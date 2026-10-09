@@ -209,6 +209,38 @@ describe('LIKApcs-Client agent ↔ server', () => {
     expect(snap().state.session).toBeNull();
   });
 
+  it('recovers on its own after staff re-issue the device token', async () => {
+    const presence = ctx.app.hub.listDevices().find((d) => d.stationId === station.id)!;
+    const reissue = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/devices/${presence.deviceId}/reissue-token`,
+      headers: authHeader(owner.token),
+    });
+    expect(reissue.statusCode).toBe(200);
+    // Socket closed with 4005 → token dropped → re-registration → the new token is collected once
+    // → a fresh connection (locally this takes a few milliseconds, so compare connection times).
+    await waitFor(
+      () =>
+        ctx.app.hub
+          .listDevices()
+          .find(
+            (d) =>
+              d.deviceId === presence.deviceId &&
+              d.connectedAt.getTime() > presence.connectedAt.getTime(),
+          ) ?? null,
+      20_000,
+      'reconnection with the re-issued token',
+    );
+    await waitFor(() => snap().phase.phase === 'online' || null, 5000, 'phase online');
+    expect(snap().state.mode).toBe('locked');
+    expect(snap().state.station?.code).toBe('PC 07');
+    const tokenState = await ctx.pool.query<{ collected: boolean }>(
+      'SELECT token_collected_at IS NOT NULL AS collected FROM station_devices WHERE id = $1',
+      [presence.deviceId],
+    );
+    expect(tokenState.rows[0]?.collected).toBe(true);
+  }, 40_000);
+
   it('re-registers automatically after staff revoke the device', async () => {
     const presence = ctx.app.hub.listDevices().find((d) => d.stationId === station.id)!;
     const revoke = await ctx.app.inject({
