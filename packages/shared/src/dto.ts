@@ -303,3 +303,43 @@ export interface SystemInfoResponse {
   database: { ok: boolean; latencyMs: number };
   counts: { users: number; stations: number; devicesOnline: number; adminConnections: number };
 }
+
+// ─── Station commands (Admin → Server → Client) ────────────────────────────────
+/** Commands staff can send directly; session.* commands are issued by the session service. */
+export const DIRECT_STATION_COMMANDS = [
+  'lock',
+  'unlock',
+  'message.show',
+  'power.restart',
+  'power.shutdown',
+  'update.apply',
+] as const;
+export type DirectStationCommand = (typeof DIRECT_STATION_COMMANDS)[number];
+
+export const stationCommandSchema = z.discriminatedUnion('command', [
+  z.object({ command: z.literal('lock') }),
+  z.object({ command: z.literal('unlock') }),
+  z.object({
+    command: z.literal('message.show'),
+    text: z.string().trim().min(1).max(300),
+    durationSeconds: z.number().int().min(3).max(600).default(20),
+  }),
+  z.object({ command: z.literal('power.restart') }),
+  z.object({ command: z.literal('power.shutdown') }),
+  z.object({ command: z.literal('update.apply') }),
+]);
+export type StationCommandRequest = z.infer<typeof stationCommandSchema>;
+
+export interface StationCommandResponse {
+  commandId: string;
+  command: DirectStationCommand;
+  ok: boolean;
+  error?: string;
+}
+
+export interface ClientUpdatePushResponse {
+  /** Online devices running a version older than the server's. */
+  outdated: number;
+  sent: number;
+  results: { deviceId: string; stationId: string; ok: boolean; error?: string }[];
+}

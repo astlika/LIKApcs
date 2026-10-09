@@ -6,11 +6,11 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                | Status (Phase 1)                          |
-| ------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, billing (authoritative)     | ✅ core implemented, 48 integration tests |
-| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, stations, employees, settings, audit; POS/inventory next | ✅ 7 screens, EN/SQ, dark/light           |
-| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, timers, secure device registration                     | ⏳ Phase 4 (server contract ready)        |
+| App                | What it is                                                                                                | Status (Phase 1)                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, billing (authoritative)     | ✅ core implemented, 48 integration tests                |
+| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, stations, employees, settings, audit; POS/inventory next | ✅ 7 screens, EN/SQ, dark/light                          |
+| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, timers, secure device registration, staff commands     | ✅ agent + kiosk shell (installer pending first release) |
 
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.
@@ -30,9 +30,12 @@ LIKApcs has exactly two installers. No separate database or server setup is need
    Business data lives in `%LOCALAPPDATA%\LIKApcs-Data` (never inside the program folder).
 2. **Other Admin PCs** (optional, e.g. the office) — run the same `LIKApcs-Setup.exe`; the app finds
    the main PC on the local network by itself (_Find server on the network_ on the login screen).
-3. **Gaming PCs — `LIKApcs-Client-Setup.exe`** (Phase 4, in progress): installs the client that
-   locks the screen between sessions, finds the server automatically and asks for a one-time approval
-   in the Admin app.
+3. **Gaming PCs — `LIKApcs-Client-Setup.exe`**: installs the client that locks the screen between
+   sessions, finds the server on the local network by itself and asks for a one-time approval in the
+   Admin app (_Stations → Pending devices → assign to a station_). It starts with Windows, keeps the
+   lock screen in front, shows the remaining time in a small overlay during a session and executes
+   staff commands (lock, unlock, message, restart, shut down, update) only after the server has
+   authenticated them. Keeps its own copy up to date from GitHub Releases (signature-verified).
 4. **Updates** — one button. The Admin app checks GitHub Releases on start-up and in
    _Settings → About_; **Download and install** applies a signature-verified update of the Admin app
    _and_ the server on the main PC in one go, the database is upgraded automatically on the next start.

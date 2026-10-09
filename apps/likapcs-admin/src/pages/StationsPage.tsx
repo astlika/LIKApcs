@@ -4,10 +4,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   Cpu,
+  DownloadCloud,
   Info,
   KeyRound,
+  Lock,
+  LockOpen,
+  MessageSquare,
   Monitor,
   Plus,
+  Power,
+  RotateCcw,
   ShieldOff,
   Trash2,
   Wifi,
@@ -16,9 +22,14 @@ import {
 } from 'lucide-react';
 import {
   PERMISSIONS,
+  isNewerVersion,
+  type ClientUpdatePushResponse,
+  type StationCommandRequest,
+  type StationCommandResponse,
   type StationDeviceSummary,
   type StationStatus,
   type StationSummary,
+  type SystemInfoResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
@@ -99,6 +110,24 @@ export function StationsPage() {
     enabled: canDevices,
     refetchInterval: 15_000,
   });
+  const systemInfo = useQuery({
+    queryKey: ['system-info'],
+    queryFn: () => api<SystemInfoResponse>('/system/info'),
+    staleTime: 60_000,
+  });
+  const outdatedOnline = useMemo(() => {
+    const server = systemInfo.data?.serverVersion;
+    if (!server) return 0;
+    return (stations.data ?? []).filter(
+      (s) => s.device?.online && s.device.appVersion && isNewerVersion(server, s.device.appVersion),
+    ).length;
+  }, [stations.data, systemInfo.data]);
+  const pushUpdates = useMutation({
+    mutationFn: () => api<ClientUpdatePushResponse>('/devices/update-outdated', { method: 'POST' }),
+    onSuccess: (r) =>
+      toast.success(t('stations.updateClientsDone', { sent: r.sent, n: r.outdated })),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -142,6 +171,11 @@ export function StationsPage() {
           <p className="page-header__sub">{t('stations.subtitle', counts)}</p>
         </div>
         <div className="page-header__actions">
+          {canDevices && outdatedOnline > 0 && (
+            <Button onClick={() => pushUpdates.mutate()} loading={pushUpdates.isPending}>
+              <DownloadCloud size={16} /> {t('stations.updateClients', { n: outdatedOnline })}
+            </Button>
+          )}
           {canManage && (
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
               <Plus size={16} /> {t('stations.addStation')}
@@ -679,6 +713,9 @@ function StationDetailDialog({
                     {device.osInfo}
                   </div>
                 )}
+                {device.status === 'approved' && (
+                  <DeviceCommands station={station} online={device.online} onDone={onChanged} />
+                )}
                 {canDevices && (
                   <div className="row row--wrap">
                     <Button size="sm" onClick={() => setConfirm('reissue')}>
@@ -805,5 +842,127 @@ function StationDetailDialog({
         }
       />
     </>
+  );
+}
+
+/** Lock / unlock / message / power / update — each one is a server command acknowledged by the PC. */
+function DeviceCommands({
+  station,
+  online,
+  onDone,
+}: {
+  station: StationSummary;
+  online: boolean;
+  onDone: () => void;
+}) {
+  const { t } = useI18n();
+  const { can } = useAuth();
+  const toast = useToast();
+  const [messageOpen, setMessageOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [confirmPower, setConfirmPower] = useState<'power.restart' | 'power.shutdown' | null>(null);
+  const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  const canPower = can(PERMISSIONS.STATIONS_POWER);
+  const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
+
+  const send = useMutation({
+    mutationFn: (body: StationCommandRequest) =>
+      api<StationCommandResponse>(`/stations/${station.id}/command`, { method: 'POST', body }),
+    onSuccess: (r) => {
+      if (r.ok)
+        toast.success(t('stations.commandOk', { command: t(`stations.commands.${r.command}`) }));
+      else toast.error(t('stations.commandFailed', { error: r.error ?? '' }));
+      setMessageOpen(false);
+      setConfirmPower(null);
+      setText('');
+      onDone();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  if (!canControl) return null;
+  const disabled = !online || send.isPending;
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="muted" style={{ fontSize: 12.5 }}>
+        {online ? t('stations.commandsHint') : t('stations.commandsOffline')}
+      </div>
+      <div className="row row--wrap">
+        <Button size="sm" disabled={disabled} onClick={() => send.mutate({ command: 'lock' })}>
+          <Lock size={14} /> {t('stations.commands.lock')}
+        </Button>
+        <Button size="sm" disabled={disabled} onClick={() => send.mutate({ command: 'unlock' })}>
+          <LockOpen size={14} /> {t('stations.commands.unlock')}
+        </Button>
+        <Button size="sm" disabled={disabled} onClick={() => setMessageOpen(true)}>
+          <MessageSquare size={14} /> {t('stations.commands.message.show')}
+        </Button>
+        {canPower && (
+          <>
+            <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.restart')}>
+              <RotateCcw size={14} /> {t('stations.commands.power.restart')}
+            </Button>
+            <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.shutdown')}>
+              <Power size={14} /> {t('stations.commands.power.shutdown')}
+            </Button>
+          </>
+        )}
+        {canDevices && (
+          <Button
+            size="sm"
+            disabled={disabled}
+            onClick={() => send.mutate({ command: 'update.apply' })}
+          >
+            <DownloadCloud size={14} /> {t('stations.commands.update.apply')}
+          </Button>
+        )}
+      </div>
+      <Dialog
+        open={messageOpen}
+        onClose={() => setMessageOpen(false)}
+        size="sm"
+        title={t('stations.commands.message.show')}
+        footer={
+          <>
+            <Button onClick={() => setMessageOpen(false)}>{t('common.cancel')}</Button>
+            <Button
+              variant="primary"
+              loading={send.isPending}
+              disabled={!text.trim()}
+              onClick={() =>
+                send.mutate({ command: 'message.show', text: text.trim(), durationSeconds: 20 })
+              }
+            >
+              {t('stations.sendMessage')}
+            </Button>
+          </>
+        }
+      >
+        <Field label={t('stations.messageText')}>
+          {(id) => (
+            <Input
+              id={id}
+              autoFocus
+              maxLength={300}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={t('stations.messagePlaceholder')}
+            />
+          )}
+        </Field>
+      </Dialog>
+      {confirmPower && (
+        <ConfirmDialog
+          open
+          danger
+          title={t(`stations.commands.${confirmPower}`)}
+          body={t('stations.powerConfirm', { code: station.code })}
+          confirmLabel={t(`stations.commands.${confirmPower}`)}
+          loading={send.isPending}
+          onClose={() => setConfirmPower(null)}
+          onConfirm={() => send.mutate({ command: confirmPower })}
+        />
+      )}
+    </div>
   );
 }

@@ -10,6 +10,7 @@ import { getMigrationStatus } from './db/migrate.js';
 import authPlugin from './plugins/auth.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import { RealtimeHub } from './realtime/hub.js';
+import { CommandsService } from './services/commands.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
 import { auditRoutes } from './routes/audit.js';
@@ -34,6 +35,7 @@ export interface Services {
   devices: DevicesService;
   audit: AuditQueryService;
   dashboard: DashboardService;
+  commands: CommandsService;
 }
 
 declare module 'fastify' {
@@ -82,6 +84,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const devices = new DevicesService(pool, hub, stations);
   const audit = new AuditQueryService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);
+  const commands = new CommandsService(pool, hub);
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -89,7 +92,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.decorate('config', config);
   app.decorate('pool', pool);
   app.decorate('hub', hub);
-  app.decorate('services', { settings, users, auth, stations, devices, audit, dashboard });
+  app.decorate('services', {
+    settings,
+    users,
+    auth,
+    stations,
+    devices,
+    audit,
+    dashboard,
+    commands,
+  });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
   app.decorate('control', {

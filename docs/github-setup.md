@@ -19,12 +19,13 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.likapcs-secrets/likapcs-updater.key
 
 A release is a git tag `vX.Y.Z` on `main`. `.github/workflows/release.yml` then runs:
 
-| Job                           | What it does                                                                                                                                                                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Verify**                    | tag == `version` in root, admin and server `package.json` and `src-tauri/Cargo.toml`; `CHANGELOG.md` has a `## [X.Y.Z]` section. Otherwise the run fails before building anything.                                              |
-| **Server bundle** (ubuntu)    | `likapcs-server-X.Y.Z.zip`: compiled `dist/`, `database/migrations/`, `deploy/` (Windows service installer), production `node_modules`, `.env.example`, README.                                                                 |
-| **Admin installer** (windows) | `pnpm tauri build --ci` → `LIKApcs_X.Y.Z_x64-setup.exe` (NSIS, per-user install) **plus** `LIKApcs_X.Y.Z_x64-setup.exe.sig` — the minisign signature made with `TAURI_SIGNING_PRIVATE_KEY`. Also copied as `LIKApcs-Setup.exe`. |
-| **Publish** (ubuntu)          | generates `latest.json` (version, notes from the changelog, signature, download URL) and `SHA256SUMS.txt`, then creates the **published** GitHub release with all files attached.                                               |
+| Job                            | What it does                                                                                                                                                                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Verify**                     | tag == `version` in root, admin, client and server `package.json` and both `src-tauri/Cargo.toml`; `CHANGELOG.md` has a `## [X.Y.Z]` section. Otherwise the run fails before building anything.                                                                 |
+| **Server bundle** (ubuntu)     | `likapcs-server-X.Y.Z.zip`: compiled `dist/`, `database/migrations/`, `deploy/` (Windows service installer), production `node_modules`, `.env.example`, README.                                                                                                 |
+| **Admin installer** (windows)  | `pnpm tauri build --ci` → `LIKApcs_X.Y.Z_x64-setup.exe` (NSIS, per-user install) **plus** `LIKApcs_X.Y.Z_x64-setup.exe.sig` — the minisign signature made with `TAURI_SIGNING_PRIVATE_KEY`. Also copied as `LIKApcs-Setup.exe`.                                 |
+| **Client installer** (windows) | `pnpm --filter @likapcs/client tauri build --ci` → `LIKApcs-Client_X.Y.Z_x64-setup.exe` + `.sig`, also copied as `LIKApcs-Client-Setup.exe`. Runs in parallel with the Admin job.                                                                               |
+| **Publish** (ubuntu)           | generates `latest.json` (Admin) and `latest-client.json` (Client) with `scripts/update-manifest.mjs` (version, notes from the changelog, signature, download URL) plus `SHA256SUMS.txt`, then creates the **published** GitHub release with all files attached. |
 
 The release is published immediately (not a draft) because the updater resolves
 `https://github.com/<owner>/LIKApcs/releases/latest/download/latest.json`, and GitHub only serves

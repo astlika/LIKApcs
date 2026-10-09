@@ -10,7 +10,11 @@ import {
   type ServerWelcomeToClient,
 } from '@likapcs/shared';
 import type { DevicePresence } from './hub.js';
+import { shouldPushUpdate } from '../services/commands.js';
 import { SERVER_VERSION } from '../version.js';
+
+/** Delay before an outdated client is told to update, so the welcome/heartbeat settle first. */
+const UPDATE_PUSH_DELAY_MS = 5_000;
 
 const HELLO_TIMEOUT_MS = 10_000;
 
@@ -147,6 +151,29 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             { deviceId: device.id, station: device.station.code, ip },
             'client connected',
           );
+
+          // Owner policy: outdated clients update themselves (signed installer from GitHub Releases).
+          if (
+            shouldPushUpdate({
+              clientVersion: message.appVersion,
+              policy: settings['updates.client_policy'],
+              maintenanceWindow: settings['updates.maintenance_window'],
+              hasActiveSession: welcome.session !== null,
+            })
+          ) {
+            const deviceId = device.id;
+            setTimeout(() => {
+              if (!hub.isDeviceOnline(deviceId)) return;
+              void hub
+                .sendCommand(deviceId, 'update.apply', {})
+                .then((r) =>
+                  request.log.info(
+                    { deviceId, ok: r.ok, error: r.error },
+                    'automatic client update requested',
+                  ),
+                );
+            }, UPDATE_PUSH_DELAY_MS).unref();
+          }
           return;
         }
 

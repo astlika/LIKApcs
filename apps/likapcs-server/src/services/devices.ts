@@ -75,9 +75,23 @@ export class DevicesService {
       );
       const row = existing.rows[0];
       if (row?.status === 'approved') {
+        // A reinstalled client has a fresh registration secret. Accepting it is safe only while no
+        // token is outstanding (never collected, or an admin re-issued it); otherwise the holder of
+        // the original credentials keeps exclusive access until staff explicitly re-issue.
         await client.query(
-          'UPDATE station_devices SET hostname = $2, os_info = $3, app_version = $4, last_ip = $5 WHERE id = $1',
-          [row.id, input.hostname, input.osInfo ?? null, input.appVersion, ip],
+          `UPDATE station_devices
+              SET hostname = $2, os_info = $3, app_version = $4, last_ip = $5,
+                  registration_secret_hash = CASE WHEN token_collected_at IS NULL THEN $6
+                                                  ELSE registration_secret_hash END
+            WHERE id = $1`,
+          [
+            row.id,
+            input.hostname,
+            input.osInfo ?? null,
+            input.appVersion,
+            ip,
+            hashToken(input.registrationSecret),
+          ],
         );
         return { registrationId: row.id, status: 'approved' };
       }

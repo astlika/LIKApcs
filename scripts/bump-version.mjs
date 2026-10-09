@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Sets the same SemVer version in every place the release workflow verifies:
- * root, apps/likapcs-admin, apps/likapcs-server package.json and src-tauri/Cargo.toml
- * (src-tauri/tauri.conf.json reads its version from ../package.json).
+ * root, apps/likapcs-admin, apps/likapcs-client, apps/likapcs-server, packages/shared package.json
+ * and both src-tauri/Cargo.toml files (tauri.conf.json reads its version from ../package.json).
  *
  *   pnpm release:bump 0.2.0
  */
@@ -20,6 +20,7 @@ const touched = [];
 for (const rel of [
   'package.json',
   'apps/likapcs-admin/package.json',
+  'apps/likapcs-client/package.json',
   'apps/likapcs-server/package.json',
   'packages/shared/package.json',
 ]) {
@@ -30,10 +31,15 @@ for (const rel of [
   touched.push(rel);
 }
 
-const cargo = resolve(root, 'apps/likapcs-admin/src-tauri/Cargo.toml');
-const toml = readFileSync(cargo, 'utf8').replace(/^version = ".*"$/m, `version = "${version}"`);
-writeFileSync(cargo, toml);
-touched.push('apps/likapcs-admin/src-tauri/Cargo.toml');
+for (const rel of [
+  'apps/likapcs-admin/src-tauri/Cargo.toml',
+  'apps/likapcs-client/src-tauri/Cargo.toml',
+]) {
+  const cargo = resolve(root, rel);
+  const toml = readFileSync(cargo, 'utf8').replace(/^version = ".*"$/m, `version = "${version}"`);
+  writeFileSync(cargo, toml);
+  touched.push(rel);
+}
 
 console.log(`version ${version} written to:\n  ${touched.join('\n  ')}`);
 console.log(

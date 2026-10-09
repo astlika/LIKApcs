@@ -1,0 +1,94 @@
+export type Language = 'en' | 'sq';
+
+const en = {
+  station: 'Station',
+  locked: 'This PC is locked',
+  lockedHint: 'Please ask the staff to start your session.',
+  free: 'Free play',
+  remaining: 'Time left',
+  elapsed: 'Time played',
+  paused: 'Paused',
+  connected: 'Connected',
+  connecting: 'Connecting to the server…',
+  offline: 'Connection lost — reconnecting…',
+  offlineSession: 'Connection lost — your timer continues.',
+  noServer: 'Looking for the LIKApcs server on the network…',
+  noServerHint: 'Make sure the main PC is on and LIKApcs is running there.',
+  registering: 'Waiting for approval',
+  registeringHint:
+    'Staff: open LIKApcs Admin → Stations → “Devices awaiting approval” and assign this PC to a station.',
+  computer: 'Computer name',
+  machineId: 'Machine ID',
+  server: 'Server',
+  rejected: 'This PC was rejected by the staff.',
+  rejectedHint:
+    'It will ask again in a few minutes. Staff can approve it in LIKApcs Admin → Stations.',
+  needsReissue: 'This PC was approved before, but its credentials are missing.',
+  needsReissueHint:
+    'Staff: LIKApcs Admin → Stations → this device → “Re-issue token”. The PC reconnects by itself.',
+  incompatible: 'This client is not compatible with the server.',
+  incompatibleHint:
+    'An update is being installed. If this message stays, update the client from the main PC.',
+  updating: 'Installing update…',
+  version: 'Version',
+  settingsTitle: 'Technician settings',
+  serverAddress: 'Server address',
+  serverAddressHint:
+    'Normally found automatically. Only set it when the server is on another network segment.',
+  save: 'Save',
+  close: 'Close',
+  findServer: 'Find on network',
+  foundNone: 'No server found.',
+  pairedNote:
+    'This PC is paired. To move it to another server or station, revoke the device in LIKApcs Admin → Stations; it will register again automatically.',
+  language: 'Language',
+};
+const sq: typeof en = {
+  station: 'Stacioni',
+  locked: 'Ky PC është i kyçur',
+  lockedHint: 'Ju lutem kërkoni stafit të nisë seancën tuaj.',
+  free: 'Lojë e lirë',
+  remaining: 'Koha e mbetur',
+  elapsed: 'Koha e luajtur',
+  paused: 'Në pauzë',
+  connected: 'I lidhur',
+  connecting: 'Duke u lidhur me serverin…',
+  offline: 'Lidhja u ndërpre — duke u rilidhur…',
+  offlineSession: 'Lidhja u ndërpre — koha juaj vazhdon.',
+  noServer: 'Duke kërkuar serverin LIKApcs në rrjet…',
+  noServerHint: 'Sigurohuni që PC-ja kryesore është ndezur dhe LIKApcs punon aty.',
+  registering: 'Në pritje të miratimit',
+  registeringHint:
+    'Stafi: hapni LIKApcs Admin → Stacionet → “Pajisje në pritje” dhe caktoni këtë PC në një stacion.',
+  computer: 'Emri i kompjuterit',
+  machineId: 'ID e makinës',
+  server: 'Serveri',
+  rejected: 'Ky PC u refuzua nga stafi.',
+  rejectedHint:
+    'Do të kërkojë përsëri pas disa minutash. Stafi mund ta miratojë në LIKApcs Admin → Stacionet.',
+  needsReissue: 'Ky PC ishte miratuar më parë, por kredencialet mungojnë.',
+  needsReissueHint:
+    'Stafi: LIKApcs Admin → Stacionet → kjo pajisje → “Rilësho token-in”. PC-ja rilidhet vetë.',
+  incompatible: 'Ky klient nuk është i përputhshëm me serverin.',
+  incompatibleHint:
+    'Po instalohet një përditësim. Nëse ky mesazh mbetet, përditësoni klientin nga PC-ja kryesore.',
+  updating: 'Po instalohet përditësimi…',
+  version: 'Versioni',
+  settingsTitle: 'Cilësimet e teknikut',
+  serverAddress: 'Adresa e serverit',
+  serverAddressHint:
+    'Zakonisht gjendet automatikisht. Vendoseni vetëm kur serveri është në një segment tjetër rrjeti.',
+  save: 'Ruaj',
+  close: 'Mbyll',
+  findServer: 'Gjej në rrjet',
+  foundNone: 'Nuk u gjet asnjë server.',
+  pairedNote:
+    'Ky PC është i çiftuar. Për ta kaluar në një server ose stacion tjetër, revokoni pajisjen në LIKApcs Admin → Stacionet; ajo regjistrohet përsëri automatikisht.',
+  language: 'Gjuha',
+};
+
+export const dictionaries: Record<Language, typeof en> = { en, sq };
+export type Key = keyof typeof en;
+export function t(language: Language, key: Key): string {
+  return dictionaries[language][key];
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities of the LIKApcs Client window",
+  "windows": ["main"],
+  "permissions": ["core:default", "process:default", "updater:default", "autostart:default"]
+}

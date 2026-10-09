@@ -1,18 +1,39 @@
-# LIKApcs-Client (Phase 4)
+# LIKApcs-Client
 
-Windows application installed on every customer gaming PC. It is **not implemented yet** — this
-directory reserves the workspace location and documents the contract the client must fulfil.
+The agent installed on every customer gaming PC (Windows; Linux/macOS only for development).
 
-The server side of the contract already exists and is covered by integration tests
-(`apps/likapcs-server/test/integration/stations-devices.test.ts`):
+| Part          | Where                       | What it does                                                                                                                                                                                    |
+| ------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocol core | `src/lib/protocol.ts`       | Pure, tested logic: command guard (sequence, expiry, replay, clock skew), state reducer (`locked` / `session` / `free`), session countdown, reconnect back-off. No I/O.                         |
+| Agent         | `src/lib/agent.ts`          | Discovery → pairing (server pinned by `installationId`) → registration & approval polling → device token → WebSocket, heartbeats, command execution and acknowledgement, local expiry, updates. |
+| Native bridge | `src/lib/native.ts`         | Tauri commands with browser fallbacks (dev mode): identity, secret store, discovery, window mode, power, self-update.                                                                           |
+| UI            | `src/App.tsx`, `styles.css` | Full-screen lock screen (station code, status, welcome message), session overlay with `HH:MM:SS`, technician panel (`Ctrl+Alt+S`), EN/SQ.                                                       |
+| Desktop shell | `src-tauri/`                | Kiosk window + focus guard, Credential Manager secrets, `MachineGuid` identity, UDP discovery, `shutdown /r                                                                                     | /s`, autostart, single instance, signed updater (`latest-client.json`). |
 
-1. **Registration** – `POST /api/v1/client/register` with `{ machineId, hostname, osInfo, appVersion, registrationSecret }`.
-   The device appears as _pending_ in the Admin app; an administrator assigns it to a station.
-2. **Polling** – `GET /api/v1/client/registration/:id?secret=…` until the status becomes `approved`;
-   the response then carries the device token **exactly once**. Store it with Windows DPAPI.
-3. **Realtime** – connect to `ws://server:4700/ws/client`, send `client.hello`, answer
-   `server.command` messages with `client.command_ack` (each `commandId` acknowledged once), send
-   `client.heartbeat` on the configured interval.
+## Security model
 
-See `docs/network-protocol.md` for the full message catalogue and the security requirements
-(device approval, replay protection, grace periods, offline behaviour).
+- The client never holds business data or credentials beyond its own device token, which it
+  receives **once** after an administrator approved the PC in the Admin app.
+- Commands arrive only over the authenticated WebSocket, carry a sequence number and an expiry, are
+  acknowledged exactly once and are limited to the fixed catalogue (`lock`, `unlock`, `message.show`,
+  `session.*`, `power.restart`, `power.shutdown`, `update.apply`). There is no shell/exec command.
+- The screen unlocks only for an explicit `unlock` or a `session.start` from the server; the agent
+  locks itself when a prepaid session runs out even if the network is down. Billing is never decided
+  on the PC.
+- Updates are downloaded from GitHub Releases and verified with the ed25519 public key compiled into
+  the app before installation.
+
+## Development
+
+```bash
+pnpm --filter @likapcs/client dev         # browser mode on http://localhost:1421 against a server on :4700
+pnpm --filter @likapcs/client test        # protocol unit tests
+pnpm --filter @likapcs/client tauri dev   # native window (needs Rust)
+```
+
+`apps/likapcs-server/test/integration/client-agent.test.ts` drives this agent end-to-end against the
+real server (registration, approval, commands, replay protection, local expiry, revocation).
+
+Kiosk hardening of Windows itself (replacing the shell, blocking Ctrl+Alt+Del / Task Manager) is
+outside the application and documented in `docs/development-setup.md`; the client keeps its window
+in front but does not pretend to be a security boundary against a local administrator.

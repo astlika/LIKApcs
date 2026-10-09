@@ -63,26 +63,49 @@ Rank rule: an actor may only manage users with strictly lower privilege; owners 
 
 ### Stations & devices (`stations.view` / `stations.manage` / `devices.manage`)
 
-| Method | Path                            | Notes                                                                               |
-| ------ | ------------------------------- | ----------------------------------------------------------------------------------- |
-| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                          |
-| GET    | `/stations/:id`                 |                                                                                     |
-| GET    | `/stations/:id/connection-logs` | last 100 connect/disconnect events                                                  |
-| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                          |
-| PATCH  | `/stations/:id`                 | partial                                                                             |
-| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead |
-| GET    | `/devices?status=pending`       | registrations                                                                       |
-| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                     |
-| POST   | `/devices/:id/reject`           |                                                                                     |
-| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                    |
-| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret   |
+| Method | Path                            | Notes                                                                                |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------------ |
+| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                           |
+| GET    | `/stations/:id`                 |                                                                                      |
+| GET    | `/stations/:id/connection-logs` | last 100 connect/disconnect events                                                   |
+| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                           |
+| PATCH  | `/stations/:id`                 | partial                                                                              |
+| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead  |
+| GET    | `/devices?status=pending`       | registrations                                                                        |
+| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                      |
+| POST   | `/devices/:id/reject`           |                                                                                      |
+| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                     |
+| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret    |
+| POST   | `/stations/:id/command`         | staff command to the connected client PC — see _Staff commands_ below                |
+| POST   | `/devices/update-outdated`      | `devices.manage` — sends `update.apply` to every online client older than the server |
+
+#### Staff commands (`POST /stations/:id/command`)
+
+Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'update.apply'}` or
+`{command: 'message.show', text (1–300), durationSeconds? (3–600, default 20)}`. Permissions:
+`stations.control` for all of them, additionally `stations.power` for `power.*` and
+`devices.manage` for `update.apply`. The call waits for the client's acknowledgement (15 s) and
+returns `{commandId, command, ok, error?}`; `409 STATION_OFFLINE` when no client is connected.
+Every call is audited as `station.command.<command>` (a refused/unanswered command is a warning).
+Session commands (`session.*`) are never issued through this route — they come from the billing
+service in Phase 3 so that the server state and the PC never disagree.
+
+#### Client updates
+
+`POST /devices/update-outdated` returns `{outdated, sent, results: [{deviceId, stationId, ok, error?}]}`.
+Independently of staff, the server pushes `update.apply` **5 seconds after a client connects** when
+the client version is older than the server version and the `updates.client_policy` setting allows
+it: `idle_only` (default — only while no session is running), `maintenance_window` (only inside
+`updates.maintenance_window`, `HH:MM-HH:MM` server-local, may cross midnight) or `manual` (never).
+The client answers with `client.event update_status {status: checking | none | installed | failed |
+unavailable}` and relaunches itself after installing a signature-verified update.
 
 ### Client registration (no bearer token; rate-limited per IP)
 
-| Method | Path                                | Notes                                                                                                                                            |
-| ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| POST   | `/client/register`                  | `{machineId, hostname, osInfo?, appVersion, registrationSecret}` → `202 {registrationId, status:'pending'}` (`200` if already approved)          |
-| GET    | `/client/registration/:id?secret=…` | `{status}`; when approved, **the first successful poll** also returns `deviceToken` and `station`. Subsequent polls never return the token again |
+| Method | Path                                | Notes                                                                                                                                                                                                                                                                                                         |
+| ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/register`                  | `{machineId, hostname, osInfo?, appVersion, registrationSecret}` → `202 {registrationId, status:'pending'}` (`200` if already approved). An approved device may re-register (reinstall) **only until its token has been collected**; afterwards the stored secret is kept and staff must _re-issue the token_ |
+| GET    | `/client/registration/:id?secret=…` | `{status}`; when approved, **the first successful poll** also returns `deviceToken` and `station`. Subsequent polls never return the token again                                                                                                                                                              |
 
 ### Audit (`audit.view`)
 
@@ -151,7 +174,8 @@ Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "s
                             | "update_status" | "error", "payload": {...} }
 ```
 
-Command rules (enforced by the server, to be mirrored by the client):
+Command rules (enforced by the server and mirrored by the client agent,
+`apps/likapcs-client/src/lib/protocol.ts`):
 
 1. Commands are only sent to **approved, currently connected** devices.
 2. `seq` increases monotonically per connection; a client must ignore a command whose `seq` is not
@@ -160,6 +184,16 @@ Command rules (enforced by the server, to be mirrored by the client):
    times out un-acked commands (the issuing API call then fails loudly instead of pretending).
 4. There is no generic "run this program" command. Power actions require the `stations.power`
    permission and are audited.
+5. The client additionally rejects commands issued more than 120 s in the future (clock skew or a
+   replayed capture), remembers the last 500 `commandId`s per connection and only unlocks the screen
+   for a `session.*` command whose `sessionId` matches, or for an explicit `unlock`. A `session.end`
+   or an expiry it detects locally (`session_expired_locally`) always locks immediately; the server
+   remains the billing authority.
+6. **Server pinning.** After the first successful registration the client stores the server URL and
+   the server's `installationId` (from UDP discovery or a technician-entered URL). It reconnects only
+   to that server; rediscovery (after 6 failed connection attempts) accepts a new address only if it
+   announces the same `installationId`. A client that must move to another installation is revoked in
+   the Admin app and re-paired.
 
 ### Presence
 

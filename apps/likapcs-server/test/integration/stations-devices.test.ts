@@ -283,6 +283,71 @@ describe('stations, device registration and realtime presence', () => {
     expect(result.ok).toBe(true);
     client.send({ type: 'client.ack', commandId: command.commandId, ok: true }); // duplicate ack is ignored
 
+    // Staff command through the HTTP API: validated, permission-checked, audited, acked by the client
+    const lockPromise = ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/stations/${station1.id}/command`,
+      headers: authHeader(owner.token),
+      payload: { command: 'message.show', text: 'Closing in 10 minutes', durationSeconds: 30 },
+    });
+    const staffCommand = await client.next();
+    expect(staffCommand).toMatchObject({
+      type: 'server.command',
+      command: 'message.show',
+      seq: 2,
+      payload: { text: 'Closing in 10 minutes', durationSeconds: 30 },
+    });
+    expect(new Date(staffCommand.expiresAt as string).getTime()).toBeGreaterThan(Date.now());
+    client.send({ type: 'client.ack', commandId: staffCommand.commandId, ok: true });
+    const lockRes = await lockPromise;
+    expect(lockRes.statusCode).toBe(200);
+    expect(lockRes.json()).toMatchObject({ ok: true, command: 'message.show' });
+
+    // A failed acknowledgement is reported back to staff instead of being swallowed
+    const restartPromise = ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/stations/${station1.id}/command`,
+      headers: authHeader(owner.token),
+      payload: { command: 'power.restart' },
+    });
+    const restartCommand = await client.next();
+    client.send({
+      type: 'client.ack',
+      commandId: restartCommand.commandId,
+      ok: false,
+      error: 'shutdown refused',
+    });
+    const restartRes = await restartPromise;
+    expect(restartRes.statusCode).toBe(200);
+    expect(restartRes.json()).toMatchObject({ ok: false, error: 'shutdown refused' });
+
+    // Malformed commands are rejected before anything reaches the client
+    const bad = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/stations/${station1.id}/command`,
+      headers: authHeader(owner.token),
+      payload: { command: 'format.disk' },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    // The push-to-outdated helper: this client reports the server's own version → nothing to do
+    const push = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/update-outdated',
+      headers: authHeader(owner.token),
+    });
+    expect(push.statusCode).toBe(200);
+    expect(push.json()).toMatchObject({ outdated: 0, sent: 0 });
+
+    const audit = await ctx.pool.query<{ action: string }>(
+      `SELECT action FROM audit_logs WHERE entity_id = $1 AND action LIKE 'station.command.%' ORDER BY id`,
+      [station1.id],
+    );
+    expect(audit.rows.map((r) => r.action)).toEqual([
+      'station.command.message.show',
+      'station.command.power.restart',
+    ]);
+
     // Disconnect → station offline, admins notified
     client.socket.close();
     const offlineEvent = await admin.next();
@@ -295,6 +360,13 @@ describe('stations, device registration and realtime presence', () => {
     expect(logs.body.map((l) => l.event)).toEqual(
       expect.arrayContaining(['connected', 'disconnected']),
     );
+    const offlineCommand = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/stations/${station1.id}/command`,
+      headers: authHeader(owner.token),
+      payload: { command: 'lock' },
+    });
+    expect(offlineCommand.statusCode).toBe(409);
     admin.socket.close();
   });
 

@@ -95,6 +95,46 @@ pnpm --filter @likapcs/admin tauri build   # Windows: produces an NSIS installer
 > The configuration is in place and the web bundle is verified; the first native build should be done
 > on a Windows machine or via the `windows-smoke` CI job (Actions → CI → Run workflow).
 
+## 6b. Start the Client (gaming-PC agent)
+
+```bash
+pnpm --filter @likapcs/client dev        # http://localhost:1421 (Vite proxies /api and /ws to :4700)
+```
+
+In the browser the agent runs in **development mode**: it pairs with the server that served the page
+(same origin), stores its secrets in `localStorage`, uses a random machine id and the hostname
+`browser-dev`. The PC appears under _Stations → Pending devices_ in the Admin app; approve it and
+assign a station and the lock screen shows the station code. Then open the station in the Admin
+app and use **Lock / Unlock / Show message** — each one is acknowledged by the agent within a second.
+`Ctrl+Alt+S` opens the technician panel (server URL, language, status, errors).
+
+Native window (needs Rust; Windows is the target platform, Linux works for development):
+
+```bash
+pnpm --filter @likapcs/client tauri dev
+```
+
+The native build adds: the real machine id (`MachineGuid`), secrets in the Windows Credential
+Manager, UDP discovery of the server, the fullscreen kiosk window with focus guard, the top-right
+timer overlay during sessions, `shutdown /r|/s` for staff power commands and the signed auto-updater
+(`latest-client.json`). Nothing in the agent depends on being inside Tauri — the same code is driven
+end-to-end by `apps/likapcs-server/test/integration/client-agent.test.ts`.
+
+### Kiosk hardening of the gaming PCs (outside the application)
+
+The client keeps its window fullscreen, always on top and refocused, blocks the browser-level
+shortcuts and context menu, and cannot be closed from its own window. It does **not** replace the
+Windows shell. For a real venue, additionally:
+
+1. Create a dedicated standard (non-administrator) Windows user for customers; install
+   `LIKApcs-Client-Setup.exe` **while logged in as that user** (per-user install, autostart entry).
+2. Enable automatic logon for that user (`netplwiz`) so the lock screen appears right after boot.
+3. Restrict Task Manager / Ctrl+Alt+Del options with local Group Policy
+   (`User Configuration → Administrative Templates → System → Ctrl+Alt+Del Options`) or use Windows
+   Assigned Access / Shell Launcher for a true single-app shell.
+4. Keep the Admin/main PC on a staff-only network segment or VLAN if customers plug in their own
+   devices; the client only needs TCP 4700 and UDP 4701 to the main PC.
+
 ## 7. Phase 1 walkthrough (what to try)
 
 1. **Dashboard** — live figures from the database (all zero until Phase 2 adds sales).

@@ -5,9 +5,11 @@ import {
   approveDeviceSchema,
   createStationSchema,
   registerDeviceSchema,
+  stationCommandSchema,
   updateStationSchema,
   uuidSchema,
 } from '@likapcs/shared';
+import { forbidden } from '../errors.js';
 
 export const stationRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
@@ -70,6 +72,29 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
       await services.stations.remove(id, actorOf(request));
       return reply.status(204).send();
     },
+  );
+
+  // ─── Commands to the client PC ───────────────────────────────────────────────
+  app.post(
+    '/stations/:id/command',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_CONTROL) },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      const body = stationCommandSchema.parse(request.body);
+      const perms = request.auth!.permissions;
+      if (body.command.startsWith('power.') && !perms.has(PERMISSIONS.STATIONS_POWER))
+        throw forbidden('Power actions require the stations.power permission');
+      if (body.command === 'update.apply' && !perms.has(PERMISSIONS.DEVICES_MANAGE))
+        throw forbidden('Client updates require the devices.manage permission');
+      await services.stations.getById(id);
+      return services.commands.sendToStation(id, body, actorOf(request));
+    },
+  );
+
+  app.post(
+    '/devices/update-outdated',
+    { preHandler: app.requirePermission(PERMISSIONS.DEVICES_MANAGE) },
+    async (request) => services.commands.pushUpdateToOutdated(actorOf(request)),
   );
 
   // ─── Devices (admin) ─────────────────────────────────────────────────────────

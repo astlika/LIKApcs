@@ -6,6 +6,30 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **LIKApcs-Client** (`apps/likapcs-client`): the gaming-PC agent. Lock screen with station code and
+  welcome message, prepaid session countdown overlay, automatic server discovery and pairing (server
+  pinned by installation id), one-time device approval flow, authenticated WebSocket with heartbeats,
+  replay-/expiry-safe command execution with exactly-once acknowledgements, local expiry lock,
+  Windows kiosk window with focus guard, Credential-Manager secret storage, autostart, single
+  instance, signed auto-update from `latest-client.json`, EN/SQ, technician panel (`Ctrl+Alt+S`).
+- Server: `POST /api/v1/stations/:id/command` (lock, unlock, message.show, power.restart,
+  power.shutdown, update.apply — permission-checked, acknowledged, audited) and
+  `POST /api/v1/devices/update-outdated`; automatic `update.apply` push to outdated clients
+  according to the `updates.client_policy` / `updates.maintenance_window` settings.
+- Admin: station dialog buttons _Lock / Unlock / Show message / Restart PC / Shut down PC / Update
+  client_ and an _Update clients_ action on the Stations page.
+- Release pipeline builds and signs `LIKApcs-Client-Setup.exe` and publishes `latest-client.json`;
+  `pnpm release:bump` and the version check cover the client package.
+- Integration test driving the real client agent against the real server
+  (`client-agent.test.ts`).
+
+### Changed
+
+- An approved device may re-register (reinstall) only until its token has been collected; after
+  that staff must re-issue the token in the Admin app.
+
 ## [0.2.0] - 2026-10-09
 
 One installer for the main PC: `LIKApcs-Setup.exe` now contains the Admin app **and** the LIKApcs

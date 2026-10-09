@@ -222,6 +222,25 @@ export const sq: Dictionary = {
     noConnectionLog: 'Ende nuk ka lidhje të regjistruara.',
     sessionControls:
       'Kontrollet e seancave vijnë në Fazën 3 (seanca me parapagim/paspagim, kohëmatës, faturim).',
+    commandsHint: 'Komandat konfirmohen nga PC-ja e klientit brenda sekondash.',
+    commandsOffline:
+      'PC-ja e klientit është offline — komandat janë të disponueshme kur të rilidhet.',
+    commands: {
+      lock: 'Kyç ekranin',
+      unlock: 'Zhblloko (lojë e lirë)',
+      'message.show': 'Shfaq mesazh',
+      'power.restart': 'Rinis PC-në',
+      'power.shutdown': 'Fik PC-në',
+      'update.apply': 'Përditëso klientin',
+    },
+    commandOk: '{command}: u krye.',
+    commandFailed: 'PC-ja e klientit nuk konfirmoi: {error}',
+    messageText: 'Mesazhi që shfaqet në ekranin e PC-së',
+    messagePlaceholder: 'Mbyllim pas 15 minutash…',
+    sendMessage: 'Dërgo',
+    powerConfirm: 'PC-ja në {code} do të detyrohet të mbyllë të gjitha programet. Të vazhdohet?',
+    updateClients: 'Përditëso klientët ({n} të vjetëruar)',
+    updateClientsDone: 'Përditësimi u kërkua në {sent} nga {n} PC klientë të vjetëruar.',
     events: {
       connected: 'U lidh',
       disconnected: 'U shkëput',
