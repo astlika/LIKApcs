@@ -387,7 +387,17 @@ function PendingDevicesPanel({
               <td>
                 <strong>{device.hostname ?? '—'}</strong>
                 {device.osInfo && (
-                  <div className="faint" style={{ fontSize: 12 }}>
+                  <div
+                    className="faint"
+                    title={device.osInfo}
+                    style={{
+                      fontSize: 12,
+                      maxWidth: 220,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
                     {device.osInfo}
                   </div>
                 )}
@@ -845,6 +855,15 @@ function StationDetailDialog({
   );
 }
 
+const COMMAND_LABEL = {
+  lock: 'stations.commands.lock',
+  unlock: 'stations.commands.unlock',
+  'message.show': 'stations.commands.messageShow',
+  'power.restart': 'stations.commands.powerRestart',
+  'power.shutdown': 'stations.commands.powerShutdown',
+  'update.apply': 'stations.commands.updateApply',
+} as const;
+
 /** Lock / unlock / message / power / update — each one is a server command acknowledged by the PC. */
 function DeviceCommands({
   station,
@@ -869,8 +888,7 @@ function DeviceCommands({
     mutationFn: (body: StationCommandRequest) =>
       api<StationCommandResponse>(`/stations/${station.id}/command`, { method: 'POST', body }),
     onSuccess: (r) => {
-      if (r.ok)
-        toast.success(t('stations.commandOk', { command: t(`stations.commands.${r.command}`) }));
+      if (r.ok) toast.success(t('stations.commandOk', { command: t(COMMAND_LABEL[r.command]) }));
       else toast.error(t('stations.commandFailed', { error: r.error ?? '' }));
       setMessageOpen(false);
       setConfirmPower(null);
@@ -895,15 +913,15 @@ function DeviceCommands({
           <LockOpen size={14} /> {t('stations.commands.unlock')}
         </Button>
         <Button size="sm" disabled={disabled} onClick={() => setMessageOpen(true)}>
-          <MessageSquare size={14} /> {t('stations.commands.message.show')}
+          <MessageSquare size={14} /> {t(COMMAND_LABEL['message.show'])}
         </Button>
         {canPower && (
           <>
             <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.restart')}>
-              <RotateCcw size={14} /> {t('stations.commands.power.restart')}
+              <RotateCcw size={14} /> {t(COMMAND_LABEL['power.restart'])}
             </Button>
             <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.shutdown')}>
-              <Power size={14} /> {t('stations.commands.power.shutdown')}
+              <Power size={14} /> {t(COMMAND_LABEL['power.shutdown'])}
             </Button>
           </>
         )}
@@ -913,7 +931,7 @@ function DeviceCommands({
             disabled={disabled}
             onClick={() => send.mutate({ command: 'update.apply' })}
           >
-            <DownloadCloud size={14} /> {t('stations.commands.update.apply')}
+            <DownloadCloud size={14} /> {t(COMMAND_LABEL['update.apply'])}
           </Button>
         )}
       </div>
@@ -921,7 +939,7 @@ function DeviceCommands({
         open={messageOpen}
         onClose={() => setMessageOpen(false)}
         size="sm"
-        title={t('stations.commands.message.show')}
+        title={t(COMMAND_LABEL['message.show'])}
         footer={
           <>
             <Button onClick={() => setMessageOpen(false)}>{t('common.cancel')}</Button>
@@ -955,9 +973,9 @@ function DeviceCommands({
         <ConfirmDialog
           open
           danger
-          title={t(`stations.commands.${confirmPower}`)}
+          title={t(COMMAND_LABEL[confirmPower])}
           body={t('stations.powerConfirm', { code: station.code })}
-          confirmLabel={t(`stations.commands.${confirmPower}`)}
+          confirmLabel={t(COMMAND_LABEL[confirmPower])}
           loading={send.isPending}
           onClose={() => setConfirmPower(null)}
           onConfirm={() => send.mutate({ command: confirmPower })}

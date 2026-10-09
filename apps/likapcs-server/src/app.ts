@@ -9,6 +9,7 @@ import type { DbPool } from './db/pool.js';
 import { getMigrationStatus } from './db/migrate.js';
 import authPlugin from './plugins/auth.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
+import { AppError } from './errors.js';
 import { RealtimeHub } from './realtime/hub.js';
 import { CommandsService } from './services/commands.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
@@ -113,7 +114,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     origin: (origin, callback) => {
       // Non-browser clients (Tauri on Windows, Node, curl) send no Origin header.
       if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error('Origin not allowed'), false);
+      return callback(
+        new AppError(
+          403,
+          'origin_not_allowed',
+          `Origin ${origin} is not allowed; add it to LIKAPCS_CORS_ORIGINS`,
+        ),
+        false,
+      );
     },
     credentials: false,
   });

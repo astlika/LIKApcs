@@ -30,8 +30,7 @@ export function App() {
   if (snap.state.mode !== 'locked') {
     return (
       <>
-        <Overlay snap={snap} />
-        {notice && <div className="toast toast--overlay">{notice.text}</div>}
+        <Overlay snap={snap} notice={notice?.text ?? null} />
       </>
     );
   }
@@ -187,16 +186,28 @@ function ConnectionDot({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string
   );
 }
 
-function Overlay({ snap }: { snap: AgentSnapshot }) {
+/**
+ * Session timer strip. In the desktop app this is the whole (320×64) always-on-top window, so a
+ * staff message is shown inside the strip instead of a toast.
+ */
+function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null }) {
   const t = (key: Key) => translate(snap.state.language, key);
   const session = snap.state.session;
   const view = session ? sessionView(session, snap.serverNowMs) : null;
   const offline = snap.phase.phase === 'offline';
   const low = view?.kind === 'countdown' && view.seconds <= 300;
   return (
-    <div className={`overlay ${low ? 'overlay--low' : ''} ${offline ? 'overlay--offline' : ''}`}>
+    <div
+      className={`overlay ${low ? 'overlay--low' : ''} ${offline ? 'overlay--offline' : ''} ${
+        notice ? 'overlay--notice' : ''
+      }`}
+    >
       <span className="overlay__code">{snap.state.station?.code ?? 'LIKApcs'}</span>
-      {view ? (
+      {notice ? (
+        <span className="overlay__notice" title={notice}>
+          {notice}
+        </span>
+      ) : view ? (
         <>
           <span className="overlay__label">
             {view.paused ? t('paused') : view.kind === 'countdown' ? t('remaining') : t('elapsed')}

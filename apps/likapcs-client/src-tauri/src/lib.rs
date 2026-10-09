@@ -18,7 +18,7 @@ use tauri_plugin_autostart::MacosLauncher;
 
 const DISCOVERY_PORT: u16 = 4701;
 const DISCOVERY_REQUEST: &[u8] = b"LIKAPCS_DISCOVER_V1";
-const OVERLAY_WIDTH: f64 = 300.0;
+const OVERLAY_WIDTH: f64 = 320.0;
 const OVERLAY_HEIGHT: f64 = 64.0;
 
 #[derive(Serialize)]

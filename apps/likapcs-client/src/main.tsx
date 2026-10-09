@@ -2,8 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { agent } from './lib/agent';
-import { ensureAutostart } from './lib/native';
+import { ensureAutostart, isDesktopApp } from './lib/native';
 import './styles.css';
+
+document.documentElement.dataset.desktop = isDesktopApp() ? '1' : '0';
 
 // Kiosk behaviour: no context menu, no accidental zoom/navigation shortcuts in the webview.
 document.addEventListener('contextmenu', (e) => e.preventDefault());
