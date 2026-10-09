@@ -2,7 +2,7 @@
   "name": "likapcs",
   "version": "0.1.0",
   "private": true,
-  "description": "LIKApcs — Professional Gaming Station POS/ERP ecosystem (Admin, Client, Server)",
+  "description": "LIKApcs \u2014 Professional Gaming Station POS/ERP ecosystem (Admin, Client, Server)",
   "license": "UNLICENSED",
   "packageManager": "pnpm@9.15.9",
   "engines": {
@@ -20,7 +20,9 @@
     "db:status": "pnpm --filter @likapcs/server run migrate:status",
     "dev:server": "pnpm --filter @likapcs/server run dev",
     "dev:admin": "pnpm --filter @likapcs/admin run dev",
-    "server:create-admin": "pnpm --filter @likapcs/server run create-admin"
+    "server:create-admin": "pnpm --filter @likapcs/server run create-admin",
+    "release:bump": "node scripts/bump-version.mjs",
+    "secret:scan": "bash scripts/secret-scan.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

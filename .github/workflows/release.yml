@@ -1,11 +1,13 @@
-# Release pipeline — triggered by a SemVer tag (v1.2.3). Produces:
-#   • LIKApcs-Setup.exe        (Admin, NSIS installer, Windows x64)
-#   • likapcs-server-<ver>.zip (Server bundle: dist/, migrations, .env.example, install scripts)
+# Release pipeline — triggered by a SemVer tag (v1.2.3). Produces a published GitHub release with:
+#   • LIKApcs_<ver>_x64-setup.exe + .sig   Admin installer (NSIS) and its minisign update signature
+#   • LIKApcs-Setup.exe                    same installer under a stable, human-friendly name
+#   • latest.json                          update manifest read by the in-app updater
+#   • likapcs-server-<ver>.zip             Server bundle (dist, migrations, deploy scripts, .env.example)
 #   • SHA256SUMS.txt
-#   • a DRAFT GitHub release (publish manually after smoke-testing the installers)
 #
-# Code signing (optional): set WINDOWS_CERTIFICATE (base64 PFX) + WINDOWS_CERTIFICATE_PASSWORD.
-# Update signing (Phase 7, mandatory for auto-updates): TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD).
+# Required secret: TAURI_SIGNING_PRIVATE_KEY (minisign private key used for update signatures;
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD only if the key has one). Authenticode code signing of the
+# installer is not configured yet (Windows SmartScreen shows "More info → Run anyway" on first install).
 name: Release
 
 on:
@@ -26,7 +28,7 @@ env:
 
 jobs:
   verify:
-    name: Verify tag matches package versions
+    name: Verify tag, versions and changelog
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -41,8 +43,9 @@ jobs:
           ROOT=$(node -p "require('./package.json').version")
           ADMIN=$(node -p "require('./apps/likapcs-admin/package.json').version")
           SERVER=$(node -p "require('./apps/likapcs-server/package.json').version")
-          echo "tag=$VERSION root=$ROOT admin=$ADMIN server=$SERVER"
-          for v in "$ROOT" "$ADMIN" "$SERVER"; do
+          CARGO=$(grep -m1 '^version' apps/likapcs-admin/src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "tag=$VERSION root=$ROOT admin=$ADMIN server=$SERVER cargo=$CARGO"
+          for v in "$ROOT" "$ADMIN" "$SERVER" "$CARGO"; do
             if [ "$v" != "$VERSION" ]; then echo "::error::package version $v does not match tag $VERSION"; exit 1; fi
           done
           grep -q "## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no entry for $VERSION"; exit 1; }
@@ -64,7 +67,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @likapcs/shared test && pnpm --filter @likapcs/server build
+      - run: pnpm --filter @likapcs/shared test
+      - run: pnpm --filter @likapcs/server build
       - name: Assemble bundle
         run: |
           VERSION=${{ needs.verify.outputs.version }}
@@ -72,12 +76,22 @@ jobs:
           mkdir -p $OUT/database
           cp -r apps/likapcs-server/dist $OUT/
           cp -r database/migrations $OUT/database/
+          cp -r apps/likapcs-server/deploy $OUT/deploy
           cp .env.example $OUT/.env.example
-          cp apps/likapcs-server/package.json $OUT/package.json
-          cp -r apps/likapcs-server/deploy $OUT/deploy 2>/dev/null || true
-          cp docs/development-setup.md $OUT/README.md
-          cd $OUT && pnpm install --prod --ignore-workspace --no-frozen-lockfile && cd ..
+          cp docs/development-setup.md $OUT/DEVELOPMENT.md
+          cp apps/likapcs-server/deploy/README.md $OUT/README.md
+          # Production package.json: runtime dependencies only (the shared package is bundled by tsup).
+          node -e '
+            const src = require("./apps/likapcs-server/package.json");
+            delete src.dependencies["@likapcs/shared"];
+            const out = { name: src.name, version: src.version, private: true, type: src.type, description: src.description,
+              engines: src.engines, scripts: { start: "node dist/index.js", migrate: "node dist/cli.js migrate", "migrate:status": "node dist/cli.js migrate:status", "create-admin": "node dist/cli.js create-admin" },
+              dependencies: src.dependencies };
+            require("fs").writeFileSync(process.argv[1] + "/package.json", JSON.stringify(out, null, 2) + "\n");
+          ' $OUT
+          cd $OUT && npm install --omit=dev --no-audit --no-fund && cd ..
           zip -qr $OUT.zip $OUT
+          ls -la $OUT.zip
       - uses: actions/upload-artifact@v4
         with:
           name: server-bundle
@@ -103,35 +117,33 @@ jobs:
         with:
           workspaces: apps/likapcs-admin/src-tauri
       - run: pnpm install --frozen-lockfile
-      - name: Import code-signing certificate (optional)
-        if: ${{ env.WINDOWS_CERTIFICATE != '' }}
+      - name: Build signed installer
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", $bytes)
-          Import-PfxCertificate -FilePath "$env:RUNNER_TEMP\cert.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force)
-      - name: Build installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --filter @likapcs/admin tauri build --ci
-      - name: Rename installer
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { Write-Error "TAURI_SIGNING_PRIVATE_KEY secret is missing - updates must be signed"; exit 1 }
+          pnpm --filter @likapcs/admin tauri build --ci
+      - name: Collect artifacts
         shell: pwsh
         run: |
-          $exe = Get-ChildItem apps/likapcs-admin/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $dir = "apps/likapcs-admin/src-tauri/target/release/bundle/nsis"
+          $exe = Get-ChildItem "$dir/*-setup.exe" | Select-Object -First 1
+          $sig = Get-ChildItem "$dir/*-setup.exe.sig" | Select-Object -First 1
+          if (-not $exe -or -not $sig) { Get-ChildItem -Recurse apps/likapcs-admin/src-tauri/target/release/bundle; Write-Error "installer or signature not found"; exit 1 }
           New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $exe.FullName out/
+          Copy-Item $sig.FullName out/
           Copy-Item $exe.FullName out/LIKApcs-Setup.exe
-          Get-ChildItem apps/likapcs-admin/src-tauri/target/release/bundle/nsis/*.sig -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName out/LIKApcs-Setup.exe.sig }
+          Get-ChildItem out
       - uses: actions/upload-artifact@v4
         with:
           name: admin-installer
           path: out/*
 
   publish:
-    name: Draft GitHub release
+    name: Publish GitHub release
     needs: [verify, server-bundle, admin-windows]
     runs-on: ubuntu-latest
     steps:
@@ -142,17 +154,45 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Checksums
-        run: cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - name: Extract changelog section
+      - name: Release notes from CHANGELOG
         run: |
           VERSION=${{ needs.verify.outputs.version }}
           awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{if(f)exit} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "LIKApcs v$VERSION" > notes.md
           cat notes.md
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.verify.outputs.version }}
-          name: LIKApcs v${{ needs.verify.outputs.version }}
-          body_path: notes.md
-          draft: true
-          files: artifacts/*
+      - name: Build updater manifest (latest.json)
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          cd artifacts
+          EXE=$(ls *-setup.exe | grep -v '^LIKApcs-Setup.exe$' | head -1)
+          SIG=$(cat "$EXE.sig")
+          node -e '
+            const [version, exe, sig, repo, notesFile] = process.argv.slice(1);
+            const notes = require("fs").readFileSync(notesFile, "utf8").trim();
+            const manifest = {
+              version,
+              notes,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "windows-x86_64": {
+                  signature: sig,
+                  url: `https://github.com/${repo}/releases/download/v${version}/${encodeURIComponent(exe)}`,
+                },
+              },
+            };
+            require("fs").writeFileSync("latest.json", JSON.stringify(manifest, null, 2) + "\n");
+          ' "$VERSION" "$EXE" "$SIG" "${{ github.repository }}" ../notes.md
+          cat latest.json
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" artifacts/* --repo "${{ github.repository }}" --title "LIKApcs v$VERSION" --notes-file notes.md --latest
+          fi

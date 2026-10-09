@@ -1,23 +1,35 @@
+import { createRequire } from 'node:module';
 import { loadConfig } from './config.js';
 import { createPool } from './db/pool.js';
 import { getMigrationStatus, runMigrations } from './db/migrate.js';
 import { buildApp } from './app.js';
 import { SERVER_VERSION } from './version.js';
 
+function isInstalled(moduleName: string): boolean {
+  try {
+    createRequire(import.meta.url).resolve(moduleName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const pool = createPool(config.databaseUrl);
 
+  // Human-friendly log output only when pino-pretty is installed (dev dependency) and we are not
+  // explicitly in production; the release bundle ships without it and logs JSON lines.
   const logger =
-    process.env.NODE_ENV === 'production'
-      ? { level: config.logLevel }
-      : {
+    process.env.NODE_ENV !== 'production' && isInstalled('pino-pretty')
+      ? {
           level: config.logLevel,
           transport: {
             target: 'pino-pretty',
             options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
           },
-        };
+        }
+      : { level: config.logLevel };
 
   const status = await getMigrationStatus(pool, config.migrationsDir);
   if (status.pending.length > 0) {
