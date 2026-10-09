@@ -6,6 +6,10 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- CI: GitHub Actions bumped to current majors (checkout v7, setup-node v6, upload-artifact v6,
+  download-artifact v7, pnpm/action-setup v6) — removes the Node 20 runner deprecation warnings.
+
 ## [0.1.1] - 2026-10-09
 
 First update delivered through the in-app updater.
