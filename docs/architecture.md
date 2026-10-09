@@ -47,6 +47,46 @@ server.
   any library's migration format. Each file runs in a transaction; the checksum of every applied file
   is stored, so an edited historical migration is detected and refused.
 
+### Deployment shape: one main PC
+
+The product is installed from two installers only (`LIKApcs-Setup.exe` for the main/counter PC and
+any extra Admin PC, `LIKApcs-Client-Setup.exe` for gaming PCs). `LIKApcs-Setup.exe` places a
+self-contained server runtime next to the Admin executable:
+
+```
+LIKApcs\                      (per-user install, %LOCALAPPDATA%\Programs\LIKApcs or similar)
+  LIKApcs.exe                  Admin app (Tauri)
+  runtime\
+    likapcs-server.exe         Node.js 22 runtime (renamed node.exe)
+    server\dist\index.js       the server, fully bundled (no node_modules)
+    server\dist\cli.js         server CLI: start | stop | status | discover | migrate | create-admin
+    server\database\migrations\*.sql
+    pgsql\                     portable PostgreSQL 17 (initdb, pg_ctl, postgres + libs)
+%LOCALAPPDATA%\LIKApcs-Data\   business data — OUTSIDE the install dir, survives updates/uninstall
+  pgdata\                      PostgreSQL cluster (listens on 127.0.0.1:54700 only, scram-sha-256)
+  config.json                  generated once: installation id, DB password, control token (0600)
+  server.json                  state file of the running server (pid, port, version)
+  logs\server.log, logs\postgres.log
+  backups\
+```
+
+- The server runs as a **detached background process of the logged-in user** (no console window,
+  no Windows service, no admin rights). The Admin app starts it when it is not reachable
+  (`embedded_server_start`), the installer stops/starts it around every install or update
+  (`src-tauri/windows/hooks.nsh`), and "Start LIKApcs when Windows starts" (`--background`) makes it
+  available right after sign-in. Closing the Admin window only hides it to the tray.
+- With no `LIKAPCS_DATABASE_URL` the server runs in **embedded mode**: it initialises the cluster on
+  first start, generates a random database password, starts PostgreSQL on the loopback interface,
+  creates the database and applies pending migrations before listening. Nothing is ever prompted.
+- **Control endpoint**: `POST /api/v1/system/control/stop` is accepted only from 127.0.0.1 with the
+  `x-likapcs-control` token from `config.json`; it is what `cli.js stop`, the installer and the Admin
+  app use for a graceful shutdown (server → PostgreSQL fast shutdown → state file removed).
+- **LAN discovery**: the server answers UDP datagrams `LIKAPCS_DISCOVER_V1` on port 4701 with
+  `{service:"likapcs", installationId, name, port, urls, version}`. Secondary Admin PCs and the
+  clients use it to find the main PC; it never grants access — authentication is unchanged.
+- Everything above also works on Linux/macOS with system PostgreSQL binaries (used by the test
+  suite: `apps/likapcs-server/test/embedded.test.ts`).
+
 ## 2. Repository layout
 
 ```

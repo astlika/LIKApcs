@@ -118,6 +118,9 @@ jobs:
         with:
           workspaces: apps/likapcs-admin/src-tauri
       - run: pnpm install --frozen-lockfile
+      - name: Stage server runtime (Node.js + PostgreSQL + server bundle)
+        shell: pwsh
+        run: ./scripts/stage-runtime.ps1
       # createUpdaterArtifacts requires the signing key; the same secret as release.yml is used.
       - run: pnpm --filter @likapcs/admin tauri build --ci
         env:

@@ -306,7 +306,7 @@ export function Alert({
   children,
   icon,
 }: {
-  tone?: 'info' | 'warning' | 'danger';
+  tone?: 'info' | 'warning' | 'danger' | 'success';
   children: ReactNode;
   icon?: ReactNode;
 }) {

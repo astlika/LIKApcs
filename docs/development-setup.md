@@ -143,6 +143,24 @@ Use the release bundle (`likapcs-server-<version>.zip`) and `deploy\install-wind
 procedure is documented in `apps/likapcs-server/deploy/README.md`. For a development checkout, run
 `pnpm dev:server` in a terminal instead.
 
+## 9a. Embedded mode (what the installer does)
+
+Without `LIKAPCS_DATABASE_URL` the server creates and runs its own PostgreSQL cluster. To try it on a
+developer machine (PostgreSQL binaries must be installed; set `LIKAPCS_PG_BIN` if they are not found):
+
+```bash
+pnpm --filter @likapcs/server build
+LIKAPCS_DATA_DIR=/tmp/likapcs-demo LIKAPCS_PORT=4710 node apps/likapcs-server/dist/cli.js start
+LIKAPCS_DATA_DIR=/tmp/likapcs-demo LIKAPCS_PORT=4710 node apps/likapcs-server/dist/cli.js status
+node apps/likapcs-server/dist/cli.js discover          # UDP broadcast, lists running servers
+LIKAPCS_DATA_DIR=/tmp/likapcs-demo LIKAPCS_PORT=4710 node apps/likapcs-server/dist/cli.js stop
+```
+
+The Windows runtime that ships inside `LIKApcs-Setup.exe` is produced by `scripts/stage-runtime.ps1`
+(Node.js and the portable PostgreSQL are downloaded from nodejs.org / Maven Central and verified
+against pinned SHA-256 values); `pnpm --filter @likapcs/admin tauri build` then bundles
+`src-tauri/runtime/`. Both steps run in CI (`release.yml`, and `ci.yml` on manual dispatch).
+
 ## 9b. Testing the in-app updater
 
 The updater only exists in the packaged desktop app (`pnpm --filter @likapcs/admin tauri build`),

@@ -6,7 +6,33 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
+One installer for the main PC: `LIKApcs-Setup.exe` now contains the Admin app **and** the LIKApcs
+Server with its own PostgreSQL. No Node.js, PostgreSQL, `.env` or command line is needed any more.
+
+### Added
+- **Server, embedded mode** — with no `LIKAPCS_DATABASE_URL` the server initialises and runs a
+  private PostgreSQL cluster in the per-user data directory (`%LOCALAPPDATA%\LIKApcs-Data`),
+  generates its credentials once (`config.json`, mode 0600), applies migrations and listens; all
+  without prompts (`src/embedded/*`). Loopback-only `POST /system/control/stop` (token protected)
+  for graceful shutdown; `server.json` state file; file logging with size rotation.
+- **Server CLI**: `start` (detached background process), `stop`, `status`, `discover`, `data-dir`.
+- **LAN discovery**: UDP responder on port 4701 (`LIKAPCS_DISCOVER_V1`), used by secondary Admin PCs
+  (login screen → _Find server on the network_, automatic when exactly one server answers) and by the
+  upcoming client.
+- **Admin desktop shell**: supervises the bundled server ("Starting LIKApcs server…" gate on launch),
+  tray icon (Open / Restart server / Close / Stop server and close), close-to-tray, single instance,
+  start-at-login with `--background`, `Settings → System → Server on this PC` (status, version,
+  data folder, log file, _Restart server_, _Allow through Windows Firewall_, autostart switch).
+- `scripts/stage-runtime.ps1`: stages Node.js 22 + portable PostgreSQL 17 (SHA-256 verified
+  downloads, trimmed to what `initdb`/`pg_ctl`/`postgres` need) + the bundled server into
+  `src-tauri/runtime/`; NSIS hooks stop the server before and start it after every install/update.
+- Tests: embedded PostgreSQL lifecycle (initdb → start → auth → stop) and discovery round-trip.
+
 ### Changed
+- Server bundle is fully self-contained (`tsup` `noExternal`), version embedded at build time.
+- Admin updater copy: one update installs Admin + server together on the main PC.
 - CI: GitHub Actions bumped to current majors (checkout v7, setup-node v6, upload-artifact v6,
   download-artifact v7, pnpm/action-setup v6) — removes the Node 20 runner deprecation warnings.
 

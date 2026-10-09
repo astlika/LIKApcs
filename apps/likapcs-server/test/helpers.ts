@@ -16,7 +16,7 @@ export interface TestContext {
 /** Drops and recreates the public schema, applies all migrations, builds a non-listening app. */
 export async function createTestContext(): Promise<TestContext> {
   const config = loadConfig();
-  if (!/likapcs_test/.test(config.databaseUrl)) {
+  if (!config.databaseUrl || !/likapcs_test/.test(config.databaseUrl)) {
     throw new Error('Refusing to run tests against a database that is not named *likapcs_test*');
   }
   const pool = createPool(config.databaseUrl, { max: 5 });

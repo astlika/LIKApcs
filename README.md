@@ -17,19 +17,28 @@ Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/l
 
 ## Install (end users)
 
-1. **Server PC** — download `likapcs-server-<version>.zip` from
-   [Releases](https://github.com/astlika/LIKApcs/releases/latest), unzip, follow
-   `README.md` inside (Node 20 + PostgreSQL, `npm run migrate`, `npm run create-admin`, optional
-   Windows service via `deploy\install-windows.ps1`).
-2. **Admin PCs** — download and run
-   [`LIKApcs-Setup.exe`](https://github.com/astlika/LIKApcs/releases/latest/download/LIKApcs-Setup.exe)
-   from the same release (the installer is not Authenticode-signed yet, so Windows SmartScreen shows
-   _More info → Run anyway_ the first time). On the login screen enter the server address
-   (`http://<server-ip>:4700`).
-3. **Updates** — the Admin app checks GitHub Releases on start-up and in _Settings → About_;
-   _Download and install_ applies a signature-verified update in one click. The server is updated by
-   unzipping the new bundle over the old one and running `npm run migrate` (details in
-   `docs/github-setup.md`).
+LIKApcs has exactly two installers. No separate database or server setup is needed.
+
+1. **Main PC (the counter / cashier PC) — `LIKApcs-Setup.exe`**
+   Download [`LIKApcs-Setup.exe`](https://github.com/astlika/LIKApcs/releases/latest/download/LIKApcs-Setup.exe)
+   and run it (the installer is not Authenticode-signed yet, so Windows SmartScreen shows
+   _More info → Run anyway_ the first time). It installs the Admin app **and the LIKApcs Server with
+   its own PostgreSQL database**; the server starts automatically, runs in the background and keeps
+   running when the window is closed (tray icon). On first start the app asks you to create the
+   owner account. Then open _Settings → System_ once and click **Allow through Windows Firewall** so
+   the other PCs can reach this server, and leave **Start LIKApcs when Windows starts** on.
+   Business data lives in `%LOCALAPPDATA%\LIKApcs-Data` (never inside the program folder).
+2. **Other Admin PCs** (optional, e.g. the office) — run the same `LIKApcs-Setup.exe`; the app finds
+   the main PC on the local network by itself (_Find server on the network_ on the login screen).
+3. **Gaming PCs — `LIKApcs-Client-Setup.exe`** (Phase 4, in progress): installs the client that
+   locks the screen between sessions, finds the server automatically and asks for a one-time approval
+   in the Admin app.
+4. **Updates** — one button. The Admin app checks GitHub Releases on start-up and in
+   _Settings → About_; **Download and install** applies a signature-verified update of the Admin app
+   _and_ the server on the main PC in one go, the database is upgraded automatically on the next start.
+
+Advanced: the server can still be installed on its own (Linux, an existing PostgreSQL, a Windows
+service) with `likapcs-server-<version>.zip` — see `apps/likapcs-server/deploy/README.md`.
 
 ## Quick start (developers)
 

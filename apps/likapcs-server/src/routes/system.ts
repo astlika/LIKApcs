@@ -11,7 +11,8 @@ import {
   type SetupStatusResponse,
   type SystemInfoResponse,
 } from '@likapcs/shared';
-import { conflict } from '../errors.js';
+import crypto from 'node:crypto';
+import { conflict, forbidden, notFound } from '../errors.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
 
@@ -32,6 +33,28 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       database,
       time: new Date().toISOString(),
     };
+  });
+
+  /**
+   * Graceful stop for local tooling (installer hooks, the Admin app's "Restart server" button).
+   * Only accepted from the loopback interface with the token stored in the data directory —
+   * i.e. from a process running as the same OS user. Never reachable from the LAN.
+   */
+  app.post('/system/control/stop', async (request, reply) => {
+    const expected = app.control.token;
+    if (!expected) throw notFound('control endpoint disabled');
+    const isLoopback =
+      request.ip === '127.0.0.1' || request.ip === '::1' || request.ip === '::ffff:127.0.0.1';
+    const provided = request.headers['x-likapcs-control'];
+    const token = Array.isArray(provided) ? provided[0] : provided;
+    const valid =
+      typeof token === 'string' &&
+      token.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+    if (!isLoopback || !valid) throw forbidden('control token invalid');
+    app.log.info({ ip: request.ip }, 'stop requested through control endpoint');
+    setTimeout(() => app.control.requestShutdown('control.stop'), 50);
+    return reply.code(202).send({ stopping: true });
   });
 
   app.get('/system/setup-status', async (): Promise<SetupStatusResponse> => {

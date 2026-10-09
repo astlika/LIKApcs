@@ -44,6 +44,8 @@ declare module 'fastify' {
     services: Services;
     schemaVersion: number;
     startedAt: Date;
+    /** Loopback-only control: token from the data directory, null when control is disabled. */
+    control: { token: string | null; requestShutdown: (reason: string) => void };
   }
 }
 
@@ -51,6 +53,9 @@ export interface BuildAppOptions {
   config: ServerConfig;
   pool: DbPool;
   logger?: boolean | object;
+  /** Enables POST /system/control/stop for local tooling (installer, Admin app). */
+  controlToken?: string | null;
+  requestShutdown?: (reason: string) => void;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -87,6 +92,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.decorate('services', { settings, users, auth, stations, devices, audit, dashboard });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
+  app.decorate('control', {
+    token: options.controlToken ?? null,
+    requestShutdown: options.requestShutdown ?? (() => undefined),
+  });
 
   await app.register(cors, {
     origin: (origin, callback) => {

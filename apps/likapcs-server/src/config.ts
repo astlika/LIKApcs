@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
+import { DEFAULT_DISCOVERY_PORT, findPostgresBinDir, resolveDataDir } from './embedded/paths.js';
 
 /**
  * Server configuration — read from environment variables (optionally a local .env file).
@@ -10,7 +11,16 @@ import { z } from 'zod';
  */
 
 const envSchema = z.object({
-  LIKAPCS_DATABASE_URL: z.string().min(1, 'LIKAPCS_DATABASE_URL is required'),
+  /** External PostgreSQL. When absent the server runs its embedded PostgreSQL (zero configuration). */
+  LIKAPCS_DATABASE_URL: z.string().min(1).optional(),
+  LIKAPCS_DATA_DIR: z.string().optional(),
+  LIKAPCS_PG_BIN: z.string().optional(),
+  LIKAPCS_LOG_FILE: z.string().optional(),
+  LIKAPCS_DISCOVERY: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
+  LIKAPCS_DISCOVERY_PORT: z.coerce.number().int().min(1).max(65535).default(DEFAULT_DISCOVERY_PORT),
   LIKAPCS_HOST: z.string().default('0.0.0.0'),
   LIKAPCS_PORT: z.coerce.number().int().min(1).max(65535).default(4700),
   LIKAPCS_AUTO_MIGRATE: z
@@ -36,7 +46,15 @@ const envSchema = z.object({
 });
 
 export interface ServerConfig {
-  databaseUrl: string;
+  /** null → embedded PostgreSQL managed by this process (see embedded/postgres.ts). */
+  databaseUrl: string | null;
+  /** Data directory (embedded database, logs, runtime config, backups). */
+  dataDir: string;
+  /** Portable PostgreSQL binaries, when found (required for embedded mode). */
+  pgBinDir: string | null;
+  /** Log destination: a file path, or null for stdout. */
+  logFile: string | null;
+  discovery: { enabled: boolean; port: number };
   host: string;
   port: number;
   autoMigrate: boolean;
@@ -79,12 +97,30 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Ser
     throw new Error(`Invalid server configuration: ${issues}`);
   }
   const env = parsed.data;
+  const dataDir = resolveDataDir(env.LIKAPCS_DATA_DIR);
+  const databaseUrl = env.LIKAPCS_DATABASE_URL ?? null;
+  const pgBinDir = findPostgresBinDir(env.LIKAPCS_PG_BIN);
+  if (!databaseUrl && !pgBinDir) {
+    throw new Error(
+      'No database configured: set LIKAPCS_DATABASE_URL to a PostgreSQL connection string, or ' +
+        'install the portable PostgreSQL runtime (pgsql/bin next to the server, or LIKAPCS_PG_BIN).',
+    );
+  }
+  // Embedded/background installs log to a file by default; LIKAPCS_LOG_FILE=stdout forces the console.
+  const logFile =
+    env.LIKAPCS_LOG_FILE === 'stdout'
+      ? null
+      : (env.LIKAPCS_LOG_FILE ?? (databaseUrl ? null : path.join(dataDir, 'logs', 'server.log')));
   const tls =
     env.LIKAPCS_TLS_CERT_FILE && env.LIKAPCS_TLS_KEY_FILE
       ? { certFile: env.LIKAPCS_TLS_CERT_FILE, keyFile: env.LIKAPCS_TLS_KEY_FILE }
       : null;
   return {
-    databaseUrl: env.LIKAPCS_DATABASE_URL,
+    databaseUrl,
+    dataDir,
+    pgBinDir,
+    logFile,
+    discovery: { enabled: env.LIKAPCS_DISCOVERY, port: env.LIKAPCS_DISCOVERY_PORT },
     host: env.LIKAPCS_HOST,
     port: env.LIKAPCS_PORT,
     autoMigrate: env.LIKAPCS_AUTO_MIGRATE,

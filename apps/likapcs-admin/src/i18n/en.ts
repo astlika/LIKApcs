@@ -94,6 +94,10 @@ export const en = {
     testConnection: 'Test connection',
     connectionOk: 'Connected to LIKApcs Server {version}',
     connectionFailed: 'Could not connect: {error}',
+    findServer: 'Find server on the network',
+    serversFound: '{n} LIKApcs servers found — choose one:',
+    noServersFound:
+      'No LIKApcs server found on this network. Make sure the main PC is on and LIKApcs is running there.',
     sessionExpired: 'Your session has expired. Please sign in again.',
     mustChangePassword: 'You must set a new password before continuing.',
     currentPassword: 'Current password',
@@ -367,6 +371,27 @@ export const en = {
       maintenanceWindow: 'Maintenance window (HH:MM-HH:MM)',
       note: 'Backup execution and the update dashboard are delivered in Phases 6 and 7. These settings are stored now and applied then.',
     },
+    localServer: {
+      title: 'Server on this PC',
+      intro:
+        'This is the main PC: the LIKApcs Server and its database run here in the background and the other PCs connect to it. It starts automatically with LIKApcs and keeps running when the window is closed.',
+      running: 'Running',
+      stopped: 'Stopped',
+      version: 'Server version',
+      port: 'Port',
+      dataDir: 'Data folder',
+      logFile: 'Log file',
+      restart: 'Restart server',
+      restarted: 'Server restarted.',
+      firewall: 'Allow through Windows Firewall',
+      firewallHint:
+        'Required once so that gaming PCs and other Admin PCs can reach this server. Windows will ask for administrator permission.',
+      firewallOk: 'Firewall rules added. Other PCs can now connect to this server.',
+      firewallFailed: 'Firewall rules were not added: {error}',
+      autostart: 'Start LIKApcs when Windows starts',
+      autostartHint:
+        'Recommended on the main PC: the server becomes available as soon as you sign in to Windows, without opening the app.',
+    },
     updates: {
       title: 'Software updates',
       current: 'Installed version',
@@ -387,7 +412,7 @@ export const en = {
       openReleases: 'Open GitHub Releases',
       badge: 'Update available',
       source:
-        'Updates are downloaded from GitHub Releases and verified with the LIKApcs signing key before installation.',
+        'Updates are downloaded from GitHub Releases and verified with the LIKApcs signing key before installation. On the main PC one update installs the Admin app and the server together; the database is upgraded automatically on the next start.',
     },
     about: {
       admin: 'Admin application',
@@ -402,6 +427,14 @@ export const en = {
       stationsCount: '{n} stations',
       usersCount: '{n} employees',
     },
+  },
+  gate: {
+    starting: 'Starting LIKApcs server…',
+    startingHint:
+      'The database and the server on this PC are being started. This takes a few seconds.',
+    failed: 'The LIKApcs server on this PC could not be started.',
+    logHint: 'Details are in the log file:',
+    retry: 'Try again',
   },
   palette: {
     placeholder: 'Jump to a page or station…',

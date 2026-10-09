@@ -1213,6 +1213,11 @@ button.stat:hover {
   border-color: rgba(239, 68, 68, 0.4);
   color: var(--danger);
 }
+.alert--success {
+  background: var(--success-soft);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: var(--success);
+}
 .alert--info {
   background: var(--info-soft);
   border-color: rgba(56, 189, 248, 0.4);

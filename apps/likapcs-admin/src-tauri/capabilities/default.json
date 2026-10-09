@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Capabilities of the main LIKApcs Admin window",
   "windows": ["main"],
-  "permissions": ["core:default", "process:default", "updater:default"]
+  "permissions": ["core:default", "process:default", "updater:default", "autostart:default"]
 }

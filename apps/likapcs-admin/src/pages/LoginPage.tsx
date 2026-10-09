@@ -1,9 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Globe, Lock, Server, User } from 'lucide-react';
+import { Globe, Lock, Radar, Server, User } from 'lucide-react';
 import type { HealthResponse, SetupStatusResponse } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, setServerUrl } from '../lib/api';
+import { storage } from '../lib/storage';
+import { isDesktopApp } from '../lib/updater';
+import { discoverServers, embeddedServerInfo, type DiscoveredServer } from '../lib/desktop';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useAppSettings } from '../state/app-settings';
@@ -21,6 +24,10 @@ export function LoginPage() {
   const [showServer, setShowServer] = useState(false);
   const [serverUrl, setServerUrlState] = useState(getServerUrl());
   const [serverTest, setServerTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredServer[] | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const autoDiscovered = useRef(false);
+  const desktop = isDesktopApp();
 
   const setup = useQuery({
     queryKey: ['setup-status'],
@@ -35,6 +42,19 @@ export function LoginPage() {
   useEffect(() => {
     if (setup.isError) setShowServer(true);
   }, [setup.isError]);
+  // Secondary Admin PC with no saved address: the default (this PC) is unreachable, so look for
+  // the main PC on the network once and adopt it automatically when exactly one server answers.
+  useEffect(() => {
+    if (!setup.isError || !desktop || autoDiscovered.current || storage.get('serverUrl') !== null)
+      return;
+    autoDiscovered.current = true;
+    void (async () => {
+      const local = await embeddedServerInfo().catch(() => null);
+      if (local?.available) return; // main PC: the server is started by the app itself
+      await runDiscovery();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup.isError, desktop]);
 
   if (auth.status === 'authenticated') return <Navigate to="/" replace />;
   if (setup.data?.needsSetup) return <Navigate to="/setup" replace />;
@@ -59,8 +79,8 @@ export function LoginPage() {
     }
   };
 
-  const testServer = async () => {
-    setServerUrl(serverUrl);
+  const testServer = async (url = serverUrl) => {
+    setServerUrl(url);
     setServerTest(null);
     try {
       const health = await api<HealthResponse>('/system/health', { auth: false });
@@ -75,6 +95,36 @@ export function LoginPage() {
       });
     }
   };
+
+  const chooseServer = (url: string) => {
+    setServerUrlState(url);
+    setDiscovered(null);
+    void testServer(url);
+  };
+
+  async function runDiscovery() {
+    setDiscovering(true);
+    setServerTest(null);
+    try {
+      const found = await discoverServers(2500);
+      if (found.length === 1 && found[0]?.urls[0]) {
+        chooseServer(found[0].urls[0]);
+      } else {
+        setDiscovered(found);
+        setShowServer(true);
+        if (found.length === 0) setServerTest({ ok: false, message: t('auth.noServersFound') });
+      }
+    } catch (err) {
+      setServerTest({
+        ok: false,
+        message: t('auth.connectionFailed', {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      });
+    } finally {
+      setDiscovering(false);
+    }
+  }
 
   return (
     <div className="auth">
@@ -142,10 +192,15 @@ export function LoginPage() {
                 />
               )}
             </Field>
-            <div className="row">
+            <div className="row" style={{ flexWrap: 'wrap' }}>
               <Button size="sm" onClick={() => void testServer()}>
                 <Globe size={14} /> {t('auth.testConnection')}
               </Button>
+              {desktop && (
+                <Button size="sm" onClick={() => void runDiscovery()} loading={discovering}>
+                  <Radar size={14} /> {t('auth.findServer')}
+                </Button>
+              )}
               {serverTest && (
                 <span
                   className={serverTest.ok ? 'text-success' : 'text-danger'}
@@ -155,6 +210,27 @@ export function LoginPage() {
                 </span>
               )}
             </div>
+            {discovered && discovered.length > 0 && (
+              <div className="stack" style={{ gap: 6 }}>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  {t('auth.serversFound', { n: discovered.length })}
+                </span>
+                {discovered.map((srv) => (
+                  <button
+                    key={srv.installationId}
+                    type="button"
+                    className="btn btn--ghost"
+                    style={{ justifyContent: 'space-between' }}
+                    onClick={() => srv.urls[0] && chooseServer(srv.urls[0])}
+                  >
+                    <span>{srv.name}</span>
+                    <span className="muted num">
+                      {srv.urls[0]} · v{srv.version}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="auth__footer">

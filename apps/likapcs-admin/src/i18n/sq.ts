@@ -96,6 +96,10 @@ export const sq: Dictionary = {
     testConnection: 'Testo lidhjen',
     connectionOk: 'U lidh me LIKApcs Server {version}',
     connectionFailed: 'Lidhja dështoi: {error}',
+    findServer: 'Gjej serverin në rrjet',
+    serversFound: 'U gjetën {n} serverë LIKApcs — zgjidhni njërin:',
+    noServersFound:
+      'Nuk u gjet asnjë server LIKApcs në këtë rrjet. Sigurohuni që PC-ja kryesore është ndezur dhe LIKApcs është duke punuar aty.',
     sessionExpired: 'Sesioni juaj ka skaduar. Ju lutemi hyni përsëri.',
     mustChangePassword: 'Duhet të vendosni një fjalëkalim të ri para se të vazhdoni.',
     currentPassword: 'Fjalëkalimi aktual',
@@ -369,6 +373,28 @@ export const sq: Dictionary = {
       maintenanceWindow: 'Dritarja e mirëmbajtjes (HH:MM-HH:MM)',
       note: 'Ekzekutimi i kopjeve rezervë dhe paneli i përditësimeve vijnë në Fazat 6 dhe 7. Këto cilësime ruhen tani dhe zbatohen atëherë.',
     },
+    localServer: {
+      title: 'Serveri në këtë PC',
+      intro:
+        'Kjo është PC-ja kryesore: Serveri LIKApcs dhe baza e të dhënave punojnë këtu në sfond dhe PC-të e tjera lidhen me të. Niset automatikisht me LIKApcs dhe vazhdon të punojë edhe kur dritarja mbyllet.',
+      running: 'Në punë',
+      stopped: 'I ndalur',
+      version: 'Versioni i serverit',
+      port: 'Porti',
+      dataDir: 'Dosja e të dhënave',
+      logFile: 'Skedari i log-ut',
+      restart: 'Rinis serverin',
+      restarted: 'Serveri u rinis.',
+      firewall: 'Lejo në Windows Firewall',
+      firewallHint:
+        'Nevojitet vetëm një herë që PC-të e lojërave dhe PC-të e tjera Admin të arrijnë këtë server. Windows do të kërkojë leje administratori.',
+      firewallOk:
+        'Rregullat e firewall-it u shtuan. PC-të e tjera tani mund të lidhen me këtë server.',
+      firewallFailed: 'Rregullat e firewall-it nuk u shtuan: {error}',
+      autostart: 'Nis LIKApcs kur ndizet Windows',
+      autostartHint:
+        'Rekomandohet në PC-në kryesore: serveri bëhet i disponueshëm sapo hyni në Windows, pa hapur aplikacionin.',
+    },
     updates: {
       title: 'Përditësimet e programit',
       current: 'Versioni i instaluar',
@@ -389,7 +415,7 @@ export const sq: Dictionary = {
       openReleases: 'Hap GitHub Releases',
       badge: 'Përditësim i disponueshëm',
       source:
-        'Përditësimet shkarkohen nga GitHub Releases dhe verifikohen me çelësin e nënshkrimit LIKApcs para instalimit.',
+        'Përditësimet shkarkohen nga GitHub Releases dhe verifikohen me çelësin e nënshkrimit të LIKApcs para instalimit. Në PC-në kryesore një përditësim instalon së bashku aplikacionin Admin dhe serverin; baza e të dhënave përditësohet automatikisht në nisjen e radhës.',
     },
     about: {
       admin: 'Aplikacioni Admin',
@@ -404,6 +430,13 @@ export const sq: Dictionary = {
       stationsCount: '{n} stacione',
       usersCount: '{n} punonjës',
     },
+  },
+  gate: {
+    starting: 'Po niset serveri LIKApcs…',
+    startingHint: 'Baza e të dhënave dhe serveri në këtë PC po nisen. Kjo zgjat disa sekonda.',
+    failed: 'Serveri LIKApcs në këtë PC nuk mund të nisej.',
+    logHint: 'Detajet gjenden në skedarin e log-ut:',
+    retry: 'Provo përsëri',
   },
   palette: {
     placeholder: 'Shko te një faqe ose stacion…',

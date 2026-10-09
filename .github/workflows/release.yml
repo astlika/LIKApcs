@@ -117,6 +117,9 @@ jobs:
         with:
           workspaces: apps/likapcs-admin/src-tauri
       - run: pnpm install --frozen-lockfile
+      - name: Stage server runtime (Node.js + PostgreSQL + server bundle)
+        shell: pwsh
+        run: ./scripts/stage-runtime.ps1
       - name: Build signed installer
         shell: pwsh
         env:

@@ -28,6 +28,7 @@ import {
   Textarea,
 } from '../components/ui/primitives';
 import { UpdatePanel } from '../components/UpdatePanel';
+import { LocalServerPanel } from '../components/LocalServerPanel';
 
 type TabId = 'business' | 'locale' | 'stations' | 'security' | 'system' | 'about';
 const TAB_IDS: TabId[] = ['business', 'locale', 'stations', 'security', 'system', 'about'];
@@ -433,58 +434,62 @@ export function SettingsPage() {
       )}
 
       {tab === 'system' && (
-        <Card>
-          <Alert tone="info">{t('settings.system.note')}</Alert>
-          <div className="form-grid" style={{ marginTop: 16 }}>
-            <div className="span-2">
-              {bool('backup.enabled', t('settings.system.backupEnabled'))}
+        <>
+          <LocalServerPanel />
+          <div style={{ height: 16 }} />
+          <Card>
+            <Alert tone="info">{t('settings.system.note')}</Alert>
+            <div className="form-grid" style={{ marginTop: 16 }}>
+              <div className="span-2">
+                {bool('backup.enabled', t('settings.system.backupEnabled'))}
+              </div>
+              {text('backup.time', t('settings.system.backupTime'), { type: 'time' })}
+              {number('backup.keep_count', t('settings.system.keepCount'), { min: 1, max: 365 })}
+              <Field label={t('settings.system.channel')} error={errors['updates.channel']}>
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={current['updates.channel']}
+                    onChange={(e) => set('updates.channel', e.target.value as 'stable' | 'beta')}
+                    disabled={ro}
+                  >
+                    <option value="stable">stable</option>
+                    <option value="beta">beta</option>
+                  </Select>
+                )}
+              </Field>
+              <Field
+                label={t('settings.system.clientPolicy')}
+                error={errors['updates.client_policy']}
+              >
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={current['updates.client_policy']}
+                    onChange={(e) =>
+                      set(
+                        'updates.client_policy',
+                        e.target.value as SettingsMap['updates.client_policy'],
+                      )
+                    }
+                    disabled={ro}
+                  >
+                    {(['manual', 'idle_only', 'maintenance_window'] as const).map((p) => (
+                      <option key={p} value={p}>
+                        {t(`settings.system.clientPolicies.${p}`)}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              {text('updates.maintenance_window', t('settings.system.maintenanceWindow'))}
+              <div className="span-2 stack">
+                {bool('updates.check_on_startup', t('settings.system.checkOnStartup'))}
+                {bool('updates.auto_download', t('settings.system.autoDownload'))}
+              </div>
             </div>
-            {text('backup.time', t('settings.system.backupTime'), { type: 'time' })}
-            {number('backup.keep_count', t('settings.system.keepCount'), { min: 1, max: 365 })}
-            <Field label={t('settings.system.channel')} error={errors['updates.channel']}>
-              {(id) => (
-                <Select
-                  id={id}
-                  value={current['updates.channel']}
-                  onChange={(e) => set('updates.channel', e.target.value as 'stable' | 'beta')}
-                  disabled={ro}
-                >
-                  <option value="stable">stable</option>
-                  <option value="beta">beta</option>
-                </Select>
-              )}
-            </Field>
-            <Field
-              label={t('settings.system.clientPolicy')}
-              error={errors['updates.client_policy']}
-            >
-              {(id) => (
-                <Select
-                  id={id}
-                  value={current['updates.client_policy']}
-                  onChange={(e) =>
-                    set(
-                      'updates.client_policy',
-                      e.target.value as SettingsMap['updates.client_policy'],
-                    )
-                  }
-                  disabled={ro}
-                >
-                  {(['manual', 'idle_only', 'maintenance_window'] as const).map((p) => (
-                    <option key={p} value={p}>
-                      {t(`settings.system.clientPolicies.${p}`)}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            {text('updates.maintenance_window', t('settings.system.maintenanceWindow'))}
-            <div className="span-2 stack">
-              {bool('updates.check_on_startup', t('settings.system.checkOnStartup'))}
-              {bool('updates.auto_download', t('settings.system.autoDownload'))}
-            </div>
-          </div>
-        </Card>
+          </Card>
+        </>
       )}
 
       {tab === 'about' && (
