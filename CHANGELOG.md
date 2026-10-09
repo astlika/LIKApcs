@@ -1,0 +1,25 @@
+# Changelog
+
+All notable changes to LIKApcs are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
+[Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
+
+## [Unreleased]
+
+### Phase 1 — Foundation
+
+#### Added
+- Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client` (placeholder), `packages/shared`, `database/migrations`, `docs`, `scripts`, `.github/workflows`.
+- **Shared library** `@likapcs/shared`: integer-cents money arithmetic with explicit rounding, DD.MM.YYYY / 24h formatting, 36 permissions and 6 system roles, typed settings schema with defaults, zod request schemas and response DTOs, WebSocket protocol v1, SemVer compatibility rules. Unit tests for money, formatting, versions and settings.
+- **Database**: migrations `0001_core` … `0007_gaming` creating all 33 required tables (plus supporting tables) with CHECK constraints, partial unique indexes (one approved device per station, one live session per station, one open shift per register), `updated_at` triggers and seeded roles/permissions/settings. Checksummed, transactional, advisory-locked migration runner.
+- **Server** (Node 20 / Fastify 5 / PostgreSQL): configuration from environment only; scrypt password hashing; hashed bearer sessions with expiry and lockout after failed logins; permission-checked HTTP API v1 (system/setup, auth, users, roles, settings, stations, devices, audit, dashboard); audit logging; realtime hub with `/ws/admin` (events) and `/ws/client` (hello/heartbeat/sequenced commands with exactly-once acks); device registration with admin approval and one-time token hand-out; heartbeat sweep and connection logs; `cli.js migrate | migrate:status | create-admin`. 48 integration tests + unit tests.
+- **Admin** (React 18 / Vite 5 / Tauri 2 scaffold): design system with dark and light themes; English/Albanian with instant switching and a parity test; setup wizard; login with configurable server address; dashboard with real database aggregates; stations grid with live status, add/edit/disable/delete, pending-device approval, revoke/re-issue token, connection log; employees with role matrix, create/edit/deactivate/reset password; settings with dirty tracking and validation; audit log with filters; command palette (Ctrl+K); forced password change; session-expiry handling.
+- **CI**: `ci.yml` (lint, typecheck, format check, migration validation against PostgreSQL 17, all tests, server + admin web builds, manual Windows native build) and `release.yml` (tag/version/changelog verification, server bundle, Windows NSIS installer with optional code signing, checksums, draft release).
+- **Docs**: architecture (incl. financial definitions), database schema, network protocol, development setup, GitHub setup.
+
+#### Not yet implemented (explicitly)
+- POS, inventory, purchases, customers, cash register, expenses, reports, printing (Phase 2 & 5).
+- Gaming sessions, pricing, billing and session commands (Phase 3) — schema and protocol are ready.
+- LIKApcs-Client application (Phase 4).
+- Backups/restore (Phase 6) and signed auto-updates / update dashboard (Phase 7).
+- No installer, release or update has been produced or verified yet.

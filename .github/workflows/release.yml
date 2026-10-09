@@ -1,0 +1,158 @@
+# Release pipeline — triggered by a SemVer tag (v1.2.3). Produces:
+#   • LIKApcs-Setup.exe        (Admin, NSIS installer, Windows x64)
+#   • likapcs-server-<ver>.zip (Server bundle: dist/, migrations, .env.example, install scripts)
+#   • SHA256SUMS.txt
+#   • a DRAFT GitHub release (publish manually after smoke-testing the installers)
+#
+# Code signing (optional): set WINDOWS_CERTIFICATE (base64 PFX) + WINDOWS_CERTIFICATE_PASSWORD.
+# Update signing (Phase 7, mandatory for auto-updates): TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD).
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: 20
+  PNPM_VERSION: 9.15.9
+
+jobs:
+  verify:
+    name: Verify tag matches package versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - id: v
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          ROOT=$(node -p "require('./package.json').version")
+          ADMIN=$(node -p "require('./apps/likapcs-admin/package.json').version")
+          SERVER=$(node -p "require('./apps/likapcs-server/package.json').version")
+          echo "tag=$VERSION root=$ROOT admin=$ADMIN server=$SERVER"
+          for v in "$ROOT" "$ADMIN" "$SERVER"; do
+            if [ "$v" != "$VERSION" ]; then echo "::error::package version $v does not match tag $VERSION"; exit 1; fi
+          done
+          grep -q "## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no entry for $VERSION"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  server-bundle:
+    name: Server bundle
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @likapcs/shared test && pnpm --filter @likapcs/server build
+      - name: Assemble bundle
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          OUT=likapcs-server-$VERSION
+          mkdir -p $OUT/database
+          cp -r apps/likapcs-server/dist $OUT/
+          cp -r database/migrations $OUT/database/
+          cp .env.example $OUT/.env.example
+          cp apps/likapcs-server/package.json $OUT/package.json
+          cp -r apps/likapcs-server/deploy $OUT/deploy 2>/dev/null || true
+          cp docs/development-setup.md $OUT/README.md
+          cd $OUT && pnpm install --prod --ignore-workspace --no-frozen-lockfile && cd ..
+          zip -qr $OUT.zip $OUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-bundle
+          path: likapcs-server-*.zip
+
+  admin-windows:
+    name: Admin installer (Windows x64)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/likapcs-admin/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Import code-signing certificate (optional)
+        if: ${{ env.WINDOWS_CERTIFICATE != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", $bytes)
+          Import-PfxCertificate -FilePath "$env:RUNNER_TEMP\cert.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force)
+      - name: Build installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --filter @likapcs/admin tauri build --ci
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem apps/likapcs-admin/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $exe.FullName out/LIKApcs-Setup.exe
+          Get-ChildItem apps/likapcs-admin/src-tauri/target/release/bundle/nsis/*.sig -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName out/LIKApcs-Setup.exe.sig }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-installer
+          path: out/*
+
+  publish:
+    name: Draft GitHub release
+    needs: [verify, server-bundle, admin-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Extract changelog section
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{if(f)exit} f' CHANGELOG.md > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.verify.outputs.version }}
+          name: LIKApcs v${{ needs.verify.outputs.version }}
+          body_path: notes.md
+          draft: true
+          files: artifacts/*

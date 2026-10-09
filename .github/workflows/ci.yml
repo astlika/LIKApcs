@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 20
+  PNPM_VERSION: 9.15.9
+
+jobs:
+  quality:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm format:check
+
+  test:
+    name: Tests & migration validation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: likapcs
+          POSTGRES_PASSWORD: likapcs_ci
+          POSTGRES_DB: likapcs_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U likapcs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      LIKAPCS_TEST_DATABASE_URL: postgres://likapcs:likapcs_ci@127.0.0.1:5432/likapcs_test
+      LIKAPCS_DATABASE_URL: postgres://likapcs:likapcs_ci@127.0.0.1:5432/likapcs_test
+      LIKAPCS_LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate migrations (fresh database → latest, idempotent re-run)
+        run: |
+          pnpm --filter @likapcs/server migrate
+          pnpm --filter @likapcs/server migrate:status
+          pnpm --filter @likapcs/server migrate   # second run must be a no-op
+      - name: Shared, server and admin tests
+        run: pnpm test
+
+  build:
+    name: Build (server bundle + admin web)
+    runs-on: ubuntu-latest
+    needs: [quality, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @likapcs/server build
+      - run: pnpm --filter @likapcs/admin build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: likapcs-server-dist
+          path: apps/likapcs-server/dist
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: likapcs-admin-web
+          path: apps/likapcs-admin/dist
+          retention-days: 7
+
+  # The native Windows build is slow (Rust); run it on demand and in the release workflow.
+  windows-smoke:
+    name: Windows native build (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    needs: [quality, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/likapcs-admin/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @likapcs/admin tauri build --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LIKApcs-Setup-unsigned
+          path: apps/likapcs-admin/src-tauri/target/release/bundle/nsis/*.exe
