@@ -1,0 +1,40 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+apps/likapcs-admin/src-tauri/target/
+apps/likapcs-client/src-tauri/target/
+apps/likapcs-admin/src-tauri/gen/
+apps/likapcs-client/src-tauri/gen/
+
+# environment & secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sig
+likapcs-updater.key
+secrets/
+
+# local data
+backups/
+uploads/
+*.log
+logs/
+data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
