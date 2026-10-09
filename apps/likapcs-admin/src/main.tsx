@@ -8,6 +8,7 @@ import { I18nProvider } from './i18n';
 import { ToastProvider } from './state/toast';
 import { AuthProvider } from './state/auth';
 import { AppSettingsProvider } from './state/app-settings';
+import { UpdatesProvider } from './state/updates';
 import { App } from './App';
 import './styles/app.css';
 
@@ -34,9 +35,11 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
         <ToastProvider>
           <AuthProvider>
             <AppSettingsProvider>
-              <HashRouter>
-                <App />
-              </HashRouter>
+              <UpdatesProvider>
+                <HashRouter>
+                  <App />
+                </HashRouter>
+              </UpdatesProvider>
             </AppSettingsProvider>
           </AuthProvider>
         </ToastProvider>

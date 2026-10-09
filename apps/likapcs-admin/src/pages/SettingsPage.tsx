@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { Save, Undo2 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -26,8 +27,10 @@ import {
   Tabs,
   Textarea,
 } from '../components/ui/primitives';
+import { UpdatePanel } from '../components/UpdatePanel';
 
 type TabId = 'business' | 'locale' | 'stations' | 'security' | 'system' | 'about';
+const TAB_IDS: TabId[] = ['business', 'locale', 'stations', 'security', 'system', 'about'];
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0';
 
 const TIMEZONES = [
@@ -57,7 +60,11 @@ export function SettingsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const canManage = can(PERMISSIONS.SETTINGS_MANAGE);
-  const [tab, setTab] = useState<TabId>('business');
+  const [params] = useSearchParams();
+  const initialTab = params.get('tab') as TabId | null;
+  const [tab, setTab] = useState<TabId>(
+    initialTab && TAB_IDS.includes(initialTab) ? initialTab : 'business',
+  );
   const [draft, setDraft] = useState<Partial<SettingsMap>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -480,7 +487,13 @@ export function SettingsPage() {
         </Card>
       )}
 
-      {tab === 'about' && <AboutPanel info={info.data} loading={info.isLoading} />}
+      {tab === 'about' && (
+        <>
+          <UpdatePanel />
+          <div style={{ height: 16 }} />
+          <AboutPanel info={info.data} loading={info.isLoading} />
+        </>
+      )}
     </>
   );
 }

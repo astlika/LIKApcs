@@ -29,8 +29,14 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/** Default server address: same origin in the browser/dev build, localhost:4700 in the desktop app. */
+export const DEFAULT_DESKTOP_SERVER_URL = 'http://127.0.0.1:4700';
+
 export function getServerUrl(): string {
-  return (storage.get('serverUrl') ?? '').replace(/\/+$/, '');
+  const stored = storage.get('serverUrl');
+  if (stored !== null) return stored.replace(/\/+$/, '');
+  const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  return isDesktop ? DEFAULT_DESKTOP_SERVER_URL : '';
 }
 export function setServerUrl(url: string): void {
   const cleaned = url.trim().replace(/\/+$/, '');

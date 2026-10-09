@@ -369,6 +369,28 @@ export const sq: Dictionary = {
       maintenanceWindow: 'Dritarja e mirëmbajtjes (HH:MM-HH:MM)',
       note: 'Ekzekutimi i kopjeve rezervë dhe paneli i përditësimeve vijnë në Fazat 6 dhe 7. Këto cilësime ruhen tani dhe zbatohen atëherë.',
     },
+    updates: {
+      title: 'Përditësimet e programit',
+      current: 'Versioni i instaluar',
+      check: 'Kontrollo për përditësime',
+      checking: 'Duke kontrolluar publikimet në GitHub…',
+      upToDate: 'Po përdorni versionin më të ri.',
+      available: 'Versioni {version} është i disponueshëm',
+      releasedOn: 'Publikuar më {date}',
+      notes: 'Çfarë ka të re',
+      install: 'Shkarko dhe instalo',
+      downloading: 'Duke shkarkuar… {percent}%',
+      installing: 'Duke instaluar — aplikacioni do të rinisë.',
+      installed: 'Përditësimi u instalua. Duke rinisur…',
+      restart: 'Rinis tani',
+      failed: 'Përditësimi dështoi: {error}',
+      browserOnly:
+        'Përditësimet instalohen nga aplikacioni desktop. Në versionin e shfletuesit, shkarkoni instaluesin nga GitHub Releases.',
+      openReleases: 'Hap GitHub Releases',
+      badge: 'Përditësim i disponueshëm',
+      source:
+        'Përditësimet shkarkohen nga GitHub Releases dhe verifikohen me çelësin e nënshkrimit LIKApcs para instalimit.',
+    },
     about: {
       admin: 'Aplikacioni Admin',
       server: 'Serveri',

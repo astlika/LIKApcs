@@ -367,6 +367,28 @@ export const en = {
       maintenanceWindow: 'Maintenance window (HH:MM-HH:MM)',
       note: 'Backup execution and the update dashboard are delivered in Phases 6 and 7. These settings are stored now and applied then.',
     },
+    updates: {
+      title: 'Software updates',
+      current: 'Installed version',
+      check: 'Check for updates',
+      checking: 'Checking GitHub releases…',
+      upToDate: 'You are running the latest version.',
+      available: 'Version {version} is available',
+      releasedOn: 'Released {date}',
+      notes: 'What’s new',
+      install: 'Download and install',
+      downloading: 'Downloading… {percent}%',
+      installing: 'Installing — the application will restart.',
+      installed: 'Update installed. Restarting…',
+      restart: 'Restart now',
+      failed: 'Update failed: {error}',
+      browserOnly:
+        'Updates are installed from inside the desktop application. In the browser version, download the installer from GitHub Releases.',
+      openReleases: 'Open GitHub Releases',
+      badge: 'Update available',
+      source:
+        'Updates are downloaded from GitHub Releases and verified with the LIKApcs signing key before installation.',
+    },
     about: {
       admin: 'Admin application',
       server: 'Server',

@@ -32,6 +32,9 @@ export function LoginPage() {
     if (setup.data && !storageHasLanguage()) setLanguage(setup.data.defaultLanguage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup.data]);
+  useEffect(() => {
+    if (setup.isError) setShowServer(true);
+  }, [setup.isError]);
 
   if (auth.status === 'authenticated') return <Navigate to="/" replace />;
   if (setup.data?.needsSetup) return <Navigate to="/setup" replace />;

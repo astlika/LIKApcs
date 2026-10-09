@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ChevronLeft,
@@ -9,6 +9,7 @@ import {
   LogOut,
   Monitor,
   Moon,
+  Rocket,
   ScrollText,
   Search,
   Settings,
@@ -28,6 +29,7 @@ import { storage } from '../../lib/storage';
 import { useAdminSocket } from '../../lib/ws';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
+import { useUpdates } from '../../state/updates';
 import { Badge, Button, Kbd, Segmented } from '../ui/primitives';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
@@ -67,6 +69,7 @@ export function AppShell() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const live = useAdminSocket(Boolean(user));
+  const updates = useUpdates();
 
   const health = useQuery({
     queryKey: ['health'],
@@ -224,6 +227,18 @@ export function AppShell() {
         <header className="topbar">
           <div className="topbar__title">{titles[location.pathname] ?? t('app.name')}</div>
           <div className="topbar__spacer" />
+          {updates.update &&
+            (updates.status === 'available' ||
+              updates.status === 'downloading' ||
+              updates.status === 'installing') && (
+              <Link
+                to="/settings?tab=about"
+                className="update-badge"
+                title={t('settings.updates.available', { version: updates.update.version })}
+              >
+                <Rocket size={13} /> {t('settings.updates.badge')} · v{updates.update.version}
+              </Link>
+            )}
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
