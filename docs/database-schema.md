@@ -17,19 +17,21 @@ Conventions: `uuid` primary keys (`bigserial` for append-only logs), `*_cents BI
 
 ## Migration map
 
-| File                         | Domain                    | Tables                                                                                                                                             |
-| ---------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0001_core.sql`              | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history |
-| `0002_stations.sql`          | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                             |
-| `0003_catalog_inventory.sql` | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items          |
-| `0004_customers_cash.sql`    | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                              |
-| `0005_sales.sql`             | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                       |
-| `0006_purchasing.sql`        | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                   |
-| `0007_gaming.sql`            | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                              |
+| File                             | Domain                    | Tables                                                                                                                                             |
+| -------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0001_core.sql`                  | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history |
+| `0002_stations.sql`              | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                             |
+| `0003_catalog_inventory.sql`     | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items          |
+| `0004_customers_cash.sql`        | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                              |
+| `0005_sales.sql`                 | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                       |
+| `0006_purchasing.sql`            | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                   |
+| `0007_gaming.sql`                | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                              |
+| `0008_session_billing_terms.sql` | Gaming sessions           | `gaming_sessions.billing_terms` (frozen pricing terms snapshot) and `gaming_sessions.client_request_id` (idempotent start)                         |
 
 All 33 tables required by the specification exist (plus supporting tables such as `user_sessions`,
-`station_connection_logs`, `document_sequences`, `customer_ledger`, `print_jobs`). Phase 1 code
-_uses_ the 0001/0002 tables and reads aggregate zeros from the others; later phases add the services.
+`station_connection_logs`, `document_sequences`, `customer_ledger`, `print_jobs`). Services exist
+for 0001/0002 (Phases 1–2) and for pricing/sessions/sales-from-sessions (Phase 3); the catalogue,
+purchasing, customers, cash and expenses tables are populated by the later phases.
 
 ## Entity overview
 
@@ -151,6 +153,31 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   A partial unique index allows **one live (active/paused) session per station**.
 - **session_events** — start/pause/resume/extend/transfer/stop/expire/lock/unlock… with
   `command_id UNIQUE` as the idempotency key for remote commands.
+
+#### Session billing (Phase 3, implemented in `apps/likapcs-server/src/services/sessions.ts`)
+
+- The pricing rule in force when a session starts is resolved once (station-specific beats global,
+  then `priority`, then newest) and its terms are **frozen** into `gaming_sessions.billing_terms`
+  (`0008`). Later rule edits never change a running session's price. With no matching rule the
+  session is tracked at a zero rate and the Admin warns before starting.
+- **Prepaid**: the sale (`sales.source = 'gaming'`, one `sale_items` line with
+  `gaming_session_id`, `payments.kind = 'sale'`) is written in the same transaction that creates the
+  session; `sale_id`/`billed_at` are set immediately. Extensions create an additional sale. A retry
+  with the same `client_request_id` returns the existing session instead of starting a second one.
+- **Postpaid**: billed exactly once at the end — the row is locked `FOR UPDATE`, the update is
+  guarded by `billed_at IS NULL`, and a second end attempt is rejected with 409. Discounts require
+  `pos.discount` and are recorded as a `discount_applied` event plus `sales.discount_authorized_by`.
+- Billable seconds = wall clock minus paused time (`total_paused_seconds`, including a pause still
+  open at `paused_at`), rounded up to `billing_increment_minutes`, with `minimum_minutes`,
+  `minimum_charge_cents` and `rounding_mode/increment` applied by the shared `@likapcs/shared`
+  billing module (unit-tested; the Admin uses the same functions for live estimates).
+- Expiry is decided by the server clock (`ends_at`), recorded with `ended_at = ends_at` even when the
+  1-second ticker notices late; pausing a prepaid session shifts `ends_at` by the paused duration.
+  A PC that stays offline longer than `stations.session_grace_seconds` pauses the session
+  back-dated to the disconnect instant (`grace_started`/`grace_ended` events).
+- Receipt numbers come from `document_sequences` (`R-<year>-000001`, atomic
+  `INSERT … ON CONFLICT DO UPDATE … RETURNING`). `shift_id` stays NULL until the cash-shift module
+  (Phase 5) attaches sessions to open shifts.
 
 ## Operations
 

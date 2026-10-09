@@ -144,7 +144,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             language: settings['locale.default_language'],
             welcomeMessage: settings['stations.client_welcome_message'],
             businessName: settings['business.name'],
-            session: null, // populated by the session service from Phase 3
+            session: await services.sessions.welcomePayload(device.station.id),
           };
           send(socket, welcome);
           request.log.info(
@@ -207,6 +207,12 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             break;
           }
           case 'client.event': {
+            if (message.event === 'session_expired_locally') {
+              const sessionId = (message.payload as { sessionId?: unknown } | undefined)?.sessionId;
+              if (typeof sessionId === 'string') {
+                await services.sessions.clientReportsExpired(sessionId, presence.deviceId);
+              }
+            }
             if (message.event === 'error') {
               await services.devices.logConnection(
                 presence.deviceId,

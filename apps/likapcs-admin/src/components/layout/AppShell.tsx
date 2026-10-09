@@ -13,6 +13,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  Tag,
   Sun,
   Users,
   Wifi,
@@ -131,6 +132,12 @@ export function AppShell() {
           permission: PERMISSIONS.STATIONS_VIEW,
           badge: pendingDevices.data?.length,
         },
+        {
+          to: '/pricing',
+          icon: Tag,
+          label: t('nav.pricing'),
+          permission: PERMISSIONS.PRICING_MANAGE,
+        },
       ],
     },
     {
@@ -161,6 +168,7 @@ export function AppShell() {
   const titles: Record<string, string> = {
     '/': t('nav.dashboard'),
     '/stations': t('nav.stations'),
+    '/pricing': t('nav.pricing'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),

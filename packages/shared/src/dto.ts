@@ -343,3 +343,255 @@ export interface ClientUpdatePushResponse {
   sent: number;
   results: { deviceId: string; stationId: string; ok: boolean; error?: string }[];
 }
+
+// ─── Phase 3: pricing & gaming sessions ─────────────────────────────────────
+
+const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM');
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
+const weekdays = z.array(z.number().int().min(1).max(7)).min(1).max(7);
+
+export const pricingRuleSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    stationId: z.string().uuid().nullable().default(null),
+    daysOfWeek: weekdays.default([1, 2, 3, 4, 5, 6, 7]),
+    startTime: clockTime.nullable().default(null),
+    endTime: clockTime.nullable().default(null),
+    rateCentsPerHour: z.number().int().min(0).max(1_000_000),
+    billingIncrementMinutes: z.number().int().min(1).max(120).default(1),
+    minimumChargeCents: z.number().int().min(0).max(1_000_000).default(0),
+    minimumMinutes: z.number().int().min(0).max(600).default(0),
+    roundingMode: z.enum(['up', 'down', 'nearest']).default('up'),
+    roundingIncrementCents: z.number().int().min(1).max(1000).default(1),
+    isHappyHour: z.boolean().default(false),
+    priority: z.number().int().min(-100).max(100).default(0),
+    isActive: z.boolean().default(true),
+    validFrom: isoDate.nullable().default(null),
+    validTo: isoDate.nullable().default(null),
+  })
+  .refine((r) => (r.startTime === null) === (r.endTime === null), {
+    message: 'startTime and endTime must be given together',
+    path: ['endTime'],
+  });
+export type PricingRuleInput = z.infer<typeof pricingRuleSchema>;
+export const updatePricingRuleSchema = pricingRuleSchema.innerType().partial();
+export type UpdatePricingRuleInput = z.infer<typeof updatePricingRuleSchema>;
+
+export interface PricingRuleSummary {
+  id: string;
+  name: string;
+  stationId: string | null;
+  stationCode: string | null;
+  daysOfWeek: number[];
+  startTime: string | null;
+  endTime: string | null;
+  rateCentsPerHour: number;
+  billingIncrementMinutes: number;
+  minimumChargeCents: number;
+  minimumMinutes: number;
+  roundingMode: 'up' | 'down' | 'nearest';
+  roundingIncrementCents: number;
+  isHappyHour: boolean;
+  priority: number;
+  isActive: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const gamingPackageSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  durationMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+  priceCents: z.number().int().min(0).max(1_000_000),
+  stationIds: z.array(z.string().uuid()).nullable().default(null),
+  daysOfWeek: weekdays.default([1, 2, 3, 4, 5, 6, 7]),
+  startTime: clockTime.nullable().default(null),
+  endTime: clockTime.nullable().default(null),
+  isPromotional: z.boolean().default(false),
+  validFrom: isoDate.nullable().default(null),
+  validTo: isoDate.nullable().default(null),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(1000).default(0),
+});
+export type GamingPackageInput = z.infer<typeof gamingPackageSchema>;
+export const updateGamingPackageSchema = gamingPackageSchema.partial();
+export type UpdateGamingPackageInput = z.infer<typeof updateGamingPackageSchema>;
+
+export interface GamingPackageSummary {
+  id: string;
+  name: string;
+  durationMinutes: number;
+  priceCents: number;
+  stationIds: string[] | null;
+  daysOfWeek: number[];
+  startTime: string | null;
+  endTime: string | null;
+  isPromotional: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const SESSION_STATUSES = ['active', 'paused', 'completed', 'cancelled', 'expired'] as const;
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+export const SESSION_END_REASONS = [
+  'expired',
+  'stopped_by_staff',
+  'cancelled',
+  'transferred',
+  'server_recovery',
+] as const;
+export type SessionEndReason = (typeof SESSION_END_REASONS)[number];
+
+/** Prepaid: either a package or a number of minutes priced by the current rule. */
+export const sessionQuoteSchema = z
+  .object({
+    stationId: z.string().uuid(),
+    billingMode: z.enum(['prepaid', 'postpaid']),
+    packageId: z.string().uuid().optional(),
+    minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .optional(),
+  })
+  .refine((q) => q.billingMode === 'postpaid' || Boolean(q.packageId) !== Boolean(q.minutes), {
+    message: 'prepaid sessions need either a package or a number of minutes',
+    path: ['minutes'],
+  });
+export type SessionQuoteRequest = z.infer<typeof sessionQuoteSchema>;
+
+export const startSessionSchema = sessionQuoteSchema.innerType().extend({
+  customerId: z.string().uuid().optional(),
+  customerName: z.string().trim().max(80).optional(),
+  /** Prepaid only: how the customer pays now. */
+  paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  notes: z.string().trim().max(500).optional(),
+  /** Idempotency key: a retried request never starts a second session. */
+  clientRequestId: z.string().min(8).max(64).optional(),
+});
+export type StartSessionRequest = z.infer<typeof startSessionSchema>;
+
+export const extendSessionSchema = z
+  .object({
+    packageId: z.string().uuid().optional(),
+    minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .optional(),
+    paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+    clientRequestId: z.string().min(8).max(64).optional(),
+  })
+  .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
+    message: 'either a package or a number of minutes',
+    path: ['minutes'],
+  });
+export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
+
+export const endSessionSchema = z.object({
+  /** Postpaid only: discount applied by staff with the pos.discount permission. */
+  discountCents: z.number().int().min(0).max(1_000_000).default(0),
+  paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  notes: z.string().trim().max(500).optional(),
+});
+export type EndSessionRequest = z.infer<typeof endSessionSchema>;
+
+export interface SessionQuoteResponse {
+  billingMode: 'prepaid' | 'postpaid';
+  /** Prepaid: minutes bought. Postpaid: null. */
+  minutes: number | null;
+  /** Prepaid: amount due now. Postpaid: 0. */
+  priceCents: number;
+  rule: { id: string; name: string; rateCentsPerHour: number } | null;
+  package: { id: string; name: string } | null;
+  terms: {
+    rateCentsPerHour: number;
+    billingIncrementMinutes: number;
+    minimumMinutes: number;
+    minimumChargeCents: number;
+    roundingMode: 'up' | 'down' | 'nearest';
+    roundingIncrementCents: number;
+  };
+}
+
+export interface SessionSummary {
+  id: string;
+  stationId: string;
+  stationCode: string;
+  stationName: string;
+  customerId: string | null;
+  customerName: string | null;
+  billingMode: 'prepaid' | 'postpaid';
+  status: SessionStatus;
+  ruleName: string | null;
+  packageName: string | null;
+  rateCentsPerHour: number;
+  /** Pricing terms frozen at start — lets the Admin tick the live price with the shared formula. */
+  terms: SessionQuoteResponse['terms'];
+  plannedSeconds: number | null;
+  startedAt: string;
+  endsAt: string | null;
+  pausedAt: string | null;
+  totalPausedSeconds: number;
+  endedAt: string | null;
+  endReason: SessionEndReason | null;
+  /** Live sessions: seconds billed so far (server clock). Ended: final billable seconds. */
+  billableSeconds: number;
+  /** Live sessions: price so far (postpaid) or paid amount (prepaid). Ended: final price. */
+  currentPriceCents: number;
+  quotedPriceCents: number | null;
+  discountCents: number;
+  finalPriceCents: number | null;
+  saleId: string | null;
+  receiptNo: string | null;
+  billedAt: string | null;
+  createdByName: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+/** Outcome of the command mirrored to the PC after a session transition. */
+export interface ClientAckSummary {
+  commandId: string;
+  command: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface SessionMutationResponse {
+  session: SessionSummary;
+  /** null when no client PC is connected to the station. */
+  client: ClientAckSummary | null;
+}
+
+export interface SessionEventSummary {
+  id: number;
+  eventType: string;
+  occurredAt: string;
+  actorName: string | null;
+  payload: Record<string, unknown>;
+}
+
+export const sessionListQuerySchema = z.object({
+  status: z.enum(SESSION_STATUSES).optional(),
+  stationId: z.string().uuid().optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type SessionListQuery = z.infer<typeof sessionListQuerySchema>;

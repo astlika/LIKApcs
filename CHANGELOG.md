@@ -8,6 +8,26 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Gaming sessions & billing (Phase 3).** Server: `PricingService` (rules + prepaid packages,
+  station/weekday/time-window resolution, happy hours, validity dates) and `SessionsService`
+  (quote, start, pause, resume, extend, end, cancel, server-side expiry with warnings, grace pause
+  for offline PCs, idempotent starts via `clientRequestId`, event timeline with PC acknowledgements).
+  Prepaid sessions are paid at start, postpaid sessions are billed **exactly once** at the end; every
+  bill is a `sales` row with `sale_items`/`payments` and a `R-<year>-NNNNNN` receipt number from
+  `document_sequences`. Pricing terms are frozen per session (`0008_session_billing_terms.sql`).
+  Shared `@likapcs/shared/billing` implements the integer-cents formula used by server and Admin.
+- API: `GET/POST/PATCH/DELETE /api/v1/pricing/{rules,packages}`, `GET /pricing/packages?stationId`,
+  `POST /sessions/quote`, `POST /sessions`, `POST /sessions/:id/{pause,resume,extend,end,cancel}`,
+  `GET /sessions`, `GET /sessions/:id`, `GET /sessions/:id/events`. Station summaries now carry the
+  live session (`occupied` / `paused` statuses, countdown, current amount); `server.welcome` sends
+  the live session to a reconnecting PC; `client.event session_expired_locally` is reconciled.
+- Admin: _Pricing_ page (rules and packages CRUD, EN/SQ) and session controls in the station dialog
+  (prepaid with packages or custom minutes and a live quote, postpaid, pause/resume, extend, end with
+  payment method and permission-gated discount, cancel), live timers and amounts on the station grid.
+- Tests: 11 billing unit tests, 7 session integration tests (prepaid/extension/expiry, postpaid
+  exactly-once, cancel rules, grace pause, history, permissions), API-driven session test against the
+  real client agent, Admin timer projection tests.
+
 - **LIKApcs-Client** (`apps/likapcs-client`): the gaming-PC agent. Lock screen with station code and
   welcome message, prepaid session countdown overlay, automatic server discovery and pairing (server
   pinned by installation id), one-time device approval flow, authenticated WebSocket with heartbeats,

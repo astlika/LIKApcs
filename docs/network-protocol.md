@@ -87,8 +87,34 @@ Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'updat
 `devices.manage` for `update.apply`. The call waits for the client's acknowledgement (15 s) and
 returns `{commandId, command, ok, error?}`; `409 STATION_OFFLINE` when no client is connected.
 Every call is audited as `station.command.<command>` (a refused/unanswered command is a warning).
-Session commands (`session.*`) are never issued through this route — they come from the billing
-service in Phase 3 so that the server state and the PC never disagree.
+Session commands (`session.*`) are never issued through this route — they are mirrored by the
+sessions service (below) so that the server state and the PC never disagree.
+
+### Pricing (`stations.view` to read, `pricing.manage` to write)
+
+`GET/POST /pricing/rules`, `PATCH/DELETE /pricing/rules/:id`, `GET/POST /pricing/packages`,
+`PATCH/DELETE /pricing/packages/:id`, `GET /pricing/packages?stationId=` (packages currently
+available for that station). Deleting a rule/package that sessions already reference deactivates it.
+
+### Gaming sessions (`stations.view` to read, `stations.control` to act)
+
+| Route                          | Body                                                                                 | Result                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| `POST /sessions/quote`         | `{stationId, billingMode, packageId? \| minutes?}`                                   | `{minutes, priceCents, rule, package, terms}`       |
+| `POST /sessions`               | quote fields + `customerName?, customerId?, paymentMethod, notes?, clientRequestId?` | `201 {session, client}` — prepaid is paid here      |
+| `POST /sessions/:id/pause`     | —                                                                                    | `{session, client}`                                 |
+| `POST /sessions/:id/resume`    | —                                                                                    | prepaid `endsAt` shifted by the paused time         |
+| `POST /sessions/:id/extend`    | `{packageId? \| minutes?, paymentMethod, clientRequestId?}` (prepaid only)           | new sale + receipt                                  |
+| `POST /sessions/:id/end`       | `{discountCents?, paymentMethod?}`                                                   | postpaid billed exactly once; `409` if already over |
+| `POST /sessions/:id/cancel`    | `{reason}` (postpaid only)                                                           | no charge                                           |
+| `GET /sessions`                | `?status&stationId&from&to&page&pageSize`                                            | `{items, total, page, pageSize}`                    |
+| `GET /sessions/:id`, `/events` | —                                                                                    | summary / event timeline (incl. PC acks)            |
+
+`client` in a mutation response is `{commandId, command, ok, error?}` for the command mirrored to
+the PC, or `null` when no client is connected (the session still runs on the server and the PC
+receives it in `server.welcome.session` when it reconnects). The server's 1-second ticker expires
+prepaid sessions at `endsAt`, sends `message.show` warnings at `stations.expiry_warning_minutes`
+and applies the grace pause after `stations.session_grace_seconds` offline.
 
 #### Client updates
 
@@ -119,6 +145,7 @@ Admin → Server   { "type": "admin.hello", "token": "<bearer token>", "protocol
 Server → Admin   { "type": "server.welcome", "protocolVersion": 1, "serverVersion": "0.1.0", "serverTime": "…" }
 Server → Admin   { "type": "server.event", "event": "station.changed" | "device.registered" | "device.changed"
                    | "session.changed" | "notification", "payload": {...}, "ts": "…" }
+                   // session.changed carries the full SessionSummary; station.changed follows it
 Admin → Server   { "type": "admin.ping" }      →   { "type": "server.pong", "serverTime": "…" }
 ```
 

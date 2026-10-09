@@ -32,6 +32,7 @@ import {
   type SystemInfoResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
+import { SessionCardTimer, SessionPanel } from '../components/sessions/SessionPanel';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -148,6 +149,7 @@ export function StationsPage() {
     return {
       online: enabled.filter((s) => s.device?.online).length,
       available: enabled.filter((s) => s.status === 'available').length,
+      occupied: enabled.filter((s) => s.activeSession).length,
       offline: enabled.filter((s) => s.status === 'offline').length,
     };
   }, [list]);
@@ -220,6 +222,7 @@ export function StationsPage() {
             <StationCard
               key={station.id}
               station={station}
+              fetchedAt={stations.dataUpdatedAt}
               onOpen={() => setDetailId(station.id)}
             />
           ))}
@@ -250,7 +253,15 @@ export function StationsPage() {
 }
 
 // ─── Station card ──────────────────────────────────────────────────────────────
-function StationCard({ station, onOpen }: { station: StationSummary; onOpen: () => void }) {
+function StationCard({
+  station,
+  fetchedAt,
+  onOpen,
+}: {
+  station: StationSummary;
+  fetchedAt: number;
+  onOpen: () => void;
+}) {
   const { t, td } = useI18n();
   const fmt = useFormat();
   const status = station.isEnabled ? station.status : 'disabled';
@@ -289,9 +300,7 @@ function StationCard({ station, onOpen }: { station: StationSummary; onOpen: () 
           )}
         </div>
       </div>
-      <div className="station__timer num">
-        {station.activeSession ? formatSeconds(station.activeSession.elapsedSeconds) : '—:—:—'}
-      </div>
+      <SessionCardTimer station={station} fetchedAt={fetchedAt} />
       <div className="station__footer">
         <span className="faint" style={{ fontSize: 12 }}>
           {station.device?.lastSeenAt
@@ -304,13 +313,6 @@ function StationCard({ station, onOpen }: { station: StationSummary; onOpen: () 
       </div>
     </div>
   );
-}
-
-function formatSeconds(total: number): string {
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
 }
 
 // ─── Pending devices ───────────────────────────────────────────────────────────
@@ -678,8 +680,10 @@ function StationDetailDialog({
                   <div>{station.notes}</div>
                 </div>
               )}
-              <Alert tone="info">{t('stations.sessionControls')}</Alert>
             </div>
+          </Card>
+          <Card title={t('sessions.title')}>
+            <SessionPanel station={station} onChanged={onChanged} />
           </Card>
           <Card title={t('stations.device')}>
             {device ? (

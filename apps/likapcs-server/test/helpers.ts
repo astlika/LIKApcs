@@ -22,7 +22,7 @@ export async function createTestContext(): Promise<TestContext> {
   const pool = createPool(config.databaseUrl, { max: 5 });
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await runMigrations(pool, config.migrationsDir);
-  const app = await buildApp({ config, pool, logger: false });
+  const app = await buildApp({ config, pool, logger: false, sessionTicker: false });
   await app.ready();
   return {
     app,

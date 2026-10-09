@@ -8,7 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { LoginResponse, StationDeviceSummary, StationSummary } from '@likapcs/shared';
+import type {
+  LoginResponse,
+  SessionEventSummary,
+  SessionMutationResponse,
+  StationDeviceSummary,
+  StationSummary,
+} from '@likapcs/shared';
 import { authHeader, createTestContext, runSetup, sleep, type TestContext } from '../helpers.js';
 import { SERVER_VERSION } from '../../src/version.js';
 
@@ -21,7 +27,7 @@ type AgentSnapshot = {
   phase: { phase: string };
   state: {
     mode: 'locked' | 'session' | 'free';
-    session: { id: string } | null;
+    session: { id: string; status: 'active' | 'paused' } | null;
     notice: { text: string } | null;
     station: { code: string; name: string } | null;
     businessName: string | null;
@@ -194,7 +200,58 @@ describe('LIKApcs-Client agent ↔ server', () => {
     expect(relock.ok).toBe(true);
   });
 
-  it('runs a session from the server and locks itself locally when the prepaid time is over', async () => {
+  it('mirrors sessions started through the API: PC enters session mode, pause/end follow, acks are recorded', async () => {
+    const start = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      headers: authHeader(owner.token),
+      payload: { stationId: station.id, billingMode: 'postpaid', customerName: 'Walk-in' },
+    });
+    expect(start.statusCode).toBe(201);
+    const { session, client } = start.json<SessionMutationResponse>();
+    expect(client).toMatchObject({ ok: true, command: 'session.start' });
+    expect(snap().state.mode).toBe('session');
+    expect(snap().state.session?.id).toBe(session.id);
+
+    const paused = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${session.id}/pause`,
+      headers: authHeader(owner.token),
+    });
+    expect(paused.json<SessionMutationResponse>().client).toMatchObject({
+      ok: true,
+      command: 'session.pause',
+    });
+    expect(snap().state.session?.status).toBe('paused');
+
+    const ended = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${session.id}/end`,
+      headers: authHeader(owner.token),
+      payload: {},
+    });
+    expect(ended.statusCode).toBe(200);
+    expect(ended.json<SessionMutationResponse>().client).toMatchObject({
+      ok: true,
+      command: 'session.end',
+    });
+    expect(snap().state.mode).toBe('locked');
+    expect(snap().state.session).toBeNull();
+
+    const events = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${session.id}/events`,
+      headers: authHeader(owner.token),
+    });
+    const acks = events.json<SessionEventSummary[]>().filter((e) => e.eventType === 'client_ack');
+    expect(acks.map((e) => e.payload.command)).toEqual([
+      'session.start',
+      'session.pause',
+      'session.end',
+    ]);
+  });
+
+  it('locks itself locally when a prepaid session runs out before the server confirms it', async () => {
     const presence = ctx.app.hub.listDevices().find((d) => d.stationId === station.id)!;
     const sessionId = randomUUID();
     const start = await ctx.app.hub.sendCommand(presence.deviceId, 'session.start', {
@@ -204,7 +261,6 @@ describe('LIKApcs-Client agent ↔ server', () => {
     });
     expect(start.ok).toBe(true);
     expect(snap().state.mode).toBe('session');
-    expect(snap().state.session?.id).toBe(sessionId);
     await waitFor(() => snap().state.mode === 'locked', 6000, 'local expiry lock');
     expect(snap().state.session).toBeNull();
   });

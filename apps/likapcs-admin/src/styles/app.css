@@ -1525,3 +1525,89 @@ button.stat:hover {
   background: var(--accent);
   text-decoration: none;
 }
+
+/* ─── Sessions (Phase 3) ─────────────────────────────────────────────────────── */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.chip:hover {
+  border-color: var(--border-strong);
+}
+.chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.quote {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-2);
+}
+.quote__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.quote__row--total {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  font-size: 16px;
+}
+.session-timers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.session-timer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+.session-timer[data-warn] {
+  border-color: rgba(245, 165, 36, 0.6);
+  background: rgba(245, 165, 36, 0.08);
+}
+.session-timer__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.session-timer__value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.station__session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.station__timer[data-warn] {
+  color: var(--warning);
+}
+.station__session-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}

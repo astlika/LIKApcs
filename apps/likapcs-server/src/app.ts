@@ -12,6 +12,10 @@ import errorHandlerPlugin from './plugins/error-handler.js';
 import { AppError } from './errors.js';
 import { RealtimeHub } from './realtime/hub.js';
 import { CommandsService } from './services/commands.js';
+import { PricingService } from './services/pricing.js';
+import { SessionsService } from './services/sessions.js';
+import { pricingRoutes } from './routes/pricing.js';
+import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
 import { auditRoutes } from './routes/audit.js';
@@ -30,6 +34,8 @@ import { UsersService } from './services/users.js';
 
 export interface Services {
   settings: SettingsService;
+  pricing: PricingService;
+  sessions: SessionsService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -59,6 +65,8 @@ export interface BuildAppOptions {
   /** Enables POST /system/control/stop for local tooling (installer, Admin app). */
   controlToken?: string | null;
   requestShutdown?: (reason: string) => void;
+  /** Set to false in tests to drive the session clock manually. */
+  sessionTicker?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -86,6 +94,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const audit = new AuditQueryService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const commands = new CommandsService(pool, hub);
+  const pricing = new PricingService(pool, settings);
+  const sessions = new SessionsService(pool, hub, settings, pricing, stations, app.log);
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -102,6 +112,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     audit,
     dashboard,
     commands,
+    pricing,
+    sessions,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -137,6 +149,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(userRoutes);
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
+      await api.register(pricingRoutes);
+      await api.register(sessionRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },
@@ -154,7 +168,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // Background maintenance
   let sweepTimer: NodeJS.Timeout | null = null;
   let dailyTimer: NodeJS.Timeout | null = null;
+  let sessionTimer: NodeJS.Timeout | null = null;
   app.addHook('onReady', async () => {
+    // Session clock: prepaid expiries, expiry warnings, grace handling. Not started under tests
+    // (they drive `sessions.tick()` with explicit times).
+    if (options.sessionTicker !== false) {
+      sessionTimer = setInterval(() => void sessions.tick(), 1_000);
+    }
     sweepTimer = setInterval(() => {
       void settings
         .get('stations.offline_after_seconds')
@@ -173,6 +193,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.addHook('onClose', async () => {
     if (sweepTimer) clearInterval(sweepTimer);
     if (dailyTimer) clearInterval(dailyTimer);
+    if (sessionTimer) clearInterval(sessionTimer);
     hub.closeAll(WS_CLOSE_CODES.SERVER_SHUTDOWN, 'server shutting down');
   });
 

@@ -12,6 +12,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { StationsPage } from './pages/StationsPage';
+import { PricingPage } from './pages/PricingPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AuditLogPage } from './pages/AuditLogPage';
@@ -57,6 +58,7 @@ export function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="stations" element={<StationsPage />} />
+          <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="audit" element={<AuditLogPage />} />
