@@ -5,7 +5,7 @@ import { GITHUB_RELEASES_URL } from '../lib/updater';
 import { useUpdates } from '../state/updates';
 import { Alert, Button, Card } from './ui/primitives';
 
-const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0';
+const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 /** Settings › About › Software updates. */
 export function UpdatePanel() {

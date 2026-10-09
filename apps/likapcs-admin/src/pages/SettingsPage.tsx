@@ -31,7 +31,7 @@ import { UpdatePanel } from '../components/UpdatePanel';
 
 type TabId = 'business' | 'locale' | 'stations' | 'security' | 'system' | 'about';
 const TAB_IDS: TabId[] = ['business', 'locale', 'stations', 'security', 'system', 'about'];
-const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0';
+const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 const TIMEZONES = [
   'Europe/Belgrade',

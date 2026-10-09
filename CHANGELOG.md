@@ -6,6 +6,21 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-09
+
+First update delivered through the in-app updater.
+
+### Security
+- Dependency updates closing all open Dependabot alerts: `react-router-dom` 6 → 7.18 (open-redirect
+  and SSR hydration advisories), `vite` 5 → 6.4, `vitest` 2 → 4.1 (+ `tinypool`, `esbuild`).
+  Navigation, setup wizard, settings deep links and command palette re-verified end-to-end.
+
+### Added
+- `.github/dependabot.yml`: weekly grouped dependency PRs (npm, Cargo, GitHub Actions).
+
+### Changed
+- README: CI/Release badges and direct download links; docs record the verified `v0.1.0` release.
+
 ## [0.1.0] - 2026-10-09
 
 First public release: Phase 1 foundation plus the release/update pipeline.

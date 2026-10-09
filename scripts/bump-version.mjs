@@ -21,6 +21,7 @@ for (const rel of [
   'package.json',
   'apps/likapcs-admin/package.json',
   'apps/likapcs-server/package.json',
+  'packages/shared/package.json',
 ]) {
   const file = resolve(root, rel);
   const json = JSON.parse(readFileSync(file, 'utf8'));

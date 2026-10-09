@@ -34,7 +34,7 @@ import { Badge, Button, Kbd, Segmented } from '../ui/primitives';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
 
-const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0';
+const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 interface NavEntry {
   to: string;

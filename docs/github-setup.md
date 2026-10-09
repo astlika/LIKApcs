@@ -47,6 +47,10 @@ gh run watch
 If a release must be withdrawn, delete it (or mark it as pre-release) — the updater will then point
 at the previous published release again.
 
+**Verified:** `v0.1.0` was built by this pipeline on GitHub-hosted runners (Windows job ≈ 7½ min
+cold). The published `latest.json`, installer, `.sig` and checksums were downloaded anonymously and
+the minisign signature was verified against the public key in `tauri.conf.json`.
+
 ## 3. How the in-app update works (Admin app)
 
 1. On start-up (8 s after launch) and whenever the user clicks **Settings → About → Check for updates**,

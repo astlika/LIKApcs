@@ -1,0 +1,41 @@
+# Keeps dependencies current with a predictable, low-noise cadence:
+# one grouped PR per ecosystem per week (security fixes are still opened immediately).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Belgrade
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: ['minor', 'patch']
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'
+
+  - package-ecosystem: cargo
+    directory: /apps/likapcs-admin/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      cargo:
+        patterns: ['*']
+    labels: ['dependencies', 'rust']
+    commit-message:
+      prefix: 'chore(deps)'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    labels: ['dependencies', 'ci']
+    commit-message:
+      prefix: 'chore(ci)'
