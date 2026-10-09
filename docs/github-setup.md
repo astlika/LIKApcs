@@ -1,100 +1,112 @@
-# LIKApcs — GitHub repository & CI setup
+# LIKApcs — GitHub repository, releases & in-app updates
 
-The repository is prepared locally with a clean history. This guide creates the **private** GitHub
-repository `LIKApcs`, pushes the code, protects `main`, and configures the secrets the workflows use.
-Nothing in the repository contains credentials; everything sensitive lives in GitHub Actions secrets
-or local `.env` files.
+The code lives in the **public** GitHub repository `LIKApcs` (owner: `__GITHUB_OWNER__`). Public was
+chosen deliberately: GitHub release assets of a public repository can be downloaded anonymously, which
+lets the installed Admin application update itself straight from GitHub Releases with no proxy, no
+token and no extra infrastructure. Nothing in the repository contains credentials — everything
+sensitive lives in GitHub Actions secrets or local `.env` files, and the repository is scanned for
+secrets before every push.
 
-## 1. Create the private repository
-
-**Web UI:** GitHub → New repository → Name `LIKApcs` → **Private** → _do not_ add README/.gitignore/licence
-(the repo already has them) → Create.
-
-**or GitHub CLI:**
+## 1. Repository creation (done once)
 
 ```bash
-gh auth login
-gh repo create LIKApcs --private --source=. --remote=origin --push
+gh auth login                                    # or GH_TOKEN=<classic PAT with repo + workflow scopes>
+gh repo create LIKApcs --public --source=. --remote=origin --push
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.likapcs-secrets/likapcs-updater.key
 ```
 
-**Manual push** (if you created it in the web UI):
+## 2. How a release is produced
+
+A release is a git tag `vX.Y.Z` on `main`. `.github/workflows/release.yml` then runs:
+
+| Job                           | What it does                                                                                                                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Verify**                    | tag == `version` in root, admin and server `package.json` and `src-tauri/Cargo.toml`; `CHANGELOG.md` has a `## [X.Y.Z]` section. Otherwise the run fails before building anything.                                              |
+| **Server bundle** (ubuntu)    | `likapcs-server-X.Y.Z.zip`: compiled `dist/`, `database/migrations/`, `deploy/` (Windows service installer), production `node_modules`, `.env.example`, README.                                                                 |
+| **Admin installer** (windows) | `pnpm tauri build --ci` → `LIKApcs_X.Y.Z_x64-setup.exe` (NSIS, per-user install) **plus** `LIKApcs_X.Y.Z_x64-setup.exe.sig` — the minisign signature made with `TAURI_SIGNING_PRIVATE_KEY`. Also copied as `LIKApcs-Setup.exe`. |
+| **Publish** (ubuntu)          | generates `latest.json` (version, notes from the changelog, signature, download URL) and `SHA256SUMS.txt`, then creates the **published** GitHub release with all files attached.                                               |
+
+The release is published immediately (not a draft) because the updater resolves
+`https://github.com/<owner>/LIKApcs/releases/latest/download/latest.json`, and GitHub only serves
+`/latest/` for published, non-prerelease releases.
+
+### Release procedure
 
 ```bash
-cd LIKApcs
-git remote add origin git@github.com:<your-account>/LIKApcs.git
-git push -u origin main
-```
-
-## 2. Branch protection (Settings → Branches → Add rule for `main`)
-
-- ✅ Require a pull request before merging (1 approval; owners can bypass for solo work)
-- ✅ Require status checks to pass: `Lint & typecheck`, `Tests & migration validation`, `Build (server bundle + admin web)`
-- ✅ Require branches to be up to date before merging
-- ✅ Do not allow force pushes / deletions
-- Optional: require signed commits.
-
-## 3. What the workflows do
-
-### `ci.yml` — on every push/PR to `main`
-
-| Job                           | Steps                                                                                                                                         |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lint & typecheck              | `pnpm lint`, `pnpm typecheck`, `pnpm format:check`                                                                                            |
-| Tests & migration validation  | PostgreSQL 17 service → migrate from empty → status → **migrate again (must be a no-op)** → `pnpm test` (shared + server integration + admin) |
-| Build                         | server bundle (`dist/`) + admin web bundle, uploaded as artifacts (7 days)                                                                    |
-| Windows native build (manual) | `workflow_dispatch` only: `tauri build` on `windows-latest`, uploads the **unsigned** NSIS installer for smoke tests                          |
-
-### `release.yml` — on tag `vX.Y.Z` (or manual with an existing tag)
-
-1. **Verify**: the tag equals the `version` in root, `apps/likapcs-admin` and `apps/likapcs-server`
-   `package.json`, and `CHANGELOG.md` has a `## [X.Y.Z]` section. Otherwise the release fails.
-2. **Server bundle**: `likapcs-server-X.Y.Z.zip` (dist, migrations, `.env.example`, production
-   `node_modules`).
-3. **Admin installer**: `LIKApcs-Setup.exe` built on `windows-latest` with Tauri; code-signed if the
-   certificate secrets exist; update-signature `.sig` produced if the Tauri signing key exists.
-4. **Publish**: `SHA256SUMS.txt`, changelog section as release notes, **draft** GitHub release with
-   all files attached. You publish it manually after installing it on a test PC.
-
-> **Status (Phase 1):** both workflow files are in place and `ci.yml` steps are the exact commands
-> that were run locally. Neither workflow has executed on GitHub yet — the first push will show
-> whether the hosted runners agree. No installer or release exists until `release.yml` has run
-> successfully on a tag and you have published the draft.
-
-## 4. Secrets (Settings → Secrets and variables → Actions)
-
-| Secret                               | Needed for                                                                         | How to create                                                                                                                                                   |
-| ------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TAURI_SIGNING_PRIVATE_KEY`          | Signed auto-updates (Phase 7)                                                      | `pnpm --filter @likapcs/admin tauri signer generate -w ~/.tauri/likapcs.key` → paste the private key; the **public** key goes into `tauri.conf.json` in Phase 7 |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | same                                                                               | the password you chose when generating the key                                                                                                                  |
-| `WINDOWS_CERTIFICATE`                | Authenticode code signing (optional but recommended to avoid SmartScreen warnings) | base64 of your `.pfx`: `base64 -w0 cert.pfx`                                                                                                                    |
-| `WINDOWS_CERTIFICATE_PASSWORD`       | same                                                                               |                                                                                                                                                                 |
-
-Keep the Tauri private key backed up offline. **If it is lost, already-installed Admin apps can never
-accept another update** and must be reinstalled manually — that is the point of signed updates.
-
-## 5. Private repo + auto-updates (Phase 7 note)
-
-GitHub release assets of a **private** repository are not downloadable anonymously. In Phase 7 the
-server will act as the update proxy: it fetches the release manifest/installers with a fine-grained
-PAT (read-only, Contents) stored in the server's `.env`, verifies the signature, and serves them on
-the LAN to Admin and Client PCs. Client PCs never hold GitHub credentials.
-
-## 6. Release procedure (from Phase 2 onwards)
-
-```bash
-# 1. bump versions in root + apps/*/package.json (keep them equal), update CHANGELOG.md
-pnpm -r exec -- npm version 0.2.0 --no-git-tag-version   # or edit by hand
-# 2. commit, tag, push
+# 1. bump the version everywhere (root, apps/*/package.json, src-tauri/Cargo.toml)
+pnpm release:bump 0.2.0
+# 2. move the [Unreleased] notes in CHANGELOG.md under "## [0.2.0] - YYYY-MM-DD"
+# 3. commit, tag, push
 git commit -am "release: v0.2.0"
 git tag v0.2.0
 git push origin main --tags
-# 3. wait for the Release workflow, install the draft's LIKApcs-Setup.exe on a test PC, then publish the draft
+# 4. watch the Release workflow; installed Admin apps will see the update within a minute of publishing
+gh run watch
 ```
+
+If a release must be withdrawn, delete it (or mark it as pre-release) — the updater will then point
+at the previous published release again.
+
+## 3. How the in-app update works (Admin app)
+
+1. On start-up (8 s after launch) and whenever the user clicks **Settings → About → Check for updates**,
+   the Tauri updater plugin downloads `latest.json` from the release feed configured in
+   `src-tauri/tauri.conf.json` (`plugins.updater.endpoints`).
+2. If `version` in the manifest is greater than the running version, the topbar shows an
+   **"Update available"** badge and the About panel shows the release notes and a
+   **Download and install** button.
+3. Clicking it downloads the installer (progress bar), **verifies the minisign signature** against
+   the public key compiled into the app (`plugins.updater.pubkey`) and runs the NSIS installer in
+   passive mode. Because the app is installed per-user, no UAC prompt is needed. The app restarts on
+   the new version.
+4. Downloads that fail the signature check are rejected before anything is executed. HTTPS alone is
+   not trusted.
+
+Browser/dev builds cannot self-update; they show a link to GitHub Releases instead.
+
+**Scope today:** one-click update covers the **Admin application only**. The Server is updated by
+unzipping the new bundle and running `npm run migrate` (see `apps/likapcs-server/deploy/README.md`);
+the Phase 7 update dashboard will orchestrate server and client updates from the Admin app. The
+Client application does not exist yet (Phase 4).
+
+## 4. Secrets (Settings → Secrets and variables → Actions)
+
+| Secret                               | Needed for                                                              | Notes                                                                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | **Required.** Signing the installer so installed apps accept the update | generated with `pnpm --filter @likapcs/admin exec tauri signer generate -w <file>`; the public half is in `tauri.conf.json` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | only if the key was generated with a password                           | the current key has no password; the workflow passes an empty value                                                         |
+
+Authenticode code signing of the installer (a paid certificate) is **not configured yet**, so Windows
+SmartScreen shows "Windows protected your PC → More info → Run anyway" the first time
+`LIKApcs-Setup.exe` is run. In-app updates are unaffected (they are verified by the minisign
+signature). When a certificate is available, add `bundle.windows.certificateThumbprint` or a
+`signCommand` to `tauri.conf.json` and import the certificate in the Windows job.
+
+> **Back up the signing private key offline (password manager + offline copy).** If it is lost,
+> every installed Admin app will refuse all future updates and must be reinstalled by hand with a
+> new key. If it leaks, rotate it: generate a new pair, put the new public key in `tauri.conf.json`,
+> ship one release signed with the **old** key (so existing installs accept it), then switch the
+> secret to the new key.
+
+## 5. Branch protection (Settings → Branches → Add rule for `main`)
+
+- Require status checks to pass: `Lint & typecheck`, `Tests & migration validation`,
+  `Build (server bundle + admin web)`
+- Do not allow force pushes / deletions
+- Pull requests with 1 approval once more than one person contributes
+
+## 6. CI (`ci.yml`) — every push / PR to `main`
+
+| Job                           | Steps                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Lint & typecheck              | `pnpm lint`, `pnpm typecheck`, `pnpm format:check`                                                                                |
+| Tests & migration validation  | PostgreSQL 17 service → migrate from empty → status → **migrate again (must be a no-op)** → `pnpm test` (shared + server + admin) |
+| Build                         | server bundle (`dist/`) + admin web bundle, uploaded as artifacts (7 days)                                                        |
+| Windows native build (manual) | `workflow_dispatch` only: `tauri build` on `windows-latest` with the signing secret, uploads the installer for smoke tests        |
 
 ## 7. Recommended repository settings
 
-- **Settings → Actions → General**: allow GitHub actions and reusable workflows from verified
-  creators; workflow permissions "Read and write" (needed to create draft releases).
-- **Settings → Code security**: enable Dependabot alerts and secret scanning (available on private
-  repos with GitHub Advanced Security or on free plans for alerts).
-- Add `CODEOWNERS` if more than one person contributes.
+- **Settings → Actions → General → Workflow permissions**: "Read and write" (release creation).
+- **Settings → Code security**: Dependabot alerts + secret scanning (free on public repositories).
+- Public repository ⇒ keep business data, customer records, real `.env` files and backups out of
+  it. `.gitignore` already excludes them; the pre-push secret scan in `scripts/` is the second line.

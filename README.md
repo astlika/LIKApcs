@@ -11,7 +11,20 @@ Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gami
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.
 
-## Quick start
+## Install (end users)
+
+1. **Server PC** — download `likapcs-server-<version>.zip` from
+   [Releases](https://github.com/__GITHUB_OWNER__/LIKApcs/releases/latest), unzip, follow
+   `README.md` inside (Node 20 + PostgreSQL, `npm run migrate`, `npm run create-admin`, optional
+   Windows service via `deploy\install-windows.ps1`).
+2. **Admin PCs** — download and run `LIKApcs-Setup.exe` from the same release. On the login screen
+   enter the server address (`http://<server-ip>:4700`).
+3. **Updates** — the Admin app checks GitHub Releases on start-up and in _Settings → About_;
+   _Download and install_ applies a signature-verified update in one click. The server is updated by
+   unzipping the new bundle over the old one and running `npm run migrate` (details in
+   `docs/github-setup.md`).
+
+## Quick start (developers)
 
 ```bash
 pnpm install

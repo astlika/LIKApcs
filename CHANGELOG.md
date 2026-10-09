@@ -6,6 +6,26 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-09
+
+First public release: Phase 1 foundation plus the release/update pipeline.
+
+### Added — Release & updates
+- Public GitHub repository with CI (`ci.yml`) and a release pipeline (`release.yml`) that builds the
+  signed Windows installer (`LIKApcs-Setup.exe`), the server bundle (`likapcs-server-<version>.zip`),
+  `latest.json` and `SHA256SUMS.txt`, and publishes them as a GitHub release.
+- **In-app updates for the Admin application**: Settings → About → *Check for updates* →
+  *Download and install* (progress, release notes, restart). Updates come from GitHub Releases and are
+  verified with the LIKApcs minisign key before installation; an "Update available" badge appears in
+  the topbar after the automatic start-up check. Browser builds link to GitHub Releases instead.
+- Desktop build defaults the server address to `http://127.0.0.1:4700`; the login screen opens the
+  server-address panel automatically when the server cannot be reached.
+- Server deployment helpers: `deploy/README.md` and `deploy/install-windows.ps1` (WinSW service +
+  firewall rule).
+- Scripts: `pnpm release:bump <version>` (sets the version everywhere the release checks) and
+  `pnpm secret:scan` (blocks keys/tokens/real `.env` files from being committed).
+- Application icon set (`src-tauri/icons`, incl. `icon.ico`).
+
 ### Phase 1 — Foundation
 
 #### Added
@@ -22,4 +42,5 @@ All notable changes to LIKApcs are documented here. The format follows
 - Gaming sessions, pricing, billing and session commands (Phase 3) — schema and protocol are ready.
 - LIKApcs-Client application (Phase 4).
 - Backups/restore (Phase 6) and signed auto-updates / update dashboard (Phase 7).
-- No installer, release or update has been produced or verified yet.
+- Server and (future) Client updates are not yet orchestrated from the Admin app (Phase 7); the
+  server is updated by unzipping the new bundle and running `npm run migrate`.

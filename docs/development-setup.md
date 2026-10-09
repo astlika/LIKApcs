@@ -137,20 +137,25 @@ Server tests use `LIKAPCS_TEST_DATABASE_URL` (default
 `postgres://likapcs:likapcs_dev_password@127.0.0.1:5432/likapcs_test`). Each test file re-creates the
 schema from the migrations, so the migration set is validated on every run.
 
-## 9. Running the server as a Windows service (interim, pre-Phase 6)
+## 9. Running the server as a Windows service
 
-Until the dedicated server installer exists, run the built server with a service wrapper such as
-[NSSM](https://nssm.cc/) or `winsw`:
+Use the release bundle (`likapcs-server-<version>.zip`) and `deploy\install-windows.ps1`; the
+procedure is documented in `apps/likapcs-server/deploy/README.md`. For a development checkout, run
+`pnpm dev:server` in a terminal instead.
 
-```powershell
-pnpm --filter @likapcs/server build
-# copy apps/likapcs-server/dist, database/migrations and .env to C:\LIKApcs\server
-nssm install LIKApcsServer "C:\Program Files\nodejs\node.exe" "C:\LIKApcs\server\dist\index.js"
-nssm set LIKApcsServer AppDirectory C:\LIKApcs\server
-nssm start LIKApcsServer
-```
+## 9b. Testing the in-app updater
 
-Open TCP 4700 in Windows Firewall for the LAN profile only.
+The updater only exists in the packaged desktop app (`pnpm --filter @likapcs/admin tauri build`),
+never in the Vite/browser build. To try it end-to-end:
+
+1. Install `LIKApcs-Setup.exe` from release `vA` on a Windows PC.
+2. Publish release `vB` (> `vA`) — `pnpm release:bump B`, changelog entry, tag, push.
+3. Start the installed app: after ~8 s the topbar shows **Update available · vB**; Settings → About →
+   **Download and install** shows progress, verifies the signature, runs the installer and restarts.
+
+The manifest the app reads is `https://github.com/<owner>/LIKApcs/releases/latest/download/latest.json`.
+If the app says it is up to date although a newer release exists, check that the release is
+published (not draft / pre-release) and that `latest.json` is attached to it.
 
 ## 10. Troubleshooting
 
