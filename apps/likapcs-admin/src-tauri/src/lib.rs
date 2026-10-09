@@ -58,6 +58,14 @@ async fn embedded_server_restart() -> Result<ServerInfo, String> {
 }
 
 #[tauri::command]
+async fn embedded_server_log(max_bytes: Option<u64>) -> Result<String, String> {
+    let max = max_bytes.unwrap_or(64 * 1024);
+    tauri::async_runtime::spawn_blocking(move || server_manager::log_tail(max))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn discover_servers(timeout_ms: Option<u64>) -> Vec<serde_json::Value> {
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(2500).clamp(300, 15_000));
     tauri::async_runtime::spawn_blocking(move || server_manager::discover(timeout))
@@ -90,6 +98,7 @@ pub fn run() {
             embedded_server_start,
             embedded_server_stop,
             embedded_server_restart,
+            embedded_server_log,
             discover_servers,
             allow_firewall
         ])

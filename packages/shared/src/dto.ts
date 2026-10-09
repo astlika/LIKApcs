@@ -70,6 +70,11 @@ export type SetupRequest = z.infer<typeof setupRequestSchema>;
 export const loginRequestSchema = z.object({
   username: z.string().trim().min(1).max(64),
   password: z.string().min(1).max(128),
+  /**
+   * "Stay signed in on this PC": the server issues a long-lived session (LIKAPCS_REMEMBER_DAYS,
+   * default 30 days) instead of the default shift-length session (LIKAPCS_SESSION_HOURS).
+   */
+  rememberMe: z.boolean().optional().default(false),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 

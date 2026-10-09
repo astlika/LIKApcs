@@ -4,7 +4,15 @@
  */
 const PREFIX = 'likapcs.';
 
-type Key = 'token' | 'serverUrl' | 'language' | 'theme' | 'sidebarCollapsed';
+type Key =
+  | 'token'
+  | 'serverUrl'
+  | 'language'
+  | 'theme'
+  | 'sidebarCollapsed'
+  | 'mapIconSize'
+  | 'mapGroupZones'
+  | 'rememberChoice';
 
 export const storage = {
   get(key: Key): string | null {
@@ -24,6 +32,34 @@ export const storage = {
   remove(key: Key): void {
     try {
       window.localStorage.removeItem(PREFIX + key);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
+/**
+ * Window-scoped storage (sessionStorage): survives page reloads but is cleared when the app /
+ * browser tab is closed. Used for sign-ins without "Stay signed in on this PC".
+ */
+export const sessionScoped = {
+  get(key: Key): string | null {
+    try {
+      return window.sessionStorage.getItem(PREFIX + key);
+    } catch {
+      return null;
+    }
+  },
+  set(key: Key, value: string): void {
+    try {
+      window.sessionStorage.setItem(PREFIX + key, value);
+    } catch {
+      /* ignore */
+    }
+  },
+  remove(key: Key): void {
+    try {
+      window.sessionStorage.removeItem(PREFIX + key);
     } catch {
       /* ignore */
     }

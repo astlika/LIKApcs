@@ -8,6 +8,31 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **PanCafe-style station map.** _Gaming Stations_ is now a floor map of PC icons (number on the
+  screen, colour = state: free, in use, expiring soon, paused, locked, offline/disabled) with the live
+  timer, cost and a prepaid progress bar under each icon. One click selects a PC and enables a fixed
+  action bar (Start / Stop, Pause / Resume, Add time, Lock / Unlock screen, Message, Restart,
+  Shut down, Details); double-click or **Enter** runs the main action; right-click opens a context
+  menu with every action; arrow keys move the selection; **Esc** deselects. Quick start dialog with
+  _Open time_ (postpaid), prepaid packages, quick durations and custom minutes, cash/card tender and
+  optional customer. Zone filter and grouping, icon-size slider (persisted), legend counts. Keyboard
+  and mouse flows are covered by a Playwright script against a real client PC
+  (message shown on the PC, unlock on start, lock on stop). Fully translated EN/SQ.
+- **Login: "Stay signed in on this PC".** Checked → the server issues a 30-day session
+  (`LIKAPCS_REMEMBER_DAYS`, default 30) kept in persistent storage; unchecked → a shift-length
+  session (`LIKAPCS_SESSION_HOURS`, default 12) that is forgotten when the app is closed. Shared
+  `loginRequestSchema.rememberMe`; integration test for both lifetimes.
+- **Main PC server controls.** When the bundled server is not running, the login page shows a
+  prominent _Start server_ button (instead of a bare connection error). _Settings → Server on this
+  PC_ gains Start / Stop (with confirmation) next to Restart, and a live tail of the server log
+  (`embedded_server_log` Tauri command — reads only the server's own log file).
+
+### Fixed
+
+- Station map: a focused PC tile and the page-level keyboard handler no longer both react to
+  **Enter**; double-click on a not-yet-selected PC runs the action for that PC (the previous
+  implementation read a stale selection).
+
 - **Point of sale, catalogue & inventory (Phase 5).** Server: `CatalogService` (tax categories,
   categories, products with multiple/pack barcodes, generated SKUs, opening stock, archive-instead-of-
   delete for products with history) and `SalesService` (cart pricing from the database only, line and

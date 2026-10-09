@@ -12,6 +12,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return services.auth.login({
         username: body.username,
         password: body.password,
+        rememberMe: body.rememberMe,
         ip: request.ip,
         userAgent: request.headers['user-agent'] ?? null,
       });

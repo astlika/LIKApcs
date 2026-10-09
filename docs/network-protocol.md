@@ -42,12 +42,12 @@ compile error in every component that has not been updated.
 
 ### Auth
 
-| Method | Path                    | Notes                                                                                       |
-| ------ | ----------------------- | ------------------------------------------------------------------------------------------- |
-| POST   | `/auth/login`           | `{username, password}` → `{token, expiresAt, user}`; rate-limited; lockout after N failures |
-| POST   | `/auth/logout`          | revokes the current token                                                                   |
-| GET    | `/auth/me`              | current user + effective permissions                                                        |
-| POST   | `/auth/change-password` | `{currentPassword, newPassword}`; clears `mustChangePassword`; revokes other sessions       |
+| Method | Path                    | Notes                                                                                                                                                                                                                                                          |
+| ------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/auth/login`           | `{username, password, rememberMe?}` → `{token, expiresAt, user}`; rate-limited; lockout after N failures. `rememberMe: true` ("Stay signed in on this PC") → lifetime `LIKAPCS_REMEMBER_DAYS` (default 30 d) instead of `LIKAPCS_SESSION_HOURS` (default 12 h) |
+| POST   | `/auth/logout`          | revokes the current token                                                                                                                                                                                                                                      |
+| GET    | `/auth/me`              | current user + effective permissions                                                                                                                                                                                                                           |
+| POST   | `/auth/change-password` | `{currentPassword, newPassword}`; clears `mustChangePassword`; revokes other sessions                                                                                                                                                                          |
 
 ### Users & roles (`users.view` / `users.manage`)
 

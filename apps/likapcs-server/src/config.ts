@@ -38,6 +38,7 @@ const envSchema = z.object({
   LIKAPCS_TLS_CERT_FILE: z.string().optional(),
   LIKAPCS_TLS_KEY_FILE: z.string().optional(),
   LIKAPCS_SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(12),
+  LIKAPCS_REMEMBER_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   LIKAPCS_MIGRATIONS_DIR: z.string().optional(),
   LIKAPCS_TRUST_PROXY: z
     .string()
@@ -62,6 +63,8 @@ export interface ServerConfig {
   corsOrigins: string[];
   tls: { certFile: string; keyFile: string } | null;
   sessionHours: number;
+  /** Lifetime of "stay signed in" sessions, in days. */
+  rememberDays: number;
   migrationsDir: string;
   trustProxy: boolean;
 }
@@ -130,6 +133,7 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Ser
       .filter(Boolean),
     tls,
     sessionHours: env.LIKAPCS_SESSION_HOURS,
+    rememberDays: env.LIKAPCS_REMEMBER_DAYS,
     migrationsDir: findMigrationsDir(env.LIKAPCS_MIGRATIONS_DIR),
     trustProxy: env.LIKAPCS_TRUST_PROXY,
   };

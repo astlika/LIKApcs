@@ -490,7 +490,7 @@ function ActiveSession({
   );
 }
 
-function EndSessionDialog({
+export function EndSessionDialog({
   session,
   elapsedSeconds,
   livePrice,
@@ -598,7 +598,7 @@ function EndSessionDialog({
   );
 }
 
-function ExtendSessionDialog({
+export function ExtendSessionDialog({
   session,
   busy,
   onClose,
@@ -730,7 +730,7 @@ function ExtendSessionDialog({
   );
 }
 
-function CancelSessionDialog({
+export function CancelSessionDialog({
   busy,
   onClose,
   onConfirm,
@@ -777,7 +777,7 @@ function CancelSessionDialog({
   );
 }
 
-function notifyClientAck(
+export function notifyClientAck(
   result: SessionMutationResponse,
   toast: ReturnType<typeof useToast>,
   t: ReturnType<typeof useI18n>['t'],

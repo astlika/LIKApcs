@@ -1,13 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Shield } from 'lucide-react';
+import { FileText, Play, RefreshCw, Shield, Square } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { Alert, Badge, Button, Card, Switch } from './ui/primitives';
 import {
   allowFirewall,
   autostartEnabled,
   embeddedServerInfo,
+  embeddedServerLog,
   embeddedServerRestart,
+  embeddedServerStart,
+  embeddedServerStop,
   setAutostart,
 } from '../lib/desktop';
 
@@ -33,15 +36,36 @@ export function LocalServerPanel() {
       .catch(() => setAutostartState(null));
   }, []);
 
+  const [showLog, setShowLog] = useState(false);
+  const log = useQuery({
+    queryKey: ['embedded-server-log'],
+    queryFn: () => embeddedServerLog(48 * 1024),
+    enabled: showLog,
+    refetchInterval: showLog ? 3000 : false,
+  });
+
+  const afterChange = (text: string) => {
+    setMessage({ tone: 'success', text });
+    void qc.invalidateQueries({ queryKey: ['embedded-server'] });
+    void qc.invalidateQueries({ queryKey: ['system-info'] });
+    void qc.invalidateQueries({ queryKey: ['embedded-server-log'] });
+  };
+  const onError = (err: unknown) =>
+    setMessage({ tone: 'danger', text: err instanceof Error ? err.message : String(err) });
+  const start = useMutation({
+    mutationFn: embeddedServerStart,
+    onSuccess: () => afterChange(t('settings.localServer.started')),
+    onError,
+  });
+  const stop = useMutation({
+    mutationFn: embeddedServerStop,
+    onSuccess: () => afterChange(t('settings.localServer.stoppedOk')),
+    onError,
+  });
   const restart = useMutation({
     mutationFn: embeddedServerRestart,
-    onSuccess: () => {
-      setMessage({ tone: 'success', text: t('settings.localServer.restarted') });
-      void qc.invalidateQueries({ queryKey: ['embedded-server'] });
-      void qc.invalidateQueries({ queryKey: ['system-info'] });
-    },
-    onError: (err) =>
-      setMessage({ tone: 'danger', text: err instanceof Error ? err.message : String(err) }),
+    onSuccess: () => afterChange(t('settings.localServer.restarted')),
+    onError,
   });
   const firewall = useMutation({
     mutationFn: allowFirewall,
@@ -90,16 +114,47 @@ export function LocalServerPanel() {
         {data.logFile && row(t('settings.localServer.logFile'), <code>{data.logFile}</code>)}
       </div>
       <div className="row" style={{ marginTop: 16, flexWrap: 'wrap', gap: 8 }}>
-        <Button onClick={() => restart.mutate()} loading={restart.isPending}>
+        {data.running ? (
+          <Button
+            onClick={() => {
+              if (window.confirm(t('settings.localServer.stopConfirm'))) stop.mutate();
+            }}
+            loading={stop.isPending}
+          >
+            <Square size={14} /> {t('settings.localServer.stop')}
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={() => start.mutate()} loading={start.isPending}>
+            <Play size={14} /> {t('settings.localServer.start')}
+          </Button>
+        )}
+        <Button
+          onClick={() => restart.mutate()}
+          loading={restart.isPending}
+          disabled={!data.running}
+        >
           <RefreshCw size={14} /> {t('settings.localServer.restart')}
         </Button>
         <Button onClick={() => firewall.mutate()} loading={firewall.isPending}>
           <Shield size={14} /> {t('settings.localServer.firewall')}
         </Button>
+        <Button onClick={() => setShowLog((v) => !v)}>
+          <FileText size={14} />{' '}
+          {showLog ? t('settings.localServer.hideLog') : t('settings.localServer.showLog')}
+        </Button>
       </div>
       <p className="muted" style={{ fontSize: 12.5 }}>
         {t('settings.localServer.firewallHint')}
       </p>
+      {showLog && (
+        <pre className="log-view" aria-live="polite">
+          {log.isLoading
+            ? '…'
+            : log.isError
+              ? String(log.error)
+              : log.data?.trim() || t('settings.localServer.logEmpty')}
+        </pre>
+      )}
       {autostart !== null && (
         <div style={{ marginTop: 8 }}>
           <Switch

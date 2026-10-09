@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   Cpu,
   DownloadCloud,
-  Info,
   KeyRound,
   Lock,
   LockOpen,
@@ -32,7 +31,11 @@ import {
   type SystemInfoResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
-import { SessionCardTimer, SessionPanel } from '../components/sessions/SessionPanel';
+import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
+import { StationMap } from '../components/stations/StationMap';
+import { useStationActions } from '../components/stations/useStationActions';
+import { formatHms, projectSession } from '../lib/session-time';
+import { storage } from '../lib/storage';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -47,6 +50,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Kbd,
   Loading,
   Select,
   Switch,
@@ -132,11 +136,20 @@ export function StationsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [zone, setZone] = useState<string>('');
+  const [iconSize, setIconSize] = useState<number>(() => Number(storage.get('mapIconSize') ?? 96));
+  const [groupByZone, setGroupByZone] = useState<boolean>(
+    () => storage.get('mapGroupZones') !== '0',
+  );
 
   // Deep link from the command palette (?focus=<stationId>).
   useEffect(() => {
     const focus = params.get('focus');
     if (focus) {
+      setSelectedId(focus);
       setDetailId(focus);
       params.delete('focus');
       setParams(params, { replace: true });
@@ -144,12 +157,22 @@ export function StationsPage() {
   }, [params, setParams]);
 
   const list = useMemo(() => stations.data ?? [], [stations.data]);
+  const zones = useMemo(
+    () => [...new Set(list.map((s) => s.zone?.trim()).filter((z): z is string => !!z))].sort(),
+    [list],
+  );
+  const visible = useMemo(
+    () => (zone ? list.filter((s) => (s.zone?.trim() ?? '') === zone) : list),
+    [list, zone],
+  );
   const counts = useMemo(() => {
     const enabled = list.filter((s) => s.isEnabled);
     return {
       online: enabled.filter((s) => s.device?.online).length,
       available: enabled.filter((s) => s.status === 'available').length,
-      occupied: enabled.filter((s) => s.activeSession).length,
+      occupied: enabled.filter((s) => s.activeSession && s.activeSession.status === 'active')
+        .length,
+      paused: enabled.filter((s) => s.activeSession?.status === 'paused').length,
       offline: enabled.filter((s) => s.status === 'offline').length,
     };
   }, [list]);
@@ -158,37 +181,196 @@ export function StationsPage() {
     [list],
   );
   const detail = list.find((s) => s.id === detailId) ?? null;
+  const selected = list.find((s) => s.id === selectedId) ?? null;
 
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['stations'] });
     void queryClient.invalidateQueries({ queryKey: ['devices'] });
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  }, [queryClient]);
+
+  const { actions, primary, run, busy, dialogs } = useStationActions(selected, invalidate, (id) =>
+    setDetailId(id),
+  );
+
+  // Double-click / Enter on a tile: run the primary action for *that* station after the
+  // selection has been applied (run() and primary are derived from the selected station).
+  const pendingPrimary = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selected || pendingPrimary.current !== selected.id) return;
+    pendingPrimary.current = null;
+    if (primary) run(primary);
+  }, [selected, primary, run]);
+
+  // Keyboard: arrows move the selection on the map, Enter = primary action, Esc = deselect.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.closest('input, textarea, select, [role="dialog"]') || target.isContentEditable)
+      )
+        return;
+      if (!visible.length) return;
+      // A focused tile handles Enter itself (see StationTile) — avoid running the action twice.
+      if (e.key === 'Enter' && target?.closest('.pc-tile')) return;
+      const idx = visible.findIndex((s) => s.id === selectedId);
+      const move = (delta: number) => {
+        e.preventDefault();
+        const next = idx < 0 ? 0 : Math.min(visible.length - 1, Math.max(0, idx + delta));
+        const id = visible[next]!.id;
+        setSelectedId(id);
+        setMenu(null);
+        // Focus follows the selection so Enter / context-menu keys act on the highlighted PC.
+        document.querySelector<HTMLElement>(`.pc-tile[data-id="${CSS.escape(id)}"]`)?.focus();
+      };
+      if (e.key === 'ArrowRight') move(1);
+      else if (e.key === 'ArrowLeft') move(-1);
+      else if (e.key === 'ArrowDown') move(perRow());
+      else if (e.key === 'ArrowUp') move(-perRow());
+      else if (e.key === 'Escape') {
+        setMenu(null);
+        setSelectedId(null);
+      } else if (e.key === 'Enter' && selected && primary) {
+        e.preventDefault();
+        run(primary);
+      }
+    };
+    const perRow = () => {
+      const grid = document.querySelector('.pc-map__grid');
+      const tile = grid?.querySelector<HTMLElement>('.pc-tile');
+      if (!grid || !tile) return 1;
+      return Math.max(1, Math.floor(grid.clientWidth / (tile.offsetWidth + 10)));
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [visible, selectedId, selected, primary, run]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu]);
+
+  const changeSize = (n: number) => {
+    setIconSize(n);
+    storage.set('mapIconSize', String(n));
+  };
+  const toggleGroup = (v: boolean) => {
+    setGroupByZone(v);
+    storage.set('mapGroupZones', v ? '1' : '0');
   };
 
   return (
-    <>
-      <div className="page-header">
-        <div>
-          <h1>{t('stations.title')}</h1>
-          <p className="page-header__sub">{t('stations.subtitle', counts)}</p>
+    <div className="map-page">
+      <div className="map-toolbar">
+        <div className="map-legend" aria-label={t('stations.subtitle', counts)}>
+          <span className="map-legend__item" data-status="available">
+            <i /> {counts.available} {t('map.free')}
+          </span>
+          <span className="map-legend__item" data-status="occupied">
+            <i /> {counts.occupied} {t('map.inUse')}
+          </span>
+          <span className="map-legend__item" data-status="paused">
+            <i /> {counts.paused} {t('map.paused')}
+          </span>
+          <span className="map-legend__item" data-status="offline">
+            <i /> {counts.offline} {t('map.offline')}
+          </span>
         </div>
-        <div className="page-header__actions">
-          {canDevices && outdatedOnline > 0 && (
-            <Button onClick={() => pushUpdates.mutate()} loading={pushUpdates.isPending}>
-              <DownloadCloud size={16} /> {t('stations.updateClients', { n: outdatedOnline })}
-            </Button>
-          )}
-          {canManage && (
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus size={16} /> {t('stations.addStation')}
-            </Button>
-          )}
-        </div>
+        <div className="map-toolbar__spacer" />
+        {zones.length > 0 && (
+          <Select
+            value={zone}
+            onChange={(e) => setZone(e.target.value)}
+            aria-label={t('stations.zone')}
+          >
+            <option value="">{t('map.allZones')}</option>
+            {zones.map((z) => (
+              <option key={z} value={z}>
+                {z}
+              </option>
+            ))}
+          </Select>
+        )}
+        {zones.length > 0 && (
+          <Switch checked={groupByZone} onChange={toggleGroup} label={t('map.groupZones')} />
+        )}
+        <label className="map-zoom" title={t('map.iconSize')}>
+          <Monitor size={13} />
+          <input
+            type="range"
+            min={64}
+            max={150}
+            step={2}
+            value={iconSize}
+            onChange={(e) => changeSize(Number(e.target.value))}
+            aria-label={t('map.iconSize')}
+          />
+          <Monitor size={18} />
+        </label>
+        {canDevices && (pending.data?.length ?? 0) > 0 && (
+          <Button variant="primary" onClick={() => setPendingOpen(true)}>
+            <Cpu size={16} /> {t('stations.pendingTitle')}{' '}
+            <Badge tone="warning">{pending.data!.length}</Badge>
+          </Button>
+        )}
+        {canDevices && outdatedOnline > 0 && (
+          <Button onClick={() => pushUpdates.mutate()} loading={pushUpdates.isPending}>
+            <DownloadCloud size={16} /> {t('stations.updateClients', { n: outdatedOnline })}
+          </Button>
+        )}
+        {canManage && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus size={16} /> {t('stations.addStation')}
+          </Button>
+        )}
       </div>
 
-      {canDevices && (pending.data?.length ?? 0) > 0 && (
-        <PendingDevicesPanel devices={pending.data ?? []} stations={list} onChanged={invalidate} />
-      )}
+      <div className="map-actions" role="toolbar" aria-label={t('common.actions')}>
+        <div className="map-actions__target">
+          {selected ? (
+            <>
+              <span className="map-actions__code">{selected.code}</span>
+              <span className="map-actions__name">
+                {[selected.name !== selected.code ? selected.name : null, selected.zone]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+              <SelectedSummary station={selected} fetchedAt={stations.dataUpdatedAt} />
+            </>
+          ) : (
+            <span className="muted">{t('map.selectHint')}</span>
+          )}
+        </div>
+        <div className="map-actions__buttons">
+          {actions
+            .filter((a) => a.bar)
+            .map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                className="map-action"
+                data-action={a.id}
+                data-tone={a.tone}
+                disabled={!selected || !a.enabled || busy}
+                title={a.enabled ? a.label : (a.hint ?? a.label)}
+                onClick={() => run(a.id)}
+              >
+                <a.icon size={20} />
+                <span>{a.label}</span>
+                {a.shortcut && selected && primary === a.id && <Kbd>{a.shortcut}</Kbd>}
+              </button>
+            ))}
+        </div>
+      </div>
 
       {stations.isLoading && <Loading />}
       {stations.isError && (
@@ -216,18 +398,74 @@ export function StationsPage() {
         </Card>
       )}
 
-      {list.length > 0 && (
-        <div className="grid grid--stations">
-          {list.map((station) => (
-            <StationCard
-              key={station.id}
-              station={station}
-              fetchedAt={stations.dataUpdatedAt}
-              onOpen={() => setDetailId(station.id)}
-            />
+      {visible.length > 0 && (
+        <div
+          className="map-canvas"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedId(null);
+          }}
+        >
+          <StationMap
+            stations={visible}
+            fetchedAt={stations.dataUpdatedAt}
+            selectedId={selectedId}
+            size={iconSize}
+            groupByZone={groupByZone}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setMenu(null);
+            }}
+            onPrimary={(id) => {
+              // run() must see the newly selected station, so the primary action is
+              // executed by the effect below once the selection has re-rendered.
+              pendingPrimary.current = id;
+              setSelectedId(id);
+              setMenu(null);
+            }}
+            onMenu={(id, x, y) => {
+              setSelectedId(id);
+              setMenu({ x, y });
+            }}
+          />
+        </div>
+      )}
+
+      {menu && selected && (
+        <div
+          className="ctx-menu"
+          role="menu"
+          style={{
+            left: Math.min(menu.x, window.innerWidth - 240),
+            top: Math.min(menu.y, window.innerHeight - 380),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="ctx-menu__title">
+            {selected.name === selected.code
+              ? selected.code
+              : `${selected.code} · ${selected.name}`}
+          </div>
+          {actions.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              role="menuitem"
+              className="ctx-menu__item"
+              data-action={a.id}
+              data-tone={a.tone}
+              disabled={!a.enabled || busy}
+              onClick={() => {
+                setMenu(null);
+                run(a.id);
+              }}
+            >
+              <a.icon size={15} /> {a.label}
+            </button>
           ))}
         </div>
       )}
+
+      {dialogs}
 
       <StationFormDialog
         open={createOpen}
@@ -241,6 +479,25 @@ export function StationsPage() {
         }}
       />
 
+      {pendingOpen && canDevices && (
+        <Dialog
+          open
+          onClose={() => setPendingOpen(false)}
+          title={t('stations.pendingTitle')}
+          size="lg"
+        >
+          {(pending.data?.length ?? 0) === 0 ? (
+            <p className="muted">{t('common.none')}</p>
+          ) : (
+            <PendingDevicesPanel
+              devices={pending.data ?? []}
+              stations={list}
+              onChanged={invalidate}
+            />
+          )}
+        </Dialog>
+      )}
+
       {detail && (
         <StationDetailDialog
           station={detail}
@@ -248,70 +505,59 @@ export function StationsPage() {
           onChanged={invalidate}
         />
       )}
-    </>
+    </div>
   );
 }
 
-// ─── Station card ──────────────────────────────────────────────────────────────
-function StationCard({
-  station,
-  fetchedAt,
-  onOpen,
-}: {
-  station: StationSummary;
-  fetchedAt: number;
-  onOpen: () => void;
-}) {
+/** Live one-line summary of the selected PC shown in the action bar. */
+function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetchedAt: number }) {
   const { t, td } = useI18n();
   const fmt = useFormat();
-  const status = station.isEnabled ? station.status : 'disabled';
-  return (
-    <div
-      className="station"
-      data-status={status}
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpen()}
-    >
-      <div className="station__top">
-        <span className="station__code">{station.code}</span>
-        <Badge tone={STATUS_TONE[status]} dot={status === 'occupied' || status === 'available'}>
-          {td(`stations.status.${status}`, status)}
+  const now = useNow();
+  const live = station.activeSession;
+  if (!live) {
+    return (
+      <span className="map-actions__status">
+        <Badge tone={STATUS_TONE[station.isEnabled ? station.status : 'disabled']} dot>
+          {td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}
         </Badge>
-      </div>
-      <div className="station__name">{station.name}</div>
-      <div className="station__meta">
-        {station.zone && <div className="station__meta-row muted">{station.zone}</div>}
-        <div className="station__meta-row">
-          {station.device ? (
-            <>
-              {station.device.online ? (
-                <Wifi size={14} className="text-success" />
-              ) : (
-                <WifiOff size={14} className="faint" />
-              )}
-              <span className={station.device.online ? '' : 'muted'}>
-                {station.device.hostname ?? station.device.machineId.slice(0, 12)}
-              </span>
-            </>
-          ) : (
-            <span className="faint">{t('stations.noDevice')}</span>
-          )}
-        </div>
-      </div>
-      <SessionCardTimer station={station} fetchedAt={fetchedAt} />
-      <div className="station__footer">
-        <span className="faint" style={{ fontSize: 12 }}>
-          {station.device?.lastSeenAt
-            ? `${t('stations.lastSeen')}: ${fmt.relative(station.device.lastSeenAt)}`
-            : ''}
-        </span>
-        <span className="btn btn--ghost btn--sm">
-          <Info size={14} /> {t('common.details')}
-        </span>
-      </div>
-    </div>
+        {station.device && (
+          <span className="faint">
+            {station.device.online ? (
+              <Wifi size={13} className="text-success" />
+            ) : (
+              <WifiOff size={13} />
+            )}{' '}
+            {station.device.hostname ?? station.device.machineId.slice(0, 10)}
+          </span>
+        )}
+      </span>
+    );
+  }
+  const { elapsed, remaining } = projectSession(
+    {
+      status: live.status,
+      billableSeconds: live.elapsedSeconds,
+      endsAt: live.endsAt,
+      pausedAt: live.pausedAt,
+    },
+    fetchedAt,
+    now,
+  );
+  return (
+    <span className="map-actions__status">
+      <Badge tone={live.status === 'paused' ? 'warning' : 'accent'} dot>
+        {live.billingMode === 'prepaid' ? t('sessions.prepaidShort') : t('sessions.postpaidShort')}
+        {live.status === 'paused' ? ` · ${t('sessions.status.paused')}` : ''}
+      </Badge>
+      <span className="num">
+        {remaining !== null
+          ? `${t('sessions.remaining')} ${formatHms(remaining)}`
+          : `${t('sessions.elapsed')} ${formatHms(elapsed)}`}
+      </span>
+      <span className="num">{fmt.money(live.currentPriceCents)}</span>
+      {live.customerName && <span className="muted">{live.customerName}</span>}
+    </span>
   );
 }
 

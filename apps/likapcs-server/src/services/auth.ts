@@ -25,6 +25,8 @@ interface LoginInput {
   ip: string | null;
   userAgent: string | null;
   clientApp?: string;
+  /** Long-lived session ("stay signed in on this PC"). */
+  rememberMe?: boolean;
 }
 
 export class AuthService {
@@ -33,6 +35,7 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly settings: SettingsService,
     private readonly sessionHours: number,
+    private readonly rememberDays = 30,
   ) {}
 
   async login(input: LoginInput): Promise<LoginResponse> {
@@ -84,7 +87,10 @@ export class AuthService {
     }
 
     const token = generateToken();
-    const expiresAt = new Date(Date.now() + this.sessionHours * 3600 * 1000);
+    const lifetimeMs = input.rememberMe
+      ? this.rememberDays * 24 * 3600 * 1000
+      : this.sessionHours * 3600 * 1000;
+    const expiresAt = new Date(Date.now() + lifetimeMs);
     const sessionId = await withTransaction(this.pool, async (client) => {
       if (needsRehash(user.password_hash)) {
         await client.query('UPDATE users SET password_hash = $2 WHERE id = $1', [

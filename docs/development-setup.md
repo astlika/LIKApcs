@@ -56,6 +56,10 @@ LIKAPCS_LOG_LEVEL=info
 `.env` is git-ignored. The server refuses to start without a database URL — there are no built-in
 credentials anywhere.
 
+Session lifetimes: `LIKAPCS_SESSION_HOURS` (default 12) for normal sign-ins, `LIKAPCS_REMEMBER_DAYS`
+(default 30) when the user ticks **Stay signed in on this PC** on the login page. Without the tick the
+token is only kept until the Admin app is closed.
+
 ## 5. Apply migrations and start the server
 
 ```bash
@@ -138,7 +142,11 @@ Windows shell. For a real venue, additionally:
 ## 7. Phase 1 walkthrough (what to try)
 
 1. **Dashboard** — live figures from the database (all zero until Phase 2 adds sales).
-2. **Gaming Stations → Add station** — create PC 01…PC 10.
+2. **Gaming Stations → Add station** — create PC 01…PC 10. The page is a PanCafe-style map: click a
+   PC icon to select it, double-click / **Enter** for the main action (Start or Stop), right-click for
+   every action (Pause, Add time, Lock screen, Message, Restart, Shut down, Cancel, Details), arrow
+   keys to move, **Esc** to deselect. Icon colours: green free, blue in use, amber expiring/paused,
+   purple locked, grey offline/disabled.
 3. Simulate a client PC registering (what LIKApcs-Client will do in Phase 4):
 
    ```bash
@@ -195,6 +203,11 @@ LIKAPCS_DATA_DIR=/tmp/likapcs-demo LIKAPCS_PORT=4710 node apps/likapcs-server/di
 node apps/likapcs-server/dist/cli.js discover          # UDP broadcast, lists running servers
 LIKAPCS_DATA_DIR=/tmp/likapcs-demo LIKAPCS_PORT=4710 node apps/likapcs-server/dist/cli.js stop
 ```
+
+In the packaged Admin app the bundled server is started automatically at launch (`ServerGate`); if it
+is down, the login page shows **Start server**, and _Settings → Server on this PC_ offers Start / Stop /
+Restart, the Windows Firewall rule, start-at-login and a live tail of
+`%LOCALAPPDATA%\LIKApcs-Data\logs\server.log`.
 
 The Windows runtime that ships inside `LIKApcs-Setup.exe` is produced by `scripts/stage-runtime.ps1`
 (Node.js and the portable PostgreSQL are downloaded from nodejs.org / Maven Central and verified

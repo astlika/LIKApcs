@@ -19,8 +19,8 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (username: string, password: string) => Promise<AuthenticatedUser>;
-  acceptSession: (session: LoginResponse) => void;
+  login: (username: string, password: string, remember?: boolean) => Promise<AuthenticatedUser>;
+  acceptSession: (session: LoginResponse, remember?: boolean) => void;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   can: (...codes: PermissionCode[]) => boolean;
@@ -71,21 +71,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh, applyUser]);
 
   const acceptSession = useCallback(
-    (session: LoginResponse) => {
-      setToken(session.token);
+    (session: LoginResponse, remember = false) => {
+      setToken(session.token, { remember });
       applyUser(session.user);
     },
     [applyUser],
   );
 
+  /**
+   * `remember` = "Stay signed in on this PC": the server issues a long-lived session and the
+   * token is kept in persistent storage; otherwise it only lives until the app is closed.
+   */
   const login = useCallback(
-    async (username: string, password: string) => {
+    async (username: string, password: string, remember = false) => {
       const session = await api<LoginResponse>('/auth/login', {
         method: 'POST',
-        body: { username, password },
+        body: { username, password, rememberMe: remember },
         auth: false,
       });
-      acceptSession(session);
+      acceptSession(session, remember);
       return session.user;
     },
     [acceptSession],

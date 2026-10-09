@@ -50,6 +50,11 @@ export function embeddedServerRestart(): Promise<EmbeddedServerInfo> {
   return invoke<EmbeddedServerInfo>('embedded_server_restart');
 }
 
+/** Last part of the bundled server's log file (main PC only; empty when there is no log yet). */
+export function embeddedServerLog(maxBytes = 64 * 1024): Promise<string> {
+  return invoke<string>('embedded_server_log', { maxBytes });
+}
+
 /** Finds LIKApcs servers on the local network (UDP broadcast, answered by every running server). */
 export async function discoverServers(timeoutMs = 2500): Promise<DiscoveredServer[]> {
   if (!isDesktopApp()) return [];

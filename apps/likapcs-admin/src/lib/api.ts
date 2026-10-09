@@ -1,5 +1,5 @@
 import type { ApiErrorBody } from '@likapcs/shared';
-import { storage } from './storage';
+import { sessionScoped, storage } from './storage';
 
 /**
  * Thin fetch wrapper for the LIKApcs Server HTTP API (v1).
@@ -43,12 +43,23 @@ export function setServerUrl(url: string): void {
   if (cleaned) storage.set('serverUrl', cleaned);
   else storage.remove('serverUrl');
 }
+/**
+ * The session token lives in sessionStorage by default (gone when the app is closed) and in
+ * localStorage when the user ticked "Stay signed in on this PC" at login.
+ */
 export function getToken(): string | null {
-  return storage.get('token');
+  return sessionScoped.get('token') ?? storage.get('token');
 }
-export function setToken(token: string | null): void {
-  if (token) storage.set('token', token);
-  else storage.remove('token');
+export function setToken(token: string | null, options: { remember?: boolean } = {}): void {
+  sessionScoped.remove('token');
+  storage.remove('token');
+  if (!token) return;
+  if (options.remember) storage.set('token', token);
+  else sessionScoped.set('token', token);
+}
+/** True when the current sign-in was made with "Stay signed in on this PC". */
+export function isRemembered(): boolean {
+  return !!storage.get('token');
 }
 
 export function websocketUrl(path: string): string {

@@ -160,6 +160,34 @@ pub fn info() -> ServerInfo {
     }
 }
 
+/// Last `max_bytes` of the bundled server's log file (only this fixed file is ever read, so the
+/// command cannot be abused to read arbitrary files). Returns an empty string when there is no log.
+pub fn log_tail(max_bytes: u64) -> Result<String, String> {
+    let path = data_dir().join("logs").join("server.log");
+    let mut file = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => return Err(format!("cannot open {}: {e}", path.display())),
+    };
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let max = max_bytes.clamp(1024, 1024 * 1024);
+    if len > max {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(len - max))
+            .map_err(|e| e.to_string())?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    if len > max {
+        // Drop the (probably partial) first line after seeking into the middle of the file.
+        if let Some(nl) = text.find('\n') {
+            text = text[nl + 1..].to_string();
+        }
+    }
+    Ok(text)
+}
+
 /// Spawns the server as a detached background process (no console window, outlives this app).
 pub fn start(rt: &Runtime) -> Result<(), String> {
     let cwd = rt

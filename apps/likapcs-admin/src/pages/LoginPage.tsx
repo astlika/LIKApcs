@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Globe, Lock, Radar, Server, User } from 'lucide-react';
+import { Globe, Lock, Play, Radar, Server, User } from 'lucide-react';
 import type { HealthResponse, SetupStatusResponse } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, setServerUrl } from '../lib/api';
 import { storage } from '../lib/storage';
 import { isDesktopApp } from '../lib/updater';
-import { discoverServers, embeddedServerInfo, type DiscoveredServer } from '../lib/desktop';
+import {
+  discoverServers,
+  embeddedServerInfo,
+  embeddedServerStart,
+  type DiscoveredServer,
+  type EmbeddedServerInfo,
+} from '../lib/desktop';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useAppSettings } from '../state/app-settings';
-import { Alert, Button, Field, Input, Segmented } from '../components/ui/primitives';
+import { Alert, Button, Checkbox, Field, Input, Segmented } from '../components/ui/primitives';
 
 export function LoginPage() {
   const { t, language, setLanguage } = useI18n();
@@ -26,6 +32,11 @@ export function LoginPage() {
   const [serverTest, setServerTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredServer[] | null>(null);
   const [discovering, setDiscovering] = useState(false);
+  const [remember, setRemember] = useState(storage.get('rememberChoice') === '1');
+  // Main PC only: the bundled server (null = browser build / secondary PC / not probed yet).
+  const [local, setLocal] = useState<EmbeddedServerInfo | null>(null);
+  const [localStarting, setLocalStarting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
   const autoDiscovered = useRef(false);
   const desktop = isDesktopApp();
 
@@ -42,6 +53,20 @@ export function LoginPage() {
   useEffect(() => {
     if (setup.isError) setShowServer(true);
   }, [setup.isError]);
+  // Main PC: when the server cannot be reached, find out whether the bundled server is simply
+  // not running — then the login page offers a big "Start server" button instead of a dead end.
+  useEffect(() => {
+    if (!setup.isError || !desktop) return;
+    let cancelled = false;
+    void embeddedServerInfo()
+      .then((info) => {
+        if (!cancelled) setLocal(info);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [setup.isError, desktop]);
   // Secondary Admin PC with no saved address: the default (this PC) is unreachable, so look for
   // the main PC on the network once and adopt it automatically when exactly one server answers.
   useEffect(() => {
@@ -65,7 +90,8 @@ export function LoginPage() {
     setError(null);
     auth.clearExpiredNotice();
     try {
-      await auth.login(username, password);
+      storage.set('rememberChoice', remember ? '1' : '0');
+      await auth.login(username, password, remember);
       navigate('/', { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
@@ -93,6 +119,20 @@ export function LoginPage() {
           error: err instanceof Error ? err.message : String(err),
         }),
       });
+    }
+  };
+
+  const startLocalServer = async () => {
+    setLocalStarting(true);
+    setLocalError(null);
+    try {
+      const info = await embeddedServerStart();
+      setLocal(info);
+      await setup.refetch();
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLocalStarting(false);
     }
   };
 
@@ -141,10 +181,39 @@ export function LoginPage() {
           </div>
         </div>
         {auth.expiredNotice && <Alert tone="warning">{t('auth.sessionExpired')}</Alert>}
-        {setup.isError && (
-          <Alert tone="danger" icon={<Server size={16} />}>
-            {t('common.networkError')}
-          </Alert>
+        {setup.isError && local?.available && !local.running ? (
+          <div className="auth__server-down">
+            <Alert tone="warning" icon={<Server size={16} />}>
+              <strong>{t('auth.localServerDown')}</strong>
+              <div style={{ marginTop: 4 }}>{t('auth.localServerDownHint')}</div>
+            </Alert>
+            <Button
+              type="button"
+              variant="primary"
+              size="lg"
+              block
+              loading={localStarting}
+              onClick={() => void startLocalServer()}
+            >
+              <Play size={18} /> {t('auth.startLocalServer')}
+            </Button>
+            {localError && (
+              <Alert tone="danger">
+                {localError}
+                {local.logFile && (
+                  <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                    {t('gate.logHint')} <code>{local.logFile}</code>
+                  </div>
+                )}
+              </Alert>
+            )}
+          </div>
+        ) : (
+          setup.isError && (
+            <Alert tone="danger" icon={<Server size={16} />}>
+              {t('common.networkError')}
+            </Alert>
+          )
         )}
         {error && <Alert tone="danger">{error}</Alert>}
         <Field label={t('auth.username')}>
@@ -177,6 +246,12 @@ export function LoginPage() {
             </div>
           )}
         </Field>
+        <Checkbox
+          checked={remember}
+          onChange={(e) => setRemember(e.target.checked)}
+          label={t('auth.rememberMe')}
+          description={t('auth.rememberMeHint')}
+        />
         <Button type="submit" variant="primary" size="lg" block loading={busy}>
           {t('auth.signIn')}
         </Button>

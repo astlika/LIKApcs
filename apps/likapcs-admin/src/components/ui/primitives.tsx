@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   type ButtonHTMLAttributes,
+  type ChangeEvent,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -124,6 +125,30 @@ export function Switch({
       />
       <span className="switch__track" aria-hidden />
       {label && <span>{label}</span>}
+    </label>
+  );
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  label: ReactNode;
+  description?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="checkbox" data-checked={checked} aria-disabled={disabled}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
+      <span>
+        <span className="checkbox__title">{label}</span>
+        {description && <div className="checkbox__desc">{description}</div>}
+      </span>
     </label>
   );
 }

@@ -85,6 +85,32 @@ describe('first-run setup and authentication', () => {
     expect(bad.json().error.message).toBe(unknown.json().error.message);
   });
 
+  it('issues a long-lived session for "stay signed in" (default sessions are shift-length)', async () => {
+    // `session` (from setup) is a regular login: lifetime = LIKAPCS_SESSION_HOURS.
+    const hours = (iso: string) => (new Date(iso).getTime() - Date.now()) / 3_600_000;
+    const regular = hours(session.expiresAt);
+    expect(regular).toBeGreaterThan(ctx.config.sessionHours - 0.1);
+    expect(regular).toBeLessThan(ctx.config.sessionHours + 0.1);
+
+    const long = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: OWNER.username, password: OWNER.password, rememberMe: true },
+    });
+    expect(long.statusCode).toBe(200);
+    const remembered = hours(long.json<LoginResponse>().expiresAt);
+    expect(remembered).toBeGreaterThan(ctx.config.rememberDays * 24 - 0.1);
+    expect(remembered).toBeLessThan(ctx.config.rememberDays * 24 + 0.1);
+    expect(remembered).toBeGreaterThan(regular);
+
+    const me = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/me',
+      headers: authHeader(long.json<LoginResponse>().token),
+    });
+    expect(me.statusCode).toBe(200);
+  });
+
   it('protects endpoints and resolves the bearer token', async () => {
     const anon = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me' });
     expect(anon.statusCode).toBe(401);

@@ -94,7 +94,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const hub = new RealtimeHub();
   const settings = new SettingsService(pool);
   const users = new UsersService(pool);
-  const auth = new AuthService(pool, users, settings, config.sessionHours);
+  const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
   const audit = new AuditQueryService(pool);
