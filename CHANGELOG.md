@@ -8,6 +8,27 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Point of sale, catalogue & inventory (Phase 5).** Server: `CatalogService` (tax categories,
+  categories, products with multiple/pack barcodes, generated SKUs, opening stock, archive-instead-of-
+  delete for products with history) and `SalesService` (cart pricing from the database only, line and
+  sale discounts with largest-remainder tax allocation, tax-inclusive/exclusive prices, cash change,
+  mixed tenders, parked sales, completion, void, partial/full refunds with restock, receipt data,
+  audited reprints). Stock is reserved in the same transaction as the sale with row locks;
+  `409 INSUFFICIENT_STOCK` is atomic. Shared `@likapcs/shared/sale-math` is the integer-cents formula
+  used by server and Admin.
+- API: `/api/v1/catalog/{tax-categories,categories}`, `/api/v1/products` (+ `/lookup?code=`,
+  `/:id/barcodes`, `/:id/stock`), `/api/v1/inventory/movements`, `/api/v1/sales` (+ `/suspend`,
+  `/:id/complete`, `/:id/void`, `/:id/refund`, `/:id/receipt`).
+- Admin: _Point of Sale_ (scanner/keyboard-wedge detection, category chips and product tiles, cart
+  with quantities and permission-gated discounts, F2/F4/F6/F8/Esc shortcuts, cash quick-tender with
+  change, card and split payments, park/resume, on-screen receipt and 58/80 mm print layout),
+  _Products_ (search, category and low-stock filters, product editor with barcodes and opening stock,
+  stock adjustments and counts, movement ledger, categories), _Sales_ (filters, totals, sale detail,
+  refund dialog, receipt reprint, resume parked sales). Fully translated EN/SQ.
+- Tests: 10 sale-math unit tests, 9 POS integration tests (catalogue, lookup, totals/tax, idempotency,
+  permissions, over/under-payment rules, atomic stock, discounts and mixed tenders, park/complete/void,
+  refunds, stock counts and ledger, receipts/reprint, archive vs delete), 5 Admin cart tests.
+
 - **Gaming sessions & billing (Phase 3).** Server: `PricingService` (rules + prepaid packages,
   station/weekday/time-window resolution, happy hours, validity dates) and `SessionsService`
   (quote, start, pause, resume, extend, end, cancel, server-side expiry with warnings, grace pause

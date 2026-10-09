@@ -9,10 +9,13 @@ import {
   LogOut,
   Monitor,
   Moon,
+  Package,
+  ReceiptText,
   Rocket,
   ScrollText,
   Search,
   Settings,
+  ShoppingCart,
   Tag,
   Sun,
   Users,
@@ -133,6 +136,24 @@ export function AppShell() {
           badge: pendingDevices.data?.length,
         },
         {
+          to: '/pos',
+          icon: ShoppingCart,
+          label: t('nav.pos'),
+          permission: PERMISSIONS.POS_SELL,
+        },
+        {
+          to: '/sales',
+          icon: ReceiptText,
+          label: t('nav.sales'),
+          permission: PERMISSIONS.POS_SELL,
+        },
+        {
+          to: '/products',
+          icon: Package,
+          label: t('nav.products'),
+          permission: PERMISSIONS.PRODUCTS_VIEW,
+        },
+        {
           to: '/pricing',
           icon: Tag,
           label: t('nav.pricing'),
@@ -168,6 +189,9 @@ export function AppShell() {
   const titles: Record<string, string> = {
     '/': t('nav.dashboard'),
     '/stations': t('nav.stations'),
+    '/pos': t('nav.pos'),
+    '/sales': t('nav.sales'),
+    '/products': t('nav.products'),
     '/pricing': t('nav.pricing'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
@@ -354,7 +378,7 @@ export function AppShell() {
             )}
           </div>
         </header>
-        <main className="content">
+        <main className={`content ${location.pathname === '/pos' ? 'content--flush' : ''}`}>
           <Outlet />
         </main>
       </div>

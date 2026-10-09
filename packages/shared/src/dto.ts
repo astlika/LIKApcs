@@ -595,3 +595,346 @@ export const sessionListQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type SessionListQuery = z.infer<typeof sessionListQuerySchema>;
+
+// ─── Phase 5: catalogue, inventory & POS ─────────────────────────────────────
+
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, '#RRGGBB');
+const barcodeValue = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9._-]{3,64}$/, 'barcode');
+const nullableText = (max: number) => z.string().trim().max(max).nullable().default(null);
+
+export const taxCategorySchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  rateBp: z.number().int().min(0).max(10_000),
+  isDefault: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+});
+export type TaxCategoryInput = z.infer<typeof taxCategorySchema>;
+export interface TaxCategorySummary {
+  id: string;
+  name: string;
+  rateBp: number;
+  isDefault: boolean;
+  isActive: boolean;
+}
+
+export const categorySchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  parentId: z.string().uuid().nullable().default(null),
+  color: hexColor.nullable().default(null),
+  sortOrder: z.number().int().min(0).max(10_000).default(0),
+  isActive: z.boolean().default(true),
+});
+export type CategoryInput = z.infer<typeof categorySchema>;
+export const updateCategorySchema = categorySchema.partial();
+export interface CategorySummary {
+  id: string;
+  name: string;
+  parentId: string | null;
+  color: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  productCount: number;
+}
+
+export const productBarcodeSchema = z.object({
+  barcode: barcodeValue,
+  quantityMilli: z.number().int().min(1).max(1_000_000_000).default(1000),
+  isPrimary: z.boolean().default(false),
+});
+export type ProductBarcodeInput = z.infer<typeof productBarcodeSchema>;
+
+export const productSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  /** Empty → generated (`SKU-000001`). */
+  sku: z.string().trim().max(40).optional(),
+  categoryId: z.string().uuid().nullable().default(null),
+  brand: nullableText(80),
+  supplierId: z.string().uuid().nullable().default(null),
+  taxCategoryId: z.string().uuid().nullable().default(null),
+  unitCode: z.string().trim().min(1).max(16).default('pc'),
+  purchaseCostCents: z.number().int().min(0).max(100_000_000).default(0),
+  sellingPriceCents: z.number().int().min(0).max(100_000_000),
+  priceIncludesTax: z.boolean().default(true),
+  minStockMilli: z.number().int().min(0).max(1_000_000_000).default(0),
+  allowNegativeStock: z.boolean().default(false),
+  trackStock: z.boolean().default(true),
+  description: nullableText(1000),
+  storageLocation: nullableText(80),
+  isActive: z.boolean().default(true),
+  barcodes: z.array(productBarcodeSchema).max(20).default([]),
+  /** Opening stock recorded as an `initial` movement when the product is created. */
+  initialStockMilli: z.number().int().min(0).max(1_000_000_000).optional(),
+});
+export type ProductInput = z.infer<typeof productSchema>;
+export const updateProductSchema = productSchema
+  .omit({ barcodes: true, initialStockMilli: true })
+  .partial();
+export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+
+export interface ProductBarcodeSummary {
+  id: string;
+  barcode: string;
+  isPrimary: boolean;
+  quantityMilli: number;
+}
+
+export interface ProductSummary {
+  id: string;
+  name: string;
+  sku: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryColor: string | null;
+  brand: string | null;
+  supplierId: string | null;
+  taxCategoryId: string | null;
+  /** Effective rate: the product's tax category or the business default. */
+  taxRateBp: number;
+  unitCode: string;
+  unitIsDecimal: boolean;
+  purchaseCostCents: number;
+  averageCostCents: number;
+  sellingPriceCents: number;
+  priceIncludesTax: boolean;
+  stockMilli: number;
+  minStockMilli: number;
+  allowNegativeStock: boolean;
+  trackStock: boolean;
+  lowStock: boolean;
+  description: string | null;
+  storageLocation: string | null;
+  isActive: boolean;
+  barcodes: ProductBarcodeSummary[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const productListQuerySchema = z.object({
+  q: z.string().trim().max(80).optional(),
+  categoryId: z.string().uuid().optional(),
+  lowStock: z.coerce.boolean().optional(),
+  active: z.enum(['all', 'active', 'inactive']).default('active'),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).default(50),
+});
+export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+/** Result of scanning/typing a code at the POS. */
+export interface ProductLookupResponse {
+  product: ProductSummary;
+  /** Quantity sold by the scanned barcode (multi-packs), 1000 for SKU matches. */
+  quantityMilli: number;
+  matchedBy: 'barcode' | 'sku';
+}
+
+export const STOCK_ADJUSTMENT_TYPES = [
+  'adjustment',
+  'initial',
+  'damaged',
+  'expired',
+  'missing',
+  'stock_count',
+] as const;
+export type StockAdjustmentType = (typeof STOCK_ADJUSTMENT_TYPES)[number];
+
+export const stockAdjustmentSchema = z
+  .object({
+    type: z.enum(STOCK_ADJUSTMENT_TYPES).default('adjustment'),
+    /** Signed change in milli units … */
+    quantityMilliDelta: z.number().int().optional(),
+    /** … or the counted absolute stock (stock counts). Exactly one of the two. */
+    newStockMilli: z.number().int().min(0).optional(),
+    reason: z.string().trim().min(2).max(200),
+    unitCostCents: z.number().int().min(0).max(100_000_000).optional(),
+  })
+  .refine((v) => (v.quantityMilliDelta === undefined) !== (v.newStockMilli === undefined), {
+    message: 'Provide quantityMilliDelta or newStockMilli',
+    path: ['quantityMilliDelta'],
+  });
+export type StockAdjustmentInput = z.infer<typeof stockAdjustmentSchema>;
+
+export interface InventoryMovementSummary {
+  id: number;
+  productId: string;
+  productName: string;
+  sku: string;
+  movementType: string;
+  quantityMilliDelta: number;
+  stockAfterMilli: number;
+  unitCostCents: number | null;
+  reason: string | null;
+  referenceType: string | null;
+  referenceId: string | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+export const inventoryMovementsQuerySchema = z.object({
+  productId: z.string().uuid().optional(),
+  type: z.string().trim().max(30).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+// ─── Sales ────────────────────────────────────────────────────────────────────
+
+export const SALE_STATUSES = [
+  'suspended',
+  'completed',
+  'partially_refunded',
+  'refunded',
+  'void',
+] as const;
+export type SaleStatus = (typeof SALE_STATUSES)[number];
+export const SALE_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other'] as const;
+
+export const saleItemInputSchema = z.object({
+  productId: z.string().uuid(),
+  quantityMilli: z.number().int().min(1).max(1_000_000_000),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+});
+export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
+
+export const salePaymentInputSchema = z.object({
+  method: z.enum(SALE_PAYMENT_METHODS),
+  amountCents: z.number().int().min(1).max(100_000_000),
+  reference: z.string().trim().max(80).optional(),
+});
+export type SalePaymentInput = z.infer<typeof salePaymentInputSchema>;
+
+const saleBody = {
+  items: z.array(saleItemInputSchema).min(1).max(200),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+  customerId: z.string().uuid().nullable().default(null),
+  notes: z.string().trim().max(500).optional(),
+  clientRequestId: z.string().trim().min(8).max(80).optional(),
+};
+export const createSaleSchema = z.object({
+  ...saleBody,
+  payments: z.array(salePaymentInputSchema).min(1).max(10),
+});
+export type CreateSaleRequest = z.infer<typeof createSaleSchema>;
+export const suspendSaleSchema = z.object(saleBody);
+export type SuspendSaleRequest = z.infer<typeof suspendSaleSchema>;
+
+export const refundSchema = z.object({
+  items: z
+    .array(
+      z.object({ saleItemId: z.number().int().min(1), quantityMilli: z.number().int().min(1) }),
+    )
+    .min(1)
+    .max(200),
+  reason: z.string().trim().min(2).max(200),
+  restock: z.boolean().default(true),
+  method: z.enum(SALE_PAYMENT_METHODS).default('cash'),
+});
+export type RefundRequest = z.infer<typeof refundSchema>;
+
+export const saleListQuerySchema = z.object({
+  status: z.enum(SALE_STATUSES).optional(),
+  source: z.enum(['retail', 'gaming', 'mixed']).optional(),
+  cashierId: z.string().uuid().optional(),
+  q: z.string().trim().max(40).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type SaleListQuery = z.infer<typeof saleListQuerySchema>;
+
+export interface SaleItemSummary {
+  id: number;
+  lineNo: number;
+  productId: string | null;
+  gamingSessionId: string | null;
+  description: string;
+  sku: string | null;
+  quantityMilli: number;
+  unitPriceCents: number;
+  discountCents: number;
+  taxRateBp: number;
+  taxCents: number;
+  lineTotalCents: number;
+  refundedMilli: number;
+}
+
+export interface SalePaymentSummary {
+  id: string;
+  kind: 'sale' | 'refund';
+  method: string;
+  amountCents: number;
+  reference: string | null;
+  receivedAt: string;
+}
+
+export interface RefundSummary {
+  id: string;
+  refundNo: string | null;
+  totalCents: number;
+  reason: string;
+  restock: boolean;
+  method: string;
+  createdByName: string | null;
+  createdAt: string;
+  items: { saleItemId: number; quantityMilli: number; amountCents: number }[];
+}
+
+export interface SaleSummary {
+  id: string;
+  receiptNo: string | null;
+  status: SaleStatus;
+  source: 'retail' | 'gaming' | 'mixed';
+  customerId: string | null;
+  customerName: string | null;
+  cashierUserId: string;
+  cashierName: string | null;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  paidCents: number;
+  changeCents: number;
+  refundedCents: number;
+  itemCount: number;
+  notes: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface SaleDetail extends SaleSummary {
+  items: SaleItemSummary[];
+  payments: SalePaymentSummary[];
+  refunds: RefundSummary[];
+}
+
+export interface SalesListResponse {
+  items: SaleSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Totals over the whole filtered set (not just the page). */
+  summary: { count: number; totalCents: number; refundedCents: number };
+}
+
+/** Everything needed to render a receipt (business header from settings + the sale). */
+export interface ReceiptData {
+  business: {
+    name: string;
+    legalName: string;
+    address: string;
+    city: string;
+    phone: string;
+    taxId: string;
+    footer: string;
+  };
+  sale: SaleDetail;
+  currency: string;
+  widthMm: 58 | 80;
+  printedAt: string;
+  isReprint: boolean;
+}

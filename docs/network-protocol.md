@@ -126,6 +126,40 @@ it: `idle_only` (default — only while no session is running), `maintenance_win
 The client answers with `client.event update_status {status: checking | none | installed | failed |
 unavailable}` and relaunches itself after installing a signature-verified update.
 
+### Catalogue & inventory (`products.view` to read, `products.manage` to write, `inventory.adjust` for stock)
+
+| Route                                                                  | Notes                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET/POST /catalog/tax-categories`                                     | VAT classes (`rateBp`, `isDefault`). A product without a tax category uses the default class, or `tax.default_rate_bp` when none exists                                                                             |
+| `GET/POST /catalog/categories`, `PATCH/DELETE /catalog/categories/:id` | `productCount` included; deleting leaves products uncategorised                                                                                                                                                     |
+| `GET /products`                                                        | `?q` (name/SKU/brand/barcode), `categoryId`, `lowStock`, `active=active\|inactive\|all`, `page`, `pageSize≤500` → `{items, total, page, pageSize}`                                                                  |
+| `GET /products/lookup?code=`                                           | Scanner path: barcode first, then SKU → `{product, quantityMilli, matchedBy}` (`quantityMilli` is the pack size of a case barcode); `404` when unknown                                                              |
+| `POST /products`                                                       | `sku` optional (generated `SKU-NNNNNN`), `barcodes[]`, `initialStockMilli` (recorded as an `initial` movement) → `201`                                                                                              |
+| `GET/PATCH/DELETE /products/:id`                                       | `DELETE` → `{archived: true}` when the product was ever sold or moved (it is deactivated instead of removed), `{archived: false}` when it was really deleted                                                        |
+| `POST /products/:id/barcodes`, `DELETE …/:barcodeId`                   | barcodes are unique across all products                                                                                                                                                                             |
+| `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that |
+| `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                             |
+
+### Sales / POS (`pos.sell`; `pos.discount`, `pos.suspend`, `pos.refund`, `pos.reprint` for the matching actions)
+
+| Route                            | Body / query                                                                                                                                              | Result                                                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /sales`                    | `{items[{productId, quantityMilli, discountCents?}], discountCents?, payments[{method, amountCents, reference?}], customerId?, notes?, clientRequestId?}` | `201 SaleDetail` — prices and tax come from the database, never from the client; idempotent on `clientRequestId`                         |
+| `POST /sales/suspend`            | same without payments                                                                                                                                     | `201` parked sale (no receipt number, no stock movement, no payment)                                                                     |
+| `POST /sales/:id/complete`       | `POST /sales` body                                                                                                                                        | completes a parked sale                                                                                                                  |
+| `POST /sales/:id/void`           | —                                                                                                                                                         | `204`; parked sales only                                                                                                                 |
+| `POST /sales/:id/refund`         | `{items[{saleItemId, quantityMilli}], reason, restock=true, method=cash}`                                                                                 | `SaleDetail` with the new `K-<year>-NNNNNN` refund; `409` when more than the sold quantity is returned                                   |
+| `GET /sales`                     | `?status&source&cashierId&q&from&to&page&pageSize`                                                                                                        | `{items, total, page, pageSize, summary{count, totalCents, refundedCents}}` (summary over the whole filter)                              |
+| `GET /sales/:id`                 | —                                                                                                                                                         | items, payments, refunds                                                                                                                 |
+| `GET /sales/:id/receipt?reprint` | —                                                                                                                                                         | `ReceiptData` (business header from settings, width 58/80 mm); `reprint=true` needs `pos.reprint`, is logged in `print_jobs` and audited |
+
+Money rules enforced by the server: `subtotal = Σ line totals after line discounts`, `total = subtotal − sale
+discount`, the sale discount is spread over lines by largest remainder for tax purposes, VAT is derived
+from tax-inclusive prices (`price_includes_tax=false` adds it instead), only **cash** may be over-tendered
+(change is returned), card/bank payments may not exceed the total, and stock is reserved inside the
+same transaction with `SELECT … FOR UPDATE` in product-id order (`409 INSUFFICIENT_STOCK` carries
+`productId`, `availableMilli`, `requestedMilli`). Error responses are `{error: {code, message, details?}}`.
+
 ### Client registration (no bearer token; rate-limited per IP)
 
 | Method | Path                                | Notes                                                                                                                                                                                                                                                                                                         |

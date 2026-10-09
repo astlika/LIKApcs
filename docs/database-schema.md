@@ -131,6 +131,16 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
 - **refunds / refund_items** — partial or full, `restock` flag, `authorized_by`.
 - **invoices**, **print_jobs** — invoice numbering/data and a queue for receipt printing.
 
+How the POS (Phase 5) uses these tables: a completed sale is written in **one transaction** — the
+`sales` row, its `sale_items` (price, tax rate and cost snapshotted from the product), one `payments`
+row per tender, one `inventory_movements` row (`sale`) per stocked product with `stock_after_milli`,
+the products' `stock_milli` update and the `R-<year>-NNNNNN` number from `document_sequences`.
+Products are locked `FOR UPDATE` in id order so two tills cannot oversell the last unit. Suspended
+(parked) sales only hold the `sales`/`sale_items` rows (`status='suspended'`, no number, no stock,
+no payment) until they are completed or voided. Refunds add `refunds`/`refund_items`, a negative
+`payments` row (`kind='refund'`), a `sale_return` movement when `restock` is set, and move the sale
+to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind='sku'`).
+
 ### Purchasing (0006)
 
 - **purchases** (`status` draft/ordered/partially_received/received/cancelled, `payment_status`,

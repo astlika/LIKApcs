@@ -16,6 +16,9 @@ import { PricingPage } from './pages/PricingPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AuditLogPage } from './pages/AuditLogPage';
+import { PosPage } from './pages/PosPage';
+import { SalesPage } from './pages/SalesPage';
+import { ProductsPage } from './pages/ProductsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 /** Redirects anonymous visitors to /login (or /setup on a fresh server). */
@@ -58,6 +61,9 @@ export function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="stations" element={<StationsPage />} />
+          <Route path="pos" element={<PosPage />} />
+          <Route path="sales" element={<SalesPage />} />
+          <Route path="products" element={<ProductsPage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />
           <Route path="settings" element={<SettingsPage />} />
