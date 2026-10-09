@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities of the main LIKApcs Admin window",
+  "windows": ["main"],
+  "permissions": ["core:default", "shell:allow-open", "process:allow-restart", "process:allow-exit"]
+}
