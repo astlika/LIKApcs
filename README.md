@@ -14,7 +14,7 @@ Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/l
 ## Install (end users)
 
 1. **Server PC** — download `likapcs-server-<version>.zip` from
-   [Releases](https://github.com/__GITHUB_OWNER__/LIKApcs/releases/latest), unzip, follow
+   [Releases](https://github.com/astlika/LIKApcs/releases/latest), unzip, follow
    `README.md` inside (Node 20 + PostgreSQL, `npm run migrate`, `npm run create-admin`, optional
    Windows service via `deploy\install-windows.ps1`).
 2. **Admin PCs** — download and run `LIKApcs-Setup.exe` from the same release. On the login screen

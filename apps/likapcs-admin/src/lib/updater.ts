@@ -18,7 +18,7 @@ export interface AvailableUpdate {
   dismiss: () => Promise<void>;
 }
 
-export const GITHUB_RELEASES_URL = 'https://github.com/__GITHUB_OWNER__/LIKApcs/releases';
+export const GITHUB_RELEASES_URL = 'https://github.com/astlika/LIKApcs/releases';
 
 export function isDesktopApp(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

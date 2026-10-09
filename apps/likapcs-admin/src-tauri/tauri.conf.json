@@ -53,7 +53,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEMUE1REIwRURBQzAzNDIKUldSQ0E2enRzRjBhelQ5TktXb1liWGlYUFpaZy9ZQXZxZitYclN1OGNscnE1UW1EcWZJanVLMi8K",
       "endpoints": [
-        "https://github.com/__GITHUB_OWNER__/LIKApcs/releases/latest/download/latest.json"
+        "https://github.com/astlika/LIKApcs/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

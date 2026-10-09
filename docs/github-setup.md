@@ -1,6 +1,6 @@
 # LIKApcs — GitHub repository, releases & in-app updates
 
-The code lives in the **public** GitHub repository `LIKApcs` (owner: `__GITHUB_OWNER__`). Public was
+The code lives in the **public** GitHub repository `LIKApcs` (owner: `astlika`). Public was
 chosen deliberately: GitHub release assets of a public repository can be downloaded anonymously, which
 lets the installed Admin application update itself straight from GitHub Releases with no proxy, no
 token and no extra infrastructure. Nothing in the repository contains credentials — everything
