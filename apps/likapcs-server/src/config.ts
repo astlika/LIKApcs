@@ -16,6 +16,8 @@ const envSchema = z.object({
   LIKAPCS_DATA_DIR: z.string().optional(),
   LIKAPCS_PG_BIN: z.string().optional(),
   LIKAPCS_LOG_FILE: z.string().optional(),
+  /** Where backups are written; defaults to <data dir>/backups. Point it at a NAS/USB path if wanted. */
+  LIKAPCS_BACKUP_DIR: z.string().optional(),
   LIKAPCS_DISCOVERY: z
     .string()
     .default('true')
@@ -55,6 +57,8 @@ export interface ServerConfig {
   pgBinDir: string | null;
   /** Log destination: a file path, or null for stdout. */
   logFile: string | null;
+  /** Backup archives live here — outside the installation directory by default. */
+  backupDir: string;
   discovery: { enabled: boolean; port: number };
   host: string;
   port: number;
@@ -123,6 +127,9 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Ser
     dataDir,
     pgBinDir,
     logFile,
+    backupDir: env.LIKAPCS_BACKUP_DIR
+      ? path.resolve(env.LIKAPCS_BACKUP_DIR)
+      : path.join(dataDir, 'backups'),
     discovery: { enabled: env.LIKAPCS_DISCOVERY, port: env.LIKAPCS_DISCOVERY_PORT },
     host: env.LIKAPCS_HOST,
     port: env.LIKAPCS_PORT,

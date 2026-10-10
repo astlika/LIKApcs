@@ -205,6 +205,12 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     }
   }
 
+  /** Disconnects every client PC (they reconnect and re-handshake); Admin sockets stay open. */
+  closeDevices(code: number, reason: string): void {
+    for (const presence of this.devices.values()) presence.socket.close(code, reason);
+    this.devices.clear();
+  }
+
   closeAll(code: number, reason: string): void {
     for (const presence of this.devices.values()) presence.socket.close(code, reason);
     for (const admin of this.admins) admin.socket.close(code, reason);

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
   Contact,
+  DatabaseBackup,
   LayoutDashboard,
   Monitor,
   Package,
@@ -65,6 +66,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'employees', label: t('nav.employees'), kind: 'page', to: '/employees', icon: Users },
       { id: 'audit', label: t('nav.audit'), kind: 'page', to: '/audit', icon: ScrollText },
       { id: 'settings', label: t('nav.settings'), kind: 'page', to: '/settings', icon: Settings },
+      {
+        id: 'backups',
+        label: t('nav.backups'),
+        kind: 'page',
+        to: '/backups',
+        icon: DatabaseBackup,
+      },
     ];
     const stationItems: Item[] = (stations.data ?? []).map((s) => ({
       id: s.id,

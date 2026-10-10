@@ -172,6 +172,20 @@ export class AuthService {
     };
   }
 
+  /**
+   * Re-confirms the password of an already signed-in user before a destructive action (restore,
+   * …). Does not count towards the lockout counter: the caller is authenticated already.
+   */
+  async confirmPassword(userId: string, password: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ password_hash: string; is_active: boolean }>(
+      'SELECT password_hash, is_active FROM users WHERE id = $1',
+      [userId],
+    );
+    const user = rows[0];
+    if (!user || !user.is_active) return false;
+    return verifyPassword(password, user.password_hash);
+  }
+
   async revokeExpiredSessions(): Promise<number> {
     const result = await this.pool.query(
       "DELETE FROM user_sessions WHERE expires_at < now() - interval '30 days' OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '30 days')",

@@ -143,3 +143,71 @@ export function fieldError(err: unknown, field: string): string | undefined {
     return err.message;
   return undefined;
 }
+
+async function throwIfNotOk(response: Response, fallbackCode: string): Promise<void> {
+  if (response.ok) return;
+  let body: Partial<ApiErrorBody> = {};
+  try {
+    body = (await response.json()) as Partial<ApiErrorBody>;
+  } catch {
+    /* not json */
+  }
+  throw new ApiError(
+    response.status,
+    body.error?.code ?? fallbackCode,
+    body.error?.message ?? `HTTP ${response.status}`,
+    body.error?.details,
+  );
+}
+
+/**
+ * Downloads an authenticated file through fetch + blob (works in the browser and in WebView2,
+ * where a plain link cannot carry the bearer token). The server's `content-disposition` file
+ * name wins over `fallbackName`.
+ */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  const url = new URL(`${getServerUrl()}/api/v1${path}`, window.location.origin);
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      headers: { authorization: `Bearer ${getToken() ?? ''}` },
+    });
+  } catch (err) {
+    throw new ApiError(0, 'network_error', err instanceof Error ? err.message : 'network error');
+  }
+  await throwIfNotOk(response, 'download_failed');
+  const blob = await response.blob();
+  const match = /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = match?.[1] ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+/** Uploads a raw file body (`application/octet-stream`) and returns the JSON response. */
+export async function apiUpload<T>(
+  path: string,
+  file: Blob,
+  query: Record<string, string> = {},
+): Promise<T> {
+  const url = new URL(`${getServerUrl()}/api/v1${path}`, window.location.origin);
+  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${getToken() ?? ''}`,
+        'content-type': 'application/octet-stream',
+      },
+      body: file,
+    });
+  } catch (err) {
+    throw new ApiError(0, 'network_error', err instanceof Error ? err.message : 'network error');
+  }
+  await throwIfNotOk(response, 'upload_failed');
+  return (await response.json()) as T;
+}

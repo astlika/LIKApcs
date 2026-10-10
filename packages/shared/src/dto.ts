@@ -1440,3 +1440,89 @@ export interface PurchaseDetail extends PurchaseSummary {
 export interface PurchaseListResponse extends Paginated<PurchaseSummary> {
   summary: { count: number; totalCents: number; paidCents: number; dueCents: number };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 7: backups & restore
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const BACKUP_KINDS = ['manual', 'scheduled', 'pre_migration', 'pre_restore'] as const;
+export type BackupKind = (typeof BACKUP_KINDS)[number];
+export const BACKUP_STATUSES = ['running', 'succeeded', 'failed', 'deleted'] as const;
+export type BackupStatus = (typeof BACKUP_STATUSES)[number];
+
+/** Archive format identifier written into every backup's manifest.json. */
+export const BACKUP_FORMAT = 'likapcs-backup';
+export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FILE_EXTENSION = '.likapcs-backup.tar.gz';
+
+export interface BackupManifest {
+  format: typeof BACKUP_FORMAT;
+  formatVersion: number;
+  createdAt: string;
+  serverVersion: string;
+  schemaVersion: number;
+  businessName: string | null;
+  kind: BackupKind;
+  tables: { name: string; rows: number; bytes: number }[];
+}
+
+export interface BackupSummary {
+  id: string;
+  kind: BackupKind;
+  status: BackupStatus;
+  fileName: string | null;
+  /** False when the history row exists but the file was removed from the backup directory. */
+  fileExists: boolean;
+  sizeBytes: number | null;
+  sha256: string | null;
+  schemaVersion: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  errorMessage: string | null;
+  createdByName: string | null;
+}
+
+export interface BackupsResponse {
+  directory: string;
+  schemaVersion: number;
+  schedule: { enabled: boolean; time: string; keepCount: number; nextRunAt: string | null };
+  items: BackupSummary[];
+}
+
+export const backupListQuerySchema = z.object({
+  includeDeleted: z.coerce.boolean().default(false),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+export type BackupListQuery = z.infer<typeof backupListQuerySchema>;
+
+export const restoreBackupSchema = z.object({
+  /** The acting administrator's own password — re-confirmed before anything is overwritten. */
+  password: z.string().min(1).max(200),
+  /** Must be literally true: the UI asks for an explicit acknowledgement. */
+  confirm: z.literal(true),
+});
+export type RestoreBackupRequest = z.infer<typeof restoreBackupSchema>;
+
+export interface RestoreResult {
+  backupId: string;
+  /** Safety copy taken immediately before the restore. */
+  preRestoreBackupId: string | null;
+  tablesRestored: number;
+  rowsRestored: number;
+  durationMs: number;
+  /** True when the caller's session survived (its user exists in the restored data). */
+  sessionKept: boolean;
+}
+
+export const backupUploadQuerySchema = z.object({
+  fileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(160)
+    .regex(
+      /^[A-Za-z0-9._-]+$/,
+      'file name may only contain letters, digits, dot, dash, underscore',
+    ),
+});

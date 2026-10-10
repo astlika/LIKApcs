@@ -14,15 +14,23 @@ export interface TestContext {
 }
 
 /** Drops and recreates the public schema, applies all migrations, builds a non-listening app. */
-export async function createTestContext(): Promise<TestContext> {
-  const config = loadConfig();
+export async function createTestContext(
+  overrides: Partial<ServerConfig> = {},
+): Promise<TestContext> {
+  const config = { ...loadConfig(), ...overrides };
   if (!config.databaseUrl || !/likapcs_test/.test(config.databaseUrl)) {
     throw new Error('Refusing to run tests against a database that is not named *likapcs_test*');
   }
   const pool = createPool(config.databaseUrl, { max: 5 });
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await runMigrations(pool, config.migrationsDir);
-  const app = await buildApp({ config, pool, logger: false, sessionTicker: false });
+  const app = await buildApp({
+    config,
+    pool,
+    logger: false,
+    sessionTicker: false,
+    backupScheduler: false,
+  });
   await app.ready();
   return {
     app,

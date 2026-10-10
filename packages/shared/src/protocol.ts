@@ -150,6 +150,8 @@ export const ADMIN_EVENTS = [
   'device.changed',
   'session.changed',
   'notification',
+  /** A backup was restored: every cached view must be reloaded. */
+  'system.restored',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

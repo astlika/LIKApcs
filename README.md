@@ -59,9 +59,10 @@ Full instructions: [docs/development-setup.md](docs/development-setup.md).
 ## Documentation
 
 - [Architecture](docs/architecture.md) — components, security model, data conventions, **financial definitions**, phase plan
-- [Database schema](docs/database-schema.md) — migrations 0001–0007, all tables and key columns
+- [Database schema](docs/database-schema.md) — migrations 0001–0009, all tables and key columns
 - [Network protocol](docs/network-protocol.md) — HTTP API v1, `/ws/admin`, `/ws/client`, device registration flow
 - [Development setup](docs/development-setup.md) — prerequisites, launch, tests, troubleshooting
+- [Backups & restore](docs/backups.md) — archive format, daily schedule, restore procedure, moving to a new PC
 - [GitHub setup](docs/github-setup.md) — private repo, branch protection, CI/release workflows, secrets
 - [CHANGELOG](CHANGELOG.md)
 

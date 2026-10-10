@@ -68,6 +68,10 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               void queryClient.invalidateQueries({ queryKey: ['stations'] });
               void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
               break;
+            case 'system.restored':
+              // A backup was restored on the server: every cached view is stale.
+              void queryClient.invalidateQueries();
+              break;
             default:
               break;
           }

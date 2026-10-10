@@ -8,6 +8,19 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Backups & restore (Phase 7b).** Node-native backup engine (works with the embedded Windows
+  PostgreSQL that has no `pg_dump`): every table is copied inside one repeatable-read snapshot into a
+  `*.likapcs-backup.tar.gz` archive (`manifest.json` + `tables/*.csv`), written to the backup folder
+  outside the install directory (`LIKAPCS_BACKUP_DIR`, default `<data dir>/backups`), recorded in
+  `backup_history` with SHA-256 and duration. Daily scheduler (`backup.enabled` / `backup.time` in the
+  business time zone / `backup.keep_count` retention of scheduled archives). Restore — behind
+  `backups.manage`, the administrator's re-typed password and an explicit acknowledgement — takes a
+  `pre_restore` safety copy, then truncates and reloads all tables in foreign-key order in one
+  transaction, resets sequences, keeps the backup history and the acting session, refuses archives
+  of another schema version, notifies Admin apps (`system.restored`) and makes client PCs reconnect.
+  Routes `/backups` (list, create, upload, download, delete, restore). Admin: **Backups** page
+  (schedule and folder overview, back up now, upload, download, delete, restore dialog with result).
+  `docs/backups.md` documents the format, retention, restore and moving to a new PC.
 - **Suppliers & purchases (Phase 7a).** Server: `PurchasingService` — suppliers (unique names,
   deactivate instead of delete, purchase totals and open balance per supplier) and purchases with
   references `B-<year>-NNNNNN`: lines in milli-quantities with unit cost and VAT, additional costs,

@@ -24,11 +24,13 @@ import { ExpensesService } from './services/expenses.js';
 import { CustomersService } from './services/customers.js';
 import { ReportsService } from './services/reports.js';
 import { PurchasingService } from './services/purchasing.js';
+import { BackupService } from './services/backups.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { purchasingRoutes } from './routes/purchasing.js';
+import { backupRoutes } from './routes/backups.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
@@ -57,6 +59,7 @@ export interface Services {
   customers: CustomersService;
   reports: ReportsService;
   purchasing: PurchasingService;
+  backups: BackupService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -88,6 +91,8 @@ export interface BuildAppOptions {
   requestShutdown?: (reason: string) => void;
   /** Set to false in tests to drive the session clock manually. */
   sessionTicker?: boolean;
+  /** Set to false in tests (they call `backups.tick()` themselves). */
+  backupScheduler?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -124,6 +129,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const customers = new CustomersService(pool, sales, sessions);
   const reports = new ReportsService(pool, cash, settings);
   const purchasing = new PurchasingService(pool, cash);
+  const backups = new BackupService(pool, config.backupDir, settings, {
+    schemaVersion: () => app.schemaVersion,
+    afterRestore: () => {
+      settings.invalidate();
+      hub.broadcastToAdmins('system.restored', { at: new Date().toISOString() });
+      hub.closeDevices(WS_CLOSE_CODES.SERVER_SHUTDOWN, 'data restored — reconnect');
+    },
+    log: app.log,
+  });
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -149,6 +163,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     customers,
     reports,
     purchasing,
+    backups,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -193,6 +208,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(customerRoutes);
       await api.register(reportRoutes);
       await api.register(purchasingRoutes);
+      await api.register(backupRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },
@@ -211,7 +227,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   let sweepTimer: NodeJS.Timeout | null = null;
   let dailyTimer: NodeJS.Timeout | null = null;
   let sessionTimer: NodeJS.Timeout | null = null;
+  let backupTimer: NodeJS.Timeout | null = null;
   app.addHook('onReady', async () => {
+    if (options.backupScheduler !== false) {
+      backupTimer = setInterval(() => {
+        void backups
+          .tick()
+          .catch((err: unknown) => app.log.error({ err }, 'scheduled backup failed'));
+      }, 30_000);
+    }
     // Session clock: prepaid expiries, expiry warnings, grace handling. Not started under tests
     // (they drive `sessions.tick()` with explicit times).
     if (options.sessionTicker !== false) {
@@ -236,6 +260,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (sweepTimer) clearInterval(sweepTimer);
     if (dailyTimer) clearInterval(dailyTimer);
     if (sessionTimer) clearInterval(sessionTimer);
+    if (backupTimer) clearInterval(backupTimer);
     hub.closeAll(WS_CLOSE_CODES.SERVER_SHUTDOWN, 'server shutting down');
   });
 

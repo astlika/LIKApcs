@@ -231,6 +231,20 @@ Days are bucketed in the **business time zone** (`locale.timezone` setting, defa
 `Europe/Belgrade`), so a sale at 00:30 local time belongs to the new day even though it is still the
 previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD HH:MM:SS`).
 
+### Backups (`backups.manage`)
+
+| Route                       | Body / query                                       | Result                                                                                                                                                                                                                     |
+| --------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /backups`              | `?includeDeleted&limit`                            | `{directory, schemaVersion, schedule{enabled, time, keepCount, nextRunAt}, items[BackupSummary]}`                                                                                                                          |
+| `POST /backups`             | `{}`                                               | `201` — writes a `manual` archive (consistent snapshot of every table) and records it                                                                                                                                      |
+| `POST /backups/upload`      | `?fileName=` + raw `application/octet-stream` body | `201` — stores a copied archive in the backup folder after validating its manifest; `400` for anything that is not a LIKApcs archive, `409` if the name exists                                                             |
+| `GET /backups/:id`          | —                                                  | one summary                                                                                                                                                                                                                |
+| `GET /backups/:id/download` | —                                                  | the archive (`application/gzip`, `content-disposition: attachment`)                                                                                                                                                        |
+| `DELETE /backups/:id`       | —                                                  | removes the file, marks the history row `deleted`                                                                                                                                                                          |
+| `POST /backups/:id/restore` | `{password, confirm: true}`                        | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 SCHEMA_MISMATCH` for another schema version; `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`) |
+
+Admin WebSocket event `system.restored` follows a successful restore; Admin apps reload every view.
+
 ### Client registration (no bearer token; rate-limited per IP)
 
 | Method | Path                                | Notes                                                                                                                                                                                                                                                                                                         |

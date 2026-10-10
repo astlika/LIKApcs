@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Contact,
+  DatabaseBackup,
   KeyRound,
   Lock,
   LockOpen,
@@ -233,6 +234,12 @@ export function AppShell() {
           permission: PERMISSIONS.AUDIT_VIEW,
         },
         {
+          to: '/backups',
+          icon: DatabaseBackup,
+          label: t('nav.backups'),
+          permission: PERMISSIONS.BACKUPS_MANAGE,
+        },
+        {
           to: '/settings',
           icon: Settings,
           label: t('nav.settings'),
@@ -258,6 +265,7 @@ export function AppShell() {
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),
+    '/backups': t('nav.backups'),
   };
   const serverOk = health.isSuccess && health.data.status === 'ok';
   const initials = (user?.fullName ?? '?')
