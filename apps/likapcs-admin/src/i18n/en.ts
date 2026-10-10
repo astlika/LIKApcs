@@ -176,6 +176,30 @@ export const en = {
   stations: {
     title: 'Gaming Stations',
     subtitle: '{online} online · {available} available · {occupied} in session · {offline} offline',
+    connectPc: 'Connect a PC',
+    firewallBanner:
+      'Gaming PCs cannot reach this server yet: Windows Firewall is blocking it on this PC.',
+    connect: {
+      title: 'Connect a gaming PC',
+      step1: '1. Install LIKApcs Client on the gaming PC',
+      step1Hint: 'Use the same version as this Admin (LIKApcs-Client-Setup.exe):',
+      step2: '2. The client finds this server by itself',
+      step2Hint:
+        'Both PCs must be on the same network. If the lock screen keeps searching, type one of these addresses into it (click to copy):',
+      step3: '3. Approve the PC below and assign it to a station',
+      step3Hint:
+        'New PCs appear here within a few seconds. Only approved PCs receive session commands.',
+      noAddresses: 'No network address found on the server PC.',
+      discoveryOff: 'Automatic discovery is disabled on this server — type the address manually.',
+      copy: 'Copy address',
+      firewall: 'Windows Firewall on this PC',
+      firewallAllowed: 'Allowed — gaming PCs can connect to this server.',
+      firewallMissing:
+        'Blocked — the firewall rule for port 4700 is missing. Allow it once (one Windows prompt).',
+      firewallUnknown: 'Could not check the firewall. If PCs cannot connect, allow it once.',
+      allowNow: 'Allow now',
+      noPending: 'No PC is waiting for approval yet. This list refreshes automatically.',
+    },
     addStation: 'Add station',
     editStation: 'Edit station',
     newStation: 'New station',

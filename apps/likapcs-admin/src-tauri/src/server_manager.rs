@@ -349,6 +349,38 @@ pub fn discover(timeout: Duration) -> Vec<serde_json::Value> {
 }
 
 /// Opens the Windows Firewall for the server (one UAC prompt). No-op on other platforms.
+/// Whether the inbound rule gaming PCs need exists. `netsh` is asked by display name and only
+/// its exit code is used (the text is localised). `state` is "allowed", "missing" or "unknown".
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FirewallStatus {
+    pub state: String,
+}
+
+pub fn firewall_status() -> FirewallStatus {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("netsh");
+        cmd.args(["advfirewall", "firewall", "show", "rule"])
+            .raw_arg(format!("name=\"LIKApcs Server API (TCP {HTTP_PORT})\""))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        hide_console(&mut cmd);
+        let state = match cmd.status() {
+            Ok(status) if status.success() => "allowed",
+            Ok(_) => "missing",
+            Err(_) => "unknown",
+        };
+        FirewallStatus { state: state.into() }
+    }
+    #[cfg(not(windows))]
+    {
+        FirewallStatus { state: "unknown".into() }
+    }
+}
+
 pub fn allow_firewall(rt: &Runtime) -> Result<(), String> {
     #[cfg(windows)]
     {

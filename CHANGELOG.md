@@ -12,6 +12,36 @@ _Nothing yet._
 
 ### Added
 
+- **Pairing that explains itself.** Gaming Stations has a _Connect a PC_ dialog: the three steps,
+  the main PC's LAN addresses to type into a client (click to copy, from the new
+  `GET /system/network`), the Windows Firewall state of the main PC with an _Allow now_ button, and
+  the approval list that refreshes every 3 s while the dialog is open. A banner on Gaming Stations
+  warns while the firewall rule for port 4700 is missing (`firewall_status`, rule looked up by name;
+  the installer adds the rules itself when run as administrator — `windows/hooks.nsh`).
+- **Smarter server discovery in the Client.** A discovery reply lists every address of the main PC,
+  virtual adapters included; the client now probes `GET /system/health` on the address the reply
+  came from first, then on the advertised ones, and pins the first that answers instead of blindly
+  taking the first entry (the classic "found the server but never connects"). When a server answers
+  discovery but no address accepts connections, the lock screen says so and points at the firewall
+  fix. Staff can type an address right on the lock screen (`192.168.1.10` is enough); it is probed
+  before saving and the message is specific: no answer, not a LIKApcs server, or a different
+  installation than the one the PC is paired with. The health endpoint now reports
+  `installationId` and the business `name`.
+- **Client settings panel & tray icon.** The client sits in the notification area (status line,
+  _Settings…_, _Check for updates_, _Quit_). The panel (Ctrl+Alt+S, or the tray) has Connection
+  (status, address, _Forget pairing_), Updates, General (language) and About sections. Connection
+  changes and _Quit_ are only possible before pairing or while a staff member has unlocked the PC —
+  never under a customer.
+- **Client self-update.** Besides the Admin-pushed `update.apply`, the client checks the signed
+  release feed 2 minutes after start and every 6 hours and installs by itself while the PC is
+  locked with no session (switchable in the panel); otherwise the new version is offered with
+  _Install now_. Updates are never installed during a customer session.
+- **Kiosk hardening while locked (Windows).** A low-level keyboard hook swallows the Windows keys
+  (so Win+D, Win+Tab, Win+R, Win+L…), Alt+Tab, Alt+Esc, Alt+F4, Ctrl+Esc and Ctrl+Shift+Esc; Task
+  Manager is disabled through the per-user policy for the duration of the lock and re-enabled on
+  unlock, on exit and by the uninstaller; the window takes the foreground back the instant it
+  loses it; secondary monitors are covered by black windows. All of it switches off the moment a
+  session or a staff unlock starts.
 - **Product pictures.** Products can carry a photo — uploaded from a file (scaled to at most 800 px in the
   Admin before upload) or fetched from a link by the server. Pictures show in the product list and on
   the POS tiles; `PUT|DELETE /products/:id/image`, `POST /products/:id/image/from-url` and the public

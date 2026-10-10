@@ -132,4 +132,33 @@ describe('settings and dashboard', () => {
     });
     expect(ctx.app.schemaVersion).toBeGreaterThanOrEqual(10);
   });
+
+  it('health names the installation so a client PC can show which server answered', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/system/health' });
+    const body = res.json() as { name: string; installationId: string | null };
+    expect(body.name).toBe('Neon Arena');
+    // Tests run against an external database → no embedded installation id.
+    expect(body.installationId).toBeNull();
+  });
+
+  it('GET /system/network lists the addresses staff type into a gaming PC (devices.manage)', async () => {
+    const anon = await ctx.app.inject({ method: 'GET', url: '/api/v1/system/network' });
+    expect(anon.statusCode).toBe(401);
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/system/network',
+      headers: authHeader(owner.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      port: number;
+      discoveryPort: number;
+      discoveryEnabled: boolean;
+      addresses: string[];
+    };
+    expect(body.port).toBe(ctx.app.config.port);
+    expect(body.discoveryPort).toBe(ctx.app.config.discovery.port);
+    expect(Array.isArray(body.addresses)).toBe(true);
+    for (const ip of body.addresses) expect(ip).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+  });
 });

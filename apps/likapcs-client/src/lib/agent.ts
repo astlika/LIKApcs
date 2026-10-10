@@ -20,23 +20,33 @@ import {
 import {
   APP_VERSION,
   applySelfUpdate,
+  checkForUpdate,
   deviceIdentity,
   discoverServers,
+  firstReachable,
   powerAction,
+  probeServer,
+  quitApp,
   randomToken,
   secretDelete,
   secretGet,
   secretSet,
   setWindowMode,
   sha256Hex,
+  trayUpdate,
   type DeviceIdentity,
+  type TrayLabels,
+  type UpdateCheck,
+  type WindowMode,
 } from './native';
 import {
   Clock,
   CommandGuard,
   applyWelcome,
   backoffMs,
+  candidateServerUrls,
   initialState,
+  normalizeServerUrl,
   reduce,
   sessionView,
   type ClientState,
@@ -72,7 +82,27 @@ export interface AgentSnapshot {
   serverNowMs: number;
   version: string;
   lastError: string | null;
+  /** A server answered discovery but none of its addresses accept connections (firewall). */
+  discoveryHint: { name: string; url: string } | null;
+  /** Newer client version offered by the release feed (null = up to date / not checked). */
+  updateAvailable: string | null;
+  updateCheckedAt: number | null;
+  updateError: string | null;
+  /** Install updates by itself while the PC is locked and idle (default on). */
+  autoUpdate: boolean;
+  /** Which native window layout is showing ('panel' = settings opened from the tray). */
+  windowMode: WindowMode;
 }
+
+export type ManualConnectResult =
+  | { ok: true; url: string; name: string; version: string }
+  | {
+      ok: false;
+      reason:
+        'invalid' | 'timeout' | 'unreachable' | 'http' | 'not_likapcs' | 'different_installation';
+      url?: string;
+      name?: string;
+    };
 
 const KEYS = {
   pairing: 'pairing',
@@ -80,12 +110,18 @@ const KEYS = {
   token: 'device-token',
   machineFallback: 'machine-id-fallback',
   language: 'language',
+  autoUpdate: 'auto-update',
 } as const;
 
 const REGISTRATION_POLL_MS = 5000;
 const NO_SERVER_RETRY_MS = 6000;
 const REJECTED_RETRY_S = 120;
 const DISCOVERY_AFTER_FAILURES = 6;
+const PROBE_TIMEOUT_MS = 2500;
+/** First self-update check shortly after start, then periodically (also triggered by Admin). */
+const UPDATE_FIRST_CHECK_MS = 2 * 60_000;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
+const UPDATE_RETRY_MS = 30 * 60_000;
 
 type Listener = () => void;
 
@@ -100,8 +136,17 @@ export class Agent {
     serverNowMs: Date.now(),
     version: APP_VERSION,
     lastError: null,
+    discoveryHint: null,
+    updateAvailable: null,
+    updateCheckedAt: null,
+    updateError: null,
+    autoUpdate: true,
+    windowMode: 'locked',
   };
   private readonly listeners = new Set<Listener>();
+  private updateTimer: ReturnType<typeof setTimeout> | null = null;
+  private trayLabels: ((snap: AgentSnapshot) => TrayLabels) | null = null;
+  private lastTrayKey = '';
   private readonly clock = new Clock();
   private guard = new CommandGuard();
   private socket: WebSocket | null = null;
@@ -123,6 +168,7 @@ export class Agent {
   private set(patch: Partial<AgentSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     for (const l of this.listeners) l();
+    this.refreshTray();
   }
   private setPhase(phase: Phase): void {
     this.set({ phase });
@@ -132,10 +178,63 @@ export class Agent {
     this.set({ state });
     if (modeChanged || !this.modeApplied) {
       this.modeApplied = true;
-      void setWindowMode(state.mode === 'locked' ? 'locked' : 'overlay');
+      void this.applyWindowMode(state.mode === 'locked' ? 'locked' : 'overlay');
     }
   }
   private modeApplied = false;
+
+  private async applyWindowMode(mode: WindowMode): Promise<void> {
+    this.set({ windowMode: mode });
+    await setWindowMode(mode);
+  }
+
+  /**
+   * Settings panel opened from the tray. Only possible while the PC is unlocked (session or
+   * staff maintenance) — the lock screen itself hosts the panel otherwise (Ctrl+Alt+S).
+   */
+  async openPanel(): Promise<boolean> {
+    if (this.snapshot.state.mode === 'locked') return false;
+    await this.applyWindowMode('panel');
+    return true;
+  }
+  async closePanel(): Promise<void> {
+    if (this.snapshot.windowMode !== 'panel') return;
+    await this.applyWindowMode(this.snapshot.state.mode === 'locked' ? 'locked' : 'overlay');
+  }
+
+  /**
+   * Quits the client. Allowed only during a staff unlock (maintenance) or while the PC is not
+   * paired yet (a technician setting it up) — never under a customer session, and never while a
+   * paired PC is locked (the native side refuses that too).
+   */
+  async quit(): Promise<boolean> {
+    const { state, paired } = this.snapshot;
+    const allowed = state.mode === 'free' || !paired;
+    if (!allowed) return false;
+    try {
+      await quitApp(!paired);
+    } catch {
+      return false;
+    }
+    this.stop();
+    return true;
+  }
+
+  // ─── tray ─────────────────────────────────────────────────────────────────
+  /** The UI provides translated tray texts; the agent pushes them whenever the status changes. */
+  setTrayLabels(provider: (snap: AgentSnapshot) => TrayLabels): void {
+    this.trayLabels = provider;
+    this.lastTrayKey = '';
+    this.refreshTray();
+  }
+  private refreshTray(): void {
+    if (!this.trayLabels) return;
+    const labels = this.trayLabels(this.snapshot);
+    const key = JSON.stringify(labels);
+    if (key === this.lastTrayKey) return;
+    this.lastTrayKey = key;
+    void trayUpdate(labels).catch(() => undefined);
+  }
 
   // ─── lifecycle ────────────────────────────────────────────────────────────
   async start(): Promise<void> {
@@ -150,25 +249,115 @@ export class Agent {
     }
     const machineId = await sha256Hex(`likapcs-client:${raw}`);
     const language = (await secretGet(KEYS.language)) === 'sq' ? 'sq' : 'en';
-    this.set({ identity, machineId, state: { ...this.snapshot.state, language } });
+    const autoUpdate = (await secretGet(KEYS.autoUpdate)) !== 'off';
+    this.set({ identity, machineId, autoUpdate, state: { ...this.snapshot.state, language } });
     this.tick = setInterval(() => this.onTick(), 1000);
+    this.scheduleUpdateCheck(UPDATE_FIRST_CHECK_MS);
     void this.loop();
   }
 
   stop(): void {
     this.stopped = true;
     if (this.tick) clearInterval(this.tick);
+    if (this.updateTimer) clearTimeout(this.updateTimer);
     this.closeSocket(1000, 'client stopping');
     this.wake?.();
   }
 
-  /** Technician action (settings panel, unpaired only): use a fixed server address. */
-  async useManualServer(url: string): Promise<void> {
-    const cleaned = url.trim().replace(/\/+$/, '');
-    if (!/^https?:\/\/.+/.test(cleaned)) throw new Error('invalid url');
-    await this.savePairing({ serverUrl: cleaned, installationId: null, source: 'manual' });
+  /**
+   * Staff typed a server address (lock screen while unpaired, or the settings panel). The
+   * address is normalised and probed first so the answer is precise: unreachable (firewall /
+   * wrong network), not a LIKApcs server, or a *different* installation than the one this PC
+   * is paired with (its device token would be useless there — revoke/forget first).
+   */
+  async connectManually(input: string): Promise<ManualConnectResult> {
+    const url = normalizeServerUrl(input);
+    if (!url) return { ok: false, reason: 'invalid' };
+    const probe = await probeServer(url, 4000);
+    if (!probe.ok) return { ok: false, reason: probe.error ?? 'unreachable', url };
+    const current = this.snapshot.pairing;
+    if (
+      this.snapshot.paired &&
+      current?.installationId &&
+      probe.installationId &&
+      probe.installationId !== current.installationId
+    ) {
+      return { ok: false, reason: 'different_installation', url, name: probe.name };
+    }
+    await this.savePairing({
+      serverUrl: url,
+      installationId: probe.installationId ?? null,
+      source: 'manual',
+    });
+    this.set({ lastError: null, discoveryHint: null });
     this.closeSocket(4000, 'server changed');
     this.wake?.();
+    return { ok: true, url, name: probe.name ?? 'LIKApcs', version: probe.version ?? '' };
+  }
+
+  /**
+   * Forgets the pairing, device token and registration so this PC registers again (used to
+   * move a PC to another server). Only offered while the PC is unlocked by staff or unpaired.
+   */
+  async forgetPairing(): Promise<void> {
+    await secretDelete(KEYS.token);
+    await secretDelete(KEYS.registration);
+    await secretDelete(KEYS.pairing);
+    this.set({ pairing: null, paired: false, lastError: null, discoveryHint: null });
+    this.closeSocket(4000, 'pairing reset');
+    this.wake?.();
+  }
+
+  // ─── self-update ──────────────────────────────────────────────────────────
+  private scheduleUpdateCheck(delayMs: number): void {
+    if (this.updateTimer) clearTimeout(this.updateTimer);
+    this.updateTimer = setTimeout(() => void this.checkUpdates('scheduled'), delayMs);
+  }
+
+  /**
+   * Looks for a newer signed client. Scheduled checks install it by themselves only when the
+   * PC is locked with no session (never under a customer) and auto-update is on; otherwise
+   * the version is just remembered and offered in the settings panel.
+   */
+  async checkUpdates(trigger: 'scheduled' | 'manual'): Promise<UpdateCheck> {
+    const result = await checkForUpdate();
+    this.set({
+      updateCheckedAt: Date.now(),
+      updateAvailable: result.status === 'available' ? (result.version ?? null) : null,
+      updateError: result.status === 'failed' ? (result.error ?? 'failed') : null,
+    });
+    if (result.status === 'available' && trigger === 'scheduled' && this.canAutoInstall()) {
+      await this.selfUpdate('scheduled');
+    }
+    const next =
+      result.status === 'failed' || result.status === 'available'
+        ? UPDATE_RETRY_MS
+        : UPDATE_CHECK_INTERVAL_MS;
+    this.scheduleUpdateCheck(next);
+    return result;
+  }
+
+  private canAutoInstall(): boolean {
+    const { state, phase } = this.snapshot;
+    return (
+      this.snapshot.autoUpdate &&
+      state.mode === 'locked' &&
+      !state.session &&
+      phase.phase !== 'updating' &&
+      this.snapshot.windowMode !== 'panel'
+    );
+  }
+
+  /** Staff pressed "Install now". Refused during a customer session. */
+  async installUpdateNow(): Promise<boolean> {
+    if (this.snapshot.state.session || this.snapshot.phase.phase === 'updating') return false;
+    await this.selfUpdate('manual');
+    return true;
+  }
+
+  async setAutoUpdate(on: boolean): Promise<void> {
+    await secretSet(KEYS.autoUpdate, on ? 'on' : 'off');
+    this.set({ autoUpdate: on });
   }
 
   async setLanguage(language: 'en' | 'sq'): Promise<void> {
@@ -239,15 +428,28 @@ export class Agent {
     }
     this.setPhase({ phase: 'no_server', attempt });
     const found = await discoverServers(2500).catch(() => []);
-    const best = found[0];
-    if (!best?.urls[0]) return null;
-    const pairing: Pairing = {
-      serverUrl: best.urls[0],
-      installationId: best.installationId,
-      source: 'discovery',
-    };
-    await this.savePairing(pairing);
-    return pairing;
+    for (const server of found) {
+      // A server may advertise several addresses (virtual adapters, Wi-Fi + Ethernet); only an
+      // address that actually answers HTTP is saved — the reply's source address is tried first.
+      const candidates = candidateServerUrls(server);
+      const probe = await firstReachable(candidates, PROBE_TIMEOUT_MS);
+      if (!probe) {
+        this.set({
+          discoveryHint: { name: server.name, url: candidates[0] ?? '' },
+          lastError: null,
+        });
+        continue;
+      }
+      const pairing: Pairing = {
+        serverUrl: probe.url,
+        installationId: server.installationId,
+        source: 'discovery',
+      };
+      await this.savePairing(pairing);
+      this.set({ discoveryHint: null, lastError: null });
+      return pairing;
+    }
+    return null;
   }
 
   /** After repeated failures, look for the pinned installation again (its IP may have changed). */
@@ -255,8 +457,11 @@ export class Agent {
     if (pairing.source !== 'discovery' || !pairing.installationId) return;
     const found = await discoverServers(2500).catch(() => []);
     const same = found.find((s) => s.installationId === pairing.installationId);
-    const url = same?.urls[0];
-    if (url && url !== pairing.serverUrl) await this.savePairing({ ...pairing, serverUrl: url });
+    if (!same) return;
+    const probe = await firstReachable(candidateServerUrls(same), PROBE_TIMEOUT_MS);
+    if (probe && probe.url !== pairing.serverUrl) {
+      await this.savePairing({ ...pairing, serverUrl: probe.url });
+    }
   }
 
   // ─── registration ─────────────────────────────────────────────────────────
@@ -592,7 +797,9 @@ export class Agent {
     }
   }
 
-  private async selfUpdate(trigger: 'command' | 'incompatible'): Promise<void> {
+  private async selfUpdate(
+    trigger: 'command' | 'incompatible' | 'scheduled' | 'manual',
+  ): Promise<void> {
     const previous = this.snapshot.phase;
     this.setPhase({ phase: 'updating', percent: null });
     this.send({

@@ -1,48 +1,124 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import { agent, type AgentSnapshot } from './lib/agent';
-import { discoverServers, isDesktopApp } from './lib/native';
-import { formatHMS, sessionView } from './lib/protocol';
-import { t as translate, type Key } from './lib/i18n';
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { agent, type AgentSnapshot, type ManualConnectResult } from './lib/agent';
+import { discoverServers, isDesktopApp, onTrayAction, type TrayLabels } from './lib/native';
+import { candidateServerUrls, formatHMS, sessionView } from './lib/protocol';
+import { t as translate, type Key, type Language } from './lib/i18n';
 
 function useAgent(): AgentSnapshot {
   return useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
 }
 
+type T = (k: Key, vars?: Record<string, string | number>) => string;
+
+/** One status line for the tray menu / tooltip, e.g. "LIKApcs Client · PC-03 · Online". */
+function trayLabelsFor(snap: AgentSnapshot): TrayLabels {
+  const lang: Language = snap.state.language;
+  const tr = (k: Key) => translate(lang, k);
+  const p = snap.phase.phase;
+  let status: string;
+  if (p === 'no_server') status = tr('trayStatusSearching');
+  else if (p === 'registering' || p === 'rejected' || p === 'needs_reissue')
+    status = tr('trayStatusPending');
+  else if (p === 'offline') status = tr('trayStatusOffline');
+  else if (snap.state.mode === 'session') status = tr('trayStatusSession');
+  else if (snap.state.mode === 'free') status = tr('trayStatusMaintenance');
+  else if (p === 'online') status = tr('trayStatusLocked');
+  else status = tr('connecting');
+  const station = snap.state.station?.code;
+  return {
+    status: `LIKApcs Client${station ? ` · ${station}` : ''} · ${status}`,
+    settings: tr('traySettings'),
+    update: tr('trayUpdate'),
+    quit: tr('trayQuit'),
+  };
+}
+
 export function App() {
   const snap = useAgent();
-  const t = (key: Key) => translate(snap.state.language, key);
+  const t: T = (key, vars) => translate(snap.state.language, key, vars);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const locked = snap.state.mode === 'locked';
 
-  // Ctrl+Alt+S opens the technician panel (read-only once paired); Ctrl+Alt+A the staff unlock.
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    void agent.closePanel();
+  };
+  const openSettings = async () => {
+    setUnlockOpen(false);
+    if (snap.state.mode !== 'locked') await agent.openPanel();
+    setSettingsOpen(true);
+  };
+
+  // Ctrl+Alt+S opens the settings panel; Ctrl+Alt+A the staff unlock (lock screen only).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        setSettingsOpen((v) => !v);
-        setUnlockOpen(false);
+        if (settingsOpen) closeSettings();
+        else void openSettings();
       }
-      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'a') {
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'a' && locked) {
         e.preventDefault();
         setUnlockOpen((v) => !v);
         setSettingsOpen(false);
       }
       if (e.key === 'Escape') {
-        setSettingsOpen(false);
+        if (settingsOpen) closeSettings();
         setUnlockOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen, locked]);
+
+  // Tray menu (native) → actions. The native side already refuses "quit" while locked.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void onTrayAction((action) => {
+      if (action === 'settings') void openSettings();
+      else if (action === 'update') {
+        void openSettings();
+        void agent.checkUpdates('manual');
+      } else if (action === 'quit') {
+        void agent.quit().then((ok) => {
+          if (!ok) {
+            setFlash(translate(agent.getSnapshot().state.language, 'quitLocked'));
+            window.setTimeout(() => setFlash(null), 6000);
+          }
+        });
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tray texts follow the language and status.
+  useEffect(() => {
+    agent.setTrayLabels(trayLabelsFor);
+  }, []);
+
+  // Back to the lock screen (e.g. maintenance expired) while the panel was open: keep it open
+  // there, the window is fullscreen again anyway.
+  useEffect(() => {
+    if (locked && snap.windowMode === 'panel') void agent.closePanel();
+    if (locked) setSettingsOpen(false);
+  }, [locked, snap.windowMode]);
+
   const notice = snap.state.notice;
-  if (snap.state.mode !== 'locked') {
-    return (
-      <>
-        <Overlay snap={snap} notice={notice?.text ?? null} />
-      </>
-    );
+  if (!locked) {
+    if (snap.windowMode === 'panel' && settingsOpen) {
+      return (
+        <div className="panel-window">
+          <SettingsPanel snap={snap} t={t} onClose={closeSettings} />
+        </div>
+      );
+    }
+    return <Overlay snap={snap} notice={notice?.text ?? null} />;
   }
 
   return (
@@ -65,6 +141,11 @@ export function App() {
         )}
         <StatusCard snap={snap} t={t} />
         {notice && <div className="toast">{notice.text}</div>}
+        {flash && (
+          <div className="toast" role="status">
+            {flash}
+          </div>
+        )}
       </main>
 
       <footer className="lock__footer">
@@ -72,11 +153,11 @@ export function App() {
         <span className="muted">
           LIKApcs Client {snap.version}
           {snap.identity ? ` · ${snap.identity.hostname}` : ''}
-          {snap.paired ? ' · Ctrl+Alt+A' : ''}
+          {snap.paired ? ` · ${t('shortcutsHint')}` : ''}
         </span>
       </footer>
 
-      {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
       {unlockOpen && snap.paired && (
         <StaffUnlockDialog snap={snap} t={t} onClose={() => setUnlockOpen(false)} />
       )}
@@ -94,7 +175,7 @@ function StaffUnlockDialog({
   onClose,
 }: {
   snap: AgentSnapshot;
-  t: (k: Key) => string;
+  t: T;
   onClose: () => void;
 }) {
   const [username, setUsername] = useState('');
@@ -215,7 +296,7 @@ function Clock({ serverNowMs }: { serverNowMs: number }) {
   );
 }
 
-function StatusCard({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string }) {
+function StatusCard({ snap, t }: { snap: AgentSnapshot; t: T }) {
   const { phase } = snap;
   switch (phase.phase) {
     case 'starting':
@@ -232,17 +313,25 @@ function StatusCard({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string })
           <div className="spinner" />
           <div className="card__title">{t('noServer')}</div>
           <div className="card__text">{t('noServerHint')}</div>
+          {snap.discoveryHint && (
+            <div className="card__warn" role="status">
+              {t('discoveryHint', { name: snap.discoveryHint.name, url: snap.discoveryHint.url })}
+            </div>
+          )}
           {snap.lastError && <div className="card__error">{snap.lastError}</div>}
+          <ManualConnect t={t} snap={snap} intro={t('noServerManual')} />
         </div>
       );
     case 'registering':
       return (
         <div className="card">
           <div className="card__title">{t('registering')}</div>
-          <div className="card__text">{t('registeringHint')}</div>
+          <div className="card__text">{t('registeringHint2')}</div>
           <dl className="facts">
             <dt>{t('computer')}</dt>
-            <dd>{snap.identity?.hostname}</dd>
+            <dd>
+              <strong>{snap.identity?.hostname}</strong>
+            </dd>
             <dt>{t('machineId')}</dt>
             <dd className="mono">{snap.machineId?.slice(0, 12)}…</dd>
             <dt>{t('server')}</dt>
@@ -298,7 +387,7 @@ function StatusCard({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string })
   }
 }
 
-function ConnectionDot({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string }) {
+function ConnectionDot({ snap, t }: { snap: AgentSnapshot; t: T }) {
   const p = snap.phase.phase;
   const online = p === 'online' || p === 'updating';
   const label =
@@ -420,114 +509,277 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
   );
 }
 
-function SettingsPanel({
-  snap,
+/**
+ * Manual server address entry. Used on the lock screen while no server was found and inside the
+ * settings panel. The agent probes the address before saving it and reports a precise reason.
+ */
+function ManualConnect({
   t,
-  onClose,
+  snap,
+  intro,
+  onDone,
 }: {
+  t: T;
   snap: AgentSnapshot;
-  t: (k: Key) => string;
-  onClose: () => void;
+  intro?: string;
+  onDone?: () => void;
 }) {
-  const [url, setUrl] = useState(snap.pairing?.serverUrl ?? '');
+  const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const paired = snap.paired;
+  const [result, setResult] = useState<ManualConnectResult | null>(null);
 
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await agent.connectManually(url);
+      setResult(r);
+      if (r.ok) onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  };
   const find = async () => {
     setBusy(true);
-    setMsg(null);
+    setResult(null);
     try {
       const found = await discoverServers(2500);
-      if (found[0]?.urls[0]) setUrl(found[0].urls[0]);
-      else setMsg(t('foundNone'));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const save = async () => {
-    setBusy(true);
-    setMsg(null);
-    try {
-      await agent.useManualServer(url);
-      onClose();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : String(err));
+      const first = found[0] ? candidateServerUrls(found[0])[0] : undefined;
+      if (first) setUrl(first.replace(/^http:\/\//, ''));
+      else setResult({ ok: false, reason: 'unreachable', url: '' });
     } finally {
       setBusy(false);
     }
   };
 
+  const message = (() => {
+    if (!result) return null;
+    if (result.ok) return t('connectedTo', { name: result.name, version: result.version });
+    const url = result.url ?? '';
+    switch (result.reason) {
+      case 'invalid':
+        return t('errAddressInvalid');
+      case 'timeout':
+        return t('errAddressTimeout', { url });
+      case 'http':
+      case 'not_likapcs':
+        return t('errAddressNotServer', { url });
+      case 'different_installation':
+        return t('errAddressDifferent', { url, name: result.name ?? '' });
+      default:
+        return url ? t('errAddressUnreachable', { url }) : t('foundNone');
+    }
+  })();
+
   return (
-    <div className="panel">
+    <form className="connect" onSubmit={(e) => void submit(e)}>
+      {intro && <p className="muted small">{intro}</p>}
+      <div className="connect__row">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={t('serverAddressPlaceholder')}
+          aria-label={t('serverAddress')}
+          disabled={busy}
+          autoComplete="off"
+          spellCheck={false}
+          data-testid="server-address"
+        />
+        <button className="btn btn--primary" type="submit" disabled={busy || !url.trim()}>
+          {busy ? t('connecting2') : t('connect')}
+        </button>
+        {isDesktopApp() && !snap.paired && (
+          <button className="btn" type="button" onClick={() => void find()} disabled={busy}>
+            {t('findServer')}
+          </button>
+        )}
+      </div>
+      {message && (
+        <div className={result?.ok ? 'unlock-ok' : 'card__error'} role="status">
+          {message}
+        </div>
+      )}
+    </form>
+  );
+}
+
+/**
+ * Settings panel (Ctrl+Alt+S, or the tray). Connection settings are editable only before pairing
+ * or while staff unlocked the PC — a customer must never be able to re-point the client.
+ */
+function SettingsPanel({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClose: () => void }) {
+  const unlockedByStaff = snap.state.mode === 'free';
+  const canEditConnection = !snap.paired || unlockedByStaff;
+  // Never under a customer session; a paired, locked PC needs the staff unlock first.
+  const canQuit = unlockedByStaff || !snap.paired;
+  const [checking, setChecking] = useState(false);
+  const [quitMsg, setQuitMsg] = useState<string | null>(null);
+  const updating = snap.phase.phase === 'updating';
+
+  const checkNow = async () => {
+    setChecking(true);
+    try {
+      await agent.checkUpdates('manual');
+    } finally {
+      setChecking(false);
+    }
+  };
+  const forget = async () => {
+    if (!window.confirm(t('forgetConfirm'))) return;
+    await agent.forgetPairing();
+  };
+  const quit = async () => {
+    const ok = await agent.quit();
+    if (!ok) setQuitMsg(t('quitLocked'));
+  };
+
+  const phaseLabel = (() => {
+    const p = snap.phase.phase;
+    if (p === 'online') return t('connected');
+    if (p === 'offline') return t('offline');
+    if (p === 'no_server') return t('noServer');
+    if (p === 'registering') return t('registering');
+    if (p === 'rejected') return t('rejected');
+    if (p === 'needs_reissue') return t('needsReissue');
+    if (p === 'incompatible') return t('incompatible');
+    if (p === 'updating') return t('updating');
+    return t('connecting');
+  })();
+  const checkedAt = snap.updateCheckedAt
+    ? new Date(snap.updateCheckedAt).toLocaleTimeString(undefined, { hour12: false })
+    : t('updateNever');
+
+  return (
+    <div className="panel panel--settings" role="dialog" aria-labelledby="settings-title">
       <div className="panel__head">
-        <strong>{t('settingsTitle')}</strong>
+        <strong id="settings-title">{t('settingsTitle')}</strong>
         <button className="btn btn--ghost" onClick={onClose}>
           {t('close')}
         </button>
       </div>
-      <dl className="facts">
-        <dt>{t('version')}</dt>
-        <dd>{snap.version}</dd>
-        <dt>{t('computer')}</dt>
-        <dd>{snap.identity?.hostname}</dd>
-        <dt>{t('machineId')}</dt>
-        <dd className="mono">{snap.machineId}</dd>
-        {snap.state.station && (
-          <>
-            <dt>{t('station')}</dt>
+      <div className="panel__body">
+        <section className="section">
+          <h3>{t('sectionConnection')}</h3>
+          <dl className="facts">
+            <dt>{t('status')}</dt>
+            <dd>{phaseLabel}</dd>
+            <dt>{t('serverAddress')}</dt>
+            <dd className="mono">{snap.pairing?.serverUrl ?? '—'}</dd>
+            <dt>{t('installation')}</dt>
             <dd>
-              {snap.state.station.code} · {snap.state.station.name}
+              {snap.paired ? t('pairedStatus') : t('notPaired')}
+              {snap.state.station ? ` · ${snap.state.station.code} ${snap.state.station.name}` : ''}
             </dd>
-          </>
-        )}
-      </dl>
-      <label className="field">
-        <span>{t('language')}</span>
-        <select
-          value={snap.state.language}
-          onChange={(e) => void agent.setLanguage(e.target.value as 'en' | 'sq')}
-        >
-          <option value="en">English</option>
-          <option value="sq">Shqip</option>
-        </select>
-      </label>
-      {paired ? (
-        <>
-          <label className="field">
-            <span>{t('serverAddress')}</span>
-            <input value={snap.pairing?.serverUrl ?? ''} readOnly />
-          </label>
-          <p className="muted small">{t('pairedNote')}</p>
-        </>
-      ) : (
-        <>
-          <label className="field">
-            <span>{t('serverAddress')}</span>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="http://192.168.1.10:4700"
-            />
-            <small className="muted">{t('serverAddressHint')}</small>
-          </label>
-          <div className="row">
-            {isDesktopApp() && (
-              <button className="btn" onClick={() => void find()} disabled={busy}>
-                {t('findServer')}
+          </dl>
+          {canEditConnection ? (
+            <>
+              <ManualConnect t={t} snap={snap} />
+              {snap.paired && (
+                <div className="row">
+                  <button className="btn" type="button" onClick={() => void forget()}>
+                    {t('forgetPairing')}
+                  </button>
+                  <span className="muted small">{t('forgetPairingHint')}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="muted small">{t('pairedOnlyWhenUnlocked')}</p>
+          )}
+        </section>
+
+        <section className="section">
+          <h3>{t('sectionUpdates')}</h3>
+          <dl className="facts">
+            <dt>{t('version')}</dt>
+            <dd>
+              {snap.version}
+              {snap.updateAvailable
+                ? ` · ${t('updateAvailable', { version: snap.updateAvailable })}`
+                : snap.updateCheckedAt && !snap.updateError
+                  ? ` · ${t('updateUpToDate')}`
+                  : ''}
+            </dd>
+            <dt>{t('updateChecked')}</dt>
+            <dd>{checkedAt}</dd>
+          </dl>
+          {snap.updateError && (
+            <div className="card__error">{t('updateError', { error: snap.updateError })}</div>
+          )}
+          {updating ? (
+            <div className="unlock-ok">{t('updateInstalling')}</div>
+          ) : (
+            <div className="row">
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void checkNow()}
+                disabled={checking || !isDesktopApp()}
+              >
+                {checking ? t('connecting2') : t('updateCheck')}
               </button>
-            )}
-            <button
-              className="btn btn--primary"
-              onClick={() => void save()}
-              disabled={busy || !url}
+              {snap.updateAvailable && (
+                <button
+                  className="btn btn--primary"
+                  type="button"
+                  onClick={() => void agent.installUpdateNow()}
+                  disabled={!!snap.state.session}
+                  title={snap.state.session ? t('updateDuringSession') : undefined}
+                >
+                  {t('updateInstall')}
+                </button>
+              )}
+            </div>
+          )}
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={snap.autoUpdate}
+              onChange={(e) => void agent.setAutoUpdate(e.target.checked)}
+            />
+            <span>{t('updateAuto')}</span>
+          </label>
+          <p className="muted small">{t('updateDuringSession')}</p>
+        </section>
+
+        <section className="section">
+          <h3>{t('sectionGeneral')}</h3>
+          <label className="field">
+            <span>{t('language')}</span>
+            <select
+              value={snap.state.language}
+              onChange={(e) => void agent.setLanguage(e.target.value as 'en' | 'sq')}
             >
-              {t('save')}
+              <option value="en">English</option>
+              <option value="sq">Shqip</option>
+            </select>
+          </label>
+        </section>
+
+        <section className="section">
+          <h3>{t('sectionAbout')}</h3>
+          <dl className="facts">
+            <dt>{t('computer')}</dt>
+            <dd>{snap.identity?.hostname}</dd>
+            <dt>{t('machineId')}</dt>
+            <dd className="mono">{snap.machineId}</dd>
+          </dl>
+          <div className="row">
+            <button
+              className="btn"
+              type="button"
+              onClick={() => void quit()}
+              disabled={!canQuit}
+              title={canQuit ? undefined : t('quitHint')}
+            >
+              {t('quit')}
             </button>
-            {msg && <span className="muted small">{msg}</span>}
+            <span className="muted small">{quitMsg ?? t('quitHint')}</span>
           </div>
-        </>
-      )}
+        </section>
+      </div>
     </div>
   );
 }

@@ -1046,6 +1046,9 @@ button.stat:hover {
 .dialog--lg {
   max-width: 780px;
 }
+.dialog--xl {
+  max-width: min(1100px, calc(100vw - 48px));
+}
 .dialog--sm {
   max-width: 420px;
 }
@@ -2767,4 +2770,64 @@ body:has(.pos) .toasts {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* ─── Connect a PC dialog ─────────────────────────────────────────────────── */
+.connect-steps {
+  margin: 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: grid;
+  gap: 14px;
+}
+.connect-steps > li {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-elevated);
+}
+.connect-steps strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.connect-pending {
+  overflow-x: auto;
+  max-width: 100%;
+}
+/* Approval table inside the dialog: the hostname identifies the PC, the machine id is noise here. */
+.connect-pending .table th:nth-child(2),
+.connect-pending .table td:nth-child(2) {
+  display: none;
+}
+.connect-pending .table th,
+.connect-pending .table td {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.connect-addresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.connect-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.connect-address:hover {
+  border-color: var(--accent);
+}
+.connect-address--primary {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  font-weight: 600;
 }

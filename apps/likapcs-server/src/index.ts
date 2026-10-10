@@ -117,6 +117,7 @@ async function main(): Promise<void> {
     pool,
     logger,
     controlToken: database.runtime?.controlToken ?? null,
+    installationId: database.runtime?.installationId ?? null,
     requestShutdown: (reason) => void shutdown(reason),
   });
   await listenWithRetry(app, config.host, config.port, startupLog);

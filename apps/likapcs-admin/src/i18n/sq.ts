@@ -183,6 +183,31 @@ export const sq: Dictionary = {
     title: 'Stacionet e Lojërave',
     subtitle:
       '{online} në linjë · {available} të lira · {occupied} në seancë · {offline} jashtë linje',
+    connectPc: 'Lidh një PC',
+    firewallBanner:
+      'PC-të e lojërave ende nuk mund ta arrijnë këtë server: Windows Firewall po e bllokon në këtë PC.',
+    connect: {
+      title: 'Lidh një PC lojërash',
+      step1: '1. Instalo LIKApcs Client në PC-në e lojërave',
+      step1Hint: 'Përdor të njëjtin version si ky Admin (LIKApcs-Client-Setup.exe):',
+      step2: '2. Klienti e gjen vetë këtë server',
+      step2Hint:
+        'Të dy PC-të duhet të jenë në të njëjtin rrjet. Nëse ekrani i kyçjes vazhdon të kërkojë, shkruaj njërën nga këto adresa në të (kliko për ta kopjuar):',
+      step3: '3. Aprovo PC-në më poshtë dhe cakto një stacion',
+      step3Hint:
+        'PC-të e reja shfaqen këtu brenda pak sekondash. Vetëm PC-të e aprovuara marrin komanda seance.',
+      noAddresses: 'Nuk u gjet asnjë adresë rrjeti në PC-në e serverit.',
+      discoveryOff:
+        'Zbulimi automatik është i çaktivizuar në këtë server — shkruaj adresën manualisht.',
+      copy: 'Kopjo adresën',
+      firewall: 'Windows Firewall në këtë PC',
+      firewallAllowed: 'E lejuar — PC-të e lojërave mund të lidhen me këtë server.',
+      firewallMissing:
+        'E bllokuar — mungon rregulli i firewall-it për portën 4700. Lejoje një herë (një dritare e Windows).',
+      firewallUnknown: 'Firewall-i nuk u kontrollua dot. Nëse PC-të nuk lidhen, lejoje një herë.',
+      allowNow: 'Lejo tani',
+      noPending: 'Asnjë PC nuk po pret aprovim ende. Kjo listë përditësohet automatikisht.',
+    },
     addStation: 'Shto stacion',
     editStation: 'Ndrysho stacionin',
     newStation: 'Stacion i ri',

@@ -32,13 +32,14 @@ compile error in every component that has not been updated.
 
 ### System
 
-| Method | Path                                 | Auth / permission                       | Notes                                                                                  |
-| ------ | ------------------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------- |
-| GET    | `/system/health`                     | public                                  | `{status, version, schemaVersion, database, time}`                                     |
-| GET    | `/system/setup-status`               | public                                  | `{needsSetup, businessName, defaultLanguage}`                                          |
-| POST   | `/system/setup`                      | public, **only while zero users exist** | `{businessName, language, owner:{fullName, username, password}}` → `201 LoginResponse` |
-| GET    | `/system/info`                       | authenticated                           | versions, uptime, DB latency, connection counts                                        |
-| GET    | `/dashboard/summary?date=YYYY-MM-DD` | `dashboard.view`                        | `DashboardSummary` (see architecture › financial definitions)                          |
+| Method | Path                                 | Auth / permission                       | Notes                                                                                                                                                                         |
+| ------ | ------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/system/health`                     | public                                  | `{status, version, schemaVersion, database, time, installationId, name}` — also the probe a client PC runs before it saves a server address                                   |
+| GET    | `/system/network`                    | `devices.manage`                        | `{port, discoveryPort, discoveryEnabled, addresses[], installationId}` — what Admin shows in “Connect a PC” (addresses ranked: physical/private first, virtual adapters last) |
+| GET    | `/system/setup-status`               | public                                  | `{needsSetup, businessName, defaultLanguage}`                                                                                                                                 |
+| POST   | `/system/setup`                      | public, **only while zero users exist** | `{businessName, language, owner:{fullName, username, password}}` → `201 LoginResponse`                                                                                        |
+| GET    | `/system/info`                       | authenticated                           | versions, uptime, DB latency, connection counts                                                                                                                               |
+| GET    | `/dashboard/summary?date=YYYY-MM-DD` | `dashboard.view`                        | `DashboardSummary` (see architecture › financial definitions)                                                                                                                 |
 
 ### Auth
 
@@ -407,10 +408,18 @@ Command rules (enforced by the server and mirrored by the client agent,
    or an expiry it detects locally (`session_expired_locally`) always locks immediately; the server
    remains the billing authority.
 6. **Server pinning.** After the first successful registration the client stores the server URL and
-   the server's `installationId` (from UDP discovery or a technician-entered URL). It reconnects only
+   the server's `installationId` (from UDP discovery or a staff-entered address). It reconnects only
    to that server; rediscovery (after 6 failed connection attempts) accepts a new address only if it
    announces the same `installationId`. A client that must move to another installation is revoked in
-   the Admin app and re-paired.
+   the Admin app (or “Forget pairing” in the client settings while staff-unlocked) and re-paired.
+7. **Address selection.** A discovery reply carries every IPv4 address of the main PC (`urls`),
+   including virtual adapters (VirtualBox, Hyper-V, VPN). The client never trusts the order: it
+   probes `GET /system/health` on the address the UDP reply _came from_ first, then on the advertised
+   ones (in parallel, 2.5 s), and pins the first that answers. When a server is found by discovery but
+   no address answers, the lock screen says so and points at the Windows Firewall fix in Admin
+   (Gaming Stations → Connect a PC → Allow now). Staff can also type an address on the lock screen;
+   it is normalised (`192.168.1.10` → `http://192.168.1.10:4700`), probed, and the error is specific
+   (no answer / not a LIKApcs server / a different installation than the one this PC is paired with).
 
 ### Presence
 

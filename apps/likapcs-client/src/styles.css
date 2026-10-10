@@ -519,3 +519,111 @@ html:not([data-desktop='1']) .overlay {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ─── pairing: manual address + hints ───────────────────────────────────── */
+.card__warn {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fcd34d;
+  font-size: 14px;
+  text-align: left;
+  line-height: 1.45;
+}
+.connect {
+  margin-top: 16px;
+  text-align: left;
+}
+.connect .muted.small {
+  margin: 0 0 8px;
+}
+.connect__row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.connect__row input {
+  flex: 1 1 240px;
+  min-width: 0;
+  background: #0b0f17;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.connect__row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.connect .card__error,
+.connect .unlock-ok {
+  margin-top: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+/* ─── settings panel (lock screen overlay and the dedicated tray window) ─ */
+.panel--settings {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+.panel__body {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.section {
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--border);
+}
+.section:first-child {
+  border-top: none;
+  padding-top: 4px;
+}
+.section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.section .facts {
+  margin: 6px 0 8px;
+}
+.section .row {
+  margin-top: 10px;
+}
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.panel-window {
+  min-height: 100vh;
+  background: #0b0f17;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+.panel-window .panel {
+  position: static;
+  width: 100%;
+  height: 100vh;
+  max-height: 100vh;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}

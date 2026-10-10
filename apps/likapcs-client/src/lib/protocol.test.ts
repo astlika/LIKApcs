@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerCommand, ServerWelcomeToClient } from '@likapcs/shared';
 import {
+  candidateServerUrls,
+  normalizeServerUrl,
   Clock,
   CommandGuard,
   applyWelcome,
@@ -304,6 +306,39 @@ describe('reduce()', () => {
     ]);
     state = msg.state;
     expect(state.mode).toBe('locked');
+  });
+});
+
+describe('server address helpers', () => {
+  it('normalises typed addresses to http://host:port', () => {
+    expect(normalizeServerUrl('192.168.1.10')).toBe('http://192.168.1.10:4700');
+    expect(normalizeServerUrl(' 192.168.1.10:4700 ')).toBe('http://192.168.1.10:4700');
+    expect(normalizeServerUrl('http://main-pc:4700/')).toBe('http://main-pc:4700');
+    expect(normalizeServerUrl('MAIN-PC:4701')).toBe('http://main-pc:4701');
+    expect(normalizeServerUrl('https://likapcs.example.com')).toBe('https://likapcs.example.com');
+    expect(normalizeServerUrl('http://10.0.0.5:4700/api/v1/x?y=1')).toBe('http://10.0.0.5:4700');
+    expect(normalizeServerUrl('')).toBeNull();
+    expect(normalizeServerUrl('   ')).toBeNull();
+    expect(normalizeServerUrl('ftp://x')).toBeNull();
+    expect(normalizeServerUrl('http://')).toBeNull();
+    expect(normalizeServerUrl('not an address!!')).toBeNull();
+    expect(normalizeServerUrl('192.168.1.10:abc')).toBeNull();
+  });
+
+  it('tries the discovery reply source first, then the advertised addresses, without duplicates', () => {
+    const urls = candidateServerUrls({
+      from: '192.168.1.10',
+      port: 4700,
+      urls: ['http://192.168.56.1:4700', 'http://192.168.1.10:4700', 'http://172.20.0.1:4700'],
+    });
+    expect(urls).toEqual([
+      'http://192.168.1.10:4700',
+      'http://192.168.56.1:4700',
+      'http://172.20.0.1:4700',
+    ]);
+    expect(candidateServerUrls({ port: 4700, urls: ['http://10.0.0.2:4700'] })).toEqual([
+      'http://10.0.0.2:4700',
+    ]);
   });
 });
 

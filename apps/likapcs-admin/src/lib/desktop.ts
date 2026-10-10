@@ -98,6 +98,22 @@ export function allowFirewall(): Promise<void> {
   return invoke<void>('allow_firewall');
 }
 
+export type FirewallState = 'allowed' | 'missing' | 'unknown';
+
+/**
+ * Whether Windows Firewall lets gaming PCs reach the bundled server (rule looked up by name).
+ * `unknown` in the browser build, on other platforms, or when `netsh` is unavailable.
+ */
+export async function firewallStatus(): Promise<FirewallState> {
+  if (!isDesktopApp()) return 'unknown';
+  try {
+    const r = await invoke<{ state: FirewallState }>('firewall_status');
+    return r.state;
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function autostartEnabled(): Promise<boolean> {
   if (!isDesktopApp()) return false;
   const { isEnabled } = await import('@tauri-apps/plugin-autostart');

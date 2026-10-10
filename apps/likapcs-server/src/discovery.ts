@@ -32,14 +32,40 @@ export interface DiscoveryResponse {
   ts: string;
 }
 
+/** Adapter names that are almost never the venue LAN (virtual switches, VPNs, tunnels). */
+const VIRTUAL_ADAPTER =
+  /vethernet|virtualbox|vmware|vmnet|hyper-v|wsl|docker|tap|tun|tailscale|zerotier|hamachi|loopback|bluetooth|npcap|wintun/i;
+
+/**
+ * IPv4 addresses of this machine, most plausible LAN address first: physical adapters with a
+ * private address win over virtual switches/VPN tunnels and over link-local (169.254.x) addresses.
+ * Clients prefer the address a discovery reply actually came from; this order matters for what
+ * staff see in "Connect a PC" and for the manual fallback.
+ */
 export function lanAddresses(): string[] {
-  const out: string[] = [];
-  for (const entries of Object.values(os.networkInterfaces())) {
+  return rankLanAddresses(os.networkInterfaces());
+}
+
+/** Pure part of `lanAddresses()` (unit-tested with synthetic adapter lists). */
+export function rankLanAddresses(
+  interfaces: Record<string, os.NetworkInterfaceInfo[] | undefined>,
+): string[] {
+  const ranked: { address: string; score: number }[] = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
     for (const entry of entries ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) out.push(entry.address);
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      let score = 0;
+      if (VIRTUAL_ADAPTER.test(name)) score -= 100;
+      if (entry.address.startsWith('169.254.')) score -= 120; // no DHCP lease: unusable
+      if (/^192\.168\./.test(entry.address)) score += 20;
+      else if (/^10\./.test(entry.address)) score += 15;
+      else if (/^172\.(1[6-9]|2\d|3[01])\./.test(entry.address)) score += 10;
+      if (/^(ethernet|wi-?fi|wlan|eth|en|local area connection)/i.test(name)) score += 5;
+      ranked.push({ address: entry.address, score });
     }
   }
-  return out;
+  ranked.sort((a, b) => b.score - a.score);
+  return [...new Set(ranked.map((r) => r.address))];
 }
 
 export class DiscoveryResponder {

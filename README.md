@@ -6,11 +6,11 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                                                                                                                          | Status (0.3.0)                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                 | ✅ schema v11, 122 integration/unit tests                   |
-| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
-| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, countdown widget, staff unlock (Ctrl+Alt+A), secure device registration, staff commands, self-update                                                             | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
+| App                | What it is                                                                                                                                                                                                             | Status (0.3.0)                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                    | ✅ schema v11, 122 integration/unit tests                   |
+| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings    | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
+| **LIKApcs-Client** | Windows agent for every customer PC — hardened lock screen, tray icon + settings panel, countdown widget, staff unlock (Ctrl+Alt+A), guided pairing, secure device registration, staff commands, automatic self-update | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
 
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.
@@ -25,17 +25,23 @@ LIKApcs has exactly two installers. No separate database or server setup is need
    _More info → Run anyway_ the first time). It installs the Admin app **and the LIKApcs Server with
    its own PostgreSQL database**; the server starts automatically, runs in the background and keeps
    running when the window is closed (tray icon). On first start the app asks you to create the
-   owner account. Then open _Settings → System_ once and click **Allow through Windows Firewall** so
-   the other PCs can reach this server, and leave **Start LIKApcs when Windows starts** on.
-   Business data lives in `%LOCALAPPDATA%\LIKApcs-Data` (never inside the program folder).
+   owner account. If the installer was run as administrator it already allowed the server through
+   Windows Firewall; otherwise _Gaming Stations_ shows a yellow banner with **Allow now** (one
+   Windows prompt) — do this once, or the gaming PCs cannot reach the server. Leave **Start LIKApcs
+   when Windows starts** on. Business data lives in `%LOCALAPPDATA%\LIKApcs-Data` (never inside the
+   program folder).
 2. **Other Admin PCs** (optional, e.g. the office) — run the same `LIKApcs-Setup.exe`; the app finds
    the main PC on the local network by itself (_Find server on the network_ on the login screen).
 3. **Gaming PCs — `LIKApcs-Client-Setup.exe`**: installs the client that locks the screen between
-   sessions, finds the server on the local network by itself and asks for a one-time approval in the
-   Admin app (_Stations → Pending devices → assign to a station_). It starts with Windows, keeps the
-   lock screen in front, shows the remaining time in a small overlay during a session and executes
-   staff commands (lock, unlock, message, restart, shut down, update) only after the server has
-   authenticated them. Keeps its own copy up to date from GitHub Releases (signature-verified).
+   sessions and finds the server on the local network by itself. In the Admin app open _Gaming
+   Stations → **Connect a PC**_: it shows the address to type on the lock screen if a PC does not
+   find the server on its own, the firewall state, and the new PC waiting for approval — assign it
+   to a station and it is online. The client starts with Windows, lives in the notification area
+   (settings, update check), keeps the lock screen in front (Windows keys, Alt+Tab, Alt+F4 and Task
+   Manager are blocked while locked; staff unlock with Ctrl+Alt+A), shows the remaining time in a
+   small widget during a session and executes staff commands (lock, unlock, message, restart, shut
+   down, update) only after the server has authenticated them. Keeps itself up to date from GitHub
+   Releases (signature-verified) — automatically while locked and idle, never during a session.
 4. **Updates** — one button. The Admin app checks GitHub Releases on start-up and in
    _Settings → About_; **Download and install** applies a signature-verified update of the Admin app
    _and_ the server on the main PC in one go, the database is upgraded automatically on the next start.

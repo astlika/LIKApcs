@@ -1,25 +1,34 @@
 //! LIKApcs-Client desktop shell.
 //!
-//! Thin native layer for the gaming-PC agent: kiosk window control (fullscreen lock screen vs. a
-//! small always-on-top timer overlay), the machine identity, a DPAPI-backed secret store, LAN
-//! discovery of the server, staff-requested power actions and the signed auto-updater. All
-//! protocol logic lives in the TypeScript agent (`src/lib/agent.ts`).
+//! Thin native layer for the gaming-PC agent: kiosk window control (fullscreen lock screen with
+//! keyboard hardening and cover windows on extra monitors, a small always-on-top countdown
+//! widget, a centred settings panel), the tray icon, the machine identity, a DPAPI-backed secret
+//! store, LAN discovery of the server, staff-requested power actions and the signed
+//! auto-updater. All protocol logic lives in the TypeScript agent (`src/lib/agent.ts`).
 
+mod kiosk;
 mod secrets;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::{SocketAddr, UdpSocket};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow, WindowEvent};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_autostart::MacosLauncher;
 
 const DISCOVERY_PORT: u16 = 4701;
 const DISCOVERY_REQUEST: &[u8] = b"LIKAPCS_DISCOVER_V1";
 const OVERLAY_WIDTH: f64 = 300.0;
 const OVERLAY_HEIGHT: f64 = 96.0;
+const PANEL_WIDTH: f64 = 560.0;
+const PANEL_HEIGHT: f64 = 720.0;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,13 +43,13 @@ struct KioskState {
 }
 
 #[cfg(windows)]
-fn hide_console(cmd: &mut Command) {
+pub(crate) fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 #[cfg(not(windows))]
-fn hide_console(_cmd: &mut Command) {}
+pub(crate) fn hide_console(_cmd: &mut Command) {}
 
 fn run_capture(program: &str, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new(program);
@@ -168,9 +177,17 @@ fn discover(timeout: Duration) -> Vec<serde_json::Value> {
     let mut buf = [0u8; 4096];
     while Instant::now() < deadline {
         match socket.recv_from(&mut buf) {
-            Ok((len, _)) => {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf[..len]) {
+            Ok((len, from)) => {
+                if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&buf[..len]) {
                     if value.get("service").and_then(|s| s.as_str()) == Some("likapcs") {
+                        // The address the reply came from is the one that is reachable from
+                        // here — the server's own list may start with a virtual adapter.
+                        if let serde_json::Value::Object(map) = &mut value {
+                            map.insert(
+                                "from".into(),
+                                serde_json::Value::String(from.ip().to_string()),
+                            );
+                        }
                         let id = value.get("installationId").cloned();
                         if !found.iter().any(|f| f.get("installationId").cloned() == id) {
                             found.push(value);
@@ -221,22 +238,144 @@ fn apply_overlay(window: &WebviewWindow) {
     let _ = window.show();
 }
 
+/// Centred, always-on-top settings panel (opened from the tray while the PC is unlocked).
+fn apply_panel(window: &WebviewWindow) {
+    let _ = window.set_fullscreen(false);
+    let _ = window.set_decorations(false);
+    let _ = window.set_resizable(false);
+    let _ = window.set_skip_taskbar(false);
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT));
+    let _ = window.center();
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+/// Black cover windows on every monitor except the one showing the lock screen, so a second
+/// screen cannot be used while the PC is locked. Closed again when the PC is unlocked.
+fn update_covers(app: &AppHandle, locked: bool) {
+    for (label, existing) in app.webview_windows() {
+        if label.starts_with("cover-") {
+            let _ = existing.destroy();
+        }
+    }
+    if !locked {
+        return;
+    }
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    // Without knowing where the lock screen is, do nothing rather than risk covering it.
+    let Some(main_monitor) = main.current_monitor().ok().flatten() else {
+        return;
+    };
+    let Ok(monitors) = app.available_monitors() else {
+        return;
+    };
+    for (index, monitor) in monitors.iter().enumerate() {
+        if main_monitor.position() == monitor.position() {
+            continue;
+        }
+        let scale = monitor.scale_factor();
+        let pos = monitor.position().to_logical::<f64>(scale);
+        let size = monitor.size().to_logical::<f64>(scale);
+        let label = format!("cover-{index}");
+        let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("cover.html".into()))
+            .title("LIKApcs")
+            .decorations(false)
+            .resizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .position(pos.x, pos.y)
+            .inner_size(size.width, size.height)
+            .build();
+        if let Ok(cover) = built {
+            let _ = cover.set_fullscreen(true);
+        }
+    }
+}
+
+/// Async on purpose: creating webview windows (the covers) from a *synchronous* command
+/// deadlocks on Windows (see `WebviewWindowBuilder::new`).
 #[tauri::command]
-fn set_window_mode(app: AppHandle, state: tauri::State<'_, KioskState>, mode: String) -> Result<(), String> {
+async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("main window missing")?;
+    let locked = app.state::<KioskState>().locked.clone();
     match mode.as_str() {
         "locked" => {
-            state.locked.store(true, Ordering::SeqCst);
+            locked.store(true, Ordering::SeqCst);
+            kiosk::set_enabled(true);
             apply_locked(&window);
-            Ok(())
+            update_covers(&app, true);
         }
         "overlay" => {
-            state.locked.store(false, Ordering::SeqCst);
+            locked.store(false, Ordering::SeqCst);
+            kiosk::set_enabled(false);
+            update_covers(&app, false);
             apply_overlay(&window);
-            Ok(())
         }
-        other => Err(format!("unknown window mode {other}")),
+        "panel" => {
+            locked.store(false, Ordering::SeqCst);
+            kiosk::set_enabled(false);
+            update_covers(&app, false);
+            apply_panel(&window);
+        }
+        other => return Err(format!("unknown window mode {other}")),
     }
+    Ok(())
+}
+
+/// Localised texts for the tray menu, provided by the frontend (it owns the language).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayLabels {
+    status: String,
+    settings: String,
+    update: String,
+    quit: String,
+}
+
+fn build_tray_menu(app: &AppHandle, labels: &TrayLabels) -> tauri::Result<Menu<tauri::Wry>> {
+    let status = MenuItem::with_id(app, "status", labels.status.as_str(), false, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", labels.settings.as_str(), true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", labels.update.as_str(), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", labels.quit.as_str(), true, None::<&str>)?;
+    Menu::with_items(
+        app,
+        &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &settings,
+            &update,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )
+}
+
+/// Refreshes the tray menu/tooltip (status line, language) — called by the agent on every change.
+#[tauri::command]
+fn tray_update(app: AppHandle, labels: TrayLabels) -> Result<(), String> {
+    let tray = app.tray_by_id("main").ok_or("tray icon missing")?;
+    let menu = build_tray_menu(&app, &labels).map_err(|e| e.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    tray.set_tooltip(Some(labels.status.as_str())).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Exits the client. Refused while the PC is locked — staff unlock it first (Ctrl+Alt+A), which
+/// the server verifies. `force` is only sent by the agent for a PC that is not paired yet (no
+/// station, nothing billable) so a technician can leave the lock screen without uninstalling.
+#[tauri::command]
+fn quit_app(app: AppHandle, state: tauri::State<'_, KioskState>, force: Option<bool>) -> Result<(), String> {
+    if state.locked.load(Ordering::SeqCst) && !force.unwrap_or(false) {
+        return Err("locked".into());
+    }
+    kiosk::restore();
+    app.exit(0);
+    Ok(())
 }
 
 /// Staff-requested power action. Only reachable through an authenticated, acknowledged server
@@ -298,9 +437,47 @@ pub fn run() {
             secret_delete,
             discover_servers,
             set_window_mode,
-            power_action
+            power_action,
+            tray_update,
+            quit_app
         ])
         .setup(move |app| {
+            // Keyboard hardening is armed from the start: the client boots locked.
+            kiosk::install();
+            kiosk::set_enabled(true);
+
+            // Tray icon: the only visible trace of the client during a session. Menu actions are
+            // forwarded to the frontend, which knows the language and the lock state.
+            let labels = TrayLabels {
+                status: "LIKApcs Client".into(),
+                settings: "Settings…".into(),
+                update: "Check for updates".into(),
+                quit: "Quit LIKApcs Client".into(),
+            };
+            let menu = build_tray_menu(app.handle(), &labels)?;
+            let mut tray = TrayIconBuilder::with_id("main")
+                .tooltip("LIKApcs Client")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    let id: String = event.id.0.clone();
+                    let _ = app.emit("tray", id);
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let _ = tray.app_handle().emit("tray", "settings");
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+
             if let Some(window) = app.get_webview_window("main") {
                 apply_locked(&window);
                 // Focus guard: while locked, keep the lock screen in front (best effort — OS-level
@@ -324,12 +501,33 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // The client is never closed by the customer; staff stop it via Task Manager or uninstall.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.show();
+            if window.label() != "main" {
+                return;
+            }
+            match event {
+                // The client is never closed by the customer; staff quit it from the tray after a
+                // staff unlock, or uninstall it.
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.show();
+                }
+                // Something stole the foreground while locked (a notification, an installer
+                // window): take it straight back.
+                WindowEvent::Focused(false) => {
+                    let locked = window.app_handle().state::<KioskState>().locked.load(Ordering::SeqCst);
+                    if locked {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running LIKApcs Client");
+        .build(tauri::generate_context!())
+        .expect("error while building LIKApcs Client")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                kiosk::restore();
+            }
+        });
 }

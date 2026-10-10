@@ -6,6 +6,7 @@ import {
   Cpu,
   DownloadCloud,
   KeyRound,
+  Link2,
   Lock,
   LockOpen,
   MessageSquare,
@@ -33,6 +34,7 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
 import { StationMap } from '../components/stations/StationMap';
+import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcDialog';
 import { useStationActions } from '../components/stations/useStationActions';
 import { formatHms, projectSession } from '../lib/session-time';
 import { storage } from '../lib/storage';
@@ -110,11 +112,13 @@ export function StationsPage() {
     queryFn: () => api<StationSummary[]>('/stations'),
     refetchInterval: 20_000,
   });
+  const [connectOpen, setConnectOpen] = useState(false);
   const pending = useQuery({
     queryKey: ['devices', 'pending'],
     queryFn: () => api<StationDeviceSummary[]>('/devices', { query: { status: 'pending' } }),
     enabled: canDevices,
-    refetchInterval: 15_000,
+    // Staff watch this list while installing a client PC: poll quickly while the dialog is open.
+    refetchInterval: connectOpen ? 3_000 : 15_000,
   });
   const systemInfo = useQuery({
     queryKey: ['system-info'],
@@ -329,6 +333,11 @@ export function StationsPage() {
             <Badge tone="warning">{pending.data!.length}</Badge>
           </Button>
         )}
+        {canDevices && (
+          <Button onClick={() => setConnectOpen(true)}>
+            <Link2 size={16} /> {t('stations.connectPc')}
+          </Button>
+        )}
         {canDevices && outdatedOnline > 0 && (
           <Button onClick={() => pushUpdates.mutate()} loading={pushUpdates.isPending}>
             <DownloadCloud size={16} /> {t('stations.updateClients', { n: outdatedOnline })}
@@ -340,6 +349,8 @@ export function StationsPage() {
           </Button>
         )}
       </div>
+
+      {canDevices && <FirewallCard bannerOnly />}
 
       <div className="map-actions" role="toolbar" aria-label={t('common.actions')}>
         <div className="map-actions__target">
@@ -485,6 +496,20 @@ export function StationsPage() {
           invalidate();
         }}
       />
+
+      {connectOpen && canDevices && (
+        <ConnectPcDialog
+          onClose={() => setConnectOpen(false)}
+          pendingCount={pending.data?.length ?? 0}
+          pendingPanel={
+            <PendingDevicesPanel
+              devices={pending.data ?? []}
+              stations={list}
+              onChanged={invalidate}
+            />
+          }
+        />
+      )}
 
       {pendingOpen && canDevices && (
         <Dialog

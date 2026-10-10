@@ -8,11 +8,13 @@ import {
   setupRequestSchema,
   toIsoDate,
   type HealthResponse,
+  type NetworkInfoResponse,
   type SetupStatusResponse,
   type SystemInfoResponse,
 } from '@likapcs/shared';
 import crypto from 'node:crypto';
 import { conflict, forbidden, notFound } from '../errors.js';
+import { lanAddresses } from '../discovery.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
 
@@ -26,14 +28,33 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       database = 'error';
     }
+    const name =
+      database === 'ok'
+        ? await services.settings.get('business.name').catch(() => 'LIKApcs')
+        : 'LIKApcs';
     return {
       status: database === 'ok' ? 'ok' : 'degraded',
       version: SERVER_VERSION,
       schemaVersion: app.schemaVersion,
       database,
       time: new Date().toISOString(),
+      installationId: app.installationId,
+      name,
     };
   });
+
+  /** Addresses staff type into a gaming PC when automatic discovery cannot reach this server. */
+  app.get(
+    '/system/network',
+    { preHandler: app.requirePermission(PERMISSIONS.DEVICES_MANAGE) },
+    async (): Promise<NetworkInfoResponse> => ({
+      port: app.config.port,
+      discoveryPort: app.config.discovery.port,
+      discoveryEnabled: app.config.discovery.enabled,
+      addresses: lanAddresses(),
+      installationId: app.installationId,
+    }),
+  );
 
   /**
    * Graceful stop for local tooling (installer hooks, the Admin app's "Restart server" button).

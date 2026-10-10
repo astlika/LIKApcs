@@ -357,3 +357,58 @@ export function backoffMs(attempt: number, random = Math.random()): number {
   const base = Math.min(30_000, 1000 * 2 ** Math.max(0, Math.min(attempt, 10)));
   return Math.round(base * (1 + random * 0.2));
 }
+
+// ─── server address helpers ─────────────────────────────────────────────────
+export const DEFAULT_SERVER_PORT = 4700;
+
+/**
+ * Normalises what staff type into the "server address" box: `192.168.1.10`, `192.168.1.10:4700`,
+ * `http://main-pc:4700/` all become `http://192.168.1.10:4700`. Returns null when it is not an
+ * address at all.
+ */
+export function normalizeServerUrl(input: string): string | null {
+  let text = input.trim();
+  if (!text) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = `http://${text}`;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  // Browsers percent-encode junk instead of rejecting it ("not an address" → not%20an%20address).
+  if (
+    !/^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)$/i.test(
+      url.hostname,
+    )
+  ) {
+    return null;
+  }
+  const port = url.port || (url.protocol === 'https:' ? '' : String(DEFAULT_SERVER_PORT));
+  return `${url.protocol}//${url.hostname}${port ? `:${port}` : ''}`;
+}
+
+/**
+ * Addresses to try for a discovered server, best first: the address its discovery reply came
+ * from (the only one proven reachable from this PC), then the addresses it advertises itself.
+ * Servers with several adapters (VirtualBox, Hyper-V, Wi-Fi + Ethernet) list them all; blindly
+ * taking the first one is the classic "client never connects" bug.
+ */
+export function candidateServerUrls(server: {
+  from?: string | null;
+  port: number;
+  urls: string[];
+}): string[] {
+  const out: string[] = [];
+  if (server.from) out.push(`http://${formatHost(server.from)}:${server.port}`);
+  for (const url of server.urls) {
+    const normalized = normalizeServerUrl(url);
+    if (normalized && !out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+function formatHost(ip: string): string {
+  return ip.includes(':') && !ip.startsWith('[') ? `[${ip}]` : ip;
+}

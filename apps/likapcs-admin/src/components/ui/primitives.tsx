@@ -383,7 +383,7 @@ interface DialogProps {
   description?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   /** Prevent closing with Escape / overlay click (e.g. forced password change). */
   locked?: boolean;
 }

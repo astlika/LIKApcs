@@ -34,6 +34,20 @@ export interface HealthResponse {
   schemaVersion: number;
   database: 'ok' | 'error';
   time: string;
+  /** Stable id of this installation (also broadcast by LAN discovery); null for external databases. */
+  installationId: string | null;
+  /** Business name — lets a client PC show *which* server answered a typed-in address. */
+  name: string;
+}
+
+/** `GET /system/network` — what staff need to connect a gaming PC by hand. */
+export interface NetworkInfoResponse {
+  port: number;
+  discoveryPort: number;
+  discoveryEnabled: boolean;
+  /** IPv4 addresses of this machine (first = most likely LAN address). */
+  addresses: string[];
+  installationId: string | null;
 }
 
 export interface SetupStatusResponse {

@@ -92,6 +92,13 @@ async fn discover_servers(timeout_ms: Option<u64>) -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
+async fn firewall_status() -> server_manager::FirewallStatus {
+    tauri::async_runtime::spawn_blocking(server_manager::firewall_status)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 async fn allow_firewall() -> Result<(), String> {
     let rt = locate_runtime().ok_or("embedded server runtime not installed")?;
     tauri::async_runtime::spawn_blocking(move || server_manager::allow_firewall(&rt))
@@ -120,6 +127,7 @@ pub fn run() {
             embedded_server_restart,
             embedded_server_log,
             discover_servers,
+            firewall_status,
             allow_firewall
         ])
         .setup(move |app| {

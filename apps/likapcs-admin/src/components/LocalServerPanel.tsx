@@ -13,6 +13,7 @@ import {
   embeddedServerStop,
   setAutostart,
 } from '../lib/desktop';
+import { FirewallCard } from './stations/ConnectPcDialog';
 
 /**
  * Settings → System → "Server on this PC". Rendered only on the main PC (the installer put the
@@ -146,6 +147,9 @@ export function LocalServerPanel() {
       <p className="muted" style={{ fontSize: 12.5 }}>
         {t('settings.localServer.firewallHint')}
       </p>
+      <div style={{ marginBottom: 10 }}>
+        <FirewallCard />
+      </div>
       {showLog && (
         <pre className="log-view" aria-live="polite">
           {log.isLoading

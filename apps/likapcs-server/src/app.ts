@@ -87,6 +87,8 @@ declare module 'fastify' {
     services: Services;
     schemaVersion: number;
     startedAt: Date;
+    /** Installation id from the embedded runtime (null with an external database). */
+    installationId: string | null;
     /** Loopback-only control: token from the data directory, null when control is disabled. */
     control: { token: string | null; requestShutdown: (reason: string) => void };
   }
@@ -98,6 +100,8 @@ export interface BuildAppOptions {
   logger?: boolean | object;
   /** Enables POST /system/control/stop for local tooling (installer, Admin app). */
   controlToken?: string | null;
+  /** Stable installation id (embedded runtime); reported by /system/health and /system/network. */
+  installationId?: string | null;
   requestShutdown?: (reason: string) => void;
   /** Set to false in tests to drive the session clock manually. */
   sessionTicker?: boolean;
@@ -197,6 +201,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
+  app.decorate('installationId', options.installationId ?? null);
   app.decorate('control', {
     token: options.controlToken ?? null,
     requestShutdown: options.requestShutdown ?? (() => undefined),
