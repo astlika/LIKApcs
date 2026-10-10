@@ -2,7 +2,12 @@
  * POS cart state (pure functions; the server recomputes everything on submission).
  * Quantities are milli-units, money is integer cents — identical to the server model.
  */
-import { computeSale, type ProductSummary, type SaleTotals } from '@likapcs/shared';
+import {
+  computeSale,
+  customerDiscountCents,
+  type ProductSummary,
+  type SaleTotals,
+} from '@likapcs/shared';
 
 export interface CartLine {
   product: ProductSummary;
@@ -64,8 +69,15 @@ export function removeLine(cart: Cart, productId: string): Cart {
   return { ...cart, lines: cart.lines.filter((l) => l.product.id !== productId) };
 }
 
-/** Preview totals; invalid discounts are clamped so the preview never throws. */
-export function cartTotals(cart: Cart): SaleTotals {
+/**
+ * Preview totals; invalid discounts are clamped so the preview never throws. `memberDiscountBp`
+ * mirrors the server rule: a customer's default discount applies only when no explicit sale
+ * discount was entered (see `customerDiscountCents` in the shared package).
+ */
+export function cartTotals(
+  cart: Cart,
+  memberDiscountBp = 0,
+): SaleTotals & { memberDiscount: boolean } {
   const lines = cart.lines.map((l) => {
     const gross = Math.round((l.product.sellingPriceCents * l.quantityMilli) / 1000);
     return {
@@ -77,7 +89,9 @@ export function cartTotals(cart: Cart): SaleTotals {
     };
   });
   const subtotal = computeSale(lines, 0).subtotalCents;
-  return computeSale(lines, Math.min(cart.discountCents, subtotal));
+  const explicit = Math.min(cart.discountCents, subtotal);
+  const member = customerDiscountCents(subtotal, memberDiscountBp, explicit);
+  return { ...computeSale(lines, member > 0 ? member : explicit), memberDiscount: member > 0 };
 }
 
 export function cartItemCount(cart: Cart): number {

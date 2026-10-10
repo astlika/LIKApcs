@@ -45,6 +45,11 @@ export const SETTING_SCHEMAS = {
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   'pos.auto_print_receipt': z.boolean(),
 
+  /** Cash tenders (sales, session bills, drawer expenses) require an open cash shift. */
+  'cash.require_open_shift': z.boolean(),
+  /** Warn when the closing count differs from the expected cash by more than this (cents). */
+  'cash.difference_warning_cents': z.number().int().min(0).max(1_000_000),
+
   'backup.enabled': z.boolean(),
   'backup.time': z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   'backup.keep_count': z.number().int().min(1).max(365),
@@ -97,6 +102,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.scan_increments_quantity': true,
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': true,
+
+  'cash.require_open_shift': true,
+  'cash.difference_warning_cents': 500,
 
   'backup.enabled': true,
   'backup.time': '04:00',

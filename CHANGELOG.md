@@ -8,6 +8,37 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Cash register, expenses, customers & reports (Phase 6).** Server: `CashService` (registers,
+  one open shift per register, opening float, pay-in / pay-out with an insufficient-cash guard, close
+  with counted amount → expected / difference frozen on the shift, drawer ledger written only inside
+  the transactions that move money: net cash of sales and cash-paid sessions, cash refunds, drawer
+  expenses and their voids), `ExpensesService` (seeded categories EN/SQ, expenses by date / category /
+  payment method, _paid from the drawer_ needs an open shift, void with reason), `CustomersService`
+  (generated codes `C-000001`, search by name / phone / code, membership, default discount,
+  blocked / archived status, detail with lifetime stats and recent receipts / sessions) and
+  `ReportsService` (sales, refunds, VAT, by day / hour / payment method / source / category / product /
+  station / employee, gaming minutes, expenses and closed shifts for any date range; CSV export of
+  sales, receipt lines, expenses, sessions and shifts — UTF-8 BOM, `;` separator). Report days and
+  CSV timestamps follow the business time zone (`locale.timezone`), not UTC. New setting
+  `cash.require_open_shift` (default on): a cash sale or cash-paid prepaid session without an open
+  shift is refused with `409 SHIFT_REQUIRED`; `cash.difference_warning_cents` highlights large
+  closing differences. Migration `0009` seeds the main register and lookup indexes. Admin: _Finance_
+  section with **Cash Register** (live drawer summary, pay-in / pay-out, ledger, close-shift dialog
+  with difference preview, printable shift report, shift history), **Expenses**, **Customers** and
+  **Reports** (quick ranges, stat tiles, bar charts, tables, CSV download); top-bar shift pill; a
+  shift guard that opens the _Open shift_ dialog on `SHIFT_REQUIRED` and retries the original
+  action; command-palette entries. All translated EN/SQ. 12 new server integration tests cover the
+  whole money trail of a shift against the ledger and the report.
+- **Customer on sales and sessions.** Type-ahead customer picker in the POS cart and in both session
+  start dialogs (free text still allowed for walk-ins). A customer's default discount
+  (`customers.discount_bp`) is applied **by the server** to retail sales when the cashier enters no
+  explicit sale discount — no `pos.discount` permission needed, never stacked with a manual
+  discount, shown as _Member discount_ in the cart and on the receipt; blocked or archived customers
+  are refused (`409 CUSTOMER_NOT_ACTIVE`). Resuming a parked sale restores the linked customer.
+  Shared `customerDiscountCents()` is the single implementation used by the POS preview and the
+  server (unit-tested).
+- Drawer ledger rows carry the receipt / refund number as their reason, so the shift report reads
+  like a bank statement.
 - **PanCafe-style station map.** _Gaming Stations_ is now a floor map of PC icons (number on the
   screen, colour = state: free, in use, expiring soon, paused, locked, offline/disabled) with the live
   timer, cost and a prepaid progress bar under each icon. One click selects a PC and enables a fixed

@@ -63,6 +63,10 @@ describe('catalogue & POS', () => {
     });
     expect(created.status).toBe(201);
     cashier = await login(ctx.app, 'kasa', 'Cashier123');
+    // Cash tenders need an open cash shift (cash.require_open_shift defaults to true).
+    expect(
+      (await call(owner.token, 'POST', '/cash/shifts/open', { openingCents: 2000 })).status,
+    ).toBe(201);
   }, 30_000);
 
   afterAll(async () => {

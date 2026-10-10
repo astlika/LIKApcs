@@ -24,7 +24,7 @@ const AGENT_MODULE = fileURLToPath(
   new URL('../../../likapcs-client/src/lib/agent.ts', import.meta.url),
 );
 type AgentSnapshot = {
-  phase: { phase: string };
+  phase: { phase: string; registrationId?: string | null };
   state: {
     mode: 'locked' | 'session' | 'free';
     session: { id: string; status: 'active' | 'paused' } | null;
@@ -305,7 +305,15 @@ describe('LIKApcs-Client agent ↔ server', () => {
       headers: authHeader(owner.token),
     });
     expect(revoke.statusCode).toBe(200);
-    await waitFor(() => snap().phase.phase === 'registering', 15_000, 're-registration');
+    // 'registering' is entered before the registration request completes; wait for its id.
+    await waitFor(
+      () => {
+        const phase = snap().phase;
+        return phase.phase === 'registering' && phase.registrationId;
+      },
+      15_000,
+      're-registration',
+    );
     expect(snap().paired).toBe(false);
     expect(snap().state.mode).toBe('locked');
     const pending = await ctx.app.inject({

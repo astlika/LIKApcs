@@ -509,6 +509,7 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
       );
       void queryClient.invalidateQueries({ queryKey: ['sales'] });
       void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
       onClose();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),

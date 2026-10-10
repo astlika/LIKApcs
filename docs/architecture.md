@@ -190,13 +190,13 @@ app.ts               composition root; index.ts = process entry; cli.ts = migrat
 
 ## 8. Phase plan (what exists today)
 
-| Phase | Scope                                                                                                  | Status                                 |
-| ----- | ------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| 1     | Foundation: monorepo, schema, server core, auth/roles, stations & devices, Admin shell + 7 screens, CI | **Implemented & verified** (this repo) |
-| 2     | Products, inventory, suppliers, purchases, POS sales, payments, receipts                               | Not started (schema already in place)  |
-| 3     | Pricing rules, packages, gaming sessions, live timers, exactly-once session billing                    | Not started (schema in place)          |
-| 4     | LIKApcs-Client Windows agent                                                                           | Not started (server contract ready)    |
-| 5     | Customers, cash register & shifts, expenses, reports, printing                                         | Not started                            |
-| 6     | Backups/restore, maintenance, audit tooling                                                            | Not started                            |
-| 7     | Signed auto-updates, update dashboard, client update policies                                          | Not started                            |
-| 8     | Hardening, acceptance test pass, installer polish                                                      | Not started                            |
+| Phase | Scope                                                                                                                                  | Status                                                            |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1     | Foundation: monorepo, schema, server core, auth/roles, stations & devices, Admin shell, CI, signed releases                            | **Implemented & verified**                                        |
+| 2     | Embedded main-PC server (bundled PostgreSQL + Node runtime, Windows service-less supervisor, ServerGate), discovery, remember-me login | **Implemented** (desk-checked Rust; Windows build in CI)          |
+| 3     | Pricing rules, packages, gaming sessions, live timers, exactly-once session billing, PanCafe-style station map                         | **Implemented & verified**                                        |
+| 4     | LIKApcs-Client agent: registration, lock/welcome screen, timer overlay, safe staff commands, reconnection                              | **Implemented** (web shell verified; Tauri shell desk-checked)    |
+| 5     | Catalogue, inventory, POS (barcode scanner, discounts, mixed tenders, parked sales, refunds, receipts)                                 | **Implemented & verified**                                        |
+| 6     | Cash register shifts & drawer ledger, expenses, customers, reports & CSV export                                                        | **Implemented & verified**                                        |
+| 7     | Purchases & suppliers UI, invoices/printing templates, backups/restore dashboard, update dashboard                                     | Not started (schema and release/update pipeline already in place) |
+| 8     | Hardening, acceptance-test pass, installer polish, employee permission matrix UI                                                       | Not started                                                       |

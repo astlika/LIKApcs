@@ -160,6 +160,61 @@ from tax-inclusive prices (`price_includes_tax=false` adds it instead), only **c
 same transaction with `SELECT … FOR UPDATE` in product-id order (`409 INSUFFICIENT_STOCK` carries
 `productId`, `availableMilli`, `requestedMilli`). Error responses are `{error: {code, message, details?}}`.
 
+### Cash register (`cash.view` to read, `cash.open_close` for shifts, `cash.move` for pay-in/pay-out)
+
+| Route                         | Body / query                                             | Result                                                                                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /cash/status`            | —                                                        | `{registers, current: CashShiftDetail \| null, requireOpenShift, differenceWarningCents}` — polled by the Admin top-bar pill; `current` is the open shift of the default register                                                      |
+| `GET /cash/registers`         | —                                                        | active registers (`0009` seeds _Main register_)                                                                                                                                                                                        |
+| `POST /cash/shifts/open`      | `{registerId?, openingCents, notes?}`                    | `201 CashShiftDetail`; `409 CONFLICT` when the register already has an open shift                                                                                                                                                      |
+| `POST /cash/shifts/:id/close` | `{countedCashCents, notes?}`                             | closes the shift: `expected_cash_cents` is computed from the ledger inside the same transaction, `difference_cents = counted − expected`; audited                                                                                      |
+| `GET /cash/shifts`            | `?registerId&status&from&to&page&pageSize`               | paginated summaries (`from`/`to` are calendar days in the business time zone)                                                                                                                                                          |
+| `GET /cash/shifts/:id`        | —                                                        | `CashShiftDetail`: `totals{openingCents, cashSalesCents, salesCount, cashRefundsCents, refundsCount, depositsCents, withdrawalsCents, expensesCents, otherCents, expectedCashCents, salesByMethod[], salesBySource[]}` + `movements[]` |
+| `POST /cash/movements`        | `{type: 'deposit' \| 'withdrawal', amountCents, reason}` | `201`; a withdrawal larger than the expected drawer content is `400 INSUFFICIENT_CASH`                                                                                                                                                 |
+
+The drawer ledger (`cash_movements`, signed cents) is written **by the server only**, inside the
+transaction that creates the money event: `opening` on open, `sale` for the **net cash** of a sale
+(tender − change) or a cash-paid gaming session (reason = receipt number), `refund` for cash refunds,
+`expense` for expenses paid from the drawer (`correction` when such an expense is voided),
+`deposit` / `withdrawal` for manual moves. Non-cash
+tenders are linked to the shift (`payments.shift_id`) for the shift report but never touch the ledger.
+With the setting `cash.require_open_shift = true` (default) a cash sale or a cash-paid prepaid session
+without an open shift is refused with `409 SHIFT_REQUIRED`; the Admin reacts by opening the
+_Open shift_ dialog and retrying the original request once the shift exists.
+
+### Expenses (`expenses.view` / `expenses.manage`)
+
+| Route                       | Body / query                                                                                    | Result                                                                                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /expenses/categories`  | `?includeInactive`                                                                              | seeded codes (`electricity`, `internet`, `rent`, `salaries`, `repairs`, `hardware`, `cleaning`, `software`, `other`) with `nameEn` / `nameSq`                                                               |
+| `POST /expenses/categories` | `{code, nameEn, nameSq}`                                                                        | `201`                                                                                                                                                                                                       |
+| `GET /expenses`             | `?from&to&categoryCode&paymentMethod&includeVoided&q&page&pageSize`                             | `{items, total, page, pageSize, totalCents}` (total over the whole filter, voided excluded)                                                                                                                 |
+| `POST /expenses`            | `{expenseDate, categoryCode, amountCents, paymentMethod, description, supplierId?, fromDrawer}` | `201`; `fromDrawer=true` requires an open shift and writes an `expense` ledger movement                                                                                                                     |
+| `POST /expenses/:id/void`   | `{reason}`                                                                                      | marks the expense void; a drawer expense is reversed with a `correction` movement in **its own** shift, so it can only be voided while that shift is still open (`409` afterwards — book a deposit instead) |
+
+### Customers (`customers.view` / `customers.manage`)
+
+| Route                   | Body / query                                                                 | Result                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `GET /customers`        | `?q&status&page&pageSize`                                                    | paginated summaries (archived customers hidden unless `status=archived`)                                              |
+| `POST /customers`       | `{name, phone?, email?, membership?, membershipUntil?, discountBp?, notes?}` | `201`; code `C-000001`, `C-000002`, … from the shared document sequence                                               |
+| `GET /customers/:id`    | —                                                                            | detail + `stats{salesCount, salesTotalCents, sessionsCount, sessionsMinutes, lastVisitAt}`, recent sales and sessions |
+| `PATCH /customers/:id`  | any subset of the create body + `status: active \| blocked`                  | updated detail                                                                                                        |
+| `DELETE /customers/:id` | —                                                                            | archives (never deletes — sales keep their customer link)                                                             |
+
+`GET /sales?customerId=` and `GET /sessions?customerId=` filter history by customer.
+
+### Reports (`reports.view`; `reports.export` for CSV)
+
+| Route                 | Query                                                                 | Result                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /reports/sales`  | `?from=YYYY-MM-DD&to=YYYY-MM-DD` (`400` when `from > to`)             | `SalesReport`: `sales{count, grossCents, discountCents, taxCents, netCents, refundedCents, refundsCount, averageCents}`, `byMethod`, `bySource`, `byDay[]`, `byHour[]`, `topProducts[]`, `byCategory`, `gaming{sessionsCount, billedMinutes, amountCents, byStation[]}`, `expenses{count, totalCents, byCategory}`, `cash{shiftsCount, differenceCents, shifts[]}`, `byEmployee`, `generatedAt` |
+| `GET /reports/export` | `?kind=sales \| sale_items \| expenses \| sessions \| shifts&from&to` | `text/csv; charset=utf-8` with BOM, `;` separator, `Content-Disposition: attachment` — opens directly in Excel/LibreOffice                                                                                                                                                                                                                                                                      |
+
+Days are bucketed in the **business time zone** (`locale.timezone` setting, default
+`Europe/Belgrade`), so a sale at 00:30 local time belongs to the new day even though it is still the
+previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD HH:MM:SS`).
+
 ### Client registration (no bearer token; rate-limited per IP)
 
 | Method | Path                                | Notes                                                                                                                                                                                                                                                                                                         |

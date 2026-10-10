@@ -21,7 +21,9 @@ import {
 import {
   PERMISSIONS,
   parseMoneyInput,
+  customerDiscountCents,
   type CategorySummary,
+  type CustomerSummary,
   type ProductLookupResponse,
   type ProductSummary,
   type ReceiptData,
@@ -46,7 +48,9 @@ import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+import { useShiftGuard } from '../state/shift-guard';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
+import { CustomerPicker } from '../components/customers/CustomerPicker';
 import {
   Alert,
   Badge,
@@ -73,6 +77,7 @@ export function PosPage() {
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
 
   const [cart, setCart] = useState<Cart>(() => emptyCart());
+  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [resumedId, setResumedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
@@ -109,9 +114,10 @@ export function PosPage() {
     staleTime: 10_000,
   });
 
-  const totals = useMemo(() => cartTotals(cart), [cart]);
+  const totals = useMemo(() => cartTotals(cart, customer?.discountBp ?? 0), [cart, customer]);
   const resetCart = useCallback(() => {
     setCart(emptyCart());
+    setCustomer(null);
     setResumedId(null);
     setSearch('');
     setDialog(null);
@@ -154,7 +160,27 @@ export function PosPage() {
         next = addToCart(next, product, item.quantityMilli);
         if (item.discountCents) next = setLineDiscount(next, product.id, item.discountCents);
       }
-      setCart({ ...next, discountCents: sale.discountCents, notes: sale.notes ?? '' });
+      // A parked sale's discount may be the customer's default one (applied by the server); do
+      // not resend it as an explicit discount, the server re-applies it on completion.
+      let linked: CustomerSummary | null = null;
+      let discountCents = sale.discountCents;
+      if (sale.customerId) {
+        linked = await api<CustomerSummary>(`/customers/${sale.customerId}`).catch(() => null);
+        if (
+          linked &&
+          discountCents > 0 &&
+          discountCents === customerDiscountCents(sale.subtotalCents, linked.discountBp)
+        ) {
+          discountCents = 0;
+        }
+      }
+      setCustomer(linked);
+      setCart({
+        ...next,
+        discountCents,
+        customerId: linked?.id ?? null,
+        notes: sale.notes ?? '',
+      });
       setResumedId(sale.id);
     });
   }, [params, setParams]);
@@ -318,6 +344,16 @@ export function PosPage() {
           </h2>
           <span className="muted">{t('pos.items', { n: cartItemCount(cart) })}</span>
         </div>
+        <div className="pos__customer">
+          <CustomerPicker
+            value={customer}
+            onChange={(c) => {
+              setCustomer(c);
+              setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
+            }}
+            placeholder={t('pos.customerPlaceholder')}
+          />
+        </div>
         <div className="pos__lines">
           {cart.lines.length === 0 && <div className="pos__empty">{t('pos.emptyCart')}</div>}
           {cart.lines.map((line, i) => {
@@ -417,7 +453,11 @@ export function PosPage() {
           </div>
           {totals.discountCents > 0 && (
             <div className="row row--between">
-              <span className="muted">{t('pos.discount')}</span>
+              <span className="muted">
+                {totals.memberDiscount
+                  ? t('pos.memberDiscount', { pct: ((customer?.discountBp ?? 0) / 100).toFixed(0) })
+                  : t('pos.discount')}
+              </span>
               <span className="num">−{fmt.money(totals.discountCents)}</span>
             </div>
           )}
@@ -478,6 +518,7 @@ export function PosPage() {
             void queryClient.invalidateQueries({ queryKey: ['products'] });
             void queryClient.invalidateQueries({ queryKey: ['sales'] });
             void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            void queryClient.invalidateQueries({ queryKey: ['cash'] });
             setReceipt(receiptData);
           }}
         />
@@ -580,6 +621,7 @@ function PaymentDialog({
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
+  const shiftGuard = useShiftGuard();
   const [cashText, setCashText] = useState('');
   const [cardText, setCardText] = useState('');
   const [reference, setReference] = useState('');
@@ -614,7 +656,10 @@ function PaymentDialog({
       return { sale, receipt };
     },
     onSuccess: ({ sale, receipt }) => onCompleted(sale, receipt),
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err) => {
+      if (shiftGuard.handle(err, () => complete.mutate())) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
 
   useEffect(() => {

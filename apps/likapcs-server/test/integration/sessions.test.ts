@@ -63,6 +63,8 @@ describe('gaming sessions', () => {
     owner = await runSetup(ctx.app);
     station = (await post<StationSummary>('/stations', { number: 1, name: 'Arena 1' })).body;
     second = (await post<StationSummary>('/stations', { number: 2, name: 'Arena 2' })).body;
+    // Cash tenders need an open cash shift (cash.require_open_shift defaults to true).
+    expect((await post('/cash/shifts/open', { openingCents: 5000 })).status).toBe(201);
     const ruleRes = await post<PricingRuleSummary>('/pricing/rules', {
       name: 'Standard',
       rateCentsPerHour: 150,

@@ -2528,3 +2528,167 @@ body:has(.pos) .toasts {
   display: grid;
   gap: 10px;
 }
+
+/* ─── Reports: CSS bar charts ─────────────────────────────────────────────────── */
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bars__row {
+  display: grid;
+  grid-template-columns: 110px 1fr 110px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.bars--compact .bars__row {
+  grid-template-columns: 56px 1fr 90px;
+  gap: 8px;
+  font-size: 12px;
+}
+.bars__label {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bars__track {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.bars__fill {
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong, var(--accent)));
+  min-width: 2px;
+  transition: width 0.3s ease;
+}
+.bars__value {
+  text-align: right;
+}
+
+/* Elements rendered only on paper (e.g. the shift report). */
+.print-only {
+  display: none;
+}
+@media print {
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* ── Customer picker (POS cart, session start) ─────────────────────────────── */
+.customer-picker {
+  position: relative;
+  width: 100%;
+}
+.customer-picker__icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.customer-picker__input {
+  padding-left: 32px;
+}
+.customer-picker__list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+.customer-picker__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.customer-picker__item.is-active {
+  background: var(--bg-hover);
+}
+.customer-picker__item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.customer-picker__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+}
+.customer-picker__name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.customer-picker__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.customer-picker__empty {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.customer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 38px;
+  padding: 0 8px 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  font-size: 13px;
+}
+.customer-chip__name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.customer-chip__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.customer-chip__clear:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.pos__customer {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}

@@ -19,6 +19,14 @@ import { catalogRoutes } from './routes/catalog.js';
 import { salesRoutes } from './routes/sales.js';
 import { CatalogService } from './services/catalog.js';
 import { SalesService } from './services/sales.js';
+import { CashService } from './services/cash.js';
+import { ExpensesService } from './services/expenses.js';
+import { CustomersService } from './services/customers.js';
+import { ReportsService } from './services/reports.js';
+import { cashRoutes } from './routes/cash.js';
+import { expenseRoutes } from './routes/expenses.js';
+import { customerRoutes } from './routes/customers.js';
+import { reportRoutes } from './routes/reports.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
@@ -42,6 +50,10 @@ export interface Services {
   sessions: SessionsService;
   catalog: CatalogService;
   sales: SalesService;
+  cash: CashService;
+  expenses: ExpensesService;
+  customers: CustomersService;
+  reports: ReportsService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -101,9 +113,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const commands = new CommandsService(pool, hub);
   const pricing = new PricingService(pool, settings);
-  const sessions = new SessionsService(pool, hub, settings, pricing, stations, app.log);
+  const cash = new CashService(pool, settings);
+  const sessions = new SessionsService(pool, hub, settings, pricing, stations, cash, app.log);
   const catalog = new CatalogService(pool, settings);
-  const sales = new SalesService(pool, settings);
+  const sales = new SalesService(pool, settings, cash);
+  const expenses = new ExpensesService(pool, cash);
+  const customers = new CustomersService(pool, sales, sessions);
+  const reports = new ReportsService(pool, cash, settings);
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -124,6 +140,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     sessions,
     catalog,
     sales,
+    cash,
+    expenses,
+    customers,
+    reports,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -163,6 +183,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(sessionRoutes);
       await api.register(catalogRoutes);
       await api.register(salesRoutes);
+      await api.register(cashRoutes);
+      await api.register(expenseRoutes);
+      await api.register(customerRoutes);
+      await api.register(reportRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },

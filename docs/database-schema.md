@@ -17,21 +17,23 @@ Conventions: `uuid` primary keys (`bigserial` for append-only logs), `*_cents BI
 
 ## Migration map
 
-| File                             | Domain                    | Tables                                                                                                                                             |
-| -------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0001_core.sql`                  | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history |
-| `0002_stations.sql`              | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                             |
-| `0003_catalog_inventory.sql`     | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items          |
-| `0004_customers_cash.sql`        | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                              |
-| `0005_sales.sql`                 | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                       |
-| `0006_purchasing.sql`            | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                   |
-| `0007_gaming.sql`                | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                              |
-| `0008_session_billing_terms.sql` | Gaming sessions           | `gaming_sessions.billing_terms` (frozen pricing terms snapshot) and `gaming_sessions.client_request_id` (idempotent start)                         |
+| File                              | Domain                    | Tables                                                                                                                                             |
+| --------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0001_core.sql`                   | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history |
+| `0002_stations.sql`               | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                             |
+| `0003_catalog_inventory.sql`      | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items          |
+| `0004_customers_cash.sql`         | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                              |
+| `0005_sales.sql`                  | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                       |
+| `0006_purchasing.sql`             | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                   |
+| `0007_gaming.sql`                 | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                              |
+| `0008_session_billing_terms.sql`  | Gaming sessions           | `gaming_sessions.billing_terms` (frozen pricing terms snapshot) and `gaming_sessions.client_request_id` (idempotent start)                         |
+| `0009_cash_register_defaults.sql` | Cash register             | seeds _Main register_ and the `customer` document sequence; partial indexes on `payments/sales/expenses.shift_id` and open (non-voided) expenses   |
 
 All 33 tables required by the specification exist (plus supporting tables such as `user_sessions`,
 `station_connection_logs`, `document_sequences`, `customer_ledger`, `print_jobs`). Services exist
-for 0001/0002 (Phases 1–2) and for pricing/sessions/sales-from-sessions (Phase 3); the catalogue,
-purchasing, customers, cash and expenses tables are populated by the later phases.
+for identity/stations (Phase 1), pricing/sessions (Phase 3), catalogue/inventory/sales (Phase 5) and
+cash register/expenses/customers/reports (Phase 6); purchasing, invoices and backup tables are
+populated by Phases 7–8.
 
 ## Entity overview
 
@@ -112,9 +114,16 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   append-only money trail behind wallet/credit.
 - **cash_registers / cash_shifts / cash_movements** — one open shift per register (partial unique
   index); shift stores `opening_cents`, `expected_cash_cents`, `counted_cash_cents`,
-  `difference_cents`.
+  `difference_cents` (filled at close, inside the closing transaction). `cash_movements` is the
+  signed drawer ledger (`movement_type` opening / sale / refund / deposit / withdrawal / expense /
+  correction, `reason`, `reference_type` + `reference_id` back to the sale, refund or expense); it is
+  written only by the server services, never from an API body. `payments.shift_id` and `sales.shift_id` link
+  every tender (cash or not) to the shift that was open when it was taken.
 - **expenses** — `category_code`, `amount_cents`, `payment_method`, optional `shift_id` (cash paid
-  from the drawer), void with reason.
+  from the drawer), void with reason (`voided_at`, `void_reason`); voiding a drawer expense writes a
+  `correction` movement into the same shift, which therefore must still be open.
+- **customers** — `code` (`C-000001`, …, from `document_sequences`), `status` active / blocked /
+  archived; archiving keeps all sales and session links.
 
 ### Sales (0005)
 

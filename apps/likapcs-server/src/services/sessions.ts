@@ -43,6 +43,7 @@ import { recordAudit, type AuditActor } from './audit.js';
 import { nextDocumentNumber } from './documents.js';
 import type { PricingService } from './pricing.js';
 import type { SettingsService } from './settings.js';
+import type { CashService } from './cash.js';
 import type { StationsService } from './stations.js';
 
 interface SessionRow {
@@ -130,6 +131,7 @@ export class SessionsService {
     private readonly settings: SettingsService,
     private readonly pricing: PricingService,
     private readonly stations: StationsService,
+    private readonly cash: CashService,
     private readonly log: {
       info: (o: unknown, m?: string) => void;
       warn: (o: unknown, m?: string) => void;
@@ -224,6 +226,10 @@ export class SessionsService {
     if (query.stationId) {
       params.push(query.stationId);
       where.push(`g.station_id = $${params.length}`);
+    }
+    if (query.customerId) {
+      params.push(query.customerId);
+      where.push(`g.customer_id = $${params.length}`);
     }
     if (query.from) {
       params.push(query.from);
@@ -932,11 +938,29 @@ export class SessionsService {
       ],
     );
     if (total > 0) {
+      const shiftId = await this.cash.attachTender(client, {
+        method: input.paymentMethod,
+        amountCents: total,
+        type: 'sale',
+        referenceType: 'sale',
+        referenceId: saleId,
+        reason: `${receiptNo} · ${input.description}`,
+        actorUserId: input.actor.userId ?? null,
+      });
       await client.query(
-        `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, received_at, created_by)
-         VALUES ('sale', $1, $2, $3, $4, $5, $6)`,
-        [input.paymentMethod, total, saleId, input.customerId, input.at, input.actor.userId],
+        `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, shift_id, received_at, created_by)
+         VALUES ('sale', $1, $2, $3, $4, $5, $6, $7)`,
+        [
+          input.paymentMethod,
+          total,
+          saleId,
+          input.customerId,
+          shiftId,
+          input.at,
+          input.actor.userId,
+        ],
       );
+      await client.query('UPDATE sales SET shift_id = $2 WHERE id = $1', [saleId, shiftId]);
     }
     return { saleId, receiptNo };
   }

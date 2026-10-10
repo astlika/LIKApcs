@@ -25,6 +25,7 @@ import {
   PERMISSIONS,
   priceForSeconds,
   type GamingPackageSummary,
+  type CustomerSummary,
   type PaymentMethod,
   type SessionMutationResponse,
   type SessionQuoteResponse,
@@ -39,6 +40,8 @@ import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
+import { useShiftGuard } from '../../state/shift-guard';
+import { CustomerPicker } from '../customers/CustomerPicker';
 import {
   CancelSessionDialog,
   EndSessionDialog,
@@ -99,6 +102,7 @@ export function useStationActions(
   const { can } = useAuth();
   const fmt = useFormat();
   const toast = useToast();
+  const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
@@ -138,7 +142,10 @@ export function useStationActions(
       setFlow(null);
       refresh();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err, variables) => {
+      if (shiftGuard.handle(err, () => sessionAct.mutate(variables))) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
   const command = useMutation({
     mutationFn: ({ stationId, body }: { stationId: string; body: StationCommandRequest }) =>
@@ -432,8 +439,10 @@ export function QuickStartDialog({
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
+  const shiftGuard = useShiftGuard();
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [customerName, setCustomerName] = useState('');
+  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [custom, setCustom] = useState('');
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
 
@@ -481,7 +490,8 @@ export function QuickStartDialog({
         body: {
           stationId: station.id,
           ...body,
-          customerName: customerName.trim() || undefined,
+          customerId: customer?.id,
+          customerName: customer ? undefined : customerName.trim() || undefined,
           paymentMethod: method,
           clientRequestId: requestId,
         },
@@ -491,8 +501,9 @@ export function QuickStartDialog({
       notifyClientAck(result, toast, t);
       onStarted();
     },
-    onError: (err) => {
+    onError: (err, body) => {
       setRequestId(crypto.randomUUID());
+      if (shiftGuard.handle(err, () => start.mutate(body))) return;
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
@@ -511,13 +522,14 @@ export function QuickStartDialog({
             ]}
             ariaLabel={t('sessions.paymentMethod')}
           />
-          <Input
+          <CustomerPicker
+            value={customer}
+            onChange={setCustomer}
+            text={customerName}
+            onTextChange={setCustomerName}
+            allowFreeText
             placeholder={t('map.customerPlaceholder')}
-            value={customerName}
-            maxLength={80}
-            onChange={(e) => setCustomerName(e.target.value)}
-            style={{ maxWidth: 220 }}
-            aria-label={t('sessions.customer')}
+            style={{ maxWidth: 260 }}
           />
         </div>
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}

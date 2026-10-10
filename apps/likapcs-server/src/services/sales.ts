@@ -9,6 +9,7 @@
 import {
   allocateProportionally,
   computeSale,
+  customerDiscountCents,
   refundAmountForQuantity,
   settlePayments,
   SaleMathError,
@@ -31,6 +32,7 @@ import { recordAudit, type AuditActor } from './audit.js';
 import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 import type { SettingsService } from './settings.js';
+import type { CashService } from './cash.js';
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -68,6 +70,11 @@ const SALE_SELECT = `
     FROM sales s
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN users u ON u.id = s.cashier_user_id`;
+
+/** The part of a customer record that influences a sale. */
+interface CustomerTerms {
+  discountBp: number;
+}
 
 interface ProductForSale {
   id: string;
@@ -111,6 +118,7 @@ export class SalesService {
   constructor(
     private readonly pool: DbPool,
     private readonly settings: SettingsService,
+    private readonly cash: CashService,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -244,6 +252,10 @@ export class SalesService {
       values.push(query.cashierId);
       where.push(`s.cashier_user_id = $${values.length}`);
     }
+    if (query.customerId) {
+      values.push(query.customerId);
+      where.push(`s.customer_id = $${values.length}`);
+    }
     if (query.q) {
       values.push(`%${query.q.toUpperCase()}%`);
       where.push(`upper(COALESCE(s.receipt_no, '')) LIKE $${values.length}`);
@@ -346,7 +358,13 @@ export class SalesService {
         input.items.map((i) => i.productId),
         false,
       );
-      const totals = this.compute(input, products, actor, await this.defaultTaxRate(client));
+      const totals = this.compute(
+        input,
+        products,
+        actor,
+        await this.defaultTaxRate(client),
+        await this.customerTerms(client, input.customerId),
+      );
       await this.writeLines(client, saleId, input, products, totals);
       await client.query(
         `UPDATE sales SET subtotal_cents = $2, discount_cents = $3, tax_cents = $4, total_cents = $5 WHERE id = $1`,
@@ -489,10 +507,20 @@ export class SalesService {
       }
       if (total <= 0) throw badRequest('Nothing left to refund on these lines');
       await client.query('UPDATE refunds SET total_cents = $2 WHERE id = $1', [refundId, total]);
+      // Cash refunds leave the drawer of the shift that is open now (not the original sale's).
+      const refundShiftId = await this.cash.attachTender(client, {
+        method: input.method,
+        amountCents: -total,
+        type: 'refund',
+        referenceType: 'refund',
+        referenceId: refundId,
+        reason: `${refundNo} · ${input.reason}`,
+        actorUserId: actor.userId,
+      });
       await client.query(
-        `INSERT INTO payments (kind, method, amount_cents, sale_id, refund_id, received_at, created_by)
-         VALUES ('refund', $1, $2, $3, $4, $5, $6)`,
-        [input.method, total, saleId, refundId, now, actor.userId],
+        `INSERT INTO payments (kind, method, amount_cents, sale_id, refund_id, shift_id, received_at, created_by)
+         VALUES ('refund', $1, $2, $3, $4, $5, $6, $7)`,
+        [input.method, total, saleId, refundId, refundShiftId, now, actor.userId],
       );
       const refundedCents = Number(sale.rows[0].refunded_cents) + total;
       const fully = await client.query<{ open: string }>(
@@ -584,34 +612,64 @@ export class SalesService {
     return map;
   }
 
+  /**
+   * Prices and tax always come from the product rows. Cashier-entered discounts need
+   * `pos.discount`; a customer's configured default discount (`customers.discount_bp`) is applied by
+   * the server itself when no explicit sale discount was entered — it was authorised when the
+   * customer record was set up, so no extra permission is required.
+   */
   private compute(
     input: SuspendSaleRequest,
     products: Map<string, ProductForSale>,
     actor: SaleActor,
     defaultRate: number,
+    customer: CustomerTerms | null,
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
     if (hasDiscount && !actor.permissions.has('pos.discount')) {
       throw forbidden('Discounts require the pos.discount permission');
     }
+    const lines = input.items.map((i) => {
+      const p = products.get(i.productId)!;
+      return {
+        unitPriceCents: Number(p.selling_price_cents),
+        quantityMilli: i.quantityMilli,
+        discountCents: i.discountCents,
+        taxRateBp: p.tax_rate_bp ?? defaultRate,
+        priceIncludesTax: p.price_includes_tax,
+      };
+    });
     try {
-      return computeSale(
-        input.items.map((i) => {
-          const p = products.get(i.productId)!;
-          return {
-            unitPriceCents: Number(p.selling_price_cents),
-            quantityMilli: i.quantityMilli,
-            discountCents: i.discountCents,
-            taxRateBp: p.tax_rate_bp ?? defaultRate,
-            priceIncludesTax: p.price_includes_tax,
-          };
-        }),
-        input.discountCents,
-      );
+      let totals = computeSale(lines, input.discountCents);
+      const memberDiscount = customer
+        ? customerDiscountCents(totals.subtotalCents, customer.discountBp, input.discountCents)
+        : 0;
+      if (memberDiscount > 0) totals = computeSale(lines, memberDiscount);
+      return { ...totals, cashierDiscount: hasDiscount };
     } catch (err) {
       if (err instanceof SaleMathError) throw badRequest(err.message, { code: err.code });
       throw err;
     }
+  }
+
+  /** Loads the customer attached to a sale; blocked or archived customers cannot buy. */
+  private async customerTerms(
+    client: DbClient,
+    customerId: string | null | undefined,
+  ): Promise<CustomerTerms | null> {
+    if (!customerId) return null;
+    const r = await client.query<{ status: string; discount_bp: number; name: string }>(
+      'SELECT status, discount_bp, name FROM customers WHERE id = $1',
+      [customerId],
+    );
+    const c = r.rows[0];
+    if (!c) throw notFound('Customer');
+    if (c.status !== 'active')
+      throw conflict(`Customer ${c.name} is ${c.status} and cannot be attached to a sale`, {
+        field: 'customerId',
+        code: 'CUSTOMER_NOT_ACTIVE',
+      });
+    return { discountBp: Number(c.discount_bp) };
   }
 
   private async writeLines(
@@ -658,7 +716,13 @@ export class SalesService {
       input.items.map((i) => i.productId),
       true,
     );
-    const totals = this.compute(input, products, actor, await this.defaultTaxRate(client));
+    const totals = this.compute(
+      input,
+      products,
+      actor,
+      await this.defaultTaxRate(client),
+      await this.customerTerms(client, input.customerId),
+    );
     let settled: { paidCents: number; changeCents: number };
     try {
       settled = settlePayments(totals.totalCents, payments);
@@ -688,17 +752,31 @@ export class SalesService {
     }
     const now = new Date();
     const receiptNo = await nextDocumentNumber(client, 'receipt', now);
+    // Cash register: the net cash that went into the drawer (cash tendered minus change given).
+    const cashTendered = payments
+      .filter((p) => p.method === 'cash')
+      .reduce((acc, p) => acc + p.amountCents, 0);
+    const shiftId = await this.cash.attachTender(client, {
+      method: cashTendered > 0 ? 'cash' : (payments[0]?.method ?? 'other'),
+      amountCents: cashTendered - settled.changeCents,
+      type: 'sale',
+      referenceType: 'sale',
+      referenceId: saleId,
+      reason: receiptNo,
+      actorUserId: actor.userId,
+    });
     // Tenders share the transaction timestamp; offset by 1 ms each so they list in entry order.
     for (const [i, p] of payments.entries()) {
       await client.query(
-        `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, reference, received_at, created_by)
-         VALUES ('sale', $1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, reference, shift_id, received_at, created_by)
+         VALUES ('sale', $1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           p.method,
           p.amountCents,
           saleId,
           input.customerId,
           p.reference ?? null,
+          shiftId,
           new Date(now.getTime() + i),
           actor.userId,
         ],
@@ -706,7 +784,8 @@ export class SalesService {
     }
     await client.query(
       `UPDATE sales SET status = 'completed', receipt_no = $2, subtotal_cents = $3, discount_cents = $4, tax_cents = $5,
-              total_cents = $6, paid_cents = $7, change_cents = $8, discount_authorized_by = $9, completed_at = $10
+              total_cents = $6, paid_cents = $7, change_cents = $8, discount_authorized_by = $9, completed_at = $10,
+              shift_id = $11
         WHERE id = $1`,
       [
         saleId,
@@ -717,10 +796,9 @@ export class SalesService {
         totals.totalCents,
         settled.paidCents,
         settled.changeCents,
-        totals.discountCents > 0 || input.items.some((i) => i.discountCents > 0)
-          ? actor.userId
-          : null,
+        totals.cashierDiscount ? actor.userId : null,
         now,
+        shiftId,
       ],
     );
     await recordAudit(client, actor, {

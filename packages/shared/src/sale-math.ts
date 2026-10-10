@@ -13,7 +13,14 @@
  *   tax              = Σ tax contained in each line's share of the total (sale discount is
  *                      allocated to the lines proportionally, largest remainder) → sales.tax_cents
  */
-import { addExclusiveTax, multiplyByQuantity, splitInclusiveTax, type Cents } from './money.js';
+import {
+  addExclusiveTax,
+  multiplyByQuantity,
+  percentOf,
+  splitInclusiveTax,
+  type BasisPoints,
+  type Cents,
+} from './money.js';
 
 export interface SaleLineInput {
   /** Unit price as stored on the product. */
@@ -184,4 +191,19 @@ export function refundAmountForQuantity(
   const charged = line.lineTotalCents - line.allocatedSaleDiscountCents;
   const raw = Math.round((charged * quantityMilli) / line.quantityMilli);
   return Math.min(raw, charged - refundedSoFarCents);
+}
+
+/**
+ * Sale-level discount owed to a customer with a default discount (`customers.discount_bp`).
+ * Applied by the server only when the cashier did not enter an explicit sale discount — the
+ * larger of the two is never combined, so a 10 % member cannot stack a manual €1 on top.
+ * The Admin uses the same function for its live preview.
+ */
+export function customerDiscountCents(
+  subtotalCents: Cents,
+  discountBp: BasisPoints,
+  explicitSaleDiscountCents: Cents = 0,
+): Cents {
+  if (explicitSaleDiscountCents > 0 || discountBp <= 0 || subtotalCents <= 0) return 0;
+  return Math.min(subtotalCents, percentOf(subtotalCents, discountBp));
 }

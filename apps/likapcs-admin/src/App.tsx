@@ -19,7 +19,12 @@ import { AuditLogPage } from './pages/AuditLogPage';
 import { PosPage } from './pages/PosPage';
 import { SalesPage } from './pages/SalesPage';
 import { ProductsPage } from './pages/ProductsPage';
+import { CashPage } from './pages/CashPage';
+import { ExpensesPage } from './pages/ExpensesPage';
+import { CustomersPage } from './pages/CustomersPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { ShiftGuardProvider } from './state/shift-guard';
 
 /** Redirects anonymous visitors to /login (or /setup on a fresh server). */
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -55,7 +60,9 @@ export function App() {
         <Route
           element={
             <RequireAuth>
-              <AppShell />
+              <ShiftGuardProvider>
+                <AppShell />
+              </ShiftGuardProvider>
             </RequireAuth>
           }
         >
@@ -64,6 +71,10 @@ export function App() {
           <Route path="pos" element={<PosPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="products" element={<ProductsPage />} />
+          <Route path="cash" element={<CashPage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
+          <Route path="customers" element={<CustomersPage />} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />
           <Route path="settings" element={<SettingsPage />} />

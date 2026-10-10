@@ -594,6 +594,7 @@ export interface SessionEventSummary {
 export const sessionListQuerySchema = z.object({
   status: z.enum(SESSION_STATUSES).optional(),
   stationId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -844,6 +845,7 @@ export const saleListQuerySchema = z.object({
   status: z.enum(SALE_STATUSES).optional(),
   source: z.enum(['retail', 'gaming', 'mixed']).optional(),
   cashierId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
   q: z.string().trim().max(40).optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
@@ -943,3 +945,320 @@ export interface ReceiptData {
   printedAt: string;
   isReprint: boolean;
 }
+
+// ─── Phase 6: cash register, expenses, customers & reports ──────────────────
+
+export const CASH_MOVEMENT_TYPES = [
+  'opening',
+  'sale',
+  'refund',
+  'deposit',
+  'withdrawal',
+  'expense',
+  'supplier_payment',
+  'wallet_topup',
+  'customer_payment',
+  'correction',
+] as const;
+export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
+
+export interface CashRegisterSummary {
+  id: string;
+  name: string;
+  isActive: boolean;
+  /** Id of the currently open shift on this register, if any. */
+  openShiftId: string | null;
+}
+
+export interface CashMovementSummary {
+  id: number;
+  shiftId: string;
+  type: CashMovementType;
+  /** Positive = into the drawer, negative = out of the drawer. */
+  amountCents: number;
+  reason: string | null;
+  referenceType: string | null;
+  referenceId: string | null;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface CashShiftTotals {
+  openingCents: number;
+  cashSalesCents: number;
+  cashRefundsCents: number;
+  depositsCents: number;
+  withdrawalsCents: number;
+  expensesCents: number;
+  otherCents: number;
+  /** opening + Σ movements (what should be in the drawer right now / at close). */
+  expectedCashCents: number;
+  salesCount: number;
+  refundsCount: number;
+  /** All tenders of sales completed during the shift, by method (not only cash). */
+  salesByMethod: { method: string; amountCents: number; count: number }[];
+  /** Sales completed during the shift by source (retail / gaming / mixed). */
+  salesBySource: { source: string; amountCents: number; count: number }[];
+}
+
+export interface CashShiftSummary {
+  id: string;
+  registerId: string;
+  registerName: string;
+  status: 'open' | 'closed';
+  openedBy: { id: string; name: string };
+  openedAt: string;
+  openingCents: number;
+  closedBy: { id: string; name: string } | null;
+  closedAt: string | null;
+  expectedCashCents: number | null;
+  countedCashCents: number | null;
+  differenceCents: number | null;
+  notes: string | null;
+}
+
+export interface CashShiftDetail extends CashShiftSummary {
+  totals: CashShiftTotals;
+  movements: CashMovementSummary[];
+}
+
+export interface CashStatusResponse {
+  registers: CashRegisterSummary[];
+  /** The open shift of the default register (first active register), with live totals. */
+  current: CashShiftDetail | null;
+  requireOpenShift: boolean;
+  /** Closing differences above this (absolute, cents) are flagged in the UI and audit log. */
+  differenceWarningCents: number;
+}
+
+export const openShiftSchema = z.object({
+  registerId: z.string().uuid().optional(),
+  openingCents: z.number().int().min(0).max(1_000_000_000),
+  notes: z.string().trim().max(500).optional(),
+});
+export type OpenShiftRequest = z.infer<typeof openShiftSchema>;
+
+export const closeShiftSchema = z.object({
+  countedCashCents: z.number().int().min(0).max(1_000_000_000),
+  notes: z.string().trim().max(500).optional(),
+});
+export type CloseShiftRequest = z.infer<typeof closeShiftSchema>;
+
+export const cashMovementSchema = z.object({
+  type: z.enum(['deposit', 'withdrawal']),
+  amountCents: z.number().int().min(1).max(1_000_000_000),
+  reason: z.string().trim().min(1).max(200),
+});
+export type CashMovementRequest = z.infer<typeof cashMovementSchema>;
+
+export const cashShiftListQuerySchema = paginationQuerySchema.extend({
+  registerId: z.string().uuid().optional(),
+  status: z.enum(['open', 'closed']).optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+});
+export type CashShiftListQuery = z.infer<typeof cashShiftListQuerySchema>;
+
+// Expenses
+
+export interface ExpenseCategorySummary {
+  code: string;
+  nameEn: string;
+  nameSq: string;
+  isSystem: boolean;
+  isActive: boolean;
+}
+
+export const expenseCategorySchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9_]+$/, 'lowercase letters, digits and _ only'),
+  nameEn: z.string().trim().min(1).max(80),
+  nameSq: z.string().trim().min(1).max(80),
+});
+export type ExpenseCategoryRequest = z.infer<typeof expenseCategorySchema>;
+
+export interface ExpenseSummary {
+  id: string;
+  expenseDate: string;
+  categoryCode: string;
+  categoryName: { en: string; sq: string };
+  amountCents: number;
+  paymentMethod: PaymentMethod;
+  description: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  /** Set when the expense was paid from the cash drawer during a shift. */
+  shiftId: string | null;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+}
+
+export const createExpenseSchema = z.object({
+  expenseDate: isoDate,
+  categoryCode: z.string().trim().min(1).max(40),
+  amountCents: z.number().int().min(1).max(1_000_000_000),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+  description: z.string().trim().min(1).max(300),
+  supplierId: z.string().uuid().nullable().optional(),
+  /** Cash expenses: take the money from the open cash drawer (records a cash movement). */
+  fromDrawer: z.boolean().default(true),
+});
+export type CreateExpenseRequest = z.infer<typeof createExpenseSchema>;
+
+export const voidExpenseSchema = z.object({
+  reason: z.string().trim().min(1).max(300),
+});
+
+export const expenseListQuerySchema = paginationQuerySchema.extend({
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  categoryCode: z.string().trim().max(40).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  includeVoided: z.coerce.boolean().default(false),
+  q: z.string().trim().max(120).optional(),
+});
+export type ExpenseListQuery = z.infer<typeof expenseListQuerySchema>;
+
+export interface ExpenseListResponse extends Paginated<ExpenseSummary> {
+  totalCents: number;
+}
+
+// Customers
+
+export const CUSTOMER_STATUSES = ['active', 'blocked', 'archived'] as const;
+export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
+
+export interface CustomerSummary {
+  id: string;
+  code: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  membership: string | null;
+  membershipUntil: string | null;
+  discountBp: number;
+  loyaltyPoints: number;
+  walletBalanceCents: number;
+  balanceDueCents: number;
+  notes: string | null;
+  status: CustomerStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerDetail extends CustomerSummary {
+  stats: {
+    salesCount: number;
+    salesTotalCents: number;
+    sessionsCount: number;
+    sessionsMinutes: number;
+    lastVisitAt: string | null;
+  };
+  recentSales: SaleSummary[];
+  recentSessions: SessionSummary[];
+}
+
+export const customerSchema = z.object({
+  code: z.string().trim().max(32).optional(),
+  name: z.string().trim().min(1).max(120),
+  phone: z.string().trim().max(40).nullable().optional(),
+  email: z.string().trim().email().max(120).nullable().optional().or(z.literal('')),
+  membership: z.string().trim().max(40).nullable().optional(),
+  membershipUntil: isoDate.nullable().optional(),
+  discountBp: z.number().int().min(0).max(10_000).default(0),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  status: z.enum(CUSTOMER_STATUSES).default('active'),
+});
+export type CustomerRequest = z.infer<typeof customerSchema>;
+export const customerPatchSchema = customerSchema.partial();
+export type CustomerPatch = z.infer<typeof customerPatchSchema>;
+
+export const customerListQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(120).optional(),
+  status: z.enum(CUSTOMER_STATUSES).optional(),
+});
+export type CustomerListQuery = z.infer<typeof customerListQuerySchema>;
+
+// Reports
+
+export const reportRangeSchema = z.object({
+  from: isoDate,
+  to: isoDate,
+});
+export type ReportRange = z.infer<typeof reportRangeSchema>;
+
+export interface ReportBucket {
+  key: string;
+  label: string | null;
+  count: number;
+  amountCents: number;
+}
+
+export interface SalesReport {
+  range: ReportRange;
+  sales: {
+    count: number;
+    grossCents: number;
+    discountCents: number;
+    taxCents: number;
+    netCents: number;
+    refundedCents: number;
+    refundsCount: number;
+    averageCents: number;
+  };
+  byMethod: ReportBucket[];
+  bySource: ReportBucket[];
+  byDay: {
+    date: string;
+    count: number;
+    amountCents: number;
+    gamingCents: number;
+    retailCents: number;
+  }[];
+  byHour: { hour: number; count: number; amountCents: number }[];
+  topProducts: { productId: string; name: string; quantityMilli: number; amountCents: number }[];
+  byCategory: ReportBucket[];
+  gaming: {
+    sessionsCount: number;
+    billedMinutes: number;
+    amountCents: number;
+    byStation: {
+      stationId: string;
+      code: string;
+      name: string;
+      sessions: number;
+      minutes: number;
+      amountCents: number;
+    }[];
+  };
+  expenses: {
+    count: number;
+    totalCents: number;
+    byCategory: ReportBucket[];
+  };
+  cash: {
+    shiftsCount: number;
+    differenceCents: number;
+    shifts: CashShiftSummary[];
+  };
+  byEmployee: ReportBucket[];
+  generatedAt: string;
+}
+
+export const REPORT_EXPORT_KINDS = [
+  'sales',
+  'sale_items',
+  'expenses',
+  'sessions',
+  'shifts',
+] as const;
+export type ReportExportKind = (typeof REPORT_EXPORT_KINDS)[number];
+export const reportExportQuerySchema = reportRangeSchema.extend({
+  kind: z.enum(REPORT_EXPORT_KINDS),
+});

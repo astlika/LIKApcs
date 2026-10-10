@@ -12,6 +12,7 @@ import {
   parseMoneyInput,
   priceForSeconds,
   type GamingPackageSummary,
+  type CustomerSummary,
   type PaymentMethod,
   type SessionMutationResponse,
   type SessionQuoteResponse,
@@ -24,6 +25,8 @@ import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
+import { useShiftGuard } from '../../state/shift-guard';
+import { CustomerPicker } from '../customers/CustomerPicker';
 import {
   Alert,
   Badge,
@@ -80,10 +83,12 @@ function StartSessionForm({
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
+  const shiftGuard = useShiftGuard();
   const [mode, setMode] = useState<'prepaid' | 'postpaid'>('prepaid');
   const [packageId, setPackageId] = useState<string | null>(null);
   const [minutes, setMinutes] = useState('60');
   const [customerName, setCustomerName] = useState('');
+  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [notes, setNotes] = useState('');
   // One request id per form instance: a retried click can never start two sessions.
@@ -122,7 +127,8 @@ function StartSessionForm({
         method: 'POST',
         body: {
           ...quoteBody,
-          customerName: customerName.trim() || undefined,
+          customerId: customer?.id,
+          customerName: customer ? undefined : customerName.trim() || undefined,
           paymentMethod: method,
           notes: notes.trim() || undefined,
           clientRequestId: requestId,
@@ -136,7 +142,10 @@ function StartSessionForm({
       setNotes('');
       onChanged();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err) => {
+      if (shiftGuard.handle(err, () => start.mutate())) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
 
   const noRule = quote.data && !quote.data.rule && (mode === 'postpaid' || !packageId);
@@ -215,12 +224,14 @@ function StartSessionForm({
       <div className="grid grid--2">
         <Field label={t('sessions.customer')} optional>
           {(id) => (
-            <Input
+            <CustomerPicker
               id={id}
-              value={customerName}
+              value={customer}
+              onChange={setCustomer}
+              text={customerName}
+              onTextChange={setCustomerName}
+              allowFreeText
               placeholder={t('sessions.customerOptional')}
-              maxLength={120}
-              onChange={(e) => setCustomerName(e.target.value)}
             />
           )}
         </Field>
@@ -321,6 +332,7 @@ function ActiveSession({
   const { can } = useAuth();
   const fmt = useFormat();
   const toast = useToast();
+  const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   const now = useNow();
   const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | null>(null);
@@ -357,7 +369,10 @@ function ActiveSession({
       setDialog(null);
       refresh();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err, variables) => {
+      if (shiftGuard.handle(err, () => act.mutate(variables))) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
 
   if (session.isLoading || !session.data) return <Loading />;

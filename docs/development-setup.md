@@ -171,10 +171,35 @@ Windows shell. For a real venue, additionally:
    immediately. Switch **EN/SQ** at any time.
 6. **Audit log** — every action above is recorded with actor and IP.
 
+## 7b. Phase 6 walkthrough — cash register, expenses, customers, reports
+
+1. **Top bar** shows a shift pill (_No open shift_ / _Shift open · €…_). It polls `GET /cash/status`.
+2. **Point of Sale → cash sale** while no shift is open → the server answers `409 SHIFT_REQUIRED`
+   and the Admin opens the _Open shift_ dialog (opening float, optional note). Confirm → the sale is
+   retried automatically and completes. Card sales are never blocked. To allow cash sales without a
+   shift, set `cash.require_open_shift = false` in **Settings** (not recommended for real use).
+3. **Finance → Cash Register** — live drawer summary (opening float, cash sales, refunds, pay-in /
+   pay-out, drawer expenses, expected cash), _Pay in_ / _Pay out_ (a pay-out above the expected
+   drawer content is refused), the ledger of the current shift, and _Close shift_ with the counted
+   amount; a difference above `cash.difference_warning_cents` (default €5.00) is highlighted and the
+   closing report can be printed (`Print report`). Past shifts are listed with their difference.
+4. **Finance → Expenses** — record an expense (date, category, amount, payment method, description,
+   _paid from the cash drawer_). Drawer expenses need an open shift and appear in the ledger; voiding
+   restores the cash. Bank/card expenses only affect the reports.
+5. **Finance → Customers** — create a customer (code `C-000001`), set membership / default discount,
+   open the detail page for lifetime stats, recent receipts and sessions; _Archive_ hides without
+   deleting. Pick the customer in POS or when starting a session to link the sale.
+6. **Finance → Reports** — Today / Yesterday / This week / This month / Last month / custom range:
+   net sales, gaming, refunds, expenses, VAT, sales by day/hour, by payment method, retail vs gaming,
+   top products, categories, per station, per employee and the closed shifts of the range.
+   **Export CSV** downloads `likapcs-<kind>-<from>_<to>.csv` (UTF-8 BOM, `;` separator).
+7. Roles: cashiers can open/close shifts and move cash; expenses and reports need the Manager,
+   Administrator or Owner role; the Accountant role sees everything read-only.
+
 ## 8. Tests, lint, build
 
 ```bash
-pnpm test              # shared (20) + server integration (48, needs likapcs_test DB) + admin (6)
+pnpm test              # shared (41) + server integration (91, needs likapcs_test DB) + admin (15) + client (10)
 pnpm lint
 pnpm typecheck
 pnpm build             # shared, server (dist/), admin web bundle (dist/)

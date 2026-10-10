@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { LayoutDashboard, Monitor, ScrollText, Search, Settings, Users } from 'lucide-react';
+import {
+  BarChart3,
+  Contact,
+  LayoutDashboard,
+  Monitor,
+  Package,
+  Receipt,
+  ScrollText,
+  Search,
+  Settings,
+  ShoppingCart,
+  Users,
+  Wallet,
+} from 'lucide-react';
 import type { StationSummary } from '@likapcs/shared';
 import { PERMISSIONS } from '@likapcs/shared';
 import { api } from '../../lib/api';
@@ -33,6 +46,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const pages: Item[] = [
       { id: 'dashboard', label: t('nav.dashboard'), kind: 'page', to: '/', icon: LayoutDashboard },
       { id: 'stations', label: t('nav.stations'), kind: 'page', to: '/stations', icon: Monitor },
+      { id: 'pos', label: t('nav.pos'), kind: 'page', to: '/pos', icon: ShoppingCart },
+      { id: 'products', label: t('nav.products'), kind: 'page', to: '/products', icon: Package },
+      { id: 'cash', label: t('nav.cash'), kind: 'page', to: '/cash', icon: Wallet },
+      { id: 'expenses', label: t('nav.expenses'), kind: 'page', to: '/expenses', icon: Receipt },
+      { id: 'customers', label: t('nav.customers'), kind: 'page', to: '/customers', icon: Contact },
+      { id: 'reports', label: t('nav.reports'), kind: 'page', to: '/reports', icon: BarChart3 },
       { id: 'employees', label: t('nav.employees'), kind: 'page', to: '/employees', icon: Users },
       { id: 'audit', label: t('nav.audit'), kind: 'page', to: '/audit', icon: ScrollText },
       { id: 'settings', label: t('nav.settings'), kind: 'page', to: '/settings', icon: Settings },

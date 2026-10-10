@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allocateProportionally,
   computeSale,
+  customerDiscountCents,
   refundAmountForQuantity,
   settlePayments,
 } from '../src/sale-math.js';
@@ -105,5 +106,21 @@ describe('refundAmountForQuantity', () => {
     expect(refundAmountForQuantity(line, 300, 1000)).toBe(300);
     expect(refundAmountForQuantity(line, 600, 1000)).toBe(300);
     expect(refundAmountForQuantity(line, 850, 1000)).toBe(50);
+  });
+});
+
+describe('customerDiscountCents', () => {
+  it('applies the member percentage to the subtotal, rounded to the cent', () => {
+    expect(customerDiscountCents(1000, 1000)).toBe(100); // 10 %
+    expect(customerDiscountCents(333, 1500)).toBe(50); // 49.95 → 50
+    expect(customerDiscountCents(1, 500)).toBe(0); // 0.05 → 0
+  });
+  it('never stacks on an explicit cashier discount and ignores empty carts', () => {
+    expect(customerDiscountCents(1000, 1000, 50)).toBe(0);
+    expect(customerDiscountCents(0, 1000)).toBe(0);
+    expect(customerDiscountCents(1000, 0)).toBe(0);
+  });
+  it('is capped at the subtotal', () => {
+    expect(customerDiscountCents(1000, 10_000)).toBe(1000);
   });
 });

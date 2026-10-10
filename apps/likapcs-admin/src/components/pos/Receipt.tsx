@@ -40,6 +40,12 @@ export function Receipt({ data }: { data: ReceiptData }) {
           <span>{t('receipt.cashier')}</span>
           <span>{sale.cashierName ?? '—'}</span>
         </div>
+        {sale.customerName && (
+          <div>
+            <span>{t('receipt.customer')}</span>
+            <span>{sale.customerName}</span>
+          </div>
+        )}
         {data.isReprint && <div className="receipt__copy">{t('receipt.reprint')}</div>}
       </div>
       <table className="receipt__items">

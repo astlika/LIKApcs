@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  BarChart3,
   ChevronLeft,
   ChevronRight,
+  Contact,
   KeyRound,
+  Lock,
+  LockOpen,
+  Receipt,
   LayoutDashboard,
   LogOut,
   Monitor,
@@ -19,11 +24,13 @@ import {
   Tag,
   Sun,
   Users,
+  Wallet,
   Wifi,
   WifiOff,
 } from 'lucide-react';
 import {
   PERMISSIONS,
+  type CashStatusResponse,
   type HealthResponse,
   type PermissionCode,
   type StationDeviceSummary,
@@ -85,6 +92,12 @@ export function AppShell() {
     queryKey: ['devices', 'pending'],
     queryFn: () => api<StationDeviceSummary[]>('/devices', { query: { status: 'pending' } }),
     enabled: can(PERMISSIONS.STATIONS_VIEW),
+    refetchInterval: 30_000,
+  });
+  const cashStatus = useQuery({
+    queryKey: ['cash', 'status'],
+    queryFn: () => api<CashStatusResponse>('/cash/status'),
+    enabled: can(PERMISSIONS.CASH_VIEW),
     refetchInterval: 30_000,
   });
 
@@ -162,6 +175,35 @@ export function AppShell() {
       ],
     },
     {
+      label: t('nav.finance'),
+      items: [
+        {
+          to: '/cash',
+          icon: Wallet,
+          label: t('nav.cash'),
+          permission: PERMISSIONS.CASH_VIEW,
+        },
+        {
+          to: '/expenses',
+          icon: Receipt,
+          label: t('nav.expenses'),
+          permission: PERMISSIONS.EXPENSES_VIEW,
+        },
+        {
+          to: '/customers',
+          icon: Contact,
+          label: t('nav.customers'),
+          permission: PERMISSIONS.CUSTOMERS_VIEW,
+        },
+        {
+          to: '/reports',
+          icon: BarChart3,
+          label: t('nav.reports'),
+          permission: PERMISSIONS.REPORTS_VIEW,
+        },
+      ],
+    },
+    {
       label: t('nav.management'),
       items: [
         {
@@ -193,6 +235,10 @@ export function AppShell() {
     '/sales': t('nav.sales'),
     '/products': t('nav.products'),
     '/pricing': t('nav.pricing'),
+    '/cash': t('nav.cash'),
+    '/expenses': t('nav.expenses'),
+    '/customers': t('nav.customers'),
+    '/reports': t('nav.reports'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),
@@ -274,6 +320,26 @@ export function AppShell() {
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
+          {cashStatus.isSuccess && (
+            <Link
+              to="/cash"
+              className="status-pill"
+              data-testid="shift-pill"
+              title={cashStatus.data.current ? t('topbar.shiftOpen') : t('topbar.shiftClosed')}
+            >
+              {cashStatus.data.current ? (
+                <LockOpen size={15} className="text-success" />
+              ) : (
+                <Lock
+                  size={15}
+                  className={cashStatus.data.requireOpenShift ? 'text-warning' : ''}
+                />
+              )}
+              <span className="muted">
+                {cashStatus.data.current ? t('topbar.shiftOpen') : t('topbar.shiftClosed')}
+              </span>
+            </Link>
+          )}
           <span
             className="status-pill"
             title={serverOk ? t('topbar.serverOnline') : t('topbar.serverOffline')}

@@ -59,6 +59,8 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
             case 'session.changed':
               void queryClient.invalidateQueries({ queryKey: ['stations'] });
               void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              // Session bills land in the cash drawer.
+              void queryClient.invalidateQueries({ queryKey: ['cash'] });
               break;
             case 'device.registered':
             case 'device.changed':
