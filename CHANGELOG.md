@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.0] - 2026-10-10
+
+First complete release of the ecosystem: one installer for the main PC (Admin + embedded server +
+PostgreSQL), one for the gaming PCs, and all business modules of Phases 2–7 — live station map and
+session billing, POS with receipts and A4 invoices, products and inventory, purchasing and suppliers,
+customers, cash register and expenses, reports, backups/restore, and the updates dashboard with
+signed auto-updates. Everything below was verified by the automated test suites (shared 44, server
+113, Admin 15, Client 10) and by browser end-to-end runs against a real PostgreSQL database.
+
 ### Added
 
 - **Invoices & printing (Phase 7d).** A4 invoices (`F-<year>-NNNNNN`, gap-free) can be issued for
@@ -181,12 +192,11 @@ All notable changes to LIKApcs are documented here. The format follows
 - An approved device may re-register (reinstall) only until its token has been collected; after
   that staff must re-issue the token in the Admin app.
 
-## [0.2.0] - 2026-10-09
+**Main-PC installer (embedded server).** One installer for the main PC: `LIKApcs-Setup.exe` now
+contains the Admin app **and** the LIKApcs Server with its own PostgreSQL. No Node.js, PostgreSQL,
+`.env` or command line is needed any more.
 
-One installer for the main PC: `LIKApcs-Setup.exe` now contains the Admin app **and** the LIKApcs
-Server with its own PostgreSQL. No Node.js, PostgreSQL, `.env` or command line is needed any more.
-
-### Added
+### Added (installer & embedded server)
 - **Server, embedded mode** — with no `LIKAPCS_DATABASE_URL` the server initialises and runs a
   private PostgreSQL cluster in the per-user data directory (`%LOCALAPPDATA%\LIKApcs-Data`),
   generates its credentials once (`config.json`, mode 0600), applies migrations and listens; all
@@ -205,7 +215,7 @@ Server with its own PostgreSQL. No Node.js, PostgreSQL, `.env` or command line i
   `src-tauri/runtime/`; NSIS hooks stop the server before and start it after every install/update.
 - Tests: embedded PostgreSQL lifecycle (initdb → start → auth → stop) and discovery round-trip.
 
-### Changed
+### Changed (installer & embedded server)
 - Server bundle is fully self-contained (`tsup` `noExternal`), version embedded at build time.
 - Admin updater copy: one update installs Admin + server together on the main PC.
 - CI: GitHub Actions bumped to current majors (checkout v7, setup-node v6, upload-artifact v6,
