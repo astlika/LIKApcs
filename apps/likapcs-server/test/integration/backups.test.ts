@@ -260,14 +260,15 @@ describe('backups & restore', () => {
       'backup.time': '04:00',
       'backup.keep_count': 1,
     });
-    // 03:59 Belgrade time → nothing yet.
+    // Simulated clock on fixed past days (CET, UTC+1) so the real `started_at` of the backups
+    // created here can never fall on one of the simulated business days. 03:59 → nothing yet.
     const tz = 'Europe/Belgrade';
     const at = (iso: string) => new Date(iso);
-    expect(await svc.tick(at('2026-10-10T01:59:00Z'))).toBeNull(); // 03:59 local (CEST)
-    const ran = await svc.tick(at('2026-10-10T02:00:30Z')); // 04:00:30 local
+    expect(await svc.tick(at('2026-01-10T02:59:00Z'))).toBeNull(); // 03:59 local (CET)
+    const ran = await svc.tick(at('2026-01-10T03:00:30Z')); // 04:00:30 local
     expect(ran?.kind).toBe('scheduled');
-    expect(await svc.tick(at('2026-10-10T05:00:00Z'))).toBeNull(); // same day: no repeat
-    const again = await svc.tick(at('2026-10-11T02:01:00Z')); // next day
+    expect(await svc.tick(at('2026-01-10T06:00:00Z'))).toBeNull(); // same day: no repeat
+    const again = await svc.tick(at('2026-01-11T03:01:00Z')); // next day
     expect(again?.kind).toBe('scheduled');
     const list = await call<BackupsResponse>(owner.token, 'GET', '/backups?includeDeleted=true');
     const scheduled = list.body.items.filter((b) => b.kind === 'scheduled');

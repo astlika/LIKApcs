@@ -17,6 +17,8 @@ export const PERMISSIONS = {
   STATIONS_MANAGE: 'stations.manage',
   STATIONS_CONTROL: 'stations.control',
   STATIONS_POWER: 'stations.power',
+  /** Unlock a station PC for maintenance with own credentials, standing at the PC. */
+  STATIONS_UNLOCK: 'stations.unlock',
   DEVICES_MANAGE: 'devices.manage',
   PRICING_MANAGE: 'pricing.manage',
 

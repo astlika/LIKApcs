@@ -17,18 +17,19 @@ Conventions: `uuid` primary keys (`bigserial` for append-only logs), `*_cents BI
 
 ## Migration map
 
-| File                              | Domain                    | Tables                                                                                                                                                        |
-| --------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0001_core.sql`                   | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history            |
-| `0002_stations.sql`               | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                                        |
-| `0003_catalog_inventory.sql`      | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items                     |
-| `0004_customers_cash.sql`         | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                                         |
-| `0005_sales.sql`                  | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                                  |
-| `0006_purchasing.sql`             | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                              |
-| `0007_gaming.sql`                 | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                                         |
-| `0008_session_billing_terms.sql`  | Gaming sessions           | `gaming_sessions.billing_terms` (frozen pricing terms snapshot) and `gaming_sessions.client_request_id` (idempotent start)                                    |
-| `0009_cash_register_defaults.sql` | Cash register             | seeds _Main register_ and the `customer` document sequence; partial indexes on `payments/sales/expenses.shift_id` and open (non-voided) expenses              |
-| `0010_invoices_printing.sql`      | Invoices & printing       | `invoices.status/billing_email/notes/due_at/voided_*`, the `invoices_one_live_per_sale` partial unique index, `invoices.*` permissions, `printing.*` settings |
+| File                                   | Domain                    | Tables                                                                                                                                                                                                                                                                         |
+| -------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0001_core.sql`                        | Identity & system         | roles, permissions, role_permissions, users, user_roles, user_sessions, audit_logs, settings, application_versions, update_history, backup_history                                                                                                                             |
+| `0002_stations.sql`                    | Gaming PCs                | stations, station_devices, station_heartbeats, station_connection_logs                                                                                                                                                                                                         |
+| `0003_catalog_inventory.sql`           | Catalogue & stock         | tax_categories, categories, suppliers, units_of_measure, products, product_barcodes, inventory_movements, stock_counts, stock_count_items                                                                                                                                      |
+| `0004_customers_cash.sql`              | Customers, cash, expenses | customers, customer_ledger, cash_registers, cash_shifts, cash_movements, expense_categories, expenses                                                                                                                                                                          |
+| `0005_sales.sql`                       | Sales                     | document_sequences, sales, sale_items, payments, refunds, refund_items, invoices, print_jobs                                                                                                                                                                                   |
+| `0006_purchasing.sql`                  | Purchasing                | purchases, purchase_items, purchase_receipts, purchase_receipt_items, purchase_payments, purchase_returns, purchase_return_items                                                                                                                                               |
+| `0007_gaming.sql`                      | Gaming sessions           | pricing_rules, gaming_packages, gaming_sessions, session_events (+ FK `sale_items.gaming_session_id`)                                                                                                                                                                          |
+| `0008_session_billing_terms.sql`       | Gaming sessions           | `gaming_sessions.billing_terms` (frozen pricing terms snapshot) and `gaming_sessions.client_request_id` (idempotent start)                                                                                                                                                     |
+| `0009_cash_register_defaults.sql`      | Cash register             | seeds _Main register_ and the `customer` document sequence; partial indexes on `payments/sales/expenses.shift_id` and open (non-voided) expenses                                                                                                                               |
+| `0010_invoices_printing.sql`           | Invoices & printing       | `invoices.status/billing_email/notes/due_at/voided_*`, the `invoices_one_live_per_sale` partial unique index, `invoices.*` permissions, `printing.*` settings                                                                                                                  |
+| `0011_product_images_staff_unlock.sql` | Pictures & staff unlock   | `products.image_path` (file name under `<dataDir>/uploads/products`), `stations.maintenance_until/by/by_name` (staff maintenance grant), permission `stations.unlock` (owner/admin/manager), setting `stations.maintenance_minutes` (15), `security.min_password_length` 8 → 4 |
 
 All 33 tables required by the specification exist (plus supporting tables such as `user_sessions`,
 `station_connection_logs`, `document_sequences`, `customer_ledger`, `print_jobs`). Services exist
@@ -84,7 +85,9 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
 
 ### Stations (0002)
 
-- **stations** — `number` (unique, 1–999) → `code` (`PC 03`), `name`, `zone`, `is_enabled`, `notes`.
+- **stations** — `number` (unique, 1–999) → `code` (`PC 03`), `name`, `zone`, `is_enabled`, `notes`;
+  `maintenance_until/by/by_name` (0011) hold a live staff unlock — status `maintenance` while
+  `maintenance_until` is in the future, cleared by expiry, lock or session start.
 - **station_devices** — one physical PC. `machine_id` (unique, from the client), `status`
   pending/approved/revoked/rejected, `token_hash`, `registration_secret_hash` (proves the poller is
   the PC that registered), `token_collected_at` (token delivered exactly once), `approved_by`,
@@ -99,7 +102,8 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
 
 - **products** — `selling_price_cents`, `purchase_cost_cents` (last), `average_cost_cents` (moving
   average, used for COGS snapshots), `stock_milli`, `min_stock_milli`, `allow_negative_stock`,
-  `track_stock`, `tax_category_id`, `unit_code`.
+  `track_stock`, `tax_category_id`, `unit_code`, `image_path` (0011 — immutable file name of the
+  product picture in `<dataDir>/uploads/products`; the file itself is not stored in the database).
 - **product_barcodes** — many barcodes per product (unique globally), `quantity_milli` for pack/case
   barcodes (a 6-pack barcode sells 6.000 units).
 - **inventory_movements** — every change with `movement_type` (purchase_receipt, purchase_return,

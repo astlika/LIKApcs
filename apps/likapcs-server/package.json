@@ -1,6 +1,6 @@
 {
   "name": "@likapcs/server",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "LIKApcs Server — local authoritative backend (database, auth, billing, sessions, realtime)",
   "type": "module",

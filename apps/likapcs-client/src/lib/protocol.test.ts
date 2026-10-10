@@ -116,6 +116,60 @@ describe('reduce()', () => {
     expect(inSession.session?.id).toBe('g1');
   });
 
+  it('a live staff maintenance grant in the welcome keeps the PC open; an expired one does not', () => {
+    const live = applyWelcome(initialState, {
+      ...welcome,
+      maintenance: { until: new Date(T0 + 600_000).toISOString(), byName: 'Arta' },
+    });
+    expect(live.mode).toBe('free');
+    expect(live.maintenance).toEqual({ untilServerMs: T0 + 600_000, byName: 'Arta' });
+    const stale = applyWelcome(initialState, {
+      ...welcome,
+      maintenance: { until: new Date(T0 - 1000).toISOString(), byName: 'Arta' },
+    });
+    expect(stale.mode).toBe('locked');
+    expect(stale.maintenance).toBeNull();
+    // A session always wins over a grant.
+    const both = applyWelcome(initialState, {
+      ...welcome,
+      maintenance: { until: new Date(T0 + 600_000).toISOString(), byName: 'Arta' },
+      session: {
+        id: 'g2',
+        status: 'active',
+        startedAt: new Date(T0).toISOString(),
+        endsAt: null,
+        pausedAt: null,
+        remainingSeconds: null,
+      },
+    });
+    expect(both.mode).toBe('session');
+    expect(both.maintenance).toBeNull();
+  });
+
+  it('a time-limited unlock records the grant; lock and session.start clear it', () => {
+    const state = applyWelcome(initialState, welcome);
+    const until = new Date(T0 + 900_000).toISOString();
+    const open = reduce(
+      state,
+      cmd({ command: 'unlock', payload: { reason: 'maintenance', until, byName: 'Arta' } }),
+      T0,
+    );
+    expect(open.ok).toBe(true);
+    expect(open.state.mode).toBe('free');
+    expect(open.state.maintenance).toEqual({ untilServerMs: T0 + 900_000, byName: 'Arta' });
+    expect(reduce(open.state, cmd({ command: 'lock' }), T0).state.maintenance).toBeNull();
+    const started = reduce(
+      open.state,
+      cmd({ command: 'session.start', payload: { sessionId: 'g3', endsAt: null } }),
+      T0,
+    );
+    expect(started.state.mode).toBe('session');
+    expect(started.state.maintenance).toBeNull();
+    // Legacy open-ended unlock (no `until`) never expires on the PC.
+    const legacy = reduce(state, cmd({ command: 'unlock' }), T0);
+    expect(legacy.state.maintenance?.untilServerMs).toBe(Number.POSITIVE_INFINITY);
+  });
+
   it('runs a prepaid session through start → pause → resume → extend → end', () => {
     let state = applyWelcome(initialState, welcome);
     const endsAt = new Date(T0 + 3_600_000).toISOString();

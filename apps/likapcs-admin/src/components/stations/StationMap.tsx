@@ -55,6 +55,16 @@ export function PcIcon({
           <rect x="-7" y="-2" width="14" height="10" rx="2" />
           <path d="M-4 -2 V-5 a4 4 0 0 1 8 0 V-2" fill="none" strokeWidth="2.2" />
         </g>
+      ) : status === 'maintenance' ? (
+        <g className="pc-icon__glyph" transform="translate(32 22)">
+          <path
+            d="M-7 7 L1 -1 M1 -1 a4 4 0 1 0 4 -4 l-2 2 -2 -2 2 -2 a4 4 0 0 0 -4 4 z"
+            fill="none"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
       ) : null}
       <text
         className="pc-icon__number"
@@ -63,7 +73,8 @@ export function PcIcon({
           status === 'paused' ||
           status === 'offline' ||
           status === 'disabled' ||
-          status === 'locked'
+          status === 'locked' ||
+          status === 'maintenance'
             ? 37
             : 28
         }
@@ -72,7 +83,8 @@ export function PcIcon({
           status === 'paused' ||
           status === 'offline' ||
           status === 'disabled' ||
-          status === 'locked'
+          status === 'locked' ||
+          status === 'maintenance'
             ? 9
             : fontSize
         }
@@ -193,6 +205,18 @@ export function StationTile({
           {td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}
           {station.isEnabled && station.status === 'available' && !station.device && !compact && (
             <span className="faint"> · {t('stations.noDevice')}</span>
+          )}
+          {station.status === 'maintenance' && station.maintenance && !compact && (
+            <span className="faint">
+              {' '}
+              · {station.maintenance.byName ?? '—'} ·{' '}
+              {formatHms(
+                Math.max(
+                  0,
+                  Math.round((new Date(station.maintenance.until).getTime() - Date.now()) / 1000),
+                ),
+              )}
+            </span>
           )}
         </div>
       )}

@@ -57,7 +57,14 @@ export const clientAckSchema = z.object({
 
 export const clientEventSchema = z.object({
   type: z.literal('client.event'),
-  event: z.enum(['locked', 'unlocked', 'session_expired_locally', 'update_status', 'error']),
+  event: z.enum([
+    'locked',
+    'unlocked',
+    'session_expired_locally',
+    'maintenance_ended',
+    'update_status',
+    'error',
+  ]),
   payload: z.record(z.unknown()).default({}),
 });
 
@@ -107,7 +114,7 @@ export interface ServerWelcomeToClient {
   language: 'en' | 'sq';
   welcomeMessage: string;
   businessName: string;
-  /** null when no session is active; the client must be locked in that case. */
+  /** null when no session is active; the client must be locked in that case … */
   session: null | {
     id: string;
     status: 'active' | 'paused';
@@ -116,6 +123,8 @@ export interface ServerWelcomeToClient {
     pausedAt: string | null;
     remainingSeconds: number | null;
   };
+  /** … unless a staff unlock (maintenance) grant is in force, which survives reconnects. */
+  maintenance?: null | { until: string; byName: string | null };
 }
 
 export interface ServerHeartbeatAck {

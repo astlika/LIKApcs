@@ -38,7 +38,12 @@ export class AuthService {
     private readonly rememberDays = 30,
   ) {}
 
-  async login(input: LoginInput): Promise<LoginResponse> {
+  /**
+   * Checks a username/password pair with the full lockout policy (failed-attempt counter,
+   * temporary lock, audit of failures) but without opening a session. Used by `login` and by the
+   * staff unlock at a station PC.
+   */
+  async verifyCredentials(input: LoginInput): Promise<{ userId: string; passwordHash: string }> {
     const maxFailed = await this.settings.get('security.max_failed_logins');
     const lockoutMinutes = await this.settings.get('security.lockout_minutes');
 
@@ -85,28 +90,32 @@ export class AuthService {
       await this.auditFailure(user.id, input, lock ? 'locked_now' : 'bad_password');
       throw unauthorized('Invalid username or password');
     }
+    return { userId: user.id, passwordHash: user.password_hash };
+  }
 
+  async login(input: LoginInput): Promise<LoginResponse> {
+    const user = await this.verifyCredentials(input);
     const token = generateToken();
     const lifetimeMs = input.rememberMe
       ? this.rememberDays * 24 * 3600 * 1000
       : this.sessionHours * 3600 * 1000;
     const expiresAt = new Date(Date.now() + lifetimeMs);
     const sessionId = await withTransaction(this.pool, async (client) => {
-      if (needsRehash(user.password_hash)) {
+      if (needsRehash(user.passwordHash)) {
         await client.query('UPDATE users SET password_hash = $2 WHERE id = $1', [
-          user.id,
+          user.userId,
           await hashPassword(input.password),
         ]);
       }
       await client.query(
         'UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = now() WHERE id = $1',
-        [user.id],
+        [user.userId],
       );
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO user_sessions (user_id, token_hash, client_app, ip_address, user_agent, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [
-          user.id,
+          user.userId,
           hashToken(token),
           input.clientApp ?? 'admin',
           input.ip,
@@ -116,14 +125,14 @@ export class AuthService {
       );
       await recordAudit(
         client,
-        { userId: user.id, label: input.username, ip: input.ip },
-        { action: 'auth.login', entityType: 'user', entityId: user.id },
+        { userId: user.userId, label: input.username, ip: input.ip },
+        { action: 'auth.login', entityType: 'user', entityId: user.userId },
       );
       return inserted.rows[0]!.id;
     });
 
-    const summary = await this.users.getById(user.id);
-    const permissions = await this.users.getPermissions(user.id);
+    const summary = await this.users.getById(user.userId);
+    const permissions = await this.users.getPermissions(user.userId);
     void sessionId;
     return { token, expiresAt: expiresAt.toISOString(), user: { ...summary, permissions } };
   }

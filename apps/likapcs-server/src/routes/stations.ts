@@ -5,11 +5,12 @@ import {
   approveDeviceSchema,
   createStationSchema,
   registerDeviceSchema,
+  staffUnlockSchema,
   stationCommandSchema,
   updateStationSchema,
   uuidSchema,
 } from '@likapcs/shared';
-import { forbidden } from '../errors.js';
+import { forbidden, unauthorized } from '../errors.js';
 
 export const stationRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
@@ -154,6 +155,39 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
       const body = registerDeviceSchema.parse(request.body);
       const result = await services.devices.register(body, request.ip);
       return reply.status(result.status === 'pending' ? 202 : 200).send(result);
+    },
+  );
+
+  // ─── Devices (client, device-token authenticated) ────────────────────────────
+  const deviceOf = async (request: FastifyRequest) => {
+    const header = request.headers.authorization ?? '';
+    const [scheme, token] = header.split(' ');
+    const device =
+      scheme?.toLowerCase() === 'bearer' && token
+        ? await services.devices.authenticate(token.trim())
+        : null;
+    if (!device) throw unauthorized('Device token required');
+    return device;
+  };
+
+  /** Staff unlock at the PC: own username/password → time-limited maintenance unlock. */
+  app.post(
+    '/client/staff-unlock',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) => {
+      const device = await deviceOf(request);
+      const body = staffUnlockSchema.parse(request.body);
+      return services.maintenance.unlockFromDevice(device, body, request.ip);
+    },
+  );
+
+  /** Staff ended the maintenance unlock at the PC (the client has locked itself already). */
+  app.post(
+    '/client/staff-lock',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (request) => {
+      const device = await deviceOf(request);
+      return services.maintenance.lockFromDevice(device, request.ip);
     },
   );
 

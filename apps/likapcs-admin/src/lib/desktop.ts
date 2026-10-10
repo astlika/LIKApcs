@@ -43,6 +43,38 @@ export async function embeddedServerInfo(): Promise<EmbeddedServerInfo | null> {
 export function embeddedServerStart(): Promise<EmbeddedServerInfo> {
   return invoke<EmbeddedServerInfo>('embedded_server_start');
 }
+export interface EmbeddedStartupState {
+  phase:
+    | 'starting'
+    | 'database-init'
+    | 'database-start'
+    | 'database-repair'
+    | 'migrations'
+    | 'listening'
+    | 'failed';
+  detail: string | null;
+  error: string | null;
+  pid: number;
+  version: string;
+  startedAt: string;
+  updatedAt: string;
+  elapsedMs: number;
+}
+
+export interface EmbeddedStartupStatus {
+  running: boolean;
+  startup: EmbeddedStartupState | null;
+  logFile: string;
+}
+
+/** Non-blocking start; resolves true when a new server process was spawned. */
+export function embeddedServerLaunch(): Promise<boolean> {
+  return invoke<boolean>('embedded_server_launch');
+}
+/** Health + the server's own start-up progress (`startup.json`). */
+export function embeddedServerStartup(): Promise<EmbeddedStartupStatus> {
+  return invoke<EmbeddedStartupStatus>('embedded_server_startup');
+}
 export function embeddedServerStop(): Promise<EmbeddedServerInfo> {
   return invoke<EmbeddedServerInfo>('embedded_server_stop');
 }

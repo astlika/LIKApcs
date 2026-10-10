@@ -13,7 +13,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
-use server_manager::{locate_runtime, ServerInfo};
+use server_manager::{locate_runtime, ServerInfo, StartupStatus};
 
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -39,6 +39,24 @@ async fn embedded_server_start() -> Result<ServerInfo, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Non-blocking start: spawns the server (unless it already answers) and returns at once. Returns
+/// true when a new process was started.
+#[tauri::command]
+async fn embedded_server_launch() -> Result<bool, String> {
+    let rt = locate_runtime().ok_or("embedded server runtime not installed")?;
+    tauri::async_runtime::spawn_blocking(move || server_manager::launch(&rt))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Health + the server's own start-up progress file; polled by the start screen.
+#[tauri::command]
+async fn embedded_server_startup() -> StartupStatus {
+    tauri::async_runtime::spawn_blocking(server_manager::startup_status)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -96,6 +114,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             embedded_server_info,
             embedded_server_start,
+            embedded_server_launch,
+            embedded_server_startup,
             embedded_server_stop,
             embedded_server_restart,
             embedded_server_log,

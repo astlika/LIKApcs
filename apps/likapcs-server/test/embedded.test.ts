@@ -75,6 +75,79 @@ describe.skipIf(!binDir)('embedded PostgreSQL lifecycle', () => {
     expect(await pg.status()).toBe('stopped');
     await pg.stop(); // idempotent while stopped
   }, 120_000);
+
+  it('moves to a free port when the preferred one is taken, and reconnects to a live cluster', async () => {
+    const net = await import('node:net');
+    const blocker = net.createServer();
+    await new Promise<void>((resolve) => blocker.listen(port, '127.0.0.1', resolve));
+    const phases: string[] = [];
+    const other = new EmbeddedPostgres(
+      {
+        binDir: binDir!,
+        dataDir: path.join(root, 'pgdata'),
+        port,
+        user: 'likapcs',
+        password: 'test-password-123',
+        database: 'likapcs',
+        logFile: path.join(root, 'logs', 'postgres.log'),
+      },
+      (phase) => phases.push(phase),
+    );
+    try {
+      await other.start();
+      expect(other.listenPort).not.toBe(port);
+      expect(phases).toContain('database-start');
+      const client = new Client({ connectionString: other.connectionString() });
+      await client.connect();
+      await client.end();
+
+      // A second manager (e.g. the Node process restarted) finds the running cluster by its
+      // postmaster.pid and uses the port it actually listens on — no pg_ctl, no second instance.
+      const again = new EmbeddedPostgres({
+        binDir: binDir!,
+        dataDir: path.join(root, 'pgdata'),
+        port,
+        user: 'likapcs',
+        password: 'test-password-123',
+        database: 'likapcs',
+        logFile: path.join(root, 'logs', 'postgres.log'),
+      });
+      await again.start();
+      expect(again.listenPort).toBe(other.listenPort);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+      await other.stop();
+    }
+  }, 120_000);
+
+  it('repairs the role password automatically when config and cluster disagree', async () => {
+    const phases: string[] = [];
+    const wrong = new EmbeddedPostgres(
+      {
+        binDir: binDir!,
+        dataDir: path.join(root, 'pgdata'),
+        port,
+        user: 'likapcs',
+        password: 'a-new-password-456',
+        database: 'likapcs',
+        logFile: path.join(root, 'logs', 'postgres.log'),
+      },
+      (phase) => phases.push(phase),
+    );
+    try {
+      const t0 = Date.now();
+      await wrong.start();
+      expect(phases).toContain('database-repair');
+      expect(Date.now() - t0).toBeLessThan(45_000); // fails fast on auth errors instead of waiting 60 s
+      const client = new Client({ connectionString: wrong.connectionString() });
+      await client.connect();
+      const res = await client.query('SELECT 1 AS ok');
+      await client.end();
+      expect(res.rows[0]?.ok).toBe(1);
+    } finally {
+      await wrong.stop();
+    }
+  }, 120_000);
 });
 
 describe('LAN discovery', () => {

@@ -31,7 +31,7 @@ export const SETTING_SCHEMAS = {
   'tax.prices_include_tax': z.boolean(),
 
   'security.session_hours': z.number().int().min(1).max(168),
-  'security.min_password_length': z.number().int().min(6).max(64),
+  'security.min_password_length': z.number().int().min(4).max(64),
   'security.max_failed_logins': z.number().int().min(3).max(20),
   'security.lockout_minutes': z.number().int().min(1).max(1440),
 
@@ -40,6 +40,8 @@ export const SETTING_SCHEMAS = {
   'stations.session_grace_seconds': z.number().int().min(0).max(3600),
   'stations.expiry_warning_minutes': z.array(z.number().int().min(1).max(120)).max(5),
   'stations.client_welcome_message': z.string().max(300),
+  /** How long a staff unlock (maintenance) keeps a station PC open before it locks again. */
+  'stations.maintenance_minutes': z.number().int().min(1).max(480),
 
   'pos.scan_increments_quantity': z.boolean(),
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
@@ -96,7 +98,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'tax.prices_include_tax': true,
 
   'security.session_hours': 12,
-  'security.min_password_length': 8,
+  'security.min_password_length': 4,
   'security.max_failed_logins': 5,
   'security.lockout_minutes': 15,
 
@@ -105,6 +107,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.session_grace_seconds': 120,
   'stations.expiry_warning_minutes': [5, 1],
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
+  'stations.maintenance_minutes': 15,
 
   'pos.scan_increments_quantity': true,
   'pos.receipt_width_mm': 80,

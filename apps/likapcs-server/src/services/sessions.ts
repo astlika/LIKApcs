@@ -349,6 +349,11 @@ export class SessionsService {
         [req.stationId, 'active', 'paused'],
       );
       if (live.rowCount) throw conflict('A session is already running on this station');
+      // A customer session supersedes a staff maintenance unlock.
+      await client.query(
+        'UPDATE stations SET maintenance_until = NULL, maintenance_by = NULL, maintenance_by_name = NULL WHERE id = $1',
+        [req.stationId],
+      );
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO gaming_sessions (station_id, device_id, customer_id, customer_name, billing_mode, status,
            pricing_rule_id, package_id, rate_cents_per_hour, billing_terms, planned_seconds, started_at, ends_at,

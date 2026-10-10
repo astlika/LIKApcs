@@ -617,6 +617,59 @@ export class Agent {
       this.setPhase(previous.phase === 'updating' ? { phase: 'online' } : previous);
   }
 
+  // ─── staff unlock at the PC (maintenance) ─────────────────────────────────
+  /**
+   * Sends the staff member's own credentials to the server, which verifies them, checks the
+   * `stations.unlock` permission and answers with the `unlock` command over the WebSocket. The
+   * client never decides on its own; this just relays. Resolves with the grant end time.
+   */
+  async staffUnlock(
+    username: string,
+    password: string,
+  ): Promise<{ ok: true; until: string; byName: string } | { ok: false; error: string }> {
+    const { pairing } = this.snapshot;
+    const token = await secretGet(KEYS.token);
+    if (!pairing || !token) return { ok: false, error: 'not_paired' };
+    try {
+      const res = await this.api<
+        { until: string; byName: string } | { error: { code: string; message: string } }
+      >(pairing, '/client/staff-unlock', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.status === 200 && res.body && 'until' in res.body) {
+        return { ok: true, until: res.body.until, byName: res.body.byName };
+      }
+      const code =
+        res.body && 'error' in res.body
+          ? res.body.error.code
+          : res.status === 429
+            ? 'rate_limited'
+            : `http_${res.status}`;
+      return { ok: false, error: code };
+    } catch {
+      return { ok: false, error: 'network' };
+    }
+  }
+
+  /** Staff ended the maintenance unlock: lock immediately, then tell the server. */
+  async staffLock(): Promise<void> {
+    const { state } = this.snapshot;
+    if (state.mode === 'free') {
+      this.setState({ ...state, mode: 'locked', maintenance: null });
+      this.send({ type: 'client.event', event: 'maintenance_ended', payload: { reason: 'staff' } });
+    }
+    const { pairing } = this.snapshot;
+    const token = await secretGet(KEYS.token);
+    if (!pairing || !token) return;
+    await this.api(pairing, '/client/staff-lock', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}',
+    }).catch(() => undefined);
+  }
+
   // ─── 1 s tick: countdown, local expiry, notice expiry ─────────────────────
   private onTick(): void {
     const now = this.clock.now();
@@ -628,6 +681,15 @@ export class Agent {
         type: 'client.event',
         event: 'session_expired_locally',
         payload: { sessionId: state.session.id },
+      });
+    }
+    if (state.mode === 'free' && state.maintenance && state.maintenance.untilServerMs <= now) {
+      // The staff unlock ran out: lock locally right away (the server sends `lock` as well).
+      next = { ...next, mode: 'locked', maintenance: null };
+      this.send({
+        type: 'client.event',
+        event: 'maintenance_ended',
+        payload: { reason: 'expired' },
       });
     }
     if (state.notice && state.notice.untilServerMs <= now) next = { ...next, notice: null };

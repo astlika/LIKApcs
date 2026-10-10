@@ -187,21 +187,28 @@ export async function apiDownload(path: string, fallbackName: string): Promise<v
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
-/** Uploads a raw file body (`application/octet-stream`) and returns the JSON response. */
+/** Absolute URL for a server-relative file path such as a product picture (`/api/v1/files/…`). */
+export function fileUrl(serverRelative: string | null | undefined): string | null {
+  if (!serverRelative) return null;
+  return `${getServerUrl()}${serverRelative}`;
+}
+
+/** Uploads a raw file body and returns the JSON response (backup archives, product pictures). */
 export async function apiUpload<T>(
   path: string,
   file: Blob,
   query: Record<string, string> = {},
+  options: { method?: 'POST' | 'PUT'; contentType?: string } = {},
 ): Promise<T> {
   const url = new URL(`${getServerUrl()}/api/v1${path}`, window.location.origin);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
   let response: Response;
   try {
     response = await fetch(url.toString(), {
-      method: 'POST',
+      method: options.method ?? 'POST',
       headers: {
         authorization: `Bearer ${getToken() ?? ''}`,
-        'content-type': 'application/octet-stream',
+        'content-type': options.contentType ?? 'application/octet-stream',
       },
       body: file,
     });

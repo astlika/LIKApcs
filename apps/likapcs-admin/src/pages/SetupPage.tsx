@@ -173,7 +173,7 @@ export function SetupPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     aria-invalid={invalid}
                     required
-                    minLength={8}
+                    minLength={4}
                   />
                 )}
               </Field>

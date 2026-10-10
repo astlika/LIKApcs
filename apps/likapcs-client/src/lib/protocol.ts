@@ -89,9 +89,16 @@ export interface Notice {
 
 export type Mode = 'locked' | 'session' | 'free';
 
+/** Staff unlock (maintenance): the PC is open without a session until `untilServerMs`. */
+export interface MaintenanceState {
+  untilServerMs: number;
+  byName: string | null;
+}
+
 export interface ClientState {
   mode: Mode;
   session: SessionState | null;
+  maintenance: MaintenanceState | null;
   notice: Notice | null;
   station: ServerWelcomeToClient['station'] | null;
   businessName: string;
@@ -102,6 +109,7 @@ export interface ClientState {
 export const initialState: ClientState = {
   mode: 'locked',
   session: null,
+  maintenance: null,
   notice: null,
   station: null,
   businessName: '',
@@ -112,7 +120,11 @@ export const initialState: ClientState = {
 export type Effect =
   | { type: 'power'; action: 'restart' | 'shutdown' }
   | { type: 'update' }
-  | { type: 'event'; event: 'locked' | 'unlocked'; payload?: Record<string, unknown> };
+  | {
+      type: 'event';
+      event: 'locked' | 'unlocked' | 'maintenance_ended';
+      payload?: Record<string, unknown>;
+    };
 
 export interface ReduceResult {
   state: ClientState;
@@ -134,9 +146,23 @@ function sessionFromWelcome(w: ServerWelcomeToClient['session']): SessionState |
   };
 }
 
+function maintenanceFrom(
+  until: string | null | undefined,
+  byName: string | null | undefined,
+  serverNowMs: number,
+): MaintenanceState | null {
+  const untilMs = until ? Date.parse(until) : NaN;
+  if (!Number.isFinite(untilMs) || untilMs <= serverNowMs) return null;
+  return { untilServerMs: untilMs, byName: byName ?? null };
+}
+
 /** Applies the authoritative snapshot sent right after the handshake. */
 export function applyWelcome(state: ClientState, welcome: ServerWelcomeToClient): ClientState {
   const session = sessionFromWelcome(welcome.session);
+  const serverNowMs = Date.parse(welcome.serverTime);
+  const maintenance = session
+    ? null
+    : maintenanceFrom(welcome.maintenance?.until, welcome.maintenance?.byName, serverNowMs);
   return {
     ...state,
     station: welcome.station,
@@ -144,8 +170,10 @@ export function applyWelcome(state: ClientState, welcome: ServerWelcomeToClient)
     welcomeMessage: welcome.welcomeMessage,
     language: welcome.language,
     session,
-    // No session ⇒ locked. A reconnect never silently unlocks a PC.
-    mode: session ? 'session' : 'locked',
+    maintenance,
+    // No session ⇒ locked — unless the server itself says a staff maintenance unlock is still in
+    // force (it recorded that grant; a reconnect never invents an unlock on its own).
+    mode: session ? 'session' : maintenance ? 'free' : 'locked',
   };
 }
 
@@ -161,16 +189,22 @@ export function reduce(
   switch (command.command) {
     case 'lock':
       return {
-        state: { ...state, mode: 'locked', session: null },
-        effects: [{ type: 'event', event: 'locked' }],
+        state: { ...state, mode: 'locked', session: null, maintenance: null },
+        effects: [{ type: 'event', event: 'locked', payload: { reason: str(p.reason) } }],
         ok: true,
       };
-    case 'unlock':
+    case 'unlock': {
+      // Time-limited by the server (maintenance grant); without `until` the old open-ended form.
+      const maintenance = maintenanceFrom(str(p.until), str(p.byName), serverNowMs) ?? {
+        untilServerMs: Number.POSITIVE_INFINITY,
+        byName: str(p.byName),
+      };
       return {
-        state: { ...state, mode: 'free', session: null },
+        state: { ...state, mode: 'free', session: null, maintenance },
         effects: [{ type: 'event', event: 'unlocked', payload: { reason: 'staff' } }],
         ok: true,
       };
+    }
     case 'session.start': {
       const id = str(p.sessionId);
       const startedAt = str(p.startedAt) ?? new Date(serverNowMs).toISOString();
@@ -182,6 +216,7 @@ export function reduce(
         state: {
           ...state,
           mode: 'session',
+          maintenance: null,
           session: {
             id,
             status: 'active',

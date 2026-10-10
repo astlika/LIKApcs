@@ -4,7 +4,18 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Barcode, Boxes, History, Package, Pencil, Plus, Tag, Trash2 } from 'lucide-react';
+import {
+  Archive,
+  Barcode,
+  Boxes,
+  History,
+  Image as ImageIcon,
+  Package,
+  Pencil,
+  Plus,
+  Tag,
+  Trash2,
+} from 'lucide-react';
 import {
   PERMISSIONS,
   STOCK_ADJUSTMENT_TYPES,
@@ -16,7 +27,12 @@ import {
   type StockAdjustmentType,
   type TaxCategorySummary,
 } from '@likapcs/shared';
-import { api, ApiError, fieldError } from '../lib/api';
+import { api, apiUpload, ApiError, fieldError } from '../lib/api';
+import {
+  ProductImageField,
+  ProductThumb,
+  type PendingImage,
+} from '../components/catalog/ProductImageField';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -190,19 +206,24 @@ export function ProductsPage() {
               {products.data.items.map((p) => (
                 <tr key={p.id} className={p.isActive ? '' : 'row--muted'}>
                   <td>
-                    <div className="row" style={{ gap: 8 }}>
-                      <strong>{p.name}</strong>
-                      {!p.isActive && <Badge>{t('products.archived')}</Badge>}
-                      {p.isActive && p.lowStock && (
-                        <Badge tone="warning">{t('products.lowBadge')}</Badge>
-                      )}
-                    </div>
-                    {p.barcodes.length > 0 && (
-                      <div className="faint" style={{ fontSize: 12 }}>
-                        <Barcode size={11} style={{ verticalAlign: '-1px' }} />{' '}
-                        {p.barcodes.map((b) => b.barcode).join(', ')}
+                    <div className="row" style={{ gap: 10 }}>
+                      <ProductThumb url={p.imageUrl} name={p.name} />
+                      <div>
+                        <div className="row" style={{ gap: 8 }}>
+                          <strong>{p.name}</strong>
+                          {!p.isActive && <Badge>{t('products.archived')}</Badge>}
+                          {p.isActive && p.lowStock && (
+                            <Badge tone="warning">{t('products.lowBadge')}</Badge>
+                          )}
+                        </div>
+                        {p.barcodes.length > 0 && (
+                          <div className="faint" style={{ fontSize: 12 }}>
+                            <Barcode size={11} style={{ verticalAlign: '-1px' }} />{' '}
+                            {p.barcodes.map((b) => b.barcode).join(', ')}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </td>
                   <td className="mono">{p.sku}</td>
                   <td>
@@ -359,6 +380,15 @@ function formFrom(p: ProductSummary | null): ProductForm {
   };
 }
 
+class ImageSaveError extends Error {
+  constructor(
+    readonly product: ProductSummary,
+    override readonly cause: unknown,
+  ) {
+    super('image_save_failed');
+  }
+}
+
 function ProductDialog({
   product,
   categories,
@@ -382,8 +412,32 @@ function ProductDialog({
   const [newBarcode, setNewBarcode] = useState('');
   const [newPack, setNewPack] = useState('1');
   const [error, setError] = useState<unknown>(null);
+  const [pendingImage, setPendingImage] = useState<PendingImage>(null);
   const set = <K extends keyof ProductForm>(k: K, v: ProductForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  /** Applies the picture choice after the product row exists (create) or was updated (edit). */
+  const applyImage = async (productId: string): Promise<void> => {
+    if (!pendingImage) return;
+    if (pendingImage.kind === 'upload') {
+      await apiUpload<ProductSummary>(
+        `/products/${productId}/image`,
+        pendingImage.blob,
+        {},
+        {
+          method: 'PUT',
+          contentType: pendingImage.contentType,
+        },
+      );
+    } else if (pendingImage.kind === 'link') {
+      await api<ProductSummary>(`/products/${productId}/image/from-url`, {
+        method: 'POST',
+        body: { url: pendingImage.url },
+      });
+    } else {
+      await api<ProductSummary>(`/products/${productId}/image`, { method: 'DELETE' });
+    }
+  };
 
   const taxCategories = useQuery({
     queryKey: ['catalog', 'tax-categories'],
@@ -419,22 +473,32 @@ function ProductDialog({
         storageLocation: form.storageLocation.trim() || null,
         isActive: form.isActive,
       };
+      let saved: ProductSummary;
       if (product) {
-        return api<ProductSummary>(`/products/${product.id}`, {
+        saved = await api<ProductSummary>(`/products/${product.id}`, {
           method: 'PATCH',
           body: { ...base, sku: form.sku.trim() || undefined },
         });
+      } else {
+        saved = await api<ProductSummary>('/products', {
+          method: 'POST',
+          body: {
+            ...base,
+            sku: form.sku.trim() || undefined,
+            barcodes,
+            initialStockMilli:
+              initialStockMilli && initialStockMilli > 0 ? initialStockMilli : undefined,
+          },
+        });
       }
-      return api<ProductSummary>('/products', {
-        method: 'POST',
-        body: {
-          ...base,
-          sku: form.sku.trim() || undefined,
-          barcodes,
-          initialStockMilli:
-            initialStockMilli && initialStockMilli > 0 ? initialStockMilli : undefined,
-        },
-      });
+      try {
+        await applyImage(saved.id);
+      } catch (err) {
+        // The product itself is saved; only the picture failed — say so and keep the dialog open
+        // on the (now existing) product so the user can retry.
+        throw new ImageSaveError(saved, err);
+      }
+      return saved;
     },
     onSuccess: () => {
       toast.success(t('products.saved'));
@@ -442,6 +506,11 @@ function ProductDialog({
       onClose();
     },
     onError: (err) => {
+      if (err instanceof ImageSaveError) {
+        invalidate();
+        toast.error(err.cause instanceof ApiError ? err.cause.message : t('products.imageInvalid'));
+        return;
+      }
       setError(err);
       if (!(err instanceof ApiError && err.status === 400))
         toast.error(err instanceof ApiError ? err.message : t('common.invalid'));
@@ -625,7 +694,14 @@ function ProductDialog({
                 value={form.taxCategoryId}
                 onChange={(e) => set('taxCategoryId', e.target.value)}
               >
-                <option value="">{t('products.defaultTax')}</option>
+                <option value="">
+                  {(() => {
+                    const def = (taxCategories.data ?? []).find((c) => c.isDefault);
+                    return t('products.defaultTax', {
+                      rate: def ? `${(def.rateBp / 100).toFixed(def.rateBp % 100 ? 2 : 0)}%` : '—',
+                    });
+                  })()}
+                </option>
                 {(taxCategories.data ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({(c.rateBp / 100).toFixed(c.rateBp % 100 ? 2 : 0)}%)
@@ -717,6 +793,16 @@ function ProductDialog({
             />
           )}
         </Field>
+
+        <div className="subhead">
+          <ImageIcon size={14} /> {t('products.image')}
+        </div>
+        <ProductImageField
+          currentUrl={existing.data?.imageUrl ?? product?.imageUrl ?? null}
+          pending={pendingImage}
+          onChange={setPendingImage}
+          disabled={save.isPending}
+        />
 
         <div className="subhead">
           <Barcode size={14} /> {t('products.barcodes')}

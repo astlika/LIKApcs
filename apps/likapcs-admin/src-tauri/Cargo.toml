@@ -1,6 +1,6 @@
 [package]
 name = "likapcs-admin"
-version = "0.2.1"
+version = "0.3.0"
 description = "LIKApcs Admin — POS, ERP and Gaming Station control"
 authors = ["LIKApcs"]
 edition = "2021"

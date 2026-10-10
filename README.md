@@ -6,11 +6,11 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                                                                                                                          | Status (after Phase 7)                                      |
+| App                | What it is                                                                                                                                                                                                          | Status (0.3.0)                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                 | ✅ schema v10, 113 integration/unit tests                   |
+| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                 | ✅ schema v11, 122 integration/unit tests                   |
 | **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
-| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, timers/overlay, secure device registration, staff commands, self-update                                                                                          | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
+| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, countdown widget, staff unlock (Ctrl+Alt+A), secure device registration, staff commands, self-update                                                             | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
 
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.

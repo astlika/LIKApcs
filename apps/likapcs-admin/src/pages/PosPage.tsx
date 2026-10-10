@@ -31,7 +31,7 @@ import {
   type SalePaymentInput,
   type SalesListResponse,
 } from '@likapcs/shared';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, fileUrl } from '../lib/api';
 import {
   addToCart,
   cartItemCount,
@@ -319,6 +319,11 @@ export function PosPage() {
                   p.categoryColor ? { ['--tile-accent' as string]: p.categoryColor } : undefined
                 }
               >
+                {p.imageUrl && (
+                  <div className="tile__image" aria-hidden>
+                    <img src={fileUrl(p.imageUrl) ?? undefined} alt="" loading="lazy" />
+                  </div>
+                )}
                 <div className="tile__name">{p.name}</div>
                 <div className="tile__meta">
                   <span className="num">{fmt.money(p.sellingPriceCents)}</span>

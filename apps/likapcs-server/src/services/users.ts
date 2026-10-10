@@ -13,6 +13,7 @@ import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { hashPassword, verifyPassword } from '../security/password.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import type { SettingsService } from './settings.js';
 
 interface UserRow {
   id: string;
@@ -79,7 +80,19 @@ export function assertCanManageRoles(
 }
 
 export class UsersService {
-  constructor(private readonly pool: DbPool) {}
+  constructor(
+    private readonly pool: DbPool,
+    /** Optional: enforces the configurable `security.min_password_length` for new passwords. */
+    private readonly settings: SettingsService | null = null,
+  ) {}
+
+  /** New passwords must satisfy the business' configured minimum length (4 = PIN allowed). */
+  private async assertPasswordPolicy(password: string, field: string): Promise<void> {
+    const min = this.settings ? await this.settings.get('security.min_password_length') : 4;
+    if (password.length < min) {
+      throw badRequest(`Password must be at least ${min} characters`, { field, minLength: min });
+    }
+  }
 
   async count(db: Queryable = this.pool): Promise<number> {
     const result = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM users');
@@ -171,6 +184,7 @@ export class UsersService {
     db?: Queryable,
   ): Promise<UserSummary> {
     if (actor.roles) assertCanManageRoles(actor.roles, input.roles);
+    await this.assertPasswordPolicy(input.password, 'password');
     const run = async (client: Queryable): Promise<UserSummary> => {
       const existing = await client.query('SELECT 1 FROM users WHERE lower(username) = lower($1)', [
         input.username,
@@ -275,6 +289,7 @@ export class UsersService {
     mustChangePassword: boolean,
     actor: AuditActor & { roles: readonly string[] },
   ): Promise<void> {
+    await this.assertPasswordPolicy(newPassword, 'newPassword');
     await withTransaction(this.pool, async (client) => {
       const target = await this.getById(id, client);
       if (actor.userId !== id) assertCanManageRoles(actor.roles, target.roles);
@@ -304,6 +319,7 @@ export class UsersService {
     keepSessionId: string,
     actor: AuditActor,
   ): Promise<void> {
+    await this.assertPasswordPolicy(newPassword, 'newPassword');
     await withTransaction(this.pool, async (client) => {
       const row = await client.query<{ password_hash: string }>(
         'SELECT password_hash FROM users WHERE id = $1 FOR UPDATE',

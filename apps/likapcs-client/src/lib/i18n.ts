@@ -42,6 +42,27 @@ const en = {
   pairedNote:
     'This PC is paired. To move it to another server or station, revoke the device in LIKApcs Admin → Stations; it will register again automatically.',
   language: 'Language',
+  maintenance: 'Maintenance',
+  maintenanceBy: 'Unlocked by',
+  locksIn: 'Locks in',
+  lockNow: 'Lock',
+  staffUnlockTitle: 'Staff unlock',
+  staffUnlockHint:
+    'Unlock this PC for maintenance with your own LIKApcs username and password. No session is started and nothing is billed; the PC locks again automatically.',
+  username: 'Username',
+  password: 'Password',
+  unlock: 'Unlock',
+  cancel: 'Cancel',
+  unlocking: 'Checking with the server…',
+  unlockedUntil: 'Unlocked until',
+  errInvalidCredentials: 'Wrong username or password.',
+  errNoPermission: 'This account may not unlock station PCs.',
+  errLocked: 'Account temporarily locked after too many attempts.',
+  errSessionActive: 'A customer session is running on this PC.',
+  errNotConnected: 'The PC is not connected to the server yet — try again in a moment.',
+  errRateLimited: 'Too many attempts — wait a minute.',
+  errGeneric: 'The server refused the request.',
+  errNetwork: 'The server could not be reached.',
 };
 const sq: typeof en = {
   station: 'Stacioni',
@@ -85,6 +106,27 @@ const sq: typeof en = {
   pairedNote:
     'Ky PC është i çiftuar. Për ta kaluar në një server ose stacion tjetër, revokoni pajisjen në LIKApcs Admin → Stacionet; ajo regjistrohet përsëri automatikisht.',
   language: 'Gjuha',
+  maintenance: 'Mirëmbajtje',
+  maintenanceBy: 'Zhbllokuar nga',
+  locksIn: 'Kyçet pas',
+  lockNow: 'Kyçe',
+  staffUnlockTitle: 'Zhbllokim nga stafi',
+  staffUnlockHint:
+    'Zhbllokoni këtë PC për mirëmbajtje me emrin tuaj të përdoruesit dhe fjalëkalimin e LIKApcs. Nuk niset asnjë seancë dhe nuk faturohet asgjë; PC-ja kyçet përsëri automatikisht.',
+  username: 'Emri i përdoruesit',
+  password: 'Fjalëkalimi',
+  unlock: 'Zhblloko',
+  cancel: 'Anulo',
+  unlocking: 'Po verifikohet me serverin…',
+  unlockedUntil: 'Zhbllokuar deri në',
+  errInvalidCredentials: 'Emri i përdoruesit ose fjalëkalimi është gabim.',
+  errNoPermission: 'Kjo llogari nuk lejohet të zhbllokojë PC-të e stacioneve.',
+  errLocked: 'Llogaria u bllokua përkohësisht pas shumë përpjekjeve.',
+  errSessionActive: 'Në këtë PC po zhvillohet një seancë klienti.',
+  errNotConnected: 'PC-ja ende nuk është lidhur me serverin — provoni përsëri pas pak.',
+  errRateLimited: 'Shumë përpjekje — prisni një minutë.',
+  errGeneric: 'Serveri e refuzoi kërkesën.',
+  errNetwork: 'Serveri nuk u arrit.',
 };
 
 export const dictionaries: Record<Language, typeof en> = { en, sq };

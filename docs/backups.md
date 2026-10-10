@@ -76,3 +76,10 @@ step 2 can itself be restored to undo the restore.
 
 See `docs/network-protocol.md` → _Backups_. Everything is under `/api/v1/backups` and needs
 `backups.manage`; uploads are raw `application/octet-stream` bodies.
+
+## What is not in a backup
+
+Product pictures live as files in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`), not in the
+database, so an archive restores every product row but not the picture files. On the same PC the
+files stay in place; when moving to a new PC copy the `uploads` folder next to the restored
+database (missing pictures simply show the product's placeholder tile — nothing else is affected).

@@ -498,7 +498,7 @@ function UserDialog({
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                   aria-invalid={invalid}
                   required
-                  minLength={8}
+                  minLength={4}
                   autoComplete="new-password"
                 />
               )}
@@ -616,7 +616,7 @@ function ResetPasswordDialog({ user, onClose }: { user: UserSummary; onClose: ()
               onChange={(e) => setPassword(e.target.value)}
               aria-invalid={invalid}
               required
-              minLength={8}
+              minLength={4}
               autoComplete="new-password"
             />
           )}

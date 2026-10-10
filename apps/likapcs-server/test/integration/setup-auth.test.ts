@@ -30,7 +30,7 @@ describe('first-run setup and authentication', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/system/setup',
-      payload: { businessName: 'X', owner: { ...OWNER, password: 'short' } },
+      payload: { businessName: 'X', owner: { ...OWNER, password: '123' } },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('validation_error');

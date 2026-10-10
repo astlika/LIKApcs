@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import fs from 'node:fs';
+import path from 'node:path';
 import { WS_CLOSE_CODES } from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
 import type { DbPool } from './db/pool.js';
@@ -18,6 +19,8 @@ import { pricingRoutes } from './routes/pricing.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { salesRoutes } from './routes/sales.js';
 import { CatalogService } from './services/catalog.js';
+import { MaintenanceService } from './services/maintenance.js';
+import { ProductImageStore } from './services/product-images.js';
 import { SalesService } from './services/sales.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
@@ -57,6 +60,7 @@ export interface Services {
   pricing: PricingService;
   sessions: SessionsService;
   catalog: CatalogService;
+  maintenance: MaintenanceService;
   sales: SalesService;
   cash: CashService;
   expenses: ExpensesService;
@@ -123,17 +127,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   const hub = new RealtimeHub();
   const settings = new SettingsService(pool);
-  const users = new UsersService(pool);
+  const users = new UsersService(pool, settings);
   const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
   const audit = new AuditQueryService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);
-  const commands = new CommandsService(pool, hub);
+  const maintenance = new MaintenanceService(pool, hub, stations, auth, users, settings);
+  const commands = new CommandsService(pool, hub, maintenance);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
   const sessions = new SessionsService(pool, hub, settings, pricing, stations, cash, app.log);
-  const catalog = new CatalogService(pool, settings);
+  const catalog = new CatalogService(
+    pool,
+    settings,
+    new ProductImageStore(path.join(config.uploadDir, 'products')),
+  );
   const sales = new SalesService(pool, settings, cash);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
@@ -172,6 +181,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     audit,
     dashboard,
     commands,
+    maintenance,
     pricing,
     sessions,
     catalog,
@@ -278,6 +288,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         .get('stations.offline_after_seconds')
         .then((seconds) => hub.sweep(seconds * 1000))
         .catch((err: unknown) => app.log.error({ err }, 'presence sweep failed'));
+      void maintenance
+        .sweep()
+        .catch((err: unknown) => app.log.error({ err }, 'maintenance sweep failed'));
     }, 5_000);
     dailyTimer = setInterval(
       () => {

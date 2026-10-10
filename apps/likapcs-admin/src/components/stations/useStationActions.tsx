@@ -170,6 +170,8 @@ export function useStationActions(
   const live = station?.activeSession ?? null;
   const online = !!station?.device?.online;
   const enabled = !!station?.isEnabled;
+  const unlockable =
+    online && !live && (station?.status === 'available' || station?.status === 'locked');
 
   const actions = useMemo<StationAction[]>(() => {
     if (!station) return [];
@@ -210,12 +212,11 @@ export function useStationActions(
         hint: live && live.billingMode !== 'prepaid' ? t('map.addTimePostpaid') : undefined,
       },
       {
-        id: online && station.status === 'locked' ? 'unlock' : 'lock',
-        label:
-          online && station.status === 'locked'
-            ? t('stations.commands.unlock')
-            : t('stations.commands.lock'),
-        icon: online && station.status === 'locked' ? LockOpen : Lock,
+        // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
+        // on the server). In maintenance or during a session the action locks the screen.
+        id: unlockable ? 'unlock' : 'lock',
+        label: unlockable ? t('stations.commands.unlock') : t('stations.commands.lock'),
+        icon: unlockable ? LockOpen : Lock,
         bar: true,
         enabled: canControl && online,
         hint: online ? undefined : offlineHint,
@@ -254,7 +255,7 @@ export function useStationActions(
       { id: 'details', label: t('common.details'), icon: Info, bar: true, enabled: true },
     ];
     return list;
-  }, [station, live, online, enabled, canControl, canPower, t]);
+  }, [station, live, online, enabled, unlockable, canControl, canPower, t]);
 
   const primary: StationActionId | null = !station
     ? null

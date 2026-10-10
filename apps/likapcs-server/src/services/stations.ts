@@ -5,6 +5,7 @@ import {
   type CreateStationRequest,
   type PricingTerms,
   type StationDeviceSummary,
+  type StationMaintenance,
   type StationStatus,
   type StationSummary,
   type UpdateStationRequest,
@@ -46,6 +47,9 @@ interface StationRow {
   session_quoted_price_cents: string | number | null;
   session_billing_terms: Record<string, unknown> | null;
   session_rate_cents_per_hour: string | number | null;
+  maintenance_until: Date | null;
+  maintenance_by: string | null;
+  maintenance_by_name: string | null;
 }
 
 const STATION_SELECT = `
@@ -58,7 +62,8 @@ const STATION_SELECT = `
          g.billing_mode AS session_billing_mode, g.status AS session_status, g.started_at AS session_started_at,
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
-         g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour
+         g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour,
+         s.maintenance_until, s.maintenance_by, s.maintenance_by_name
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
@@ -140,10 +145,19 @@ export class StationsService {
       : null;
 
     const activeSession = liveSessionOf(row);
+    const maintenance: StationMaintenance | null =
+      row.maintenance_until && row.maintenance_until.getTime() > Date.now()
+        ? {
+            until: row.maintenance_until.toISOString(),
+            byUserId: row.maintenance_by,
+            byName: row.maintenance_by_name,
+          }
+        : null;
     let status: StationStatus;
     if (!row.is_enabled) status = 'disabled';
     else if (activeSession) status = activeSession.status === 'paused' ? 'paused' : 'occupied';
     else if (!device || !online) status = 'offline';
+    else if (maintenance) status = 'maintenance';
     else status = 'available';
 
     return {
@@ -157,9 +171,62 @@ export class StationsService {
       status,
       device,
       activeSession,
+      maintenance,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };
+  }
+
+  // ─── Maintenance (staff unlock) grants ──────────────────────────────────────
+
+  /** Records that the PC may stay unlocked without a session until `until`. */
+  async grantMaintenance(
+    stationId: string,
+    until: Date,
+    by: { userId: string | null; name: string },
+    db: Queryable = this.pool,
+  ): Promise<StationSummary> {
+    const r = await db.query(
+      `UPDATE stations SET maintenance_until = $2, maintenance_by = $3, maintenance_by_name = $4
+        WHERE id = $1`,
+      [stationId, until, by.userId, by.name],
+    );
+    if (!r.rowCount) throw notFound('Station');
+    const station = await this.getById(stationId, db);
+    this.hub.broadcastToAdmins('station.changed', station);
+    return station;
+  }
+
+  /** Ends a maintenance grant (lock, session start, expiry). Returns false when there was none. */
+  async clearMaintenance(stationId: string, db: Queryable = this.pool): Promise<boolean> {
+    const r = await db.query(
+      `UPDATE stations SET maintenance_until = NULL, maintenance_by = NULL, maintenance_by_name = NULL
+        WHERE id = $1 AND maintenance_until IS NOT NULL`,
+      [stationId],
+    );
+    if (!r.rowCount) return false;
+    const station = await this.getById(stationId, db);
+    this.hub.broadcastToAdmins('station.changed', station);
+    return true;
+  }
+
+  /** Live grant for the client handshake (null when none or expired). */
+  async maintenanceOf(stationId: string): Promise<{ until: string; byName: string | null } | null> {
+    const r = await this.pool.query<{ until: Date; by_name: string | null }>(
+      `SELECT maintenance_until AS until, maintenance_by_name AS by_name FROM stations
+        WHERE id = $1 AND maintenance_until > now()`,
+      [stationId],
+    );
+    const row = r.rows[0];
+    return row ? { until: row.until.toISOString(), byName: row.by_name } : null;
+  }
+
+  /** Stations whose grant ran out but is still recorded; the caller locks the PCs. */
+  async expiredMaintenance(db: Queryable = this.pool): Promise<string[]> {
+    const r = await db.query<{ id: string }>(
+      'SELECT id FROM stations WHERE maintenance_until IS NOT NULL AND maintenance_until <= now()',
+    );
+    return r.rows.map((x) => x.id);
   }
 
   async list(db: Queryable = this.pool): Promise<StationSummary[]> {

@@ -412,6 +412,11 @@ export function SettingsPage() {
               multiline: true,
               className: 'span-2',
             })}
+            {number('stations.maintenance_minutes', t('settings.stations.maintenanceMinutes'), {
+              min: 1,
+              max: 480,
+              hint: t('settings.stations.maintenanceMinutesHint'),
+            })}
           </div>
         </Card>
       )}
@@ -488,7 +493,7 @@ export function SettingsPage() {
               max: 168,
             })}
             {number('security.min_password_length', t('settings.security.minPassword'), {
-              min: 6,
+              min: 4,
               max: 64,
             })}
             {number('security.max_failed_logins', t('settings.security.maxFailed'), {

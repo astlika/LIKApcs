@@ -399,21 +399,32 @@ export function Dialog({
 }: DialogProps) {
   const ref = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
+  // Callers almost always pass inline arrow functions for `onClose`; keep the latest one in a ref so
+  // the effects below depend on `open` only. (Depending on `onClose` re-ran the focus effect on every
+  // keystroke — each re-render moved the focus back to the first field while the user was typing.)
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !locked) {
+      if (e.key === 'Escape' && !lockedRef.current) {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+  // Focus the first control once, when the dialog opens.
+  useEffect(() => {
+    if (!open) return;
     const first = ref.current?.querySelector<HTMLElement>(
-      'input, select, textarea, button:not([data-close])',
+      'input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([data-close])',
     );
     first?.focus();
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose, locked]);
+  }, [open]);
   if (!open) return null;
   return (
     <div

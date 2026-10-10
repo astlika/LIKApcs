@@ -8,6 +8,52 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.3.0] - 2026-10-11
+
+### Added
+
+- **Product pictures.** Products can carry a photo — uploaded from a file (scaled to at most 800 px in the
+  Admin before upload) or fetched from a link by the server. Pictures show in the product list and on
+  the POS tiles; `PUT|DELETE /products/:id/image`, `POST /products/:id/image/from-url` and the public
+  `GET /files/products/:name` route (immutable file names, long caching). Files live in
+  `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are not part of database backups
+  (`docs/backups.md`). Migration `0011` adds `products.image_path`.
+- **Staff unlock on the gaming PC (Ctrl+Alt+A).** A staff member types their own LIKApcs username and
+  password on the locked Client; the server verifies them (`stations.unlock` permission, same lockout
+  and rate limits as login) and unlocks the PC for maintenance — no session, no billing. The grant
+  ends after `stations.maintenance_minutes` (Settings → Stations, default 15), with the _Lock_ button
+  on the widget, with an Admin lock, or when a session starts; the PC re-locks by itself even if the
+  server is unreachable. The Admin map shows such PCs as _Maintenance_ (wrench, name, countdown), and
+  _Unlock_ in the Admin is now the same time-limited grant. New device-token routes
+  `POST /client/staff-unlock` / `/client/staff-lock`; audit `station.maintenance_*`.
+- **Client countdown widget.** The always-on-top strip is now a 300 × 96 widget with the station
+  code, a large HH:MM:SS, a progress bar for prepaid time, amber/red low-time states, the offline dot,
+  staff messages, and the maintenance view with the _Lock_ button. It can be dragged anywhere.
+- **Server startup diagnostics.** The embedded server writes `startup.json` (phase, timings, last
+  error) next to `server.json`; the Admin start screen shows the live phase, how long it took, and the
+  real error text with _Retry_ / _Show log_ actions instead of a generic "starting…" that could
+  spin for minutes. A wrong embedded database password is repaired automatically.
+
+### Changed
+
+- **Faster, more robust main-PC start.** The embedded PostgreSQL is recognised as already running
+  from its `postmaster.pid` (no `pg_ctl` round trip), a stale pid file after a crash is removed, the
+  wait loop fails fast on authentication errors instead of retrying until the timeout (the cause of
+  the "starts for a minute, then nothing" reports), and the cluster runs with a lighter
+  configuration. The Admin launches the server without blocking and follows its phases live.
+- **Password minimum is 4 characters** (short PINs for cashiers). `security.min_password_length` is
+  enforced server-side (default 4; existing installations that still had the seeded 8 are moved to 4
+  by migration 0011) and can be raised in Settings → Security.
+- Dialog inputs no longer lose focus after each keystroke (New employee / product dialogs typed one
+  character at a time).
+- Admin tiles and lists tolerate external picture links (`img-src http: https:` in the CSP).
+
+### Fixed
+
+- The product dialog's VAT selector showed the literal `{rate}` placeholder instead of the default
+  rate.
+- Deleting a never-sold product now also removes its picture file.
+
 ## [0.2.1] - 2026-10-10
 
 ### Changed

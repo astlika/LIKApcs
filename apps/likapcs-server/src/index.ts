@@ -1,12 +1,21 @@
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import module, { createRequire } from 'node:module';
 import { loadConfig } from './config.js';
 import { createPool } from './db/pool.js';
 import { getMigrationStatus, runMigrations } from './db/migrate.js';
 import { buildApp } from './app.js';
 import { openDatabase } from './embedded/bootstrap.js';
 import { DiscoveryResponder } from './discovery.js';
+import { StartupReporter } from './embedded/startup-state.js';
 import { SERVER_VERSION } from './version.js';
+
+// Node ≥ 22.1 can cache compiled bytecode of this (large, bundled) file between starts — a
+// noticeably quicker cold start on the main PC. Older runtimes simply skip it.
+try {
+  (module as unknown as { enableCompileCache?: () => void }).enableCompileCache?.();
+} catch {
+  /* optional */
+}
 
 function isInstalled(moduleName: string): boolean {
   try {
@@ -29,9 +38,40 @@ function rotateIfLarge(file: string, maxBytes = 20 * 1024 * 1024): void {
   }
 }
 
+/** `app.listen` with a short retry: right after an update the previous instance may still be releasing the port. */
+async function listenWithRetry(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  host: string,
+  port: number,
+  log: (message: string) => void,
+): Promise<void> {
+  const attempts = 8;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await app.listen({ host, port });
+      return;
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code !== 'EADDRINUSE' || attempt >= attempts) {
+        if (code === 'EADDRINUSE') {
+          throw new Error(
+            `port ${port} is in use by another program (or a previous LIKApcs server that is still stopping)`,
+          );
+        }
+        throw err;
+      }
+      log(`port ${port} busy — retrying (${attempt}/${attempts})`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
+let reporter: StartupReporter | null = null;
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const startupLog = (message: string) => console.info(`[startup] ${message}`);
+  reporter = new StartupReporter(config.dataDir, SERVER_VERSION, startupLog);
 
   if (config.logFile) rotateIfLarge(config.logFile);
   // Pretty console output only for an interactive developer terminal; a background process
@@ -48,9 +88,12 @@ async function main(): Promise<void> {
         }
       : { level: config.logLevel };
 
-  const database = await openDatabase(config, startupLog);
+  const database = await openDatabase(config, startupLog, (phase, detail) =>
+    reporter?.set(phase, detail ?? null),
+  );
   const pool = createPool(database.databaseUrl);
 
+  reporter.set('migrations');
   const status = await getMigrationStatus(pool, config.migrationsDir);
   if (status.pending.length > 0) {
     if (!config.autoMigrate) {
@@ -61,6 +104,7 @@ async function main(): Promise<void> {
       await database.release();
       process.exit(1);
     }
+    reporter.set('migrations', `${status.pending.length} pending`);
     await runMigrations(pool, config.migrationsDir, {
       info: (m) => console.info(`[migrate] ${m}`),
       error: (m) => console.error(`[migrate] ${m}`),
@@ -75,7 +119,8 @@ async function main(): Promise<void> {
     controlToken: database.runtime?.controlToken ?? null,
     requestShutdown: (reason) => void shutdown(reason),
   });
-  await app.listen({ host: config.host, port: config.port });
+  await listenWithRetry(app, config.host, config.port, startupLog);
+  reporter.set('listening');
 
   const discovery =
     config.discovery.enabled && database.runtime
@@ -157,6 +202,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error('LIKApcs Server failed to start:', err instanceof Error ? err.message : err);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error('LIKApcs Server failed to start:', message);
+  reporter?.fail(message);
   process.exit(1);
 });

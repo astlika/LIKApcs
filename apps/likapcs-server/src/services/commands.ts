@@ -8,6 +8,7 @@ import {
 import { conflict } from '../errors.js';
 import type { DevicePresence, RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import type { MaintenanceService } from './maintenance.js';
 import { SERVER_VERSION } from '../version.js';
 
 /** A policy decision for pushing `update.apply` to a connected client. */
@@ -55,6 +56,7 @@ export class CommandsService {
   constructor(
     private readonly pool: Pool,
     private readonly hub: RealtimeHub,
+    private readonly maintenance: MaintenanceService,
   ) {}
 
   private onlineDeviceForStation(stationId: string): DevicePresence {
@@ -69,7 +71,16 @@ export class CommandsService {
     actor: AuditActor,
   ): Promise<StationCommandResponse> {
     const presence = this.onlineDeviceForStation(stationId);
-    const { command, ...payload } = request;
+    const { command, ...rest } = request;
+    let payload: Record<string, unknown> = rest;
+    if (command === 'lock' || command === 'unlock') {
+      // Keep the station's maintenance grant in step with what the PC is told.
+      const grant = await this.maintenance.onAdminCommand(command, stationId, {
+        userId: actor.userId ?? null,
+        label: actor.label ?? 'admin',
+      });
+      if (grant) payload = { ...payload, reason: 'maintenance', ...grant };
+    }
     const result = await this.hub.sendCommand(presence.deviceId, command, payload, {
       // power actions need a longer window: the client acks before the OS acts, but the PC may be slow
       timeoutMs: command.startsWith('power.') ? 20_000 : 15_000,

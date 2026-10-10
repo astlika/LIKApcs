@@ -12,15 +12,25 @@ export function App() {
   const snap = useAgent();
   const t = (key: Key) => translate(snap.state.language, key);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [unlockOpen, setUnlockOpen] = useState(false);
 
-  // Ctrl+Alt+S opens the technician panel (read-only once paired).
+  // Ctrl+Alt+S opens the technician panel (read-only once paired); Ctrl+Alt+A the staff unlock.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
         setSettingsOpen((v) => !v);
+        setUnlockOpen(false);
       }
-      if (e.key === 'Escape') setSettingsOpen(false);
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setUnlockOpen((v) => !v);
+        setSettingsOpen(false);
+      }
+      if (e.key === 'Escape') {
+        setSettingsOpen(false);
+        setUnlockOpen(false);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -62,10 +72,130 @@ export function App() {
         <span className="muted">
           LIKApcs Client {snap.version}
           {snap.identity ? ` · ${snap.identity.hostname}` : ''}
+          {snap.paired ? ' · Ctrl+Alt+A' : ''}
         </span>
       </footer>
 
       {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={() => setSettingsOpen(false)} />}
+      {unlockOpen && snap.paired && (
+        <StaffUnlockDialog snap={snap} t={t} onClose={() => setUnlockOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Staff unlock (Ctrl+Alt+A on the lock screen). The credentials go to the server, which verifies
+ * them and — when allowed — sends the `unlock` command; the dialog only relays and reports.
+ */
+function StaffUnlockDialog({
+  snap,
+  t,
+  onClose,
+}: {
+  snap: AgentSnapshot;
+  t: (k: Key) => string;
+  onClose: () => void;
+}) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Key | null>(null);
+  const [until, setUntil] = useState<string | null>(null);
+  const connected = snap.phase.phase === 'online';
+
+  const submit = async () => {
+    if (!username.trim() || !password || busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await agent.staffUnlock(username.trim(), password);
+    setBusy(false);
+    if (result.ok) {
+      setUntil(result.until);
+      setPassword('');
+      window.setTimeout(onClose, 1500);
+      return;
+    }
+    setPassword('');
+    const map: Record<string, Key> = {
+      unauthorized: 'errInvalidCredentials',
+      account_locked: 'errLocked',
+      forbidden: 'errNoPermission',
+      session_active: 'errSessionActive',
+      conflict: 'errNotConnected',
+      rate_limited: 'errRateLimited',
+      network: 'errNetwork',
+      not_paired: 'errNetwork',
+    };
+    setError(map[result.error] ?? 'errGeneric');
+  };
+
+  const hhmm = (iso: string) => {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="panel panel--center" role="dialog" aria-labelledby="staff-unlock-title">
+      <div className="panel__head">
+        <strong id="staff-unlock-title">{t('staffUnlockTitle')}</strong>
+      </div>
+      <p className="muted small" style={{ marginTop: 0 }}>
+        {t('staffUnlockHint')}
+      </p>
+      {until ? (
+        <div className="unlock-ok" role="status">
+          {t('unlockedUntil')} {hhmm(until)}
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <label className="field">
+            <span>{t('username')}</span>
+            <input
+              autoFocus
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={busy}
+              data-testid="staff-username"
+            />
+          </label>
+          <label className="field">
+            <span>{t('password')}</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              data-testid="staff-password"
+            />
+          </label>
+          {error && (
+            <div className="card__error" role="alert">
+              {t(error)}
+            </div>
+          )}
+          {!connected && !error && <div className="card__error">{t('errNotConnected')}</div>}
+          <div className="row">
+            <button className="btn btn--ghost" type="button" onClick={onClose} disabled={busy}>
+              {t('cancel')}
+            </button>
+            <button
+              className="btn btn--primary"
+              type="submit"
+              disabled={busy || !connected || !username.trim() || !password}
+            >
+              {busy ? t('unlocking') : t('unlock')}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
@@ -187,37 +317,105 @@ function ConnectionDot({ snap, t }: { snap: AgentSnapshot; t: (k: Key) => string
 }
 
 /**
- * Session timer strip. In the desktop app this is the whole (320×64) always-on-top window, so a
- * staff message is shown inside the strip instead of a toast.
+ * Countdown widget. In the desktop app this is the whole (300×96) always-on-top window, draggable
+ * by its surface (`data-tauri-drag-region`), so a staff message is shown inside it instead of a
+ * toast. Everything displayed is derived from server time (see Clock) — the PC never computes
+ * billing.
  */
 function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null }) {
   const t = (key: Key) => translate(snap.state.language, key);
   const session = snap.state.session;
   const view = session ? sessionView(session, snap.serverNowMs) : null;
   const offline = snap.phase.phase === 'offline';
-  const low = view?.kind === 'countdown' && view.seconds <= 300;
+  const low = view?.kind === 'countdown' && !view.paused && view.seconds <= 300;
+  const critical = view?.kind === 'countdown' && !view.paused && view.seconds <= 60;
+  const maintenance = snap.state.mode === 'free' ? snap.state.maintenance : null;
+  const maintenanceLeft =
+    maintenance && Number.isFinite(maintenance.untilServerMs)
+      ? Math.max(0, Math.round((maintenance.untilServerMs - snap.serverNowMs) / 1000))
+      : null;
+  // Progress of a prepaid session (fraction of planned time still left).
+  let fraction: number | null = null;
+  if (session?.endsAt && view?.kind === 'countdown') {
+    const total = (Date.parse(session.endsAt) - Date.parse(session.startedAt)) / 1000;
+    if (total > 0) fraction = Math.min(1, Math.max(0, view.seconds / total));
+  }
+  const cls = [
+    'overlay',
+    low ? 'overlay--low' : '',
+    critical ? 'overlay--critical' : '',
+    offline ? 'overlay--offline' : '',
+    notice ? 'overlay--notice' : '',
+    maintenance ? 'overlay--maintenance' : '',
+    view?.paused ? 'overlay--paused' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
-    <div
-      className={`overlay ${low ? 'overlay--low' : ''} ${offline ? 'overlay--offline' : ''} ${
-        notice ? 'overlay--notice' : ''
-      }`}
-    >
-      <span className="overlay__code">{snap.state.station?.code ?? 'LIKApcs'}</span>
-      {notice ? (
-        <span className="overlay__notice" title={notice}>
-          {notice}
+    <div className={cls} data-tauri-drag-region>
+      <div className="overlay__top" data-tauri-drag-region>
+        <span className="overlay__brand" data-tauri-drag-region>
+          <span className="overlay__mark">L</span>
+          <span className="overlay__code">{snap.state.station?.code ?? 'LIKApcs'}</span>
         </span>
+        <span className="overlay__label" data-tauri-drag-region>
+          {notice
+            ? ''
+            : maintenance
+              ? t('maintenance')
+              : view
+                ? view.paused
+                  ? t('paused')
+                  : view.kind === 'countdown'
+                    ? t('remaining')
+                    : t('elapsed')
+                : t('free')}
+        </span>
+        {offline && <span className="overlay__offline" title={t('offlineSession')} />}
+      </div>
+      {notice ? (
+        <div className="overlay__notice" title={notice}>
+          {notice}
+        </div>
+      ) : maintenance ? (
+        <div className="overlay__main">
+          <div className="overlay__maint" data-tauri-drag-region>
+            {maintenance.byName && (
+              <span className="overlay__by">
+                {t('maintenanceBy')} {maintenance.byName}
+              </span>
+            )}
+            {maintenanceLeft !== null && (
+              <span className="overlay__time overlay__time--sm">
+                {t('locksIn')} {formatHMS(maintenanceLeft)}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="overlay__lock"
+            onClick={() => void agent.staffLock()}
+            data-testid="overlay-lock"
+          >
+            {t('lockNow')}
+          </button>
+        </div>
       ) : view ? (
-        <>
-          <span className="overlay__label">
-            {view.paused ? t('paused') : view.kind === 'countdown' ? t('remaining') : t('elapsed')}
+        <div className="overlay__main" data-tauri-drag-region>
+          <span className="overlay__time" data-tauri-drag-region>
+            {formatHMS(view.seconds)}
           </span>
-          <span className="overlay__time">{formatHMS(view.seconds)}</span>
-        </>
+        </div>
       ) : (
-        <span className="overlay__label">{t('free')}</span>
+        <div className="overlay__main" data-tauri-drag-region>
+          <span className="overlay__time overlay__time--sm">{t('free')}</span>
+        </div>
       )}
-      {offline && <span className="overlay__offline" title={t('offlineSession')} />}
+      {fraction !== null && !notice && (
+        <div className="overlay__bar" aria-hidden>
+          <span style={{ width: `${fraction * 100}%` }} />
+        </div>
+      )}
     </div>
   );
 }

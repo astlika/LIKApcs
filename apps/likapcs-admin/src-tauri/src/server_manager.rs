@@ -216,6 +216,44 @@ pub fn start(rt: &Runtime) -> Result<(), String> {
         .map_err(|e| format!("could not start the LIKApcs server ({}): {e}", rt.node.display()))
 }
 
+/// Progress of a starting server, read from `<data dir>/startup.json` (written by the server, see
+/// apps/likapcs-server/src/embedded/startup-state.ts). The Admin's start screen polls this together
+/// with the health endpoint, so the user sees the real phase/error instead of a blind spinner.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupStatus {
+    /// True when the health endpoint answers (the server is ready).
+    pub running: bool,
+    /// Parsed startup.json, if present.
+    pub startup: Option<serde_json::Value>,
+    pub log_file: String,
+}
+
+/// Starts the server in the background when it is not reachable and returns immediately; use
+/// `startup_status` to follow the progress. (`ensure_running` is the blocking variant.)
+pub fn launch(rt: &Runtime) -> Result<bool, String> {
+    if health(HTTP_PORT, Duration::from_millis(900)).is_some() {
+        return Ok(false);
+    }
+    // A stale startup.json from an earlier failure must not be mistaken for this attempt.
+    let _ = std::fs::remove_file(data_dir().join("startup.json"));
+    start(rt)?;
+    Ok(true)
+}
+
+pub fn startup_status() -> StartupStatus {
+    let data = data_dir();
+    let running = health(HTTP_PORT, Duration::from_millis(900)).is_some();
+    let startup = std::fs::read_to_string(data.join("startup.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+    StartupStatus {
+        running,
+        startup,
+        log_file: data.join("logs").join("server.log").display().to_string(),
+    }
+}
+
 /// Makes sure the server answers on the loopback port, starting it when necessary.
 pub fn ensure_running(rt: &Runtime, wait: Duration) -> Result<serde_json::Value, String> {
     if let Some(h) = health(HTTP_PORT, Duration::from_millis(900)) {

@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Client } from 'pg';
 import { isWindows } from './paths.js';
+import { explainExitCode } from './startup-state.js';
 
 /**
  * Manages a private PostgreSQL instance from portable binaries: initdb on first run, start/stop
@@ -13,6 +15,7 @@ import { isWindows } from './paths.js';
 export interface EmbeddedPostgresOptions {
   binDir: string;
   dataDir: string;
+  /** Preferred port; when another program holds it a free one is used for this run instead. */
   port: number;
   user: string;
   password: string;
@@ -28,8 +31,27 @@ export interface CommandResult {
   stderr: string;
 }
 
+/** Phases reported to the start-up progress file (see startup-state.ts). */
+export type EmbeddedPhase = 'database-init' | 'database-start' | 'database-repair';
+
+/** Codes PostgreSQL returns while it is up but refuses our credentials — retrying is pointless. */
+const AUTH_ERROR_CODES = new Set(['28P01', '28000']);
+
 export class EmbeddedPostgres {
-  constructor(private readonly opts: EmbeddedPostgresOptions) {}
+  /** The port the cluster actually listens on (may differ from `opts.port`, see `start`). */
+  private port: number;
+  private repaired = false;
+
+  constructor(
+    private readonly opts: EmbeddedPostgresOptions,
+    private readonly onPhase: (phase: EmbeddedPhase, detail?: string) => void = () => undefined,
+  ) {
+    this.port = opts.port;
+  }
+
+  get listenPort(): number {
+    return this.port;
+  }
 
   private bin(name: string): string {
     return path.join(this.opts.binDir, isWindows() ? `${name}.exe` : name);
@@ -61,7 +83,8 @@ export class EmbeddedPostgres {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        resolve({ code: code ?? -1, stdout, stderr });
+        const hint = code != null && code !== 0 ? explainExitCode(code) : null;
+        resolve({ code: code ?? -1, stdout, stderr: hint ? `${stderr}\n${hint}`.trim() : stderr });
       });
     });
   }
@@ -73,6 +96,7 @@ export class EmbeddedPostgres {
   /** Creates the cluster on first run (scram-sha-256 auth, UTF-8, C locale for deterministic sorting). */
   async ensureInitialized(): Promise<boolean> {
     if (this.isInitialized()) return false;
+    this.onPhase('database-init');
     this.info('initialising database cluster');
     fs.mkdirSync(path.dirname(this.opts.dataDir), { recursive: true });
     const pwFile = path.join(os.tmpdir(), `likapcs-pw-${process.pid}-${Date.now()}.txt`);
@@ -100,10 +124,13 @@ export class EmbeddedPostgres {
 
   private serverOptions(): string {
     const settings = [
-      `-p ${this.opts.port}`,
+      `-p ${this.port}`,
       '-c listen_addresses=127.0.0.1',
       '-c max_connections=40',
       '-c shared_buffers=128MB',
+      // Frequent, cheap checkpoints keep crash recovery short when Windows shuts the PC down
+      // without stopping the server (the whole database is a few MB).
+      '-c checkpoint_timeout=2min',
       '-c log_min_messages=warning',
       '-c log_timezone=UTC',
       '-c timezone=UTC',
@@ -118,13 +145,75 @@ export class EmbeddedPostgres {
     return result.code === 0 ? 'running' : 'stopped';
   }
 
-  /** Starts the cluster (idempotent) and waits until it accepts connections. */
+  /**
+   * postmaster.pid of a live cluster: line 1 pid, line 4 port. Returns the port when the process
+   * exists, otherwise null (no file, dead process, unreadable).
+   */
+  private livePostmaster(): { pid: number; port: number } | null {
+    try {
+      const lines = fs
+        .readFileSync(path.join(this.opts.dataDir, 'postmaster.pid'), 'utf8')
+        .split(/\r?\n/);
+      const pid = Number.parseInt(lines[0] ?? '', 10);
+      const port = Number.parseInt(lines[3] ?? '', 10);
+      if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(port) || port <= 0) return null;
+      process.kill(pid, 0); // throws when the process does not exist
+      return { pid, port };
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when something accepts TCP connections on 127.0.0.1:port. */
+  private static portOpen(port: number, timeoutMs = 400): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = net.connect({ host: '127.0.0.1', port });
+      const done = (open: boolean) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve(open);
+      };
+      socket.setTimeout(timeoutMs, () => done(false));
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+    });
+  }
+
+  private static freePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const srv = net.createServer();
+      srv.once('error', reject);
+      srv.listen(0, '127.0.0.1', () => {
+        const address = srv.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
+        srv.close(() => (port ? resolve(port) : reject(new Error('no free port'))));
+      });
+    });
+  }
+
+  /**
+   * Starts the cluster (idempotent) and waits until it accepts connections.
+   *
+   * Fast path first: a live postmaster.pid whose port answers means the database survived (for
+   * example only the Node process was restarted) — no pg_ctl round trip at all. Otherwise the
+   * preferred port is checked; when another program occupies it a free port is used for this run,
+   * so a port clash can never keep the POS from starting.
+   */
   async start(): Promise<void> {
-    if ((await this.status()) === 'running') {
-      this.info('database already running');
+    this.onPhase('database-start');
+    const t0 = Date.now();
+    const live = this.livePostmaster();
+    if (live && (await EmbeddedPostgres.portOpen(live.port))) {
+      this.port = live.port;
+      this.info(`database already running (pid ${live.pid}, port ${live.port})`);
     } else {
       this.cleanStalePidFile();
       fs.mkdirSync(path.dirname(this.opts.logFile), { recursive: true });
+      if (await EmbeddedPostgres.portOpen(this.port)) {
+        const alternative = await EmbeddedPostgres.freePort();
+        this.info(`port ${this.port} is used by another program — using ${alternative}`);
+        this.port = alternative;
+      }
       const result = await this.run('pg_ctl', [
         'start',
         '-D',
@@ -144,11 +233,59 @@ export class EmbeddedPostgres {
       }
     }
     await this.waitUntilReady(60_000);
+    this.info(`database ready in ${Date.now() - t0} ms`);
+  }
+
+  /**
+   * The embedded role's password lives in config.json next to the cluster. Should the two ever
+   * disagree (config.json restored from elsewhere, recreated by hand, …) the server would be locked
+   * out of its own database forever. Since we own the cluster we repair it: stop, set the password
+   * in single-user mode (no authentication), start again. Done at most once per process.
+   */
+  private async repairPassword(): Promise<void> {
+    if (this.repaired) throw new Error('database password repair did not help');
+    this.repaired = true;
+    this.onPhase('database-repair');
+    this.info('database refuses our credentials — repairing the role password');
+    await this.stop();
+    const escaped = this.opts.password.replace(/'/g, "''");
+    const role = this.opts.user.replace(/"/g, '""');
+    const sql = `ALTER ROLE "${role}" WITH PASSWORD '${escaped}';\n`;
+    const result = await new Promise<CommandResult>((resolve, reject) => {
+      const child = spawn(this.bin('postgres'), ['--single', '-D', this.opts.dataDir, 'postgres'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, LC_ALL: 'C' },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error('single-user postgres timed out'));
+      }, 60_000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? -1, stdout, stderr });
+      });
+      child.stdin.end(sql);
+    });
+    if (result.code !== 0) {
+      throw new Error(
+        `password repair failed (${result.code}): ${(result.stderr || result.stdout).trim()}`,
+      );
+    }
+    await this.start();
   }
 
   /** Stops the cluster gracefully ("fast": active transactions are rolled back, data is flushed). */
   async stop(): Promise<void> {
-    if ((await this.status()) !== 'running') return;
+    if (!this.livePostmaster() && (await this.status()) !== 'running') return;
     const result = await this.run('pg_ctl', [
       'stop',
       '-D',
@@ -188,8 +325,8 @@ export class EmbeddedPostgres {
   }
 
   adminConnectionString(database = 'postgres'): string {
-    const { user, password, port } = this.opts;
-    return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@127.0.0.1:${port}/${database}`;
+    const { user, password } = this.opts;
+    return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@127.0.0.1:${this.port}/${database}`;
   }
 
   connectionString(): string {
@@ -212,7 +349,13 @@ export class EmbeddedPostgres {
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
         await client.end().catch(() => undefined);
-        await new Promise((r) => setTimeout(r, 500));
+        const code = (err as { code?: string } | null)?.code;
+        if (code && AUTH_ERROR_CODES.has(code)) {
+          // The server is up and talking to us; waiting longer cannot change its answer.
+          await this.repairPassword();
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 300));
       }
     }
     throw new Error(`PostgreSQL did not become ready within ${timeoutMs} ms: ${lastError}`);

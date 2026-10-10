@@ -22,6 +22,7 @@ import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import { ProductImageStore } from './product-images.js';
 import type { SettingsService } from './settings.js';
 
 interface ProductRow {
@@ -47,6 +48,7 @@ interface ProductRow {
   track_stock: boolean;
   description: string | null;
   storage_location: string | null;
+  image_path: string | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -60,7 +62,7 @@ const PRODUCT_SELECT = `
          COALESCE(u.is_decimal, false) AS unit_is_decimal,
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
-         p.storage_location, p.is_active, p.created_at, p.updated_at,
+         p.storage_location, p.image_path, p.is_active, p.created_at, p.updated_at,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
             FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes
@@ -73,6 +75,7 @@ export class CatalogService {
   constructor(
     private readonly pool: DbPool,
     private readonly settings: SettingsService,
+    readonly images: ProductImageStore,
   ) {}
 
   // ─── Tax categories ─────────────────────────────────────────────────────────
@@ -254,6 +257,7 @@ export class CatalogService {
       description: row.description,
       storageLocation: row.storage_location,
       isActive: row.is_active,
+      imageUrl: ProductImageStore.urlFor(row.image_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
         barcode: b.barcode,
@@ -456,8 +460,64 @@ export class CatalogService {
     });
   }
 
-  /** Products that were ever sold are archived instead of deleted (sale lines reference them). */
+  // ─── Product pictures ───────────────────────────────────────────────────────
+
+  /** Replaces the product picture with an already stored file; the previous file is removed. */
+  async setProductImage(id: string, fileName: string, actor: AuditActor): Promise<ProductSummary> {
+    const previous = await withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ image_path: string | null }>(
+        'UPDATE products SET image_path = $2 WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+        [id, fileName],
+      );
+      if (!r.rowCount) throw notFound('Product');
+      await recordAudit(client, actor, {
+        action: 'catalog.product.image_set',
+        entityType: 'product',
+        entityId: id,
+        details: { file: fileName },
+      });
+      return r.rows[0]!.image_path;
+    }).catch(async (err: unknown) => {
+      await this.images.remove(fileName); // the file was stored before the row update failed
+      throw err;
+    });
+    if (previous && previous !== fileName) await this.images.remove(previous);
+    return this.getProduct(id);
+  }
+
+  async clearProductImage(id: string, actor: AuditActor): Promise<ProductSummary> {
+    const previous = await withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ image_path: string | null }>(
+        'UPDATE products SET image_path = NULL WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+        [id],
+      );
+      if (!r.rowCount) throw notFound('Product');
+      await recordAudit(client, actor, {
+        action: 'catalog.product.image_cleared',
+        entityType: 'product',
+        entityId: id,
+      });
+      return r.rows[0]!.image_path;
+    });
+    await this.images.remove(previous);
+    return this.getProduct(id);
+  }
+
+  /**
+   * Products that were ever sold are archived instead of deleted (sale lines reference them).
+   * A hard delete also removes the picture file — after the row is gone, so a failed transaction
+   * never leaves a product without its picture.
+   */
   async deleteProduct(id: string, actor: AuditActor): Promise<{ archived: boolean }> {
+    const result = await this.deleteProductRow(id, actor);
+    if (result.imagePath) await this.images.remove(result.imagePath);
+    return { archived: result.archived };
+  }
+
+  private async deleteProductRow(
+    id: string,
+    actor: AuditActor,
+  ): Promise<{ archived: boolean; imagePath: string | null }> {
     return withTransaction(this.pool, async (client) => {
       const used = await client.query(
         `SELECT 1 FROM sale_items WHERE product_id = $1
@@ -472,16 +532,19 @@ export class CatalogService {
           entityType: 'product',
           entityId: id,
         });
-        return { archived: true };
+        return { archived: true, imagePath: null };
       }
-      const r = await client.query('DELETE FROM products WHERE id = $1', [id]);
+      const r = await client.query<{ image_path: string | null }>(
+        'DELETE FROM products WHERE id = $1 RETURNING image_path',
+        [id],
+      );
       if (!r.rowCount) throw notFound('Product');
       await recordAudit(client, actor, {
         action: 'catalog.product.deleted',
         entityType: 'product',
         entityId: id,
       });
-      return { archived: false };
+      return { archived: false, imagePath: r.rows[0]!.image_path };
     });
   }
 

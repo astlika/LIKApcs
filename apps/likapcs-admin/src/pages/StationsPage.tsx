@@ -65,6 +65,7 @@ const STATUS_TONE: Record<
   occupied: 'accent',
   paused: 'warning',
   locked: 'purple',
+  maintenance: 'warning',
   offline: 'default',
   error: 'danger',
   updating: 'info',
@@ -173,6 +174,7 @@ export function StationsPage() {
       occupied: enabled.filter((s) => s.activeSession && s.activeSession.status === 'active')
         .length,
       paused: enabled.filter((s) => s.activeSession?.status === 'paused').length,
+      maintenance: enabled.filter((s) => s.status === 'maintenance').length,
       offline: enabled.filter((s) => s.status === 'offline').length,
     };
   }, [list]);
@@ -281,6 +283,11 @@ export function StationsPage() {
           <span className="map-legend__item" data-status="paused">
             <i /> {counts.paused} {t('map.paused')}
           </span>
+          {counts.maintenance > 0 && (
+            <span className="map-legend__item" data-status="maintenance">
+              <i /> {counts.maintenance} {t('stations.status.maintenance')}
+            </span>
+          )}
           <span className="map-legend__item" data-status="offline">
             <i /> {counts.offline} {t('map.offline')}
           </span>

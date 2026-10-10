@@ -90,6 +90,14 @@ Every call is audited as `station.command.<command>` (a refused/unanswered comma
 Session commands (`session.*`) are never issued through this route — they are mirrored by the
 sessions service (below) so that the server state and the PC never disagree.
 
+`unlock` (permission `stations.unlock`, also required for the Admin button) is a **maintenance
+grant**, never a free session: the server records `maintenance_until/by` on the station, the station
+status becomes `maintenance`, the PC receives `unlock {reason:'maintenance', until, byName}` and
+locks again when the grant expires (`stations.maintenance_minutes`, default 15; a 5 s sweep sends
+`lock {reason:'maintenance_expired'}`), when staff presses _Lock_ on the PC, when an Admin `lock` is
+sent, or when a session starts. `StationSummary.maintenance` is `{until, byName} | null`. Audited as
+`station.maintenance_unlock` / `station.maintenance_lock` / `station.maintenance_expired`.
+
 ### Pricing (`stations.view` to read, `pricing.manage` to write)
 
 `GET/POST /pricing/rules`, `PATCH/DELETE /pricing/rules/:id`, `GET/POST /pricing/packages`,
@@ -131,17 +139,21 @@ opens a `pending` run, later events update it; `none`/`unavailable` close it qui
 
 ### Catalogue & inventory (`products.view` to read, `products.manage` to write, `inventory.adjust` for stock)
 
-| Route                                                                  | Notes                                                                                                                                                                                                               |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET/POST /catalog/tax-categories`                                     | VAT classes (`rateBp`, `isDefault`). A product without a tax category uses the default class, or `tax.default_rate_bp` when none exists                                                                             |
-| `GET/POST /catalog/categories`, `PATCH/DELETE /catalog/categories/:id` | `productCount` included; deleting leaves products uncategorised                                                                                                                                                     |
-| `GET /products`                                                        | `?q` (name/SKU/brand/barcode), `categoryId`, `lowStock`, `active=active\|inactive\|all`, `page`, `pageSize≤500` → `{items, total, page, pageSize}`                                                                  |
-| `GET /products/lookup?code=`                                           | Scanner path: barcode first, then SKU → `{product, quantityMilli, matchedBy}` (`quantityMilli` is the pack size of a case barcode); `404` when unknown                                                              |
-| `POST /products`                                                       | `sku` optional (generated `SKU-NNNNNN`), `barcodes[]`, `initialStockMilli` (recorded as an `initial` movement) → `201`                                                                                              |
-| `GET/PATCH/DELETE /products/:id`                                       | `DELETE` → `{archived: true}` when the product was ever sold or moved (it is deactivated instead of removed), `{archived: false}` when it was really deleted                                                        |
-| `POST /products/:id/barcodes`, `DELETE …/:barcodeId`                   | barcodes are unique across all products                                                                                                                                                                             |
-| `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that |
-| `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                             |
+| Route                                                                  | Notes                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET/POST /catalog/tax-categories`                                     | VAT classes (`rateBp`, `isDefault`). A product without a tax category uses the default class, or `tax.default_rate_bp` when none exists                                                                                                                           |
+| `GET/POST /catalog/categories`, `PATCH/DELETE /catalog/categories/:id` | `productCount` included; deleting leaves products uncategorised                                                                                                                                                                                                   |
+| `GET /products`                                                        | `?q` (name/SKU/brand/barcode), `categoryId`, `lowStock`, `active=active\|inactive\|all`, `page`, `pageSize≤500` → `{items, total, page, pageSize}`                                                                                                                |
+| `GET /products/lookup?code=`                                           | Scanner path: barcode first, then SKU → `{product, quantityMilli, matchedBy}` (`quantityMilli` is the pack size of a case barcode); `404` when unknown                                                                                                            |
+| `POST /products`                                                       | `sku` optional (generated `SKU-NNNNNN`), `barcodes[]`, `initialStockMilli` (recorded as an `initial` movement) → `201`                                                                                                                                            |
+| `GET/PATCH/DELETE /products/:id`                                       | `DELETE` → `{archived: true}` when the product was ever sold or moved (it is deactivated instead of removed), `{archived: false}` when it was really deleted                                                                                                      |
+| `POST /products/:id/barcodes`, `DELETE …/:barcodeId`                   | barcodes are unique across all products                                                                                                                                                                                                                           |
+| `PUT /products/:id/image`                                              | `products.manage`; raw body with `content-type: image/png\|jpeg\|webp\|gif` (≤ 5 MB, format sniffed from the bytes). Replaces and deletes the previous file → `ProductSummary` with the new `imageUrl`                                                            |
+| `POST /products/:id/image/from-url`                                    | `{url}` — the **server** downloads the picture (http/https only, ≤ 5 MB, 10 s, private/loopback addresses refused) so the Admin never embeds third-party URLs                                                                                                     |
+| `DELETE /products/:id/image`                                           | removes the file → `imageUrl: null`. Deleting a never-sold product also deletes its picture file                                                                                                                                                                  |
+| `GET /files/products/:name`                                            | **public, no token** (POS tiles, future kiosk screens): immutable file names (`<24 hex>.<ext>`), `Cache-Control: public, max-age=31536000, immutable`. Files live in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are **not** part of database backups |
+| `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                               |
+| `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                           |
 
 ### Sales / POS (`pos.sell`; `pos.discount`, `pos.suspend`, `pos.refund`, `pos.reprint` for the matching actions)
 
@@ -294,6 +306,16 @@ isolated iframe, so the A4 layout never depends on the application stylesheet.
 | POST   | `/client/register`                  | `{machineId, hostname, osInfo?, appVersion, registrationSecret}` → `202 {registrationId, status:'pending'}` (`200` if already approved). An approved device may re-register (reinstall) **only until its token has been collected**; afterwards the stored secret is kept and staff must _re-issue the token_ |
 | GET    | `/client/registration/:id?secret=…` | `{status}`; when approved, **the first successful poll** also returns `deviceToken` and `station`. Subsequent polls never return the token again                                                                                                                                                              |
 
+### Client PC → server, with the device token (`Authorization: Bearer <device token>`)
+
+| Method | Path                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (Ctrl+Alt+A). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC |
+| POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                        |
+
+The PC never evaluates credentials or permissions itself; it only relays them over the pinned,
+device-authenticated connection and shows the server's answer.
+
 ### Audit (`audit.view`)
 
 `GET /audit-logs?page&pageSize&action&actorUserId&entityType&from&to&search`,
@@ -325,7 +347,8 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
                    "station": { "id", "number", "code", "name" },
                    "heartbeatIntervalSeconds": 10, "offlineAfterSeconds": 30,
                    "language": "sq", "welcomeMessage": "…", "businessName": "…",
-                   "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds" } }
+                   "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds" },
+                   "maintenance": null | { "until": "…", "byName": "…" } }
 ```
 
 Failure codes (`server.error` is sent first, then the socket closes):
@@ -339,9 +362,11 @@ Failure codes (`server.error` is sent first, then the socket closes):
 | 4005       | device revoked by an administrator                               |
 | 4010       | server shutting down                                             |
 
-`session: null` means the PC **must be locked**. The client never decides on its own that time is up
-for billing purposes — it only displays the authoritative `endsAt` and locks when told (or when it
-has lost the server beyond the grace period, as a safety measure).
+`session: null` means the PC **must be locked** — unless a live staff `maintenance` grant is present
+(`until` in the future, compared with `serverTime`), in which case the PC stays open and re-locks
+itself at `until`. The client never decides on its own that time is up for billing purposes — it
+only displays the authoritative `endsAt` and locks when told (or when it has lost the server beyond
+the grace period, as a safety measure).
 
 ### Steady state
 
@@ -359,8 +384,12 @@ Client → Server  { "type": "client.ack", "commandId": "<uuid>", "ok": true }
                  { "type": "client.ack", "commandId": "<uuid>", "ok": false, "error": "…" }
 
 Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "session_expired_locally"
-                            | "update_status" | "error", "payload": {...} }
+                            | "maintenance_ended" | "update_status" | "error", "payload": {...} }
 ```
+
+`maintenance_ended {reason: 'expired' | 'staff'}` is informational: the PC reports that it locked
+itself at the end of a staff grant (or that staff pressed _Lock_); the server's own sweep and the
+`/client/staff-lock` call remain authoritative for the station status.
 
 Command rules (enforced by the server and mirrored by the client agent,
 `apps/likapcs-client/src/lib/protocol.ts`):

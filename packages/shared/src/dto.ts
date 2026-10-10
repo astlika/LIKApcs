@@ -42,11 +42,15 @@ export interface SetupStatusResponse {
   defaultLanguage: 'en' | 'sq';
 }
 
+/**
+ * Passwords / PINs: at least 4 characters (the owner asked for short cashier PINs). Brute force is
+ * contained by the login rate limit (10/min per IP) and the account lock after repeated failures.
+ */
+export const PASSWORD_MIN_LENGTH = 4;
 export const passwordSchema = z
   .string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(128)
-  .refine((v) => /[a-zA-Z]/.test(v) && /\d/.test(v), 'Password must contain letters and numbers');
+  .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
+  .max(128);
 
 export const usernameSchema = z
   .string()
@@ -156,6 +160,8 @@ export const STATION_STATUSES = [
   'occupied',
   'paused',
   'locked',
+  /** Unlocked by a staff member for maintenance (no customer session, no billing). */
+  'maintenance',
   'updating',
   'error',
 ] as const;
@@ -199,8 +205,31 @@ export interface StationSummary {
   status: StationStatus;
   device: StationDeviceSummary | null;
   activeSession: ActiveSessionSummary | null;
+  /** Present while a staff unlock (maintenance) grant is in force. */
+  maintenance: StationMaintenance | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StationMaintenance {
+  until: string;
+  byUserId: string | null;
+  byName: string | null;
+}
+
+/** Staff unlock at the station PC (device-token authenticated, see POST /client/staff-unlock). */
+export const staffUnlockSchema = z.object({
+  username: usernameSchema,
+  password: z.string().min(1).max(128),
+  /** Defaults to the `stations.maintenance_minutes` setting. */
+  minutes: z.number().int().min(1).max(480).optional(),
+});
+export type StaffUnlockInput = z.infer<typeof staffUnlockSchema>;
+
+export interface StaffUnlockResponse {
+  until: string;
+  byName: string;
+  minutes: number;
 }
 
 /** Populated from Phase 3 onwards; shape fixed now so clients and UI can rely on it. */
@@ -713,10 +742,21 @@ export interface ProductSummary {
   description: string | null;
   storageLocation: string | null;
   isActive: boolean;
+  /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
+  imageUrl: string | null;
   barcodes: ProductBarcodeSummary[];
   createdAt: string;
   updatedAt: string;
 }
+
+/** Product picture fetched by the server from a link (the file is then stored locally). */
+export const productImageFromUrlSchema = z.object({
+  url: z.string().trim().url().max(2000),
+});
+export type ProductImageFromUrlInput = z.infer<typeof productImageFromUrlSchema>;
+
+export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 
 export const productListQuerySchema = z.object({
   q: z.string().trim().max(80).optional(),

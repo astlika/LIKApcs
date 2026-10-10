@@ -21,6 +21,10 @@ export interface DatabaseHandle {
 export async function openDatabase(
   config: ServerConfig,
   log: (message: string) => void = () => undefined,
+  onPhase: (
+    phase: 'database-init' | 'database-start' | 'database-repair',
+    detail?: string,
+  ) => void = () => undefined,
 ): Promise<DatabaseHandle> {
   const dirs = ensureDataDirs(config.dataDir);
   const runtime = loadOrCreateRuntimeConfig(dirs.configFile);
@@ -35,16 +39,19 @@ export async function openDatabase(
     };
   }
   if (!config.pgBinDir) throw new Error('Embedded PostgreSQL binaries not found');
-  const pg = new EmbeddedPostgres({
-    binDir: config.pgBinDir,
-    dataDir: dirs.pgdata,
-    port: runtime.embeddedPostgres.port,
-    user: runtime.embeddedPostgres.user,
-    password: runtime.embeddedPostgres.password,
-    database: runtime.embeddedPostgres.database,
-    logFile: path.join(dirs.logs, 'postgres.log'),
-    log,
-  });
+  const pg = new EmbeddedPostgres(
+    {
+      binDir: config.pgBinDir,
+      dataDir: dirs.pgdata,
+      port: runtime.embeddedPostgres.port,
+      user: runtime.embeddedPostgres.user,
+      password: runtime.embeddedPostgres.password,
+      database: runtime.embeddedPostgres.database,
+      logFile: path.join(dirs.logs, 'postgres.log'),
+      log,
+    },
+    onPhase,
+  );
   const created = await pg.ensureInitialized();
   if (created) log(`database cluster created in ${dirs.pgdata}`);
   await pg.start();
