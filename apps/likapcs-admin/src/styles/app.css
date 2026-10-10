@@ -928,6 +928,10 @@ button.stat:hover {
 .table th.sortable:hover {
   color: var(--text);
 }
+.table th.right,
+.table td.right {
+  text-align: right;
+}
 .table td {
   padding: 11px 14px;
   border-bottom: 1px solid var(--border);

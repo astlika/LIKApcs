@@ -1262,3 +1262,181 @@ export type ReportExportKind = (typeof REPORT_EXPORT_KINDS)[number];
 export const reportExportQuerySchema = reportRangeSchema.extend({
   kind: z.enum(REPORT_EXPORT_KINDS),
 });
+
+// ─── Phase 7: suppliers & purchases ──────────────────────────────────────────
+
+export const PURCHASE_STATUSES = [
+  'draft',
+  'ordered',
+  'partially_received',
+  'received',
+  'cancelled',
+] as const;
+export type PurchaseStatus = (typeof PURCHASE_STATUSES)[number];
+export const PURCHASE_PAYMENT_STATUSES = ['unpaid', 'partial', 'paid'] as const;
+export type PurchasePaymentStatus = (typeof PURCHASE_PAYMENT_STATUSES)[number];
+
+export interface SupplierSummary {
+  id: string;
+  name: string;
+  businessName: string | null;
+  taxId: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  contactPerson: string | null;
+  notes: string | null;
+  isActive: boolean;
+  /** Non-cancelled purchases. */
+  purchasesCount: number;
+  purchasedCents: number;
+  /** Σ (total − paid) over non-cancelled purchases. */
+  balanceDueCents: number;
+  lastPurchaseAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const supplierSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  businessName: z.string().trim().max(160).nullable().optional(),
+  taxId: z.string().trim().max(40).nullable().optional(),
+  phone: z.string().trim().max(40).nullable().optional(),
+  email: z.string().trim().email().max(120).nullable().optional().or(z.literal('')),
+  address: z.string().trim().max(240).nullable().optional(),
+  contactPerson: z.string().trim().max(120).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+export type SupplierRequest = z.infer<typeof supplierSchema>;
+export const supplierPatchSchema = supplierSchema.partial();
+export type SupplierPatch = z.infer<typeof supplierPatchSchema>;
+export const supplierListQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  includeInactive: z.coerce.boolean().default(false),
+});
+export type SupplierListQuery = z.infer<typeof supplierListQuerySchema>;
+
+export const purchaseItemInputSchema = z.object({
+  productId: uuidSchema,
+  quantityMilli: z.number().int().positive(),
+  unitCostCents: z.number().int().min(0),
+  /** Supplier VAT on top of the unit cost; informational for the cost price. */
+  taxRateBp: z.number().int().min(0).max(10_000).default(0),
+});
+export type PurchaseItemInput = z.infer<typeof purchaseItemInputSchema>;
+
+export const purchasePaymentInputSchema = z.object({
+  method: z.enum(PAYMENT_METHODS),
+  amountCents: z.number().int().positive(),
+  reference: z.string().trim().max(80).nullable().optional(),
+});
+export type PurchasePaymentInput = z.infer<typeof purchasePaymentInputSchema>;
+
+export const createPurchaseSchema = z.object({
+  supplierId: uuidSchema,
+  supplierInvoiceNo: z.string().trim().max(60).nullable().optional(),
+  orderDate: isoDate.optional(),
+  expectedDate: isoDate.nullable().optional(),
+  items: z.array(purchaseItemInputSchema).min(1).max(500),
+  additionalCostsCents: z.number().int().min(0).default(0),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  /** true → goods are booked into stock immediately (the common "invoice arrives with the goods" case). */
+  receiveNow: z.boolean().default(true),
+  /** Optional payment recorded together with the purchase. */
+  payment: purchasePaymentInputSchema.nullable().optional(),
+});
+export type CreatePurchaseRequest = z.infer<typeof createPurchaseSchema>;
+
+export const receivePurchaseSchema = z.object({
+  /** Omitted → everything still outstanding is received. */
+  items: z
+    .array(
+      z.object({
+        purchaseItemId: z.number().int().positive(),
+        quantityMilli: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .optional(),
+  deliveryNoteNo: z.string().trim().max(60).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+export type ReceivePurchaseRequest = z.infer<typeof receivePurchaseSchema>;
+
+export const purchaseListQuerySchema = paginationQuerySchema.extend({
+  supplierId: uuidSchema.optional(),
+  status: z.enum(PURCHASE_STATUSES).optional(),
+  paymentStatus: z.enum(PURCHASE_PAYMENT_STATUSES).optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  q: z.string().trim().max(120).optional(),
+});
+export type PurchaseListQuery = z.infer<typeof purchaseListQuerySchema>;
+
+export interface PurchaseSummary {
+  id: string;
+  referenceNo: string;
+  supplierId: string;
+  supplierName: string;
+  supplierInvoiceNo: string | null;
+  status: PurchaseStatus;
+  paymentStatus: PurchasePaymentStatus;
+  orderDate: string;
+  expectedDate: string | null;
+  subtotalCents: number;
+  additionalCostsCents: number;
+  taxCents: number;
+  totalCents: number;
+  paidCents: number;
+  itemsCount: number;
+  notes: string | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PurchaseItemSummary {
+  id: number;
+  lineNo: number;
+  productId: string;
+  productName: string;
+  sku: string | null;
+  description: string;
+  quantityOrderedMilli: number;
+  quantityReceivedMilli: number;
+  quantityReturnedMilli: number;
+  unitCostCents: number;
+  taxRateBp: number;
+  lineTotalCents: number;
+}
+
+export interface PurchaseReceiptSummary {
+  id: string;
+  receivedAt: string;
+  receivedByName: string | null;
+  deliveryNoteNo: string | null;
+  notes: string | null;
+  items: { purchaseItemId: number; quantityMilli: number; unitCostCents: number }[];
+}
+
+export interface PurchasePaymentSummary {
+  id: string;
+  method: PaymentMethod;
+  amountCents: number;
+  paidAt: string;
+  reference: string | null;
+  shiftId: string | null;
+  createdByName: string | null;
+}
+
+export interface PurchaseDetail extends PurchaseSummary {
+  items: PurchaseItemSummary[];
+  receipts: PurchaseReceiptSummary[];
+  payments: PurchasePaymentSummary[];
+}
+
+export interface PurchaseListResponse extends Paginated<PurchaseSummary> {
+  summary: { count: number; totalCents: number; paidCents: number; dueCents: number };
+}

@@ -8,6 +8,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Suppliers & purchases (Phase 7a).** Server: `PurchasingService` — suppliers (unique names,
+  deactivate instead of delete, purchase totals and open balance per supplier) and purchases with
+  references `B-<year>-NNNNNN`: lines in milli-quantities with unit cost and VAT, additional costs,
+  immediate or later (partial) receiving that books `purchase_receipt` inventory movements and keeps
+  `products.purchase_cost_cents` (last) and `average_cost_cents` (weighted average) current, supplier
+  payments by any method where cash leaves the open drawer as a `supplier_payment` movement, and
+  cancellation only for untouched orders. Routes under `/suppliers` and `/purchases` guarded by
+  `purchases.view` / `suppliers.manage` / `purchases.manage` / `purchases.pay`; audit entries for
+  every write. Admin: **Suppliers** page (search, contacts, balances, edit / deactivate) and
+  **Purchases** page (filters with period summary, new-purchase form built from a scanner-friendly
+  product picker with live subtotal / VAT / total, receive-now and pay-now options, detail dialog to
+  receive outstanding lines, record payments through the shift guard and cancel). Navigation,
+  command palette and EN/SQ dictionaries extended; integration tests for weighted average cost,
+  partial receipts, drawer payments and permissions.
 - **Cash register, expenses, customers & reports (Phase 6).** Server: `CashService` (registers,
   one open shift per register, opening float, pay-in / pay-out with an insufficient-cash guard, close
   with counted amount → expected / difference frozen on the shift, drawer ledger written only inside

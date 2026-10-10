@@ -23,10 +23,12 @@ import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { CustomersService } from './services/customers.js';
 import { ReportsService } from './services/reports.js';
+import { PurchasingService } from './services/purchasing.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
+import { purchasingRoutes } from './routes/purchasing.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
@@ -54,6 +56,7 @@ export interface Services {
   expenses: ExpensesService;
   customers: CustomersService;
   reports: ReportsService;
+  purchasing: PurchasingService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -120,6 +123,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
   const reports = new ReportsService(pool, cash, settings);
+  const purchasing = new PurchasingService(pool, cash);
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -144,6 +148,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     expenses,
     customers,
     reports,
+    purchasing,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -187,6 +192,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(expenseRoutes);
       await api.register(customerRoutes);
       await api.register(reportRoutes);
+      await api.register(purchasingRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },

@@ -708,7 +708,10 @@ export interface MovementInput {
  * Applies one stock movement to a product whose row is already locked by the caller
  * (`SELECT … FOR UPDATE`). Throws 409 when the stock would go negative and that is not allowed.
  */
-export async function applyMovement(client: DbClient, input: MovementInput): Promise<number> {
+export async function applyMovement(
+  client: DbClient,
+  input: MovementInput,
+): Promise<{ movementId: number; stockAfterMilli: number }> {
   const r = await client.query<{ stock_milli: string | number; name: string }>(
     'SELECT stock_milli, name FROM products WHERE id = $1 FOR UPDATE',
     [input.productId],
@@ -723,10 +726,10 @@ export async function applyMovement(client: DbClient, input: MovementInput): Pro
       requestedMilli: -input.delta,
     });
   }
-  await client.query(
+  const inserted = await client.query<{ id: string }>(
     `INSERT INTO inventory_movements (product_id, movement_type, quantity_milli_delta, stock_after_milli, unit_cost_cents,
                                       reason, reference_type, reference_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id::text`,
     [
       input.productId,
       input.type,
@@ -743,5 +746,5 @@ export async function applyMovement(client: DbClient, input: MovementInput): Pro
     input.productId,
     after,
   ]);
-  return after;
+  return { movementId: Number(inserted.rows[0]!.id), stockAfterMilli: after };
 }
