@@ -1,0 +1,11 @@
+{
+  "version": "0.2.1",
+  "notes": "### Changed\n\n- **Release page = two files.** A release now offers exactly `LIKApcs-Setup.exe` (main PC: Admin +\n  server) and `LIKApcs-Client-Setup.exe` (gaming PCs), with a download table and SHA-256 checksums in\n  the release notes. The versioned duplicates, `.sig` files, server zip and `SHA256SUMS.txt` are no\n  longer attached; the server bundle remains a workflow artifact for manual deployments.\n- **Update feed moved to the `release-feed` branch.** `latest.json`, `latest-client.json` and\n  `SHA256SUMS.txt` are written by the release workflow to\n  `https://raw.githubusercontent.com/astlika/LIKApcs/release-feed/` (signatures are embedded in the\n  manifests, as before). Admin, Client and the server's Updates page read from there.\n  _Installations of 0.1.1 / 0.2.0 still look at the old feed and will not see this or later versions\n  by themselves — install 0.2.1 once by hand; from then on updates arrive automatically._",
+  "pub_date": "2026-10-10T21:19:49.098Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelVuSXdjMG01VzY4VWpjck9ISjdZUGdHZytEaHNEWFF1TFBvVE1Tc2RWTUVZUGsxMXZTYk15a3czazJXMGx4VWZIMEY2eHh5OE5DWUZNYW1tNDJzWlFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNjY3MDA5CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yLjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4xClhxcmZmUHEzSXNwSmpIUHpCZGRoT1dKaUxyaXJJVEEzSTZyOXB2bTdmU0dORzNzdUJMZjdJWm1wRHRTZU9UaitOMWpBUmgrTmNvUENEMVZqak5TUERRPT0K",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.2.1/LIKApcs-Client-Setup.exe"
+    }
+  }
+}
