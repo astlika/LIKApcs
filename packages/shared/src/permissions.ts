@@ -26,6 +26,8 @@ export const PERMISSIONS = {
   POS_REFUND: 'pos.refund',
   POS_SUSPEND: 'pos.suspend',
   POS_REPRINT: 'pos.reprint',
+  INVOICES_VIEW: 'invoices.view',
+  INVOICES_MANAGE: 'invoices.manage',
 
   // Catalog & inventory
   PRODUCTS_VIEW: 'products.view',

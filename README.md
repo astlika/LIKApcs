@@ -6,11 +6,11 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                | Status (Phase 1)                                         |
-| ------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, billing (authoritative)     | ✅ core implemented, 48 integration tests                |
-| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, stations, employees, settings, audit; POS/inventory next | ✅ 7 screens, EN/SQ, dark/light                          |
-| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, timers, secure device registration, staff commands     | ✅ agent + kiosk shell (installer pending first release) |
+| App                | What it is                                                                                                                                                                                                          | Status (after Phase 7)                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                 | ✅ schema v10, 113 integration/unit tests                   |
+| **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
+| **LIKApcs-Client** | Windows agent for every customer PC — lock screen, timers/overlay, secure device registration, staff commands, self-update                                                                                          | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
 
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.

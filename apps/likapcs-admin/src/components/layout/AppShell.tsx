@@ -12,6 +12,7 @@ import {
   Lock,
   LockOpen,
   Receipt,
+  FileText,
   LayoutDashboard,
   LogOut,
   Monitor,
@@ -200,6 +201,12 @@ export function AppShell() {
           permission: PERMISSIONS.CASH_VIEW,
         },
         {
+          to: '/invoices',
+          icon: FileText,
+          label: t('nav.invoices'),
+          permission: PERMISSIONS.INVOICES_VIEW,
+        },
+        {
           to: '/expenses',
           icon: Receipt,
           label: t('nav.expenses'),
@@ -267,6 +274,7 @@ export function AppShell() {
     '/pricing': t('nav.pricing'),
     '/cash': t('nav.cash'),
     '/expenses': t('nav.expenses'),
+    '/invoices': t('nav.invoices'),
     '/customers': t('nav.customers'),
     '/reports': t('nav.reports'),
     '/employees': t('nav.employees'),

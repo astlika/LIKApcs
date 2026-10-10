@@ -124,6 +124,12 @@ describe('settings and dashboard', () => {
   it('health endpoint is public and reports schema version', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/system/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ status: 'ok', database: 'ok', schemaVersion: 9 });
+    // The schema version is the number of migration files — never hard-code it here.
+    expect(res.json()).toMatchObject({
+      status: 'ok',
+      database: 'ok',
+      schemaVersion: ctx.app.schemaVersion,
+    });
+    expect(ctx.app.schemaVersion).toBeGreaterThanOrEqual(10);
   });
 });

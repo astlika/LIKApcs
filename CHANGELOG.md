@@ -8,6 +8,22 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Invoices & printing (Phase 7d).** A4 invoices (`F-<year>-NNNNNN`, gap-free) can be issued for
+  any completed sale from _Sales › sale › Issue invoice_: buyer picked from the customer list or typed
+  in (name, tax/VAT number, address, e-mail), notes and payment term. The document is rendered by the
+  Admin app in the operator's language (seller/buyer blocks, lines with VAT, VAT breakdown, payments
+  net of change, balance due, bank details and footer from settings) and printed through an isolated
+  print document, so the layout never depends on the application stylesheet. Reprints are marked
+  _COPY_ and audited (`print_jobs`, `invoice.reprinted`); voiding needs a reason, keeps the number and
+  frees the sale for a new invoice (`invoices_one_live_per_sale`). New Admin page _Invoices_
+  (`invoices.view`/`invoices.manage`; search, status/period filters, totals, print, void), invoice
+  number shown in the sales list, `GET/POST /invoices`, `GET /invoices/:id`,
+  `GET /invoices/:id/document`, `POST /invoices/:id/void`, migration `0010_invoices_printing.sql`.
+- **Settings › POS & Printing.** Receipt paper width (80/58 mm), _print receipt automatically_
+  (the POS now prints the receipt right after a completed sale when enabled), _scanner increments
+  quantity_, receipt footer, default invoice payment term, bank details and invoice footer
+  (`printing.*` settings).
+
 - **Updates dashboard (Phase 7c).** New Admin page _Updates_ (`updates.manage`): version of the
   main PC (server + Admin + schema), newest release published on GitHub (read from the signed
   update manifests `latest.json` / `latest-client.json`, cached in `application_versions` so the

@@ -264,6 +264,27 @@ version change in `update_history` (`component = 'server'`) whenever it starts w
 different from the last recorded one. Installing is never done by the server: the signed Tauri
 updater inside the Admin and Client apps verifies and applies the installers.
 
+### Invoices (`invoices.view` to read/print, `invoices.manage` to issue/void)
+
+An invoice is an A4 document (`F-<year>-NNNNNN`, gap-free from `document_sequences`) issued for one
+**completed** sale. The buyer details are snapshotted at issue time; the lines, taxes and payments
+always come from the immutable sale. Only one live invoice can exist per sale (a voided invoice keeps
+its number and the sale can be invoiced again with the next number).
+
+| Route                        | Body / query                                                                                          | Result                                                                                                                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /invoices`              | `?status=issued\|void&customerId&q&from&to&page&pageSize` (`from`/`to` are ISO datetimes)             | `{items[InvoiceSummary], total, page, pageSize, summary{count, totalCents}}` — the summary counts only `issued` invoices of the filtered period; `q` matches number, buyer name, buyer tax id and receipt number                                 |
+| `GET /invoices/:id`          | —                                                                                                     | `InvoiceDetail` = summary + the full `SaleDetail` (lines, payments, refunds)                                                                                                                                                                     |
+| `GET /invoices/:id/document` | —                                                                                                     | `InvoiceData` for rendering: `{invoice, sale, business{…}, bankDetails, footer, isReprint}`. Every call increments `print_count`, writes a `print_jobs` row (`document_type='invoice'`) and, from the second time on, audits `invoice.reprinted` |
+| `POST /invoices`             | `{saleId, customerId?, billingName, billingTaxId?, billingAddress?, billingEmail?, notes?, dueDays?}` | `201 InvoiceSummary`. `409` unless the sale is `completed`/`partially_refunded`; `409 INVOICE_EXISTS` (`details{invoiceId, invoiceNo}`) when the sale already has a live invoice. `dueDays` defaults to the `printing.invoice_due_days` setting  |
+| `POST /invoices/:id/void`    | `{reason}` (≥ 3 characters)                                                                           | `InvoiceSummary` with `status='void'`, `voidedAt/By`, `voidReason`; `409` when already void                                                                                                                                                      |
+
+Issuing, voiding and reprinting are audit-logged (`invoice.created`, `invoice.voided`,
+`invoice.reprinted`). `SaleSummary`/`SaleDetail` carry `invoiceId`/`invoiceNo` of the live invoice so
+the Sales screen can show the link. The document itself is rendered by the Admin app
+(`components/invoices/invoice-document.ts`) in the operator's language and printed through an
+isolated iframe, so the A4 layout never depends on the application stylesheet.
+
 ### Client registration (no bearer token; rate-limited per IP)
 
 | Method | Path                                | Notes                                                                                                                                                                                                                                                                                                         |

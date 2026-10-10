@@ -520,6 +520,8 @@ export function PosPage() {
             void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
             void queryClient.invalidateQueries({ queryKey: ['cash'] });
             setReceipt(receiptData);
+            // Settings › POS & Printing › "Print receipt automatically".
+            if (receiptData.autoPrint) window.setTimeout(() => printReceipt(), 250);
           }}
         />
       )}

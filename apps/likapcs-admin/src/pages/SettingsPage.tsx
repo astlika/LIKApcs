@@ -30,8 +30,16 @@ import {
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
 
-type TabId = 'business' | 'locale' | 'stations' | 'security' | 'system' | 'about';
-const TAB_IDS: TabId[] = ['business', 'locale', 'stations', 'security', 'system', 'about'];
+type TabId = 'business' | 'locale' | 'stations' | 'printing' | 'security' | 'system' | 'about';
+const TAB_IDS: TabId[] = [
+  'business',
+  'locale',
+  'stations',
+  'printing',
+  'security',
+  'system',
+  'about',
+];
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 const TIMEZONES = [
@@ -253,9 +261,7 @@ export function SettingsPage() {
       <Tabs
         value={tab}
         onChange={setTab}
-        tabs={(['business', 'locale', 'stations', 'security', 'system', 'about'] as TabId[]).map(
-          (id) => ({ id, label: t(`settings.tabs.${id}`) }),
-        )}
+        tabs={TAB_IDS.map((id) => ({ id, label: t(`settings.tabs.${id}`) }))}
       />
 
       {tab === 'business' && (
@@ -408,6 +414,70 @@ export function SettingsPage() {
             })}
           </div>
         </Card>
+      )}
+
+      {tab === 'printing' && (
+        <div className="stack">
+          <Card title={t('settings.printing.receipts')}>
+            <div className="form-grid">
+              <Field
+                label={t('settings.printing.receiptWidth')}
+                error={errors['pos.receipt_width_mm']}
+              >
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={String(current['pos.receipt_width_mm'])}
+                    onChange={(e) => set('pos.receipt_width_mm', Number(e.target.value) as 58 | 80)}
+                    disabled={ro}
+                  >
+                    <option value="80">80 mm</option>
+                    <option value="58">58 mm</option>
+                  </Select>
+                )}
+              </Field>
+              <div className="span-2">
+                {bool(
+                  'pos.auto_print_receipt',
+                  t('settings.printing.autoPrint'),
+                  t('settings.printing.autoPrintHint'),
+                )}
+              </div>
+              <div className="span-2">
+                {bool(
+                  'pos.scan_increments_quantity',
+                  t('settings.printing.scanIncrements'),
+                  t('settings.printing.scanIncrementsHint'),
+                )}
+              </div>
+              {text('business.receipt_footer', t('settings.business.receiptFooter'), {
+                hint: t('settings.business.receiptFooterHint'),
+                multiline: true,
+                className: 'span-2',
+              })}
+            </div>
+          </Card>
+          <Card title={t('settings.printing.invoices')}>
+            <Alert tone="info">{t('settings.printing.invoicesNote')}</Alert>
+            <div className="form-grid" style={{ marginTop: 16 }}>
+              {number('printing.invoice_due_days', t('settings.printing.dueDays'), {
+                min: 0,
+                max: 365,
+                hint: t('settings.printing.dueDaysHint'),
+              })}
+              {text('printing.invoice_bank_details', t('settings.printing.bankDetails'), {
+                hint: t('settings.printing.bankDetailsHint'),
+                multiline: true,
+                className: 'span-2',
+              })}
+              {text('printing.invoice_footer', t('settings.printing.invoiceFooter'), {
+                hint: t('settings.printing.invoiceFooterHint'),
+                multiline: true,
+                className: 'span-2',
+              })}
+            </div>
+          </Card>
+        </div>
       )}
 
       {tab === 'security' && (

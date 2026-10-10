@@ -2696,3 +2696,13 @@ body:has(.pos) .toasts {
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
+
+/* ── Invoice preview (A4 document rendered in an iframe) ─────────────────── */
+.invoice-preview {
+  display: block;
+  width: 100%;
+  height: min(70vh, 1000px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #e9ecef;
+}

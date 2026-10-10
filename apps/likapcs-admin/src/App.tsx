@@ -25,6 +25,7 @@ import { PurchasesPage } from './pages/PurchasesPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { BackupsPage } from './pages/BackupsPage';
 import { UpdatesPage } from './pages/UpdatesPage';
+import { InvoicesPage } from './pages/InvoicesPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -86,6 +87,7 @@ export function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="backups" element={<BackupsPage />} />
           <Route path="updates" element={<UpdatesPage />} />
+          <Route path="invoices" element={<InvoicesPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

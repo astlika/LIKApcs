@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Printer, Receipt as ReceiptIcon, RotateCcw, Undo2 } from 'lucide-react';
+import { FileText, Printer, Receipt as ReceiptIcon, RotateCcw, Undo2 } from 'lucide-react';
 import {
   PERMISSIONS,
   SALE_PAYMENT_METHODS,
@@ -15,6 +15,7 @@ import {
   type SaleDetail,
   type SaleStatus,
   type SalesListResponse,
+  type InvoiceData,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
 import { useFormat } from '../lib/format';
@@ -22,6 +23,7 @@ import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
+import { CreateInvoiceDialog, InvoicePreviewDialog } from '../components/invoices/InvoiceDialogs';
 import {
   Badge,
   Button,
@@ -213,6 +215,15 @@ export function SalesPage() {
                         {t(`sales.source.${s.source}` as 'sales.source.retail')}
                       </span>
                     )}
+                    {s.invoiceNo && (
+                      <span
+                        className="faint"
+                        style={{ marginLeft: 6, fontSize: 12 }}
+                        title={t('invoice.title')}
+                      >
+                        · {s.invoiceNo}
+                      </span>
+                    )}
                   </td>
                   <td className="num">{fmt.dateTime(s.completedAt ?? s.createdAt)}</td>
                   <td>{s.cashierName ?? '—'}</td>
@@ -239,6 +250,8 @@ export function SalesPage() {
           onClose={() => setOpenId(null)}
           canRefund={can(PERMISSIONS.POS_REFUND)}
           canReprint={can(PERMISSIONS.POS_REPRINT)}
+          canInvoice={can(PERMISSIONS.INVOICES_MANAGE)}
+          canViewInvoice={can(PERMISSIONS.INVOICES_VIEW)}
           onResume={(id) => navigate(`/pos?resume=${id}`)}
         />
       )}
@@ -252,12 +265,16 @@ function SaleDetailDialog({
   onClose,
   canRefund,
   canReprint,
+  canInvoice,
+  canViewInvoice,
   onResume,
 }: {
   saleId: string;
   onClose: () => void;
   canRefund: boolean;
   canReprint: boolean;
+  canInvoice: boolean;
+  canViewInvoice: boolean;
   onResume: (id: string) => void;
 }) {
   const { t } = useI18n();
@@ -265,9 +282,16 @@ function SaleDetailDialog({
   const toast = useToast();
   const [refunding, setRefunding] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [invoicing, setInvoicing] = useState(false);
+  const [invoiceDoc, setInvoiceDoc] = useState<InvoiceData | null>(null);
   const sale = useQuery({
     queryKey: ['sales', 'detail', saleId],
     queryFn: () => api<SaleDetail>(`/sales/${saleId}`),
+  });
+  const openInvoice = useMutation({
+    mutationFn: (id: string) => api<InvoiceData>(`/invoices/${id}/document`),
+    onSuccess: (data) => setInvoiceDoc(data),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
   const reprint = useMutation({
     mutationFn: () => api<ReceiptData>(`/sales/${saleId}/receipt`, { query: { reprint: true } }),
@@ -300,6 +324,22 @@ function SaleDetailDialog({
                 <Printer size={14} /> {t('sales.reprint')}
               </Button>
             )}
+            {s.invoiceId && canViewInvoice && (
+              <Button
+                onClick={() => openInvoice.mutate(s.invoiceId!)}
+                loading={openInvoice.isPending}
+                data-testid="sale-print-invoice"
+              >
+                <FileText size={14} /> {t('invoice.printExisting', { number: s.invoiceNo ?? '' })}
+              </Button>
+            )}
+            {!s.invoiceId &&
+              canInvoice &&
+              (s.status === 'completed' || s.status === 'partially_refunded') && (
+                <Button onClick={() => setInvoicing(true)} data-testid="sale-issue-invoice">
+                  <FileText size={14} /> {t('invoice.issue')}
+                </Button>
+              )}
             {canRefundThis && (
               <Button
                 variant="danger"
@@ -439,6 +479,17 @@ function SaleDetailDialog({
         </div>
       )}
       {refunding && s && <RefundDialog sale={s} onClose={() => setRefunding(false)} />}
+      {invoicing && s && (
+        <CreateInvoiceDialog
+          sale={s}
+          onClose={() => setInvoicing(false)}
+          onCreated={(inv) => {
+            setInvoicing(false);
+            openInvoice.mutate(inv.id);
+          }}
+        />
+      )}
+      {invoiceDoc && <InvoicePreviewDialog data={invoiceDoc} onClose={() => setInvoiceDoc(null)} />}
       {receipt && (
         <Dialog
           open

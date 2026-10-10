@@ -26,6 +26,7 @@ import { ReportsService } from './services/reports.js';
 import { PurchasingService } from './services/purchasing.js';
 import { BackupService } from './services/backups.js';
 import { UpdatesService } from './services/updates.js';
+import { InvoiceService } from './services/invoices.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { customerRoutes } from './routes/customers.js';
@@ -33,6 +34,7 @@ import { reportRoutes } from './routes/reports.js';
 import { purchasingRoutes } from './routes/purchasing.js';
 import { backupRoutes } from './routes/backups.js';
 import { updateRoutes } from './routes/updates.js';
+import { invoiceRoutes } from './routes/invoices.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
@@ -63,6 +65,7 @@ export interface Services {
   purchasing: PurchasingService;
   backups: BackupService;
   updates: UpdatesService;
+  invoices: InvoiceService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -145,6 +148,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     },
     log: app.log,
   });
+  const invoices = new InvoiceService(pool, sales, settings);
   const updates = new UpdatesService(pool, settings, {
     schemaVersion: () => app.schemaVersion,
     startedAt: () => app.startedAt,
@@ -179,6 +183,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     purchasing,
     backups,
     updates,
+    invoices,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -225,6 +230,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(purchasingRoutes);
       await api.register(backupRoutes);
       await api.register(updateRoutes);
+      await api.register(invoiceRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },

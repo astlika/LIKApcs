@@ -57,6 +57,8 @@ interface SaleRow {
   refunded_cents: string;
   item_count: string;
   notes: string | null;
+  invoice_id: string | null;
+  invoice_no: string | null;
   created_at: Date;
   completed_at: Date | null;
 }
@@ -66,8 +68,12 @@ const SALE_SELECT = `
          u.full_name AS cashier_name, s.subtotal_cents::text, s.discount_cents::text, s.tax_cents::text,
          s.total_cents::text, s.paid_cents::text, s.change_cents::text, s.refunded_cents::text,
          (SELECT count(*) FROM sale_items i WHERE i.sale_id = s.id)::text AS item_count,
-         s.notes, s.created_at, s.completed_at
+         s.notes, inv.id AS invoice_id, inv.invoice_no, s.created_at, s.completed_at
     FROM sales s
+    LEFT JOIN LATERAL (
+      SELECT id, invoice_no FROM invoices
+       WHERE sale_id = s.id AND kind = 'invoice' AND status = 'issued' LIMIT 1
+    ) inv ON true
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN users u ON u.id = s.cashier_user_id`;
 
@@ -109,6 +115,8 @@ function mapSale(row: SaleRow): SaleSummary {
     refundedCents: Number(row.refunded_cents),
     itemCount: Number(row.item_count),
     notes: row.notes,
+    invoiceId: row.invoice_id,
+    invoiceNo: row.invoice_no,
     createdAt: row.created_at.toISOString(),
     completedAt: row.completed_at?.toISOString() ?? null,
   };
@@ -325,6 +333,7 @@ export class SalesService {
       sale,
       currency: s['locale.currency'],
       widthMm: s['pos.receipt_width_mm'],
+      autoPrint: s['pos.auto_print_receipt'],
       printedAt: new Date().toISOString(),
       isReprint: reprint,
     };

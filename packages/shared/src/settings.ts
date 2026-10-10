@@ -45,6 +45,13 @@ export const SETTING_SCHEMAS = {
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   'pos.auto_print_receipt': z.boolean(),
 
+  /** Default payment term for invoices (0 = due on issue). */
+  'printing.invoice_due_days': z.number().int().min(0).max(365),
+  /** Bank account / IBAN block printed on invoices. */
+  'printing.invoice_bank_details': z.string().max(500),
+  /** Terms / legal text printed at the bottom of invoices. */
+  'printing.invoice_footer': z.string().max(1000),
+
   /** Cash tenders (sales, session bills, drawer expenses) require an open cash shift. */
   'cash.require_open_shift': z.boolean(),
   /** Warn when the closing count differs from the expected cash by more than this (cents). */
@@ -102,6 +109,10 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.scan_increments_quantity': true,
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': true,
+
+  'printing.invoice_due_days': 0,
+  'printing.invoice_bank_details': '',
+  'printing.invoice_footer': '',
 
   'cash.require_open_shift': true,
   'cash.difference_warning_cents': 500,

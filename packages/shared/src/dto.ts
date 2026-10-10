@@ -909,6 +909,9 @@ export interface SaleSummary {
   refundedCents: number;
   itemCount: number;
   notes: string | null;
+  /** Live (non-void) invoice issued for this sale, if any. */
+  invoiceId: string | null;
+  invoiceNo: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -942,6 +945,8 @@ export interface ReceiptData {
   sale: SaleDetail;
   currency: string;
   widthMm: 58 | 80;
+  /** `pos.auto_print_receipt`: the POS opens the print dialog as soon as the receipt appears. */
+  autoPrint: boolean;
   printedAt: string;
   isReprint: boolean;
 }
@@ -1636,3 +1641,96 @@ export const updateEventSchema = z.object({
   error: z.string().trim().max(500).nullable().optional(),
 });
 export type UpdateEventRequest = z.infer<typeof updateEventSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 7: invoices & printing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const INVOICE_STATUSES = ['issued', 'void'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export const createInvoiceSchema = z.object({
+  saleId: uuidSchema,
+  customerId: uuidSchema.nullable().optional(),
+  billingName: z.string().trim().min(1).max(200),
+  billingTaxId: z.string().trim().max(60).nullable().optional(),
+  billingAddress: z.string().trim().max(500).nullable().optional(),
+  billingEmail: z.string().trim().email().max(200).nullable().optional().or(z.literal('')),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  /** Overrides `printing.invoice_due_days` for this invoice. */
+  dueDays: z.number().int().min(0).max(365).optional(),
+});
+export type CreateInvoiceRequest = z.infer<typeof createInvoiceSchema>;
+
+export const voidInvoiceSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export type VoidInvoiceRequest = z.infer<typeof voidInvoiceSchema>;
+
+export const invoiceListQuerySchema = z.object({
+  status: z.enum(INVOICE_STATUSES).optional(),
+  customerId: uuidSchema.optional(),
+  q: z.string().trim().max(60).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type InvoiceListQuery = z.infer<typeof invoiceListQuerySchema>;
+
+export interface InvoiceSummary {
+  id: string;
+  invoiceNo: string;
+  status: InvoiceStatus;
+  saleId: string;
+  receiptNo: string | null;
+  customerId: string | null;
+  billingName: string;
+  billingTaxId: string | null;
+  billingAddress: string | null;
+  billingEmail: string | null;
+  notes: string | null;
+  issuedAt: string;
+  /** ISO date (YYYY-MM-DD) or null = due on issue. */
+  dueAt: string | null;
+  issuedByName: string | null;
+  totalCents: number;
+  taxCents: number;
+  printCount: number;
+  lastPrintedAt: string | null;
+  voidedAt: string | null;
+  voidedByName: string | null;
+  voidReason: string | null;
+}
+
+export interface InvoiceDetail extends InvoiceSummary {
+  sale: SaleDetail;
+}
+
+export interface InvoicesListResponse {
+  items: InvoiceSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { count: number; totalCents: number };
+}
+
+/** Everything needed to render / print an A4 invoice. */
+export interface InvoiceData {
+  business: {
+    name: string;
+    legalName: string;
+    address: string;
+    city: string;
+    phone: string;
+    email: string;
+    website: string;
+    taxId: string;
+    registrationNo: string;
+    bankDetails: string;
+    footer: string;
+  };
+  invoice: InvoiceSummary;
+  sale: SaleDetail;
+  currency: string;
+  printedAt: string;
+  isReprint: boolean;
+}
