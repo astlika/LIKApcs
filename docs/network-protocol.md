@@ -257,7 +257,9 @@ Admin WebSocket event `system.restored` follows a successful restore; Admin apps
 | `POST /system/updates/push`   | `{}`                                                                        | Same as `POST /devices/update-outdated`: `update.apply` to every online client older than the server                                                                                                                                                                                                                                                                                                                                                                 |
 | `POST /system/updates/events` | `{component: 'admin' \| 'server', fromVersion?, toVersion, status, error?}` | `201 UpdateHistoryEntry` — the Admin app reports its own completed self-update at the first start after it; `client` runs come only from WebSocket events and are rejected here (`400`)                                                                                                                                                                                                                                                                              |
 
-The release feed defaults to `https://github.com/astlika/LIKApcs/releases/latest/download` and can be
+The release feed defaults to `https://raw.githubusercontent.com/astlika/LIKApcs/release-feed` (the
+`release-feed` branch, written by the Release workflow — the release page itself only carries the two
+installers) and can be
 pointed at a local mirror with `LIKAPCS_UPDATE_FEED_URL` (offline venues). When
 `updates.check_on_startup` is on, the server checks once at start-up; it also records its own
 version change in `update_history` (`component = 'server'`) whenever it starts with a version

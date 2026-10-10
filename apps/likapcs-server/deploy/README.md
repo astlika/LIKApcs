@@ -1,6 +1,7 @@
 # LIKApcs Server — release bundle
 
-This folder is what `likapcs-server-<version>.zip` from GitHub Releases contains:
+This folder is what `likapcs-server-<version>.zip` (artifact of the _Release_ workflow run on GitHub
+Actions; the release page itself only offers the two installers) contains:
 
 ```
 dist/                 compiled server (node dist/index.js) and CLI (node dist/cli.js)

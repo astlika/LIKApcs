@@ -8,6 +8,21 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.2.1] - 2026-10-10
+
+### Changed
+
+- **Release page = two files.** A release now offers exactly `LIKApcs-Setup.exe` (main PC: Admin +
+  server) and `LIKApcs-Client-Setup.exe` (gaming PCs), with a download table and SHA-256 checksums in
+  the release notes. The versioned duplicates, `.sig` files, server zip and `SHA256SUMS.txt` are no
+  longer attached; the server bundle remains a workflow artifact for manual deployments.
+- **Update feed moved to the `release-feed` branch.** `latest.json`, `latest-client.json` and
+  `SHA256SUMS.txt` are written by the release workflow to
+  `https://raw.githubusercontent.com/astlika/LIKApcs/release-feed/` (signatures are embedded in the
+  manifests, as before). Admin, Client and the server's Updates page read from there.
+  _Installations of 0.1.1 / 0.2.0 still look at the old feed and will not see this or later versions
+  by themselves — install 0.2.1 once by hand; from then on updates arrive automatically._
+
 ## [0.2.0] - 2026-10-10
 
 First complete release of the ecosystem: one installer for the main PC (Admin + embedded server +

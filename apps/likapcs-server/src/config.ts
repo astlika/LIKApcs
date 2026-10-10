@@ -60,7 +60,7 @@ export interface ServerConfig {
   logFile: string | null;
   /** Backup archives live here — outside the installation directory by default. */
   backupDir: string;
-  /** Release feed with `latest.json` / `latest-client.json`; null = the GitHub Releases feed. */
+  /** Release feed with `latest.json` / `latest-client.json`; null = the `release-feed` branch on GitHub. */
   updateFeedBaseUrl: string | null;
   discovery: { enabled: boolean; port: number };
   host: string;

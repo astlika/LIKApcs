@@ -1,12 +1,15 @@
-# Release pipeline — triggered by a SemVer tag (v1.2.3). Produces a published GitHub release with:
-#   • LIKApcs_<ver>_x64-setup.exe + .sig          Admin installer (NSIS, embedded server runtime) + update signature
-#   • LIKApcs-Setup.exe                           same installer under a stable, human-friendly name
-#   • latest.json                                 update manifest read by the Admin in-app updater
-#   • LIKApcs-Client_<ver>_x64-setup.exe + .sig   Client installer for the gaming PCs + update signature
-#   • LIKApcs-Client-Setup.exe                    same installer under a stable name
-#   • latest-client.json                          update manifest read by the Client auto-updater
-#   • likapcs-server-<ver>.zip                    Server bundle (dist, migrations, deploy scripts, .env.example)
-#   • SHA256SUMS.txt
+# Release pipeline — triggered by a SemVer tag (v1.2.3). Publishes a GitHub release that contains
+# exactly two files, so nobody has to guess what to download:
+#   • LIKApcs-Setup.exe          main PC — Admin app + LIKApcs Server (embedded PostgreSQL)
+#   • LIKApcs-Client-Setup.exe   every gaming PC
+# Both are built from the same tag and carry the same version; the server only accepts clients of
+# the same major version and the Admin "Updates" page pushes client updates.
+#
+# Everything the auto-updater needs is published to the `release-feed` branch instead of the release
+# page: latest.json (Admin), latest-client.json (Client) — each with the installer URL and its
+# minisign signature — plus SHA256SUMS.txt. The apps read
+# https://raw.githubusercontent.com/<owner>/LIKApcs/release-feed/latest(.json|-client.json).
+# The server bundle (likapcs-server-<ver>.zip) stays a workflow artifact for manual deployments.
 #
 # Required secret: TAURI_SIGNING_PRIVATE_KEY (minisign private key used for update signatures;
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD only if the key has one). Authenticode code signing of the
@@ -141,9 +144,9 @@ jobs:
           $sig = Get-ChildItem "$dir/*-setup.exe.sig" | Select-Object -First 1
           if (-not $exe -or -not $sig) { Get-ChildItem -Recurse apps/likapcs-admin/src-tauri/target/release/bundle; Write-Error "installer or signature not found"; exit 1 }
           New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item $exe.FullName out/
-          Copy-Item $sig.FullName out/
+          # Published under the stable name only; the signature covers the file content, not its name.
           Copy-Item $exe.FullName out/LIKApcs-Setup.exe
+          Copy-Item $sig.FullName out/LIKApcs-Setup.exe.sig
           Get-ChildItem out
       - uses: actions/upload-artifact@v6
         with:
@@ -187,9 +190,8 @@ jobs:
           $sig = Get-ChildItem "$dir/LIKApcs-Client_*-setup.exe.sig" | Select-Object -First 1
           if (-not $exe -or -not $sig) { Get-ChildItem -Recurse apps/likapcs-client/src-tauri/target/release/bundle; Write-Error "client installer or signature not found"; exit 1 }
           New-Item -ItemType Directory -Force out-client | Out-Null
-          Copy-Item $exe.FullName out-client/
-          Copy-Item $sig.FullName out-client/
           Copy-Item $exe.FullName out-client/LIKApcs-Client-Setup.exe
+          Copy-Item $sig.FullName out-client/LIKApcs-Client-Setup.exe.sig
           Get-ChildItem out-client
       - uses: actions/upload-artifact@v6
         with:
@@ -206,34 +208,94 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/download-artifact@v7
         with:
+          pattern: '*-installer'
           path: artifacts
           merge-multiple: true
-      - name: Release notes from CHANGELOG
-        run: |
-          VERSION=${{ needs.verify.outputs.version }}
-          awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{if(f)exit} f' CHANGELOG.md > notes.md
-          [ -s notes.md ] || echo "LIKApcs v$VERSION" > notes.md
-          cat notes.md
-      - name: Build updater manifests (latest.json, latest-client.json)
+      - name: Checksums and updater manifests
         run: |
           VERSION=${{ needs.verify.outputs.version }}
           cd artifacts
-          ADMIN_EXE=$(ls LIKApcs_*-setup.exe | head -1)
-          CLIENT_EXE=$(ls LIKApcs-Client_*-setup.exe | head -1)
-          [ -n "$ADMIN_EXE" ] && [ -n "$CLIENT_EXE" ] || { ls -la; echo "::error::installer missing"; exit 1; }
-          node ../scripts/update-manifest.mjs "$VERSION" "$ADMIN_EXE" "${{ github.repository }}" ../notes.md latest.json
-          node ../scripts/update-manifest.mjs "$VERSION" "$CLIENT_EXE" "${{ github.repository }}" ../notes.md latest-client.json
-          cat latest.json latest-client.json
-          sha256sum * > SHA256SUMS.txt
+          for f in LIKApcs-Setup.exe LIKApcs-Setup.exe.sig LIKApcs-Client-Setup.exe LIKApcs-Client-Setup.exe.sig; do
+            [ -s "$f" ] || { ls -la; echo "::error::$f missing"; exit 1; }
+          done
+          sha256sum LIKApcs-Setup.exe LIKApcs-Client-Setup.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: Create or update the release
+          # Changelog section of this version = updater release notes.
+          awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{if(f)exit} f' ../CHANGELOG.md > changelog.md
+          [ -s changelog.md ] || echo "LIKApcs v$VERSION" > changelog.md
+          node ../scripts/update-manifest.mjs "$VERSION" LIKApcs-Setup.exe "${{ github.repository }}" changelog.md latest.json
+          node ../scripts/update-manifest.mjs "$VERSION" LIKApcs-Client-Setup.exe "${{ github.repository }}" changelog.md latest-client.json
+          node -e 'for (const f of ["latest.json","latest-client.json"]) { const m = JSON.parse(require("fs").readFileSync(f, "utf8")); if (m.version !== process.argv[1] || !m.platforms["windows-x86_64"].signature) throw new Error(f + " invalid"); console.log(f, "->", m.platforms["windows-x86_64"].url); }' "$VERSION"
+      - name: Release notes
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
+          ADMIN_SHA=$(awk '/LIKApcs-Setup.exe$/{print $1}' artifacts/SHA256SUMS.txt)
+          CLIENT_SHA=$(awk '/LIKApcs-Client-Setup.exe$/{print $1}' artifacts/SHA256SUMS.txt)
+          {
+            echo "## Download / Shkarko"
+            echo
+            echo "| Install on | File |"
+            echo "| --- | --- |"
+            echo "| **Main PC** (counter) — Admin app + LIKApcs Server, one installer · _PC-ja kryesore_ | [**LIKApcs-Setup.exe**]($BASE/LIKApcs-Setup.exe) |"
+            echo "| **Every gaming PC** · _çdo PC lojërash_ | [**LIKApcs-Client-Setup.exe**]($BASE/LIKApcs-Client-Setup.exe) |"
+            echo
+            echo "Install the main PC first. The client finds the server on the local network by itself and asks for a one-time approval in the Admin app (_Gaming Stations → Pending devices_). Both files are version $VERSION, belong together and update themselves automatically from now on."
+            echo
+            echo "<details><summary>SHA-256</summary>"
+            echo
+            echo '```'
+            echo "$ADMIN_SHA  LIKApcs-Setup.exe"
+            echo "$CLIENT_SHA  LIKApcs-Client-Setup.exe"
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "---"
+            echo
+            cat artifacts/changelog.md
+          } > notes.md
+          cat notes.md
+      - name: Create or update the release (two installers only)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=${{ needs.verify.outputs.version }}
           TAG="v$VERSION"
+          FILES="artifacts/LIKApcs-Setup.exe artifacts/LIKApcs-Client-Setup.exe"
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/* --clobber --repo "${{ github.repository }}"
+            gh release upload "$TAG" $FILES --clobber --repo "${{ github.repository }}"
+            gh release edit "$TAG" --repo "${{ github.repository }}" --title "LIKApcs v$VERSION" --notes-file notes.md --latest
           else
-            gh release create "$TAG" artifacts/* --repo "${{ github.repository }}" --title "LIKApcs v$VERSION" --notes-file notes.md --latest
+            gh release create "$TAG" $FILES --repo "${{ github.repository }}" --title "LIKApcs v$VERSION" --notes-file notes.md --latest
           fi
+          # Nothing else may sit on the release page.
+          gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | sort
+      - name: Publish updater feed (branch release-feed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ needs.verify.outputs.version }}
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if ! git clone -q --depth 1 --branch release-feed "$REPO_URL" feed 2>/dev/null; then
+            mkdir feed && git -C feed init -q -b release-feed && git -C feed remote add origin "$REPO_URL"
+          fi
+          cp artifacts/latest.json artifacts/latest-client.json artifacts/SHA256SUMS.txt feed/
+          {
+            echo "# LIKApcs update feed"
+            echo
+            echo "Machine-read by the LIKApcs auto-updater — **downloads are on the [releases page](https://github.com/${{ github.repository }}/releases/latest)**."
+            echo
+            echo "| File | Read by |"
+            echo "| --- | --- |"
+            echo "| \`latest.json\` | LIKApcs Admin / main-PC installer (and the server's Updates page) |"
+            echo "| \`latest-client.json\` | LIKApcs-Client on the gaming PCs |"
+            echo "| \`SHA256SUMS.txt\` | checksums of the current installers |"
+            echo
+            echo "Current version: **$VERSION**. Written by the Release workflow; do not edit by hand."
+          } > feed/README.md
+          cd feed
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "feed: v$VERSION" || { echo "feed unchanged"; exit 0; }
+          git push -q origin release-feed
+          echo "feed: https://raw.githubusercontent.com/${{ github.repository }}/release-feed/latest.json"

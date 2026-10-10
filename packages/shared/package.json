@@ -1,6 +1,6 @@
 {
   "name": "@likapcs/shared",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Shared types, validation schemas, money/format utilities and protocol definitions for LIKApcs",
   "type": "module",

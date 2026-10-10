@@ -9,6 +9,7 @@
  * into the application before anything is installed.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 
 const [version, exe, repo, notesFile, outFile] = process.argv.slice(2);
 if (!version || !exe || !repo || !notesFile || !outFile) {
@@ -30,7 +31,8 @@ const manifest = {
   platforms: {
     'windows-x86_64': {
       signature,
-      url: `https://github.com/${repo}/releases/download/v${version}/${encodeURIComponent(exe)}`,
+      // The asset is published under the stable file name (LIKApcs-Setup.exe / LIKApcs-Client-Setup.exe).
+      url: `https://github.com/${repo}/releases/download/v${version}/${encodeURIComponent(basename(exe))}`,
     },
   },
 };

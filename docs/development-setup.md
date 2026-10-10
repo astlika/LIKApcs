@@ -212,7 +212,8 @@ schema from the migrations, so the migration set is validated on every run.
 
 ## 9. Running the server as a Windows service
 
-Use the release bundle (`likapcs-server-<version>.zip`) and `deploy\install-windows.ps1`; the
+Use the server bundle (`likapcs-server-<version>.zip`, artifact of the Release workflow run — not a
+release download) and `deploy\install-windows.ps1`; the
 procedure is documented in `apps/likapcs-server/deploy/README.md`. For a development checkout, run
 `pnpm dev:server` in a terminal instead.
 
@@ -249,9 +250,11 @@ never in the Vite/browser build. To try it end-to-end:
 3. Start the installed app: after ~8 s the topbar shows **Update available · vB**; Settings → About →
    **Download and install** shows progress, verifies the signature, runs the installer and restarts.
 
-The manifest the app reads is `https://github.com/<owner>/LIKApcs/releases/latest/download/latest.json`.
-If the app says it is up to date although a newer release exists, check that the release is
-published (not draft / pre-release) and that `latest.json` is attached to it.
+The manifest the app reads is `https://raw.githubusercontent.com/<owner>/LIKApcs/release-feed/latest.json`
+(branch `release-feed`, written by the Release workflow after the release is published). If the app
+says it is up to date although a newer release exists, check that the _Publish updater feed_ step of
+the release run succeeded and that `latest.json` on that branch carries the new version
+(raw.githubusercontent.com caches for up to 5 minutes).
 
 ## 10. Troubleshooting
 

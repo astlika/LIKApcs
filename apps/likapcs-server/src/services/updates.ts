@@ -39,7 +39,13 @@ export interface UpdatesServiceOptions {
   log?: { info: (o: object, msg: string) => void; warn: (o: object, msg: string) => void };
 }
 
-export const DEFAULT_FEED_BASE_URL = 'https://github.com/astlika/LIKApcs/releases/latest/download';
+/**
+ * The release workflow publishes the updater manifests (`latest.json`, `latest-client.json`,
+ * `SHA256SUMS.txt`) to the `release-feed` branch so the GitHub release page itself only shows the
+ * two installers. The manifests point at the installers of the matching release.
+ */
+export const DEFAULT_FEED_BASE_URL =
+  'https://raw.githubusercontent.com/astlika/LIKApcs/release-feed';
 
 interface ManifestFile {
   version: string;

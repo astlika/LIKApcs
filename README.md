@@ -40,8 +40,10 @@ LIKApcs has exactly two installers. No separate database or server setup is need
    _Settings → About_; **Download and install** applies a signature-verified update of the Admin app
    _and_ the server on the main PC in one go, the database is upgraded automatically on the next start.
 
-Advanced: the server can still be installed on its own (Linux, an existing PostgreSQL, a Windows
-service) with `likapcs-server-<version>.zip` — see `apps/likapcs-server/deploy/README.md`.
+Every release page shows exactly these two files; both are built from the same version and belong
+together. Advanced: the server can still be installed on its own (Linux, an existing PostgreSQL, a
+Windows service) with `likapcs-server-<version>.zip`, kept as an artifact of the release workflow
+run (_Actions → Release → Artifacts_) — see `apps/likapcs-server/deploy/README.md`.
 
 ## Quick start (developers)
 

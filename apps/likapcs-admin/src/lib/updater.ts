@@ -1,7 +1,7 @@
 /**
  * In-app updates for the installed desktop application.
  *
- * The Tauri updater plugin fetches `latest.json` from the GitHub release feed configured in
+ * The Tauri updater plugin fetches `latest.json` from the release feed (branch `release-feed`) configured in
  * `src-tauri/tauri.conf.json`, verifies the installer's minisign signature against the public key
  * compiled into the app, runs the installer and relaunches. In the browser/dev build none of this
  * exists, so every function here degrades gracefully (`isDesktopApp()` is false).
