@@ -213,6 +213,13 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                 await services.sessions.clientReportsExpired(sessionId, presence.deviceId);
               }
             }
+            if (message.event === 'update_status') {
+              await services.updates.recordClientStatus(
+                presence.deviceId,
+                presence.appVersion,
+                message.payload,
+              );
+            }
             if (message.event === 'error') {
               await services.devices.logConnection(
                 presence.deviceId,

@@ -5,6 +5,7 @@ import {
   BarChart3,
   Contact,
   DatabaseBackup,
+  RefreshCw,
   LayoutDashboard,
   Monitor,
   Package,
@@ -73,6 +74,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         to: '/backups',
         icon: DatabaseBackup,
       },
+      { id: 'updates', label: t('nav.updates'), kind: 'page', to: '/updates', icon: RefreshCw },
     ];
     const stationItems: Item[] = (stations.data ?? []).map((s) => ({
       id: s.id,

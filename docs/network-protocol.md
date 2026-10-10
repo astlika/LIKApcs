@@ -124,7 +124,10 @@ the client version is older than the server version and the `updates.client_poli
 it: `idle_only` (default — only while no session is running), `maintenance_window` (only inside
 `updates.maintenance_window`, `HH:MM-HH:MM` server-local, may cross midnight) or `manual` (never).
 The client answers with `client.event update_status {status: checking | none | installed | failed |
-unavailable}` and relaunches itself after installing a signature-verified update.
+unavailable, version?, error?, trigger}` and relaunches itself after installing a signature-verified
+update. The server turns these events into `update_history` rows (one row per attempt: `checking`
+opens a `pending` run, later events update it; `none`/`unavailable` close it quietly) — see
+"Updates" below.
 
 ### Catalogue & inventory (`products.view` to read, `products.manage` to write, `inventory.adjust` for stock)
 
@@ -244,6 +247,22 @@ previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD H
 | `POST /backups/:id/restore` | `{password, confirm: true}`                        | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 SCHEMA_MISMATCH` for another schema version; `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`) |
 
 Admin WebSocket event `system.restored` follows a successful restore; Admin apps reload every view.
+
+### Updates (`updates.manage`; the events route only needs a signed-in user)
+
+| Route                         | Body                                                                        | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /system/updates`         | —                                                                           | `UpdatesOverview`: `server{version, schemaVersion, startedAt}`, `targetVersion` (= the server version — clients follow the server), `latest{admin, client, serverUpdateAvailable}` from the cached manifests, `check{checkedAt, ok, error, feedUrl}`, `policy` (the `updates.*` settings), `clients[]` (approved devices with `state: current / outdated / newer / unknown`, online flag and last update run), `counts`, `history[]` (last 50 `update_history` rows) |
+| `POST /system/updates/check`  | `{}`                                                                        | Fetches `latest.json` and `latest-client.json` from the release feed (10 s timeout each, independent of each other), upserts `application_versions` (`is_latest` moves to the newest row) and returns the refreshed overview. Never fails the request — a feed problem is reported in `check.error`                                                                                                                                                                  |
+| `POST /system/updates/push`   | `{}`                                                                        | Same as `POST /devices/update-outdated`: `update.apply` to every online client older than the server                                                                                                                                                                                                                                                                                                                                                                 |
+| `POST /system/updates/events` | `{component: 'admin' \| 'server', fromVersion?, toVersion, status, error?}` | `201 UpdateHistoryEntry` — the Admin app reports its own completed self-update at the first start after it; `client` runs come only from WebSocket events and are rejected here (`400`)                                                                                                                                                                                                                                                                              |
+
+The release feed defaults to `https://github.com/astlika/LIKApcs/releases/latest/download` and can be
+pointed at a local mirror with `LIKAPCS_UPDATE_FEED_URL` (offline venues). When
+`updates.check_on_startup` is on, the server checks once at start-up; it also records its own
+version change in `update_history` (`component = 'server'`) whenever it starts with a version
+different from the last recorded one. Installing is never done by the server: the signed Tauri
+updater inside the Admin and Client apps verifies and applies the installers.
 
 ### Client registration (no bearer token; rate-limited per IP)
 

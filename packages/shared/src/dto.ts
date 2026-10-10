@@ -1526,3 +1526,113 @@ export const backupUploadQuerySchema = z.object({
       'file name may only contain letters, digits, dot, dash, underscore',
     ),
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 7: updates dashboard
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const UPDATE_COMPONENTS = ['admin', 'client', 'server'] as const;
+export type UpdateComponent = (typeof UPDATE_COMPONENTS)[number];
+export const UPDATE_STATUSES = [
+  'pending',
+  'downloading',
+  'downloaded',
+  'installing',
+  'succeeded',
+  'failed',
+  'rolled_back',
+] as const;
+export type UpdateStatus = (typeof UPDATE_STATUSES)[number];
+
+/** A release known to the server (from the GitHub update manifests). */
+export interface ApplicationVersionSummary {
+  component: UpdateComponent;
+  version: string;
+  channel: 'stable' | 'beta';
+  releasedAt: string | null;
+  releaseNotes: string | null;
+  downloadUrl: string | null;
+  /** Detached minisign signature of the installer, as published in the manifest. */
+  signed: boolean;
+  isLatest: boolean;
+}
+
+export type ClientVersionState = 'current' | 'outdated' | 'newer' | 'unknown';
+
+export interface ClientUpdateRow {
+  deviceId: string;
+  stationId: string | null;
+  stationCode: string | null;
+  stationName: string | null;
+  hostname: string | null;
+  appVersion: string | null;
+  online: boolean;
+  lastSeenAt: string | null;
+  state: ClientVersionState;
+  lastUpdate: {
+    status: UpdateStatus;
+    toVersion: string;
+    startedAt: string;
+    finishedAt: string | null;
+    errorMessage: string | null;
+  } | null;
+}
+
+export interface UpdateHistoryEntry {
+  id: string;
+  component: UpdateComponent;
+  deviceId: string | null;
+  stationCode: string | null;
+  fromVersion: string | null;
+  toVersion: string;
+  status: UpdateStatus;
+  initiatedByName: string | null;
+  /** Client runs: what started them (`command` = pushed from Admin, `incompatible` = forced). */
+  trigger: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface UpdateCheckState {
+  checkedAt: string | null;
+  ok: boolean | null;
+  error: string | null;
+  /** Where the manifests are fetched from (for the dashboard's "source" line). */
+  feedUrl: string;
+}
+
+export interface UpdatesOverview {
+  server: { version: string; schemaVersion: number; startedAt: string };
+  /**
+   * Version every client should run: always the server's. The main PC (server + Admin) is updated
+   * first; clients are then pushed to the same version (a client may not be newer than its server).
+   */
+  targetVersion: string;
+  latest: {
+    admin: ApplicationVersionSummary | null;
+    client: ApplicationVersionSummary | null;
+    /** The release feed carries a newer main-PC installer than the running server. */
+    serverUpdateAvailable: boolean;
+  };
+  check: UpdateCheckState;
+  policy: {
+    channel: 'stable' | 'beta';
+    checkOnStartup: boolean;
+    autoDownload: boolean;
+    clientPolicy: 'manual' | 'idle_only' | 'maintenance_window';
+    maintenanceWindow: string;
+  };
+  clients: ClientUpdateRow[];
+  counts: { clients: number; online: number; outdated: number; updating: number };
+  history: UpdateHistoryEntry[];
+}
+
+export const updateEventSchema = z.object({
+  component: z.enum(['admin', 'server']),
+  fromVersion: z.string().trim().max(40).nullable().optional(),
+  toVersion: z.string().trim().min(1).max(40),
+  status: z.enum(UPDATE_STATUSES),
+  error: z.string().trim().max(500).nullable().optional(),
+});
+export type UpdateEventRequest = z.infer<typeof updateEventSchema>;

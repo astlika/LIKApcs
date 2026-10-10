@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Contact,
   DatabaseBackup,
+  RefreshCw,
   KeyRound,
   Lock,
   LockOpen,
@@ -240,6 +241,12 @@ export function AppShell() {
           permission: PERMISSIONS.BACKUPS_MANAGE,
         },
         {
+          to: '/updates',
+          icon: RefreshCw,
+          label: t('nav.updates'),
+          permission: PERMISSIONS.UPDATES_MANAGE,
+        },
+        {
           to: '/settings',
           icon: Settings,
           label: t('nav.settings'),
@@ -266,6 +273,7 @@ export function AppShell() {
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),
     '/backups': t('nav.backups'),
+    '/updates': t('nav.updates'),
   };
   const serverOk = health.isSuccess && health.data.status === 'ok';
   const initials = (user?.fullName ?? '?')

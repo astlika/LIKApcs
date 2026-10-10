@@ -25,12 +25,14 @@ import { CustomersService } from './services/customers.js';
 import { ReportsService } from './services/reports.js';
 import { PurchasingService } from './services/purchasing.js';
 import { BackupService } from './services/backups.js';
+import { UpdatesService } from './services/updates.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { purchasingRoutes } from './routes/purchasing.js';
 import { backupRoutes } from './routes/backups.js';
+import { updateRoutes } from './routes/updates.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
@@ -60,6 +62,7 @@ export interface Services {
   reports: ReportsService;
   purchasing: PurchasingService;
   backups: BackupService;
+  updates: UpdatesService;
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
@@ -93,6 +96,10 @@ export interface BuildAppOptions {
   sessionTicker?: boolean;
   /** Set to false in tests (they call `backups.tick()` themselves). */
   backupScheduler?: boolean;
+  /** Release feed for the updates dashboard (tests point it at a local server). */
+  updateFeedBaseUrl?: string;
+  /** Set to false in tests: no start-up update check against the feed. */
+  updateCheckOnStartup?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -138,6 +145,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     },
     log: app.log,
   });
+  const updates = new UpdatesService(pool, settings, {
+    schemaVersion: () => app.schemaVersion,
+    startedAt: () => app.startedAt,
+    onlineDeviceIds: () => hub.onlineDeviceIds(),
+    feedBaseUrl: options.updateFeedBaseUrl ?? config.updateFeedBaseUrl ?? undefined,
+    log: app.log,
+  });
 
   await settings.ensureDefaults();
   const migrationStatus = await getMigrationStatus(pool, config.migrationsDir);
@@ -164,6 +178,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     reports,
     purchasing,
     backups,
+    updates,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -209,6 +224,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(reportRoutes);
       await api.register(purchasingRoutes);
       await api.register(backupRoutes);
+      await api.register(updateRoutes);
       await api.register(auditRoutes);
     },
     { prefix: '/api/v1' },
@@ -229,6 +245,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   let sessionTimer: NodeJS.Timeout | null = null;
   let backupTimer: NodeJS.Timeout | null = null;
   app.addHook('onReady', async () => {
+    // Version bookkeeping + optional start-up check of the release feed (never blocks start-up).
+    void updates
+      .recordServerStart()
+      .catch((err: unknown) => app.log.error({ err }, 'could not record server version'));
+    if (options.updateCheckOnStartup !== false) {
+      void settings
+        .get('updates.check_on_startup')
+        .then((enabled) => (enabled ? updates.checkRemote(null) : null))
+        .catch((err: unknown) => app.log.warn({ err }, 'start-up update check failed'));
+    }
     if (options.backupScheduler !== false) {
       backupTimer = setInterval(() => {
         void backups

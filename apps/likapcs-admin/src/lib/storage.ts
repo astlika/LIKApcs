@@ -12,7 +12,9 @@ type Key =
   | 'sidebarCollapsed'
   | 'mapIconSize'
   | 'mapGroupZones'
-  | 'rememberChoice';
+  | 'rememberChoice'
+  /** Admin version seen at the previous start — used to report a completed self-update. */
+  | 'lastVersion';
 
 export const storage = {
   get(key: Key): string | null {

@@ -8,7 +8,12 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { api } from '../lib/api';
+import { storage } from '../lib/storage';
 import { checkForUpdate, isDesktopApp, relaunchApp, type AvailableUpdate } from '../lib/updater';
+import { useAuth } from './auth';
+
+const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 export type UpdateStatus =
   | 'idle'
@@ -102,6 +107,26 @@ export function UpdatesProvider({
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supported, autoCheck]);
+
+  // After an update the desktop app starts with a new version: report it once to the server so the
+  // Updates dashboard shows when the main PC was upgraded (and from which version).
+  const { status: authStatus } = useAuth();
+  useEffect(() => {
+    if (!supported || authStatus !== 'authenticated') return;
+    const previous = storage.get('lastVersion');
+    if (previous === ADMIN_VERSION) return;
+    api('/system/updates/events', {
+      method: 'POST',
+      body: {
+        component: 'admin',
+        fromVersion: previous,
+        toVersion: ADMIN_VERSION,
+        status: 'succeeded',
+      },
+    })
+      .then(() => storage.set('lastVersion', ADMIN_VERSION))
+      .catch(() => undefined); // offline/forbidden: retried at the next start
+  }, [supported, authStatus]);
 
   const value = useMemo<UpdatesContextValue>(
     () => ({

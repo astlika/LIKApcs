@@ -30,6 +30,7 @@ export async function createTestContext(
     logger: false,
     sessionTicker: false,
     backupScheduler: false,
+    updateCheckOnStartup: false,
   });
   await app.ready();
   return {

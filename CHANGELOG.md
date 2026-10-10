@@ -8,6 +8,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- **Updates dashboard (Phase 7c).** New Admin page _Updates_ (`updates.manage`): version of the
+  main PC (server + Admin + schema), newest release published on GitHub (read from the signed
+  update manifests `latest.json` / `latest-client.json`, cached in `application_versions` so the
+  page works offline), every approved client PC with its version, online state and
+  current / outdated / newer badge, one-click _Update all clients_ (`update.apply` to online
+  outdated clients) and the history of update attempts. Clients' `update_status` WebSocket events
+  now become `update_history` rows (one per attempt, with the error message); the server records
+  its own version change at start-up and the Admin app reports its completed self-update once
+  (`POST /system/updates/events`). Optional start-up feed check (`updates.check_on_startup`) and
+  `LIKAPCS_UPDATE_FEED_URL` for a local release mirror. Routes: `GET /system/updates`,
+  `POST /system/updates/check|push|events`. EN/SQ.
 - **Backups & restore (Phase 7b).** Node-native backup engine (works with the embedded Windows
   PostgreSQL that has no `pg_dump`): every table is copied inside one repeatable-read snapshot into a
   `*.likapcs-backup.tar.gz` archive (`manifest.json` + `tables/*.csv`), written to the backup folder
