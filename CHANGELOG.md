@@ -6,6 +6,10 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.6.0] - 2026-10-11
+
 ### Added
 
 - **"Pay later" — customer debts (borxh).** Off by default (Settings › Point of sale › _Allow
@@ -69,8 +73,9 @@ All notable changes to LIKApcs are documented here. The format follows
 - **POS — smarter cash suggestions.** The fixed 5 / 10 / 20 / 50 row is replaced by the
   denominations a customer plausibly hands over for _this_ total, from 0.50 € to 50 € (0.20 → 0.50,
   1, 2, 5…; 2.50 → 3, 4, 5, 10…; 7.30 → 7.50, 8, 10, 20, 50), plus _Exact_.
-- The payment UI is now one shared tender panel (POS today; session bills next), so cash, card,
-  split and pay-later behave the same everywhere.
+- The payment UI is now one shared tender panel (POS and session bills), so cash, card, split and
+  pay-later behave the same everywhere.
+- Cash shift summary lists _Debt repayments (pay later)_ as its own drawer line.
 
 ## [0.5.1] - 2026-10-11
 

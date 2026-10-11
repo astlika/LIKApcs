@@ -1118,6 +1118,7 @@ export const en = {
     expenses: 'Expenses from drawer',
     inOut: 'Pay-in / pay-out',
     other: 'Other',
+    debtPayments: 'Debt repayments (pay later)',
     deposit: 'Pay in',
     depositHint: 'Cash added to the drawer (e.g. change from the bank).',
     depositDone: 'Pay-in recorded.',

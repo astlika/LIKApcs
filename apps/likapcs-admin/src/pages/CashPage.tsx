@@ -409,6 +409,7 @@ function ShiftBreakdown({ shift }: { shift: CashShiftDetail }) {
     { label: t('cash.deposit'), cents: tt.depositsCents, sign: true },
     { label: t('cash.withdrawal'), cents: -tt.withdrawalsCents, sign: true },
     { label: t('cash.expenses'), cents: -tt.expensesCents, sign: true },
+    { label: t('cash.debtPayments'), cents: tt.debtPaymentsCents, sign: true },
     { label: t('cash.other'), cents: tt.otherCents, sign: true },
   ];
   return (

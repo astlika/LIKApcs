@@ -1125,6 +1125,7 @@ export const sq: Dictionary = {
     expenses: 'Shpenzime nga arka',
     inOut: 'Hyrje / dalje',
     other: 'Tjetër',
+    debtPayments: 'Pagesa borxhesh (pagesë më vonë)',
     deposit: 'Hyrje parash',
     depositHint: 'Para që shtohen në arkë (p.sh. kusur nga banka).',
     depositDone: 'Hyrja u regjistrua.',
