@@ -335,6 +335,68 @@ function DayPicker({ value, onChange }: { value: number[]; onChange: (days: numb
 const centsToInput = (cents: number) =>
   formatMoney(cents, { showSymbol: true }).replace(/[^\d.,-]/g, '');
 const toInt = (v: string) => (v.trim() === '' ? NaN : Number(v));
+const inRange = (v: number, min: number, max: number) =>
+  Number.isInteger(v) && v >= min && v <= max;
+
+/**
+ * Validation messages shown under the fields. Local checks run when Save is pressed (the button
+ * is never silently disabled); server-side issues are merged in by field path, and anything that
+ * targets a field we do not show is listed in the alert at the top — a rule must never fail to
+ * save without saying why.
+ */
+type Issues = Partial<Record<string, string>>;
+const KNOWN_RULE_FIELDS = [
+  'name',
+  'stationId',
+  'rateCentsPerHour',
+  'billingIncrementMinutes',
+  'minimumMinutes',
+  'minimumChargeCents',
+  'roundingMode',
+  'roundingIncrementCents',
+  'daysOfWeek',
+  'startTime',
+  'endTime',
+  'validFrom',
+  'validTo',
+  'priority',
+];
+const KNOWN_PACKAGE_FIELDS = [
+  'name',
+  'sortOrder',
+  'durationMinutes',
+  'priceCents',
+  'stationIds',
+  'daysOfWeek',
+  'startTime',
+  'endTime',
+  'validFrom',
+  'validTo',
+];
+
+/** Server issues that no visible field claims (so they still get shown). */
+function unclaimedIssues(err: unknown, known: string[]): string[] {
+  if (!(err instanceof ApiError)) return err ? [String((err as Error)?.message ?? err)] : [];
+  if (Array.isArray(err.details)) {
+    const issues = err.details as { path: string; message: string }[];
+    const unclaimed = issues.filter(
+      (i) => !known.some((f) => i.path === f || i.path.endsWith(`.${f}`)),
+    );
+    return unclaimed.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message));
+  }
+  if (typeof err.details === 'object' && err.details && (err.details as { field?: string }).field)
+    return [];
+  return [err.message];
+}
+
+/** Scrolls the first invalid field of the dialog into view and focuses it. */
+function focusFirstInvalid() {
+  window.requestAnimationFrame(() => {
+    const el = document.querySelector<HTMLElement>('.dialog [aria-invalid="true"]');
+    el?.scrollIntoView({ block: 'center' });
+    el?.focus();
+  });
+}
 
 // ─── Rule dialog ───────────────────────────────────────────────────────────────
 interface RuleForm {
@@ -389,8 +451,34 @@ function RuleDialog({
   const set = <K extends keyof RuleForm>(key: K, value: RuleForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
   const [error, setError] = useState<unknown>(null);
+  const [attempted, setAttempted] = useState(false);
   const rateCents = parseMoneyInput(form.rate);
   const minimumCents = form.minimumCharge.trim() ? parseMoneyInput(form.minimumCharge) : 0;
+
+  // Local validation (mirrors the server schema) — shown after the first Save attempt.
+  const local: Issues = {};
+  if (!form.name.trim()) local.name = t('common.required');
+  if (rateCents === null || rateCents < 0) local.rateCentsPerHour = t('pricing.errors.money');
+  if (minimumCents === null || minimumCents < 0)
+    local.minimumChargeCents = t('pricing.errors.money');
+  if (!inRange(toInt(form.billingIncrementMinutes), 1, 120))
+    local.billingIncrementMinutes = t('pricing.errors.range', { min: 1, max: 120 });
+  if (!inRange(toInt(form.minimumMinutes), 0, 600))
+    local.minimumMinutes = t('pricing.errors.range', { min: 0, max: 600 });
+  if (!inRange(toInt(form.roundingIncrementCents), 1, 1000))
+    local.roundingIncrementCents = t('pricing.errors.range', { min: 1, max: 1000 });
+  if (!inRange(toInt(form.priority), -100, 100))
+    local.priority = t('pricing.errors.range', { min: -100, max: 100 });
+  if (form.daysOfWeek.length === 0) local.daysOfWeek = t('pricing.errors.days');
+  if ((form.startTime === '') !== (form.endTime === '')) {
+    local[form.startTime === '' ? 'startTime' : 'endTime'] = t('pricing.errors.timeWindow');
+  }
+  if (form.validFrom && form.validTo && form.validTo < form.validFrom)
+    local.validTo = t('pricing.errors.validRange');
+  const issue = (field: string) =>
+    (attempted ? local[field] : undefined) ?? fieldError(error, field);
+  const hasLocalIssues = Object.keys(local).length > 0;
+  const unclaimed = unclaimedIssues(error, KNOWN_RULE_FIELDS);
 
   const save = useMutation({
     mutationFn: () => {
@@ -417,15 +505,20 @@ function RuleDialog({
         : api<PricingRuleSummary>('/pricing/rules', { method: 'POST', body });
     },
     onSuccess: onSaved,
-    onError: setError,
+    onError: (err) => {
+      setError(err);
+      focusFirstInvalid();
+    },
   });
-  const invalid =
-    !form.name.trim() ||
-    rateCents === null ||
-    rateCents < 0 ||
-    minimumCents === null ||
-    form.daysOfWeek.length === 0 ||
-    (form.startTime === '') !== (form.endTime === '');
+  const submit = () => {
+    setAttempted(true);
+    setError(null);
+    if (hasLocalIssues) {
+      focusFirstInvalid();
+      return;
+    }
+    save.mutate();
+  };
 
   return (
     <Dialog
@@ -436,22 +529,35 @@ function RuleDialog({
       footer={
         <>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
-          <Button
-            variant="primary"
-            disabled={invalid}
-            loading={save.isPending}
-            onClick={() => save.mutate()}
-          >
+          <Button variant="primary" loading={save.isPending} onClick={submit}>
             {t('common.save')}
           </Button>
         </>
       }
     >
-      {error instanceof ApiError && !Array.isArray(error.details) && (
-        <Alert tone="danger">{error.message}</Alert>
+      {attempted && hasLocalIssues && <Alert tone="danger">{t('pricing.errors.fixFields')}</Alert>}
+      {unclaimed.length > 0 && (
+        <Alert tone="danger">
+          {unclaimed.length === 1 ? (
+            unclaimed[0]
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {unclaimed.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          )}
+        </Alert>
       )}
-      <div className="grid grid--2">
-        <Field label={t('pricing.name')} error={fieldError(error, 'name')}>
+      <form
+        className="grid grid--2"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <Field label={t('pricing.name')} error={issue('name')}>
           {(id, inv) => (
             <Input
               id={id}
@@ -463,10 +569,11 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.station')}>
-          {(id) => (
+        <Field label={t('pricing.station')} error={issue('stationId')}>
+          {(id, inv) => (
             <Select
               id={id}
+              aria-invalid={inv}
               value={form.stationId}
               onChange={(e) => set('stationId', e.target.value)}
             >
@@ -479,7 +586,11 @@ function RuleDialog({
             </Select>
           )}
         </Field>
-        <Field label={t('pricing.rate')} error={fieldError(error, 'rateCentsPerHour')}>
+        <Field
+          label={t('pricing.rate')}
+          hint={t('pricing.rateHint')}
+          error={issue('rateCentsPerHour')}
+        >
           {(id, inv) => (
             <Input
               id={id}
@@ -491,10 +602,15 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.increment')} hint={t('pricing.incrementHint')}>
-          {(id) => (
+        <Field
+          label={t('pricing.increment')}
+          hint={t('pricing.incrementHint')}
+          error={issue('billingIncrementMinutes')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="number"
               min={1}
               max={120}
@@ -503,10 +619,11 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.minimumMinutes')}>
-          {(id) => (
+        <Field label={t('pricing.minimumMinutes')} error={issue('minimumMinutes')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="number"
               min={0}
               max={600}
@@ -515,17 +632,18 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.minimumCharge')}>
-          {(id) => (
+        <Field label={t('pricing.minimumCharge')} error={issue('minimumChargeCents')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               inputMode="decimal"
               value={form.minimumCharge}
               onChange={(e) => set('minimumCharge', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.rounding')}>
+        <Field label={t('pricing.rounding')} error={issue('roundingMode')}>
           {(id) => (
             <Select
               id={id}
@@ -540,10 +658,11 @@ function RuleDialog({
             </Select>
           )}
         </Field>
-        <Field label={t('pricing.roundingIncrement')}>
-          {(id) => (
+        <Field label={t('pricing.roundingIncrement')} error={issue('roundingIncrementCents')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="number"
               min={1}
               max={1000}
@@ -552,53 +671,71 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.days')} className="span-2">
+        <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
           {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
         </Field>
-        <Field label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`} optional>
-          {(id) => (
+        <Field
+          label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`}
+          hint={t('pricing.timeWindowHint')}
+          optional
+          error={issue('startTime')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="time"
               value={form.startTime}
               onChange={(e) => set('startTime', e.target.value)}
             />
           )}
         </Field>
-        <Field label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`} optional>
-          {(id) => (
+        <Field
+          label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`}
+          optional
+          error={issue('endTime')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="time"
               value={form.endTime}
               onChange={(e) => set('endTime', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.validFrom')} optional>
-          {(id) => (
+        <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="date"
               value={form.validFrom}
               onChange={(e) => set('validFrom', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.validTo')} optional>
-          {(id) => (
+        <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="date"
               value={form.validTo}
               onChange={(e) => set('validTo', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.priority')} hint={t('pricing.priorityHint')}>
-          {(id) => (
+        <Field
+          label={t('pricing.priority')}
+          hint={t('pricing.priorityHint')}
+          error={issue('priority')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="number"
               min={-100}
               max={100}
@@ -623,7 +760,9 @@ function RuleDialog({
             label={t('pricing.active')}
           />
         </div>
-      </div>
+        {/* Enter in any field submits (the footer button lives outside the form). */}
+        <button type="submit" hidden aria-hidden tabIndex={-1} />
+      </form>
     </Dialog>
   );
 }
@@ -673,7 +812,27 @@ function PackageDialog({
   const set = <K extends keyof PackageForm>(key: K, value: PackageForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
   const [error, setError] = useState<unknown>(null);
+  const [attempted, setAttempted] = useState(false);
   const priceCents = parseMoneyInput(form.price);
+
+  const local: Issues = {};
+  if (!form.name.trim()) local.name = t('common.required');
+  if (priceCents === null || priceCents < 0) local.priceCents = t('pricing.errors.money');
+  if (!inRange(toInt(form.durationMinutes), 1, 1440))
+    local.durationMinutes = t('pricing.errors.range', { min: 1, max: 1440 });
+  if (!inRange(toInt(form.sortOrder), 0, 1000))
+    local.sortOrder = t('pricing.errors.range', { min: 0, max: 1000 });
+  if (form.daysOfWeek.length === 0) local.daysOfWeek = t('pricing.errors.days');
+  if ((form.startTime === '') !== (form.endTime === '')) {
+    local[form.startTime === '' ? 'startTime' : 'endTime'] = t('pricing.errors.timeWindow');
+  }
+  if (form.validFrom && form.validTo && form.validTo < form.validFrom)
+    local.validTo = t('pricing.errors.validRange');
+  const issue = (field: string) =>
+    (attempted ? local[field] : undefined) ?? fieldError(error, field);
+  const hasLocalIssues = Object.keys(local).length > 0;
+  const unclaimed = unclaimedIssues(error, KNOWN_PACKAGE_FIELDS);
+
   const save = useMutation({
     mutationFn: () => {
       const body = {
@@ -695,15 +854,20 @@ function PackageDialog({
         : api<GamingPackageSummary>('/pricing/packages', { method: 'POST', body });
     },
     onSuccess: onSaved,
-    onError: setError,
+    onError: (err) => {
+      setError(err);
+      focusFirstInvalid();
+    },
   });
-  const invalid =
-    !form.name.trim() ||
-    priceCents === null ||
-    priceCents < 0 ||
-    !(toInt(form.durationMinutes) >= 1) ||
-    form.daysOfWeek.length === 0 ||
-    (form.startTime === '') !== (form.endTime === '');
+  const submit = () => {
+    setAttempted(true);
+    setError(null);
+    if (hasLocalIssues) {
+      focusFirstInvalid();
+      return;
+    }
+    save.mutate();
+  };
   const toggleStation = (id: string) => {
     const current = form.stationIds ?? [];
     set('stationIds', current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
@@ -718,22 +882,35 @@ function PackageDialog({
       footer={
         <>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
-          <Button
-            variant="primary"
-            disabled={invalid}
-            loading={save.isPending}
-            onClick={() => save.mutate()}
-          >
+          <Button variant="primary" loading={save.isPending} onClick={submit}>
             {t('common.save')}
           </Button>
         </>
       }
     >
-      {error instanceof ApiError && !Array.isArray(error.details) && (
-        <Alert tone="danger">{error.message}</Alert>
+      {attempted && hasLocalIssues && <Alert tone="danger">{t('pricing.errors.fixFields')}</Alert>}
+      {unclaimed.length > 0 && (
+        <Alert tone="danger">
+          {unclaimed.length === 1 ? (
+            unclaimed[0]
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {unclaimed.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          )}
+        </Alert>
       )}
-      <div className="grid grid--2">
-        <Field label={t('pricing.name')} error={fieldError(error, 'name')}>
+      <form
+        className="grid grid--2"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <Field label={t('pricing.name')} error={issue('name')}>
           {(id, inv) => (
             <Input
               id={id}
@@ -745,10 +922,11 @@ function PackageDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.sortOrder')}>
-          {(id) => (
+        <Field label={t('pricing.sortOrder')} error={issue('sortOrder')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="number"
               min={0}
               max={1000}
@@ -757,7 +935,7 @@ function PackageDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.duration')} error={fieldError(error, 'durationMinutes')}>
+        <Field label={t('pricing.duration')} error={issue('durationMinutes')}>
           {(id, inv) => (
             <Input
               id={id}
@@ -770,7 +948,7 @@ function PackageDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.price')} error={fieldError(error, 'priceCents')}>
+        <Field label={t('pricing.price')} hint={t('pricing.rateHint')} error={issue('priceCents')}>
           {(id, inv) => (
             <Input
               id={id}
@@ -782,7 +960,12 @@ function PackageDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.stations')} hint={t('pricing.stationsHint')} className="span-2">
+        <Field
+          label={t('pricing.stations')}
+          hint={t('pricing.stationsHint')}
+          className="span-2"
+          error={issue('stationIds')}
+        >
           {() => (
             <div className="chips">
               {stations.map((s) => (
@@ -799,43 +982,56 @@ function PackageDialog({
             </div>
           )}
         </Field>
-        <Field label={t('pricing.days')} className="span-2">
+        <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
           {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
         </Field>
-        <Field label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`} optional>
-          {(id) => (
+        <Field
+          label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`}
+          hint={t('pricing.timeWindowHint')}
+          optional
+          error={issue('startTime')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="time"
               value={form.startTime}
               onChange={(e) => set('startTime', e.target.value)}
             />
           )}
         </Field>
-        <Field label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`} optional>
-          {(id) => (
+        <Field
+          label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`}
+          optional
+          error={issue('endTime')}
+        >
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="time"
               value={form.endTime}
               onChange={(e) => set('endTime', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.validFrom')} optional>
-          {(id) => (
+        <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="date"
               value={form.validFrom}
               onChange={(e) => set('validFrom', e.target.value)}
             />
           )}
         </Field>
-        <Field label={t('pricing.validTo')} optional>
-          {(id) => (
+        <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
+          {(id, inv) => (
             <Input
               id={id}
+              aria-invalid={inv}
               type="date"
               value={form.validTo}
               onChange={(e) => set('validTo', e.target.value)}
@@ -858,7 +1054,8 @@ function PackageDialog({
             label={t('pricing.active')}
           />
         </div>
-      </div>
+        <button type="submit" hidden aria-hidden tabIndex={-1} />
+      </form>
     </Dialog>
   );
 }

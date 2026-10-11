@@ -161,6 +161,8 @@ export const ADMIN_EVENTS = [
   'notification',
   /** A backup was restored: every cached view must be reloaded. */
   'system.restored',
+  /** A role's permission set changed: signed-in users must refresh their permissions. */
+  'permissions.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

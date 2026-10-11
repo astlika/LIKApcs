@@ -13,6 +13,8 @@ type Key =
   | 'mapIconSize'
   | 'mapGroupZones'
   | 'rememberChoice'
+  /** '1' when the desktop app should start in full screen (restored at launch). */
+  | 'fullscreen'
   /** Admin version seen at the previous start — used to report a completed self-update. */
   | 'lastVersion';
 

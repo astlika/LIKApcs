@@ -15,6 +15,8 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
+  Maximize,
+  Minimize,
   Monitor,
   Moon,
   Package,
@@ -43,6 +45,7 @@ import {
 import { api } from '../../lib/api';
 import { storage } from '../../lib/storage';
 import { useAdminSocket } from '../../lib/ws';
+import { toggleFullscreen, useFullscreen } from '../../lib/fullscreen';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useUpdates } from '../../state/updates';
@@ -85,6 +88,7 @@ export function AppShell() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const live = useAdminSocket(Boolean(user));
+  const fullscreen = useFullscreen();
   const updates = useUpdates();
 
   const health = useQuery({
@@ -384,6 +388,7 @@ export function AppShell() {
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
+
           {cashStatus.isSuccess && (
             <Link
               to="/cash"
@@ -442,6 +447,18 @@ export function AppShell() {
               { value: 'sq', label: 'SQ' },
             ]}
           />
+          <Button
+            variant="ghost"
+            icon
+            size="sm"
+            data-testid="fullscreen-toggle"
+            aria-pressed={fullscreen}
+            title={`${fullscreen ? t('topbar.exitFullscreen') : t('topbar.fullscreen')} · F11 / F12`}
+            aria-label={fullscreen ? t('topbar.exitFullscreen') : t('topbar.fullscreen')}
+            onClick={() => void toggleFullscreen().catch(() => undefined)}
+          >
+            {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+          </Button>
           <Button
             variant="ghost"
             icon

@@ -5,6 +5,9 @@ import { getToken, websocketUrl } from './api';
 
 export type LiveStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
+/** DOM event fired when the server reports a role-permission change (consumed by the auth state). */
+export const PERMISSIONS_CHANGED_EVENT = 'likapcs:permissions-changed';
+
 /**
  * Maintains the /ws/admin connection while the user is signed in. Server events invalidate the
  * relevant React Query caches so every screen refreshes without polling.
@@ -71,6 +74,12 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
             case 'system.restored':
               // A backup was restored on the server: every cached view is stale.
               void queryClient.invalidateQueries();
+              break;
+            case 'permissions.changed':
+              // A role was edited: the auth provider re-reads /auth/me so the navigation,
+              // buttons and the home page follow the new permissions immediately.
+              void queryClient.invalidateQueries({ queryKey: ['roles'] });
+              window.dispatchEvent(new Event(PERMISSIONS_CHANGED_EVENT));
               break;
             default:
               break;

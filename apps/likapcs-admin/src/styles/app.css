@@ -1116,9 +1116,14 @@ button.stat:hover {
 .dialog__body {
   padding: 6px 20px 20px;
   overflow-y: auto;
+  min-height: 0; /* lets the body scroll instead of pushing the footer off-screen */
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.dialog__header,
+.dialog__footer {
+  flex: 0 0 auto;
 }
 .dialog__footer {
   display: flex;
@@ -1458,6 +1463,19 @@ button.stat:hover {
 }
 .perm-matrix .cross {
   color: var(--text-faint);
+}
+.perm-matrix__intro {
+  padding: 12px 12px 0;
+}
+.perm-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.perm-check:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }
 .json {
   margin: 0;
@@ -2262,6 +2280,71 @@ body:has(.pos) .toasts {
   max-width: 320px;
   padding-right: 14px;
   border-right: 1px solid var(--border);
+}
+.map-help {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+.map-help__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.map-help__btn:hover,
+.map-help__btn[aria-expanded='true'] {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+.map-help__pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
+  animation: rise var(--t-fast);
+}
+.map-help__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.map-help__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12.5px;
+}
+.map-help__list li {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  gap: 10px;
+  align-items: center;
+}
+.map-help__keys {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
 }
 .map-actions__code {
   font-size: 22px;

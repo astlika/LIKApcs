@@ -166,6 +166,18 @@ export interface RoleSummary {
   permissions: string[];
 }
 
+export interface PermissionSummary {
+  code: string;
+  category: string;
+  description: string;
+}
+
+/** Full replacement of a role's permission set (PUT /roles/:id/permissions). */
+export const updateRolePermissionsSchema = z.object({
+  permissions: z.array(z.string().trim().min(1).max(64)).max(200),
+});
+export type UpdateRolePermissionsRequest = z.infer<typeof updateRolePermissionsSchema>;
+
 // ─── Stations & devices ────────────────────────────────────────────────────────
 export const STATION_STATUSES = [
   'disabled',

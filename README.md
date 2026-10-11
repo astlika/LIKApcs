@@ -6,9 +6,9 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                                                                                                                             | Status (0.4.0)                                              |
+| App                | What it is                                                                                                                                                                                                             | Status (0.5.0)                                              |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                    | ✅ schema v12, 126 integration/unit tests                   |
+| **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                    | ✅ schema v12, 128 integration/unit tests                   |
 | **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings    | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
 | **LIKApcs-Client** | Windows agent for every customer PC — hardened lock screen, tray icon + settings panel, countdown widget, staff unlock (Ctrl+Alt+A), guided pairing, secure device registration, staff commands, automatic self-update | ✅ agent + kiosk shell, `LIKApcs-Client-Setup.exe` released |
 

@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { AuthenticatedUser, LoginResponse, PermissionCode } from '@likapcs/shared';
 import { api, ApiError, getToken, setToken, setUnauthorizedHandler } from '../lib/api';
+import { PERMISSIONS_CHANGED_EVENT } from '../lib/ws';
 
 interface AuthState {
   status: 'loading' | 'anonymous' | 'authenticated';
@@ -67,7 +68,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       applyUser(null, true);
     });
     void refresh();
-    return () => setUnauthorizedHandler(null);
+    const onPermissionsChanged = () => void refresh();
+    window.addEventListener(PERMISSIONS_CHANGED_EVENT, onPermissionsChanged);
+    return () => {
+      setUnauthorizedHandler(null);
+      window.removeEventListener(PERMISSIONS_CHANGED_EVENT, onPermissionsChanged);
+    };
   }, [refresh, applyUser]);
 
   const acceptSession = useCallback(

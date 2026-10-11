@@ -11,6 +11,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
+  CircleHelp,
   Cpu,
   DownloadCloud,
   KeyRound,
@@ -545,14 +546,10 @@ export function StationsPage() {
               <SelectedSummary station={selected} fetchedAt={stations.dataUpdatedAt} />
             </>
           ) : (
-            <>
-              <span className="muted">{t('map.selectHint')}</span>
-              <span className="faint" style={{ fontSize: 11.5 }}>
-                {t('map.multiSelectHint')}
-              </span>
-            </>
+            <span className="muted">{t('map.selectShort')}</span>
           )}
         </div>
+        <MapHelp />
         <div className="map-actions__buttons">
           {actions
             .filter((a) => a.bar)
@@ -746,6 +743,75 @@ export function StationsPage() {
 }
 
 /** Live one-line summary of the selected PC shown in the action bar. */
+/**
+ * Small "?" button with a popover listing the mouse/keyboard shortcuts of the map, so the
+ * instructions no longer take up space in the action bar.
+ */
+function MapHelp() {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+  const rows: { keys: string[]; text: string }[] = [
+    { keys: ['2×', 'Enter'], text: t('map.help.primary') },
+    { keys: [t('map.help.rightClick')], text: t('map.help.menu') },
+    { keys: ['Ctrl', 'Shift'], text: t('map.help.multi') },
+    { keys: ['Ctrl', 'A'], text: t('map.help.all') },
+    { keys: ['↑↓←→'], text: t('map.help.move') },
+    { keys: ['Esc'], text: t('map.help.clear') },
+    { keys: ['F9'], text: t('map.help.pos') },
+  ];
+  return (
+    <div className="map-help" ref={ref}>
+      <button
+        type="button"
+        className="map-help__btn"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title={t('map.help.title')}
+        aria-label={t('map.help.title')}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <CircleHelp size={16} />
+      </button>
+      {open && (
+        <div className="map-help__pop" role="dialog" aria-label={t('map.help.title')}>
+          <div className="map-help__title">{t('map.help.title')}</div>
+          <ul className="map-help__list">
+            {rows.map((r) => (
+              <li key={r.text}>
+                <span className="map-help__keys">
+                  {r.keys.map((k) => (
+                    <Kbd key={k}>{k}</Kbd>
+                  ))}
+                </span>
+                <span>{r.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetchedAt: number }) {
   const { t, td } = useI18n();
   const fmt = useFormat();

@@ -3,6 +3,7 @@ import {
   ROLE_RANK,
   type CreateUserRequest,
   type Paginated,
+  type PermissionSummary,
   type RoleSummary,
   type UpdateUserRequest,
   type UserSummary,
@@ -11,6 +12,7 @@ import {
 import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import type { RealtimeHub } from '../realtime/hub.js';
 import { hashPassword, verifyPassword } from '../security/password.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { SettingsService } from './settings.js';
@@ -84,6 +86,8 @@ export class UsersService {
     private readonly pool: DbPool,
     /** Optional: enforces the configurable `security.min_password_length` for new passwords. */
     private readonly settings: SettingsService | null = null,
+    /** Optional: lets signed-in Admin apps know when a role's permissions change. */
+    private readonly hub: RealtimeHub | null = null,
   ) {}
 
   /** New passwords must satisfy the business' configured minimum length (4 = PIN allowed). */
@@ -151,8 +155,86 @@ export class UsersService {
     return result.rows.map((r) => r.permission_code);
   }
 
-  async listRoles(): Promise<RoleSummary[]> {
-    const result = await this.pool.query<{
+  async listPermissions(): Promise<PermissionSummary[]> {
+    const result = await this.pool.query<PermissionSummary>(
+      'SELECT code, category, description FROM permissions ORDER BY category, code',
+    );
+    return result.rows;
+  }
+
+  /**
+   * Replaces the permission set of a role. Guard rails:
+   *  - the owner role always keeps every permission (it is the recovery path);
+   *  - an actor may only edit roles with strictly lower power than their own;
+   *  - an actor may only grant permissions they hold themselves (no escalation).
+   * Permissions are resolved from the database on every request, so the change applies to
+   * signed-in staff immediately; Admin apps are notified to refresh their navigation.
+   */
+  async updateRolePermissions(
+    roleId: string,
+    codes: readonly string[],
+    actor: AuditActor & { roles: readonly string[]; permissions: ReadonlySet<string> },
+  ): Promise<RoleSummary> {
+    const wanted = [...new Set(codes)].sort();
+    return withTransaction(this.pool, async (client) => {
+      const roleRes = await client.query<{ id: string; code: string }>(
+        'SELECT id, code FROM roles WHERE id = $1 FOR UPDATE',
+        [roleId],
+      );
+      const role = roleRes.rows[0];
+      if (!role) throw notFound('Role');
+      if (role.code === ROLES.OWNER) {
+        throw forbidden('The owner role always has every permission');
+      }
+      assertCanManageRoles(actor.roles, [role.code]);
+      const known = await client.query<{ code: string }>(
+        'SELECT code FROM permissions WHERE code = ANY($1::text[])',
+        [wanted],
+      );
+      const knownSet = new Set(known.rows.map((r) => r.code));
+      const unknown = wanted.filter((c) => !knownSet.has(c));
+      if (unknown.length > 0) throw badRequest('Unknown permission codes', { unknown });
+      const missing = wanted.filter((c) => !actor.permissions.has(c));
+      if (missing.length > 0) {
+        throw forbidden('You cannot grant permissions you do not have yourself', { missing });
+      }
+
+      const before = await client.query<{ permission_code: string }>(
+        'SELECT permission_code FROM role_permissions WHERE role_id = $1',
+        [roleId],
+      );
+      const current = new Set(before.rows.map((r) => r.permission_code));
+      const added = wanted.filter((c) => !current.has(c));
+      const removed = [...current].filter((c) => !wanted.includes(c)).sort();
+      if (added.length > 0 || removed.length > 0) {
+        await client.query('DELETE FROM role_permissions WHERE role_id = $1', [roleId]);
+        if (wanted.length > 0) {
+          await client.query(
+            `INSERT INTO role_permissions (role_id, permission_code)
+               SELECT $1, unnest($2::text[])`,
+            [roleId, wanted],
+          );
+        }
+        await recordAudit(client, actor, {
+          action: 'role.permissions_update',
+          entityType: 'role',
+          entityId: roleId,
+          details: { role: role.code, added, removed },
+          severity: 'warning',
+        });
+      }
+      const roles = await this.listRoles(client);
+      const updated = roles.find((r) => r.id === roleId);
+      if (!updated) throw notFound('Role');
+      if (added.length > 0 || removed.length > 0) {
+        this.hub?.broadcastToAdmins('permissions.changed', { roleId, role: role.code });
+      }
+      return updated;
+    });
+  }
+
+  async listRoles(db: Queryable = this.pool): Promise<RoleSummary[]> {
+    const result = await db.query<{
       id: string;
       code: string;
       name: string;

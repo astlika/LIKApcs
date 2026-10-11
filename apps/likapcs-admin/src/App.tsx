@@ -1,11 +1,13 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { SetupStatusResponse } from '@likapcs/shared';
+import { ShieldOff } from 'lucide-react';
+import { PERMISSIONS, type PermissionCode, type SetupStatusResponse } from '@likapcs/shared';
 import { api } from './lib/api';
+import { initFullscreen, isFullscreenKey, toggleFullscreen } from './lib/fullscreen';
 import { useAuth } from './state/auth';
 import { useI18n } from './i18n';
-import { Loading } from './components/ui/primitives';
+import { Card, EmptyState, Loading } from './components/ui/primitives';
 import { AppShell } from './components/layout/AppShell';
 import { ServerGate } from './components/ServerGate';
 import { LoginPage } from './pages/LoginPage';
@@ -52,7 +54,58 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children;
 }
 
+/** Where "/" lands for staff who may not see the dashboard — first page they are allowed to use. */
+const HOME_FALLBACKS: [PermissionCode, string][] = [
+  [PERMISSIONS.STATIONS_VIEW, '/stations'],
+  [PERMISSIONS.POS_SELL, '/pos'],
+  [PERMISSIONS.CASH_VIEW, '/cash'],
+  [PERMISSIONS.PRODUCTS_VIEW, '/products'],
+  [PERMISSIONS.PURCHASES_VIEW, '/purchases'],
+  [PERMISSIONS.CUSTOMERS_VIEW, '/customers'],
+  [PERMISSIONS.INVOICES_VIEW, '/invoices'],
+  [PERMISSIONS.EXPENSES_VIEW, '/expenses'],
+  [PERMISSIONS.REPORTS_VIEW, '/reports'],
+  [PERMISSIONS.USERS_VIEW, '/employees'],
+  [PERMISSIONS.SETTINGS_VIEW, '/settings'],
+  [PERMISSIONS.AUDIT_VIEW, '/audit'],
+];
+
+function HomeRoute() {
+  const { can } = useAuth();
+  const { t } = useI18n();
+  if (can(PERMISSIONS.DASHBOARD_VIEW)) return <DashboardPage />;
+  const fallback = HOME_FALLBACKS.find(([permission]) => can(permission));
+  if (fallback) return <Navigate to={fallback[1]} replace />;
+  return (
+    <Card>
+      <EmptyState
+        icon={<ShieldOff size={24} />}
+        title={t('common.noAccessTitle')}
+        hint={t('common.noAccessHint')}
+      />
+    </Card>
+  );
+}
+
+/** F11 / F12 toggle whole-app full screen on every screen, including sign-in. */
+function useFullscreenShortcut() {
+  useEffect(() => {
+    const stop = initFullscreen();
+    const onKey = (e: KeyboardEvent) => {
+      if (!isFullscreenKey(e)) return;
+      e.preventDefault();
+      void toggleFullscreen().catch(() => undefined);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      stop();
+      document.removeEventListener('keydown', onKey);
+    };
+  }, []);
+}
+
 export function App() {
+  useFullscreenShortcut();
   const { t } = useI18n();
   useEffect(() => {
     document.title = t('app.name');
@@ -74,7 +127,7 @@ export function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<DashboardPage />} />
+          <Route index element={<HomeRoute />} />
           <Route path="stations" element={<StationsPage />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="sales" element={<SalesPage />} />

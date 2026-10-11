@@ -54,8 +54,15 @@ compile error in every component that has not been updated.
 
 `GET /users?page&pageSize&search&includeInactive`, `GET /users/:id`, `POST /users`, `PATCH /users/:id`
 (fullName, email, phone, roles, isActive), `POST /users/:id/reset-password`
-(`{newPassword, mustChangePassword}`), `GET /roles` (code, name, rank, permissions[]).
+(`{newPassword, mustChangePassword}`), `GET /roles` (code, name, rank, permissions[]),
+`GET /permissions` (code, category, description), `PUT /roles/:id/permissions` (`{permissions: string[]}`,
+`users.manage`) — full replacement of a role's permission set, audited as `role.permissions_update`.
 Rank rule: an actor may only manage users with strictly lower privilege; owners may manage owners.
+Role editing: the `owner` role is immutable (always every permission — it is the recovery path), an
+actor may only edit roles of strictly lower power than their own and may only grant permissions they
+hold themselves (no escalation). Permissions are resolved from the database on every request, so a
+change applies to signed-in staff at once; Admin apps receive the `permissions.changed` event and
+re-read `/auth/me`.
 
 ### Settings (`settings.view` / `settings.manage`)
 
@@ -328,7 +335,8 @@ device-authenticated connection and shows the server's answer.
 Admin → Server   { "type": "admin.hello", "token": "<bearer token>", "protocolVersion": 1 }
 Server → Admin   { "type": "server.welcome", "protocolVersion": 1, "serverVersion": "0.1.0", "serverTime": "…" }
 Server → Admin   { "type": "server.event", "event": "station.changed" | "device.registered" | "device.changed"
-                   | "session.changed" | "notification", "payload": {...}, "ts": "…" }
+                   | "session.changed" | "notification" | "system.restored" | "permissions.changed",
+                   "payload": {...}, "ts": "…" }
                    // session.changed carries the full SessionSummary; station.changed follows it
 Admin → Server   { "type": "admin.ping" }      →   { "type": "server.pong", "serverTime": "…" }
 ```

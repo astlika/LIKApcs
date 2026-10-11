@@ -8,6 +8,38 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.5.0] - 2026-10-11
+
+### Added
+
+- **Editable role permissions — hide the Dashboard (revenue, profit, investments) from workers.**
+  _Employees → Roles & permissions_ is now a live matrix: tick or untick a box to change what a
+  role may do; each change is saved at once (`PUT /roles/:id/permissions`, audited as
+  `role.permissions_update`) and applies to signed-in staff immediately — the server resolves
+  permissions per request and pushes a `permissions.changed` event so every open Admin re-reads
+  `/auth/me`, hides the menu entries it lost and leaves the page it may no longer see. Guard rails:
+  the Owner role is immutable (always every permission — the recovery path), a user may only edit
+  roles below their own, and may only grant permissions they hold themselves. Every permission
+  shows a plain-language name next to its code (EN/SQ). Staff without `dashboard.view` land on the
+  first page they are allowed to use (Stations, POS, …) instead of the Dashboard.
+- **Full screen for the whole Admin app.** **F11** or **F12** (and a new top-bar button) switch the
+  desktop app to true full screen — no taskbar, no title bar — and back; the choice is remembered
+  and restored at the next start. In a browser the same keys use the browser's full-screen mode.
+- **Stations map help popover.** The mouse/keyboard instructions left the action bar; a small
+  **?** button opens a compact cheat-sheet (double-click/Enter, right-click, box/Ctrl/Shift
+  selection, Ctrl+A, arrows, Esc, F9). The empty action bar now just says _Select a PC_.
+
+### Fixed
+
+- **Pricing rules and packages that "would not save".** The _Save_ button was silently disabled
+  whenever the form was incomplete (a time window with only _From_ filled in, a rate such as
+  `1.500`, a cleared numeric field, no weekday) and server-side validation errors for fields
+  without a message slot were swallowed, so nothing happened and nothing explained why. _Save_ is
+  now always active: pressing it (or Enter in any field) runs the same validation as the server and
+  marks every offending field with a message in the user's language, scrolls to the first one, and
+  any server error — field-level or general — is shown in the dialog. Dialog bodies scroll on small
+  screens so the footer with _Save_ can no longer be pushed off-screen.
+
 ## [0.4.0] - 2026-10-11
 
 ### Added

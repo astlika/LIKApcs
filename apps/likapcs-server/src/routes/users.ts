@@ -5,6 +5,7 @@ import {
   createUserSchema,
   paginationQuerySchema,
   resetPasswordSchema,
+  updateRolePermissionsSchema,
   updateUserSchema,
   uuidSchema,
 } from '@likapcs/shared';
@@ -35,6 +36,23 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   app.get('/roles', { preHandler: app.requirePermission(PERMISSIONS.USERS_VIEW) }, async () => {
     return services.users.listRoles();
   });
+
+  app.get('/permissions', { preHandler: app.requirePermission(PERMISSIONS.USERS_VIEW) }, async () =>
+    services.users.listPermissions(),
+  );
+
+  app.put(
+    '/roles/:id/permissions',
+    { preHandler: app.requirePermission(PERMISSIONS.USERS_MANAGE) },
+    async (request) => {
+      const { id } = z.object({ id: uuidSchema }).parse(request.params);
+      const body = updateRolePermissionsSchema.parse(request.body);
+      return services.users.updateRolePermissions(id, body.permissions, {
+        ...actorOf(request),
+        permissions: request.auth!.permissions,
+      });
+    },
+  );
 
   app.get(
     '/users/:id',

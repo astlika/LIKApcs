@@ -44,6 +44,7 @@ const CATEGORY_OF: Record<string, string> = {
   devices: 'stations',
   pricing: 'stations',
   pos: 'pos',
+  invoices: 'pos',
   products: 'inventory',
   inventory: 'inventory',
   purchases: 'purchasing',
@@ -636,6 +637,49 @@ function ResetPasswordDialog({ user, onClose }: { user: UserSummary; onClose: ()
 // ─── Roles matrix ──────────────────────────────────────────────────────────────
 function RolesMatrix({ roles, loading }: { roles: RoleSummary[] | undefined; loading: boolean }) {
   const { t, td } = useI18n();
+  const { user, can } = useAuth();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const myRank = bestRank(user?.roles ?? []);
+  const iAmOwner = user?.roles.includes(ROLES.OWNER) ?? false;
+  const canManage = can(PERMISSIONS.USERS_MANAGE);
+  /** Roles whose permission set the current user may edit (owner is always locked). */
+  const editable = (r: RoleSummary) =>
+    canManage && r.code !== ROLES.OWNER && (r.rank > myRank || (r.rank === myRank && iAmOwner));
+
+  // One in-flight save per role; the matrix shows the optimistic state meanwhile.
+  const [pending, setPending] = useState<Record<string, string[]>>({});
+  const save = useMutation({
+    mutationFn: ({ role, permissions }: { role: RoleSummary; permissions: string[] }) =>
+      api<RoleSummary>(`/roles/${role.id}/permissions`, { method: 'PUT', body: { permissions } }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<RoleSummary[]>(['roles'], (list) =>
+        list?.map((r) => (r.id === updated.id ? updated : r)),
+      );
+      toast.success(
+        t('employees.permissionsSaved', {
+          role: t(`employees.roleNames.${updated.code}` as RoleKey),
+        }),
+      );
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onSettled: (_data, _err, vars) =>
+      setPending((p) => {
+        const next = { ...p };
+        delete next[vars.role.id];
+        return next;
+      }),
+  });
+  const toggle = (role: RoleSummary, code: string) => {
+    if (pending[role.id]) return;
+    const current = role.permissions;
+    const next = current.includes(code)
+      ? current.filter((c) => c !== code)
+      : [...current, code].sort();
+    setPending((p) => ({ ...p, [role.id]: next }));
+    save.mutate({ role, permissions: next });
+  };
+
   if (loading || !roles) return <Loading />;
   const grouped = new Map<string, string[]>();
   for (const code of ALL_PERMISSION_CODES) {
@@ -643,8 +687,14 @@ function RolesMatrix({ roles, loading }: { roles: RoleSummary[] | undefined; loa
     const category = CATEGORY_OF[prefix] ?? 'system';
     grouped.set(category, [...(grouped.get(category) ?? []), code]);
   }
+  const anyEditable = roles.some(editable);
   return (
     <Card flush>
+      <div className="perm-matrix__intro">
+        <Alert tone="info">
+          {anyEditable ? t('employees.permissionsHint') : t('employees.permissionsReadOnly')}
+        </Alert>
+      </div>
       <div className="perm-matrix-wrap">
         <table className="table perm-matrix">
           <thead>
@@ -656,6 +706,11 @@ function RolesMatrix({ roles, loading }: { roles: RoleSummary[] | undefined; loa
                   <div className="faint" style={{ fontWeight: 400, fontSize: 11 }}>
                     {t(`employees.roleDescriptions.${r.code}` as RoleDescKey)}
                   </div>
+                  {r.code === ROLES.OWNER && (
+                    <div className="faint" style={{ fontWeight: 400, fontSize: 11 }}>
+                      {t('employees.ownerLocked')}
+                    </div>
+                  )}
                 </th>
               ))}
             </tr>
@@ -665,8 +720,14 @@ function RolesMatrix({ roles, loading }: { roles: RoleSummary[] | undefined; loa
               <CategoryRows
                 key={category}
                 label={td(`employees.permissionCategories.${category}`, category)}
+                nameOf={(code) => td(`employees.permissionNames.${code.replace('.', '_')}`, code)}
                 codes={codes}
-                roles={roles}
+                roles={roles.map((r) =>
+                  pending[r.id] ? { ...r, permissions: pending[r.id]! } : r,
+                )}
+                editable={editable}
+                busy={(r) => Boolean(pending[r.id])}
+                onToggle={toggle}
               />
             ))}
           </tbody>
@@ -680,11 +741,20 @@ function CategoryRows({
   label,
   codes,
   roles,
+  nameOf,
+  editable,
+  busy,
+  onToggle,
 }: {
   label: string;
   codes: string[];
   roles: RoleSummary[];
+  nameOf: (code: string) => string;
+  editable: (role: RoleSummary) => boolean;
+  busy: (role: RoleSummary) => boolean;
+  onToggle: (role: RoleSummary, code: string) => void;
 }) {
+  const { t } = useI18n();
   return (
     <>
       <tr>
@@ -703,18 +773,34 @@ function CategoryRows({
       </tr>
       {codes.map((code) => (
         <tr key={code}>
-          <td className="mono" style={{ fontSize: 12.5 }}>
-            {code}
+          <td>
+            <div style={{ fontSize: 13 }}>{nameOf(code)}</div>
+            <div className="mono faint" style={{ fontSize: 11 }}>
+              {code}
+            </div>
           </td>
-          {roles.map((r) => (
-            <td key={r.code} style={{ textAlign: 'center' }}>
-              {r.permissions.includes(code) ? (
-                <Check size={16} className="check" />
-              ) : (
-                <X size={14} className="cross" />
-              )}
-            </td>
-          ))}
+          {roles.map((r) => {
+            const has = r.permissions.includes(code);
+            if (!editable(r)) {
+              return (
+                <td key={r.code} style={{ textAlign: 'center' }}>
+                  {has ? <Check size={16} className="check" /> : <X size={14} className="cross" />}
+                </td>
+              );
+            }
+            return (
+              <td key={r.code} style={{ textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  className="perm-check"
+                  checked={has}
+                  disabled={busy(r)}
+                  onChange={() => onToggle(r, code)}
+                  aria-label={`${nameOf(code)} · ${t(`employees.roleNames.${r.code}` as RoleKey)}`}
+                />
+              </td>
+            );
+          })}
         </tr>
       ))}
     </>

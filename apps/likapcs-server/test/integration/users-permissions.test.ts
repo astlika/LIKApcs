@@ -219,6 +219,126 @@ describe('employees, roles and permission enforcement', () => {
     expect(s2.user.mustChangePassword).toBe(true);
   });
 
+  it('owner can hide the dashboard from cashiers by editing the role permissions', async () => {
+    const perms = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/permissions',
+      headers: authHeader(owner.token),
+    });
+    expect(perms.statusCode).toBe(200);
+    expect(perms.json<{ code: string }[]>().map((p) => p.code)).toContain('dashboard.view');
+
+    const roles = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/roles',
+        headers: authHeader(owner.token),
+      })
+    ).json<RoleSummary[]>();
+    const cashierRole = roles.find((r) => r.code === 'cashier')!;
+    expect(cashierRole.permissions).toContain('dashboard.view');
+
+    // The cashier currently sees the dashboard summary.
+    const kai = await login(ctx.app, 'cashier', 'Temp12345');
+    const before = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboard/summary',
+      headers: authHeader(kai.token),
+    });
+    expect(before.statusCode).toBe(200);
+
+    const updated = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/roles/${cashierRole.id}/permissions`,
+      headers: authHeader(owner.token),
+      payload: { permissions: cashierRole.permissions.filter((p) => p !== 'dashboard.view') },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json<RoleSummary>().permissions).not.toContain('dashboard.view');
+
+    // Takes effect immediately for the signed-in cashier (permissions are resolved per request).
+    const after = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboard/summary',
+      headers: authHeader(kai.token),
+    });
+    expect(after.statusCode).toBe(403);
+    const me = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/me',
+      headers: authHeader(kai.token),
+    });
+    expect(me.json<{ permissions: string[] }>().permissions).not.toContain('dashboard.view');
+
+    // Unknown codes are rejected; the change was audited.
+    const bad = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/roles/${cashierRole.id}/permissions`,
+      headers: authHeader(owner.token),
+      payload: { permissions: ['pos.sell', 'does.not.exist'] },
+    });
+    expect(bad.statusCode).toBe(400);
+    const audit = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/audit-logs?action=role.permissions_update',
+      headers: authHeader(owner.token),
+    });
+    const entries = audit.json<Paginated<{ action: string; details: Record<string, unknown> }>>();
+    expect(entries.items[0]?.details).toMatchObject({
+      role: 'cashier',
+      removed: ['dashboard.view'],
+    });
+  });
+
+  it('role permissions cannot be escalated or edited for the owner role', async () => {
+    const roles = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/roles',
+        headers: authHeader(owner.token),
+      })
+    ).json<RoleSummary[]>();
+    const byCode = (code: string) => roles.find((r) => r.code === code)!;
+    const admin = await login(ctx.app, 'admin1', 'Admin1234');
+    const put = (token: string, roleId: string, permissions: string[]) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/roles/${roleId}/permissions`,
+        headers: authHeader(token),
+        payload: { permissions },
+      });
+    // Owner role is immutable (recovery path).
+    expect((await put(owner.token, byCode('owner').id, ['pos.sell'])).statusCode).toBe(403);
+    // An admin cannot edit a role of equal power (admin) …
+    expect((await put(admin.token, byCode('admin').id, ['pos.sell'])).statusCode).toBe(403);
+    // … but may edit the manager role, as long as they only grant what they hold themselves.
+    expect(
+      (await put(admin.token, byCode('manager').id, byCode('manager').permissions)).statusCode,
+    ).toBe(200);
+    // A manager has users.view but not users.manage → cannot touch roles at all.
+    expect((await put(manager.token, byCode('cashier').id, ['pos.sell'])).statusCode).toBe(403);
+    // A cashier cannot even list permissions.
+    const kai = await login(ctx.app, 'cashier', 'Temp12345');
+    expect(
+      (
+        await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/permissions',
+          headers: authHeader(kai.token),
+        })
+      ).statusCode,
+    ).toBe(403);
+    // Restore the cashier dashboard for the remaining tests.
+    expect(
+      (
+        await put(owner.token, byCode('cashier').id, [
+          ...byCode('cashier').permissions,
+          'dashboard.view',
+        ])
+      ).statusCode,
+    ).toBe(200);
+  });
+
   it('records every staff change in the audit log', async () => {
     const res = await ctx.app.inject({
       method: 'GET',
