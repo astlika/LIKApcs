@@ -349,9 +349,55 @@ textarea {
 .topbar__title {
   font-size: 15px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .topbar__spacer {
   flex: 1;
+}
+/* Stations ↔ POS one-click switch (also F9). */
+.quick-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 14px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+.quick-switch__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  white-space: nowrap;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+}
+.quick-switch__btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.quick-switch__btn.active {
+  color: var(--accent-contrast, #fff);
+  background: var(--accent);
+  box-shadow: var(--shadow-1);
+}
+.quick-switch .kbd {
+  margin: 0 4px 0 6px;
+  opacity: 0.7;
+}
+@media (max-width: 900px) {
+  .quick-switch__btn span,
+  .quick-switch .kbd {
+    display: none;
+  }
 }
 .content {
   flex: 1;
@@ -1712,13 +1758,23 @@ button.stat:hover {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* Photo + name share the top row: the photo is a small fixed square, the name wraps beside it
+   (up to three lines) so long names never push the photo out of shape. */
+.tile__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
 .tile__image {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  margin: -4px 0 -2px;
-  border-radius: calc(var(--radius-md) - 4px);
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--bg-sunken, rgba(0, 0, 0, 0.15));
+  border: 1px solid var(--border);
 }
 .tile__image img {
   width: 100%;
@@ -1727,13 +1783,22 @@ button.stat:hover {
   display: block;
 }
 .tile__name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   font-size: 14px;
   line-height: 1.3;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .tile__image {
+    width: 40px;
+    height: 40px;
+  }
 }
 .tile__meta {
   display: flex;
@@ -2282,6 +2347,7 @@ body:has(.pos) .toasts {
 
 /* Floor */
 .map-canvas {
+  position: relative;
   flex: 1;
   padding: 14px;
   border: 1px solid var(--border);
@@ -2290,6 +2356,71 @@ body:has(.pos) .toasts {
     radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px,
     var(--bg-app);
   min-height: 320px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.map-canvas[data-dragging] {
+  cursor: crosshair;
+}
+.map-canvas[data-dragging] .pc-tile {
+  pointer-events: none;
+}
+/* Rubber-band selection box. */
+.map-marquee {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 4px;
+  z-index: 2;
+}
+.map-actions__target[data-multi] .map-actions__code {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+}
+.map-actions__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.map-actions__clear:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.map-actions__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 44px;
+  overflow: hidden;
+}
+.map-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.map-chip[data-status='occupied'] {
+  border-color: color-mix(in srgb, var(--success, #2ecc71) 50%, transparent);
+  color: var(--success, #2ecc71);
+}
+.map-chip[data-status='offline'] {
+  opacity: 0.6;
 }
 .pc-map {
   display: flex;

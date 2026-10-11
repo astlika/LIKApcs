@@ -10,6 +10,11 @@ import { useToast } from '../state/toast';
 import { Alert, Button, Field, Input, Select, Segmented } from '../components/ui/primitives';
 
 /** First-run wizard: business identity + owner account. Only works while no user exists. */
+/** Suggested owner credentials shown (editable) in the wizard. */
+export const DEFAULT_OWNER = { fullName: 'Administrator', username: 'admin', password: 'admin' };
+const usingDefaults = (username: string, password: string) =>
+  username.trim() === DEFAULT_OWNER.username && password === DEFAULT_OWNER.password;
+
 export function SetupPage() {
   const { t, language, setLanguage } = useI18n();
   const auth = useAuth();
@@ -17,10 +22,13 @@ export function SetupPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState<0 | 1>(0);
   const [businessName, setBusinessName] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  // Pre-filled defaults so a first login is always `admin` / `admin`; every field stays editable
+  // and the wizard says so. Nothing is created until the form is submitted — there is no hidden
+  // built-in account, and the password can be changed any time from the user menu.
+  const [fullName, setFullName] = useState(DEFAULT_OWNER.fullName);
+  const [username, setUsername] = useState(DEFAULT_OWNER.username);
+  const [password, setPassword] = useState(DEFAULT_OWNER.password);
+  const [confirm, setConfirm] = useState(DEFAULT_OWNER.password);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const status = useQuery({
@@ -129,6 +137,14 @@ export function SetupPage() {
           <>
             <Alert tone="info" icon={<ShieldCheck size={18} />}>
               {t('setup.ownerIntro')}
+            </Alert>
+            <Alert tone={usingDefaults(username, password) ? 'warning' : 'success'}>
+              {usingDefaults(username, password)
+                ? t('setup.defaultsNote', {
+                    username: DEFAULT_OWNER.username,
+                    password: DEFAULT_OWNER.password,
+                  })
+                : t('setup.defaultsChanged')}
             </Alert>
             <div className="form-grid">
               <Field label={t('setup.fullName')} error={fieldError(error, 'owner.fullName')}>

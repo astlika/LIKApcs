@@ -8,6 +8,46 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.4.0] - 2026-10-11
+
+### Added
+
+- **Select several PCs on the map.** Drag a box on the floor map (rubber-band), Ctrl+click to add
+  or remove, Shift+click (or Shift+arrows) for a range in display order, Ctrl+A for every visible
+  PC, Esc or a click on the background to clear. The action bar turns into a group view
+  (_N PCs selected_ with their codes) and _Start_, _Lock/Unlock_, _Message_, _Restart_ and
+  _Shut down_ go to every selected PC in parallel — the button labels count the PCs that will
+  actually receive the command (online ones). One toast sums the outcome and names the PCs that
+  failed. _Start_ opens one quick-start dialog for the whole group (each PC is billed by its own
+  pricing rule and gets its own idempotency key); the right-click menu on a selected PC keeps the
+  group. Actions that need a bill — _Stop_, _Add time_, pause/resume, cancel, details — stay
+  single-PC and say so in their tooltip.
+- **One click between Gaming Stations and the POS.** A _Stations | POS_ switch sits in the top bar
+  of every page (for users allowed on both) and **F9** flips between the two from anywhere. The open
+  sale now lives outside the POS page (`PosCartProvider`), so the cart, the customer and a resumed
+  parked sale survive the trip — and any other navigation — until the sale is paid, parked or
+  cleared; it is dropped on sign-out.
+- **Setup wizard suggests `admin` / `admin`.** The owner step comes pre-filled with _Administrator_
+  / `admin` / `admin` (editable, with a note that says the default login out loud and turns green
+  once custom credentials are typed). Nothing is created until the form is submitted and there is
+  no hidden built-in account; existing installations are untouched (`Employees` page or
+  `create-admin` remain the recovery paths).
+
+### Changed
+
+- **Product photos on POS tiles are small squares** (48 px, 40 px on narrow windows) beside the
+  name instead of a 16:9 banner across the tile; long names wrap up to three lines next to the
+  photo and never distort it. Tiles without a photo are unchanged.
+
+### Tests
+
+- `apps/likapcs-admin/src/lib/map-selection.test.ts` covers zone ordering, Shift ranges, Ctrl
+  toggles, marquee geometry and bulk summaries (admin: 27 unit tests). New browser smoke
+  `LIKApcs-smoke/phase8d.mjs` (32 checks) drives three simulated online client PCs through
+  marquee / Ctrl / Shift / Ctrl+A selection, bulk message + lock (each PC acknowledges exactly
+  one command), a two-PC quick start, the F9 round trip with a full cart, the square tile
+  geometry and the wizard defaults on a fresh database (`admin` / `admin` then signs in).
+
 ## [0.3.0] - 2026-10-11
 
 ### Added

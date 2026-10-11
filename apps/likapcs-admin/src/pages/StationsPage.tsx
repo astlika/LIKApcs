@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -33,7 +41,15 @@ import {
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
-import { StationMap } from '../components/stations/StationMap';
+import { StationMap, type SelectModifiers } from '../components/stations/StationMap';
+import {
+  intersects,
+  mapOrder,
+  normalizeRect,
+  rangeIds,
+  toggleId,
+  unionIds,
+} from '../lib/map-selection';
 import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcDialog';
 import { useStationActions } from '../components/stations/useStationActions';
 import { formatHms, projectSession } from '../lib/session-time';
@@ -142,8 +158,30 @@ export function StationsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selection: an ordered id list (several PCs via marquee / Ctrl+click / Shift+click) plus the
+  // anchor — the PC last clicked, which single-PC flows and Shift ranges work from.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [anchorId, setAnchorId] = useState<string | null>(null);
+  const setSelectedId = useCallback((id: string | null) => {
+    setSelectedIds(id ? [id] : []);
+    setAnchorId(id);
+  }, []);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{
+    startX: number;
+    startY: number;
+    additive: boolean;
+    base: string[];
+    moved: boolean;
+    raf: number;
+  } | null>(null);
   const [zone, setZone] = useState<string>('');
   const [iconSize, setIconSize] = useState<number>(() => Number(storage.get('mapIconSize') ?? 96));
   const [groupByZone, setGroupByZone] = useState<boolean>(
@@ -159,7 +197,7 @@ export function StationsPage() {
       params.delete('focus');
       setParams(params, { replace: true });
     }
-  }, [params, setParams]);
+  }, [params, setParams, setSelectedId]);
 
   const list = useMemo(() => stations.data ?? [], [stations.data]);
   const zones = useMemo(
@@ -187,7 +225,108 @@ export function StationsPage() {
     [list],
   );
   const detail = list.find((s) => s.id === detailId) ?? null;
-  const selected = list.find((s) => s.id === selectedId) ?? null;
+  // Selection pruned to stations that still exist and are visible in the current zone filter.
+  const selectedStations = useMemo(() => {
+    const byId = new Map(visible.map((s) => [s.id, s]));
+    return selectedIds.map((id) => byId.get(id)).filter((s): s is StationSummary => !!s);
+  }, [selectedIds, visible]);
+  const selectedSet = useMemo(() => new Set(selectedStations.map((s) => s.id)), [selectedStations]);
+  const selected = selectedStations.find((s) => s.id === anchorId) ?? selectedStations[0] ?? null;
+  const selectedId = selected?.id ?? null;
+  const displayOrder = useMemo(() => mapOrder(visible, groupByZone).flat(), [visible, groupByZone]);
+
+  /** Click on a tile with modifier keys: plain = only this, Ctrl = toggle, Shift = range. */
+  const selectTile = useCallback(
+    (id: string, mods: SelectModifiers) => {
+      setMenu(null);
+      if (mods.keep && selectedSet.has(id)) {
+        setAnchorId(id);
+        return;
+      }
+      if (mods.range && anchorId) {
+        const range = rangeIds(displayOrder, anchorId, id);
+        if (range) {
+          setSelectedIds(mods.toggle ? unionIds(selectedIds, range) : range);
+          return; // the anchor stays where it was so the range can be re-stretched
+        }
+      }
+      if (mods.toggle) {
+        const next = toggleId(selectedIds, id);
+        setSelectedIds(next.ids);
+        setAnchorId(next.anchor);
+        return;
+      }
+      setSelectedId(id);
+    },
+    [anchorId, displayOrder, selectedIds, selectedSet, setSelectedId],
+  );
+
+  // Rubber-band selection: drag on the canvas background; tiles touching the box are selected
+  // (Ctrl adds them to the current selection). A plain click on the background deselects.
+  const hitTest = useCallback((x1: number, y1: number, x2: number, y2: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return [];
+    const box = normalizeRect(x1, y1, x2, y2);
+    const hits: string[] = [];
+    for (const el of canvas.querySelectorAll<HTMLElement>('.pc-tile[data-id]')) {
+      if (intersects(box, el.getBoundingClientRect())) hits.push(el.dataset.id!);
+    }
+    return hits;
+  }, []);
+  const onCanvasPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.pointerType === 'touch') return;
+    if ((e.target as HTMLElement).closest('.pc-tile')) return;
+    // The start point is kept relative to the canvas so the box stays put if the page scrolls.
+    const rc = e.currentTarget.getBoundingClientRect();
+    drag.current = {
+      startX: e.clientX - rc.left,
+      startY: e.clientY - rc.top,
+      additive: e.ctrlKey || e.metaKey,
+      base: selectedIds,
+      moved: false,
+      raf: 0,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setMenu(null);
+  };
+  const onCanvasPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const canvas = canvasRef.current;
+    if (!d || !canvas) return;
+    const { clientX, clientY } = e;
+    const rc0 = canvas.getBoundingClientRect();
+    if (!d.moved && Math.hypot(clientX - rc0.left - d.startX, clientY - rc0.top - d.startY) < 4)
+      return;
+    d.moved = true;
+    e.preventDefault();
+    if (d.raf) return; // one hit test per frame
+    d.raf = window.requestAnimationFrame(() => {
+      d.raf = 0;
+      const rc = canvas.getBoundingClientRect();
+      const x = clientX - rc.left;
+      const y = clientY - rc.top;
+      setMarquee({
+        left: Math.min(d.startX, x),
+        top: Math.min(d.startY, y),
+        width: Math.abs(x - d.startX),
+        height: Math.abs(y - d.startY),
+      });
+      const hits = hitTest(d.startX + rc.left, d.startY + rc.top, clientX, clientY);
+      const next = d.additive ? unionIds(d.base, hits) : hits;
+      setSelectedIds(next);
+      setAnchorId(hits[hits.length - 1] ?? d.base[d.base.length - 1] ?? null);
+    });
+  };
+  const onCanvasPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (d.raf) window.cancelAnimationFrame(d.raf);
+    if (e.currentTarget.hasPointerCapture(e.pointerId))
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    setMarquee(null);
+    if (!d.moved && !d.additive) setSelectedId(null);
+  };
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['stations'] });
@@ -195,8 +334,11 @@ export function StationsPage() {
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
   }, [queryClient]);
 
-  const { actions, primary, run, busy, dialogs } = useStationActions(selected, invalidate, (id) =>
-    setDetailId(id),
+  const { actions, primary, run, busy, dialogs, multi } = useStationActions(
+    selected,
+    invalidate,
+    (id) => setDetailId(id),
+    selectedStations,
   );
 
   // Double-click / Enter on a tile: run the primary action for *that* station after the
@@ -220,12 +362,16 @@ export function StationsPage() {
       if (!visible.length) return;
       // A focused tile handles Enter itself (see StationTile) — avoid running the action twice.
       if (e.key === 'Enter' && target?.closest('.pc-tile')) return;
-      const idx = visible.findIndex((s) => s.id === selectedId);
+      const order = displayOrder;
+      const idx = order.findIndex((s) => s.id === selectedId);
       const move = (delta: number) => {
         e.preventDefault();
-        const next = idx < 0 ? 0 : Math.min(visible.length - 1, Math.max(0, idx + delta));
-        const id = visible[next]!.id;
-        setSelectedId(id);
+        const next = idx < 0 ? 0 : Math.min(order.length - 1, Math.max(0, idx + delta));
+        const id = order[next]!.id;
+        // Shift+arrow grows the selection, a plain arrow moves it.
+        if (e.shiftKey) setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+        else setSelectedIds([id]);
+        setAnchorId(id);
         setMenu(null);
         // Focus follows the selection so Enter / context-menu keys act on the highlighted PC.
         document.querySelector<HTMLElement>(`.pc-tile[data-id="${CSS.escape(id)}"]`)?.focus();
@@ -234,7 +380,12 @@ export function StationsPage() {
       else if (e.key === 'ArrowLeft') move(-1);
       else if (e.key === 'ArrowDown') move(perRow());
       else if (e.key === 'ArrowUp') move(-perRow());
-      else if (e.key === 'Escape') {
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setSelectedIds(order.map((s) => s.id));
+        setAnchorId(selectedId ?? order[0]!.id);
+        setMenu(null);
+      } else if (e.key === 'Escape') {
         setMenu(null);
         setSelectedId(null);
       } else if (e.key === 'Enter' && selected && primary) {
@@ -250,7 +401,7 @@ export function StationsPage() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [visible, selectedId, selected, primary, run]);
+  }, [visible, displayOrder, selectedId, selected, primary, run, setSelectedId]);
 
   useEffect(() => {
     if (!menu) return;
@@ -353,8 +504,37 @@ export function StationsPage() {
       {canDevices && <FirewallCard bannerOnly />}
 
       <div className="map-actions" role="toolbar" aria-label={t('common.actions')}>
-        <div className="map-actions__target">
-          {selected ? (
+        <div className="map-actions__target" data-multi={multi || undefined}>
+          {multi && selected ? (
+            <>
+              <span className="map-actions__code">
+                {t('map.nSelected', { n: selectedStations.length })}
+                <button
+                  type="button"
+                  className="map-actions__clear"
+                  onClick={() => setSelectedId(null)}
+                  title={t('map.clearSelection')}
+                  aria-label={t('map.clearSelection')}
+                >
+                  <X size={14} />
+                </button>
+              </span>
+              <span
+                className="map-actions__chips"
+                title={selectedStations.map((s) => s.code).join(', ')}
+              >
+                {selectedStations.slice(0, 10).map((s) => (
+                  <span key={s.id} className="map-chip" data-status={s.status}>
+                    {s.code}
+                  </span>
+                ))}
+                {selectedStations.length > 10 && (
+                  <span className="map-chip">+{selectedStations.length - 10}</span>
+                )}
+              </span>
+              <span className="map-actions__name">{t('map.multiHint')}</span>
+            </>
+          ) : selected ? (
             <>
               <span className="map-actions__code">{selected.code}</span>
               <span className="map-actions__name">
@@ -365,7 +545,12 @@ export function StationsPage() {
               <SelectedSummary station={selected} fetchedAt={stations.dataUpdatedAt} />
             </>
           ) : (
-            <span className="muted">{t('map.selectHint')}</span>
+            <>
+              <span className="muted">{t('map.selectHint')}</span>
+              <span className="faint" style={{ fontSize: 11.5 }}>
+                {t('map.multiSelectHint')}
+              </span>
+            </>
           )}
         </div>
         <div className="map-actions__buttons">
@@ -419,32 +604,46 @@ export function StationsPage() {
       {visible.length > 0 && (
         <div
           className="map-canvas"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setSelectedId(null);
-          }}
+          ref={canvasRef}
+          data-dragging={marquee ? '' : undefined}
+          onPointerDown={onCanvasPointerDown}
+          onPointerMove={onCanvasPointerMove}
+          onPointerUp={onCanvasPointerUp}
+          onPointerCancel={onCanvasPointerUp}
         >
           <StationMap
             stations={visible}
             fetchedAt={stations.dataUpdatedAt}
-            selectedId={selectedId}
+            selectedIds={selectedSet}
             size={iconSize}
             groupByZone={groupByZone}
-            onSelect={(id) => {
-              setSelectedId(id);
-              setMenu(null);
-            }}
+            onSelect={selectTile}
             onPrimary={(id) => {
               // run() must see the newly selected station, so the primary action is
               // executed by the effect below once the selection has re-rendered.
               pendingPrimary.current = id;
-              setSelectedId(id);
+              if (!selectedSet.has(id) || selectedStations.length <= 1) setSelectedId(id);
+              else setAnchorId(id);
               setMenu(null);
             }}
             onMenu={(id, x, y) => {
-              setSelectedId(id);
+              // selectTile() already handled the selection (keeps a group the tile is in).
+              if (!selectedSet.has(id)) setSelectedId(id);
               setMenu({ x, y });
             }}
           />
+          {marquee && (
+            <div
+              className="map-marquee"
+              aria-hidden
+              style={{
+                left: marquee.left,
+                top: marquee.top,
+                width: marquee.width,
+                height: marquee.height,
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -459,9 +658,14 @@ export function StationsPage() {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="ctx-menu__title">
-            {selected.name === selected.code
-              ? selected.code
-              : `${selected.code} · ${selected.name}`}
+            {multi
+              ? `${t('map.nSelected', { n: selectedStations.length })} · ${selectedStations
+                  .slice(0, 6)
+                  .map((s) => s.code)
+                  .join(', ')}${selectedStations.length > 6 ? '…' : ''}`
+              : selected.name === selected.code
+                ? selected.code
+                : `${selected.code} · ${selected.name}`}
           </div>
           {actions.map((a) => (
             <button

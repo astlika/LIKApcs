@@ -55,6 +55,7 @@ import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
+import { usePosCart } from '../state/pos-cart';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
 import { CustomerPicker } from '../components/customers/CustomerPicker';
 import {
@@ -85,13 +86,20 @@ export function PosPage() {
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
 
-  const [cart, setCart] = useState<Cart>(() => emptyCart());
-  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
-  const [resumedId, setResumedId] = useState<string | null>(null);
+  // The draft sale lives in PosCartProvider so it survives switching pages (F9 Stations ↔ POS).
+  const {
+    cart,
+    setCart,
+    customer,
+    setCustomer,
+    resumedId,
+    setResumedId,
+    categoryId,
+    setCategoryId,
+  } = usePosCart();
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
-  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -138,7 +146,7 @@ export function PosPage() {
     setSearch('');
     setDialog(null);
     focusSearch();
-  }, [focusSearch]);
+  }, [focusSearch, setCart, setCustomer, setResumedId]);
 
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
@@ -146,7 +154,7 @@ export function PosPage() {
       setCart((c) => addToCart(c, product, quantityMilli));
       focusSearch();
     },
-    [focusSearch],
+    [focusSearch, setCart],
   );
 
   // Leaving the "sale completed" screen: refresh what the sale changed (stock on the tiles, the
@@ -228,7 +236,7 @@ export function PosPage() {
       });
       setResumedId(sale.id);
     });
-  }, [params, setParams]);
+  }, [params, setParams, setCart, setCustomer, setResumedId]);
 
   // Global shortcuts.
   useEffect(() => {
@@ -357,12 +365,16 @@ export function PosPage() {
                   p.categoryColor ? { ['--tile-accent' as string]: p.categoryColor } : undefined
                 }
               >
-                {p.imageUrl && (
-                  <div className="tile__image" aria-hidden>
-                    <img src={fileUrl(p.imageUrl) ?? undefined} alt="" loading="lazy" />
+                <div className="tile__head">
+                  {p.imageUrl && (
+                    <div className="tile__image" aria-hidden>
+                      <img src={fileUrl(p.imageUrl) ?? undefined} alt="" loading="lazy" />
+                    </div>
+                  )}
+                  <div className="tile__name" title={p.name}>
+                    {p.name}
                   </div>
-                )}
-                <div className="tile__name">{p.name}</div>
+                </div>
                 <div className="tile__meta">
                   <span className="num">{fmt.money(p.sellingPriceCents)}</span>
                   {p.trackStock && (

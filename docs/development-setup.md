@@ -81,8 +81,10 @@ pnpm dev:admin           # Vite → http://localhost:1420  (proxies /api and /ws
 ```
 
 Open http://localhost:1420. On a fresh database you land on the **setup wizard**:
-business name → owner account (username + password ≥ 8 chars with letters and digits). You are then
-signed in as the owner.
+business name → owner account. The owner step comes pre-filled with **`admin` / `admin`**
+("Administrator"); keep it for a quick start or type your own (password ≥ 4 chars). Nothing exists
+until you press _Create account_ — there is no hidden built-in account — and the password can be
+changed any time from the user menu. You are then signed in as the owner.
 
 If your server runs on another machine, either start Vite with
 `LIKAPCS_SERVER_URL=http://192.168.1.10:4700 pnpm dev:admin`, or open the login screen →

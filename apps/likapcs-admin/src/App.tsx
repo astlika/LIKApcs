@@ -30,6 +30,7 @@ import { CustomersPage } from './pages/CustomersPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ShiftGuardProvider } from './state/shift-guard';
+import { PosCartProvider } from './state/pos-cart';
 
 /** Redirects anonymous visitors to /login (or /setup on a fresh server). */
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -66,7 +67,9 @@ export function App() {
           element={
             <RequireAuth>
               <ShiftGuardProvider>
-                <AppShell />
+                <PosCartProvider>
+                  <AppShell />
+                </PosCartProvider>
               </ShiftGuardProvider>
             </RequireAuth>
           }

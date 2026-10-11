@@ -94,6 +94,10 @@ export const en = {
     logout: 'Sign out',
     search: 'Search',
     searchHint: 'Ctrl+K',
+    switchStations: 'Stations',
+    switchPos: 'POS',
+    quickSwitch: 'Switch screen',
+    quickSwitchHint: 'F9 switches between Gaming Stations and POS — the open sale is kept.',
   },
   auth: {
     signIn: 'Sign in',
@@ -141,6 +145,9 @@ export const en = {
     fullName: 'Full name',
     finish: 'Create account and continue',
     done: 'Setup complete. Welcome!',
+    defaultsNote:
+      'Default login: username {username} / password {password}. You can log in with these right away — change the password later from the user menu (top right).',
+    defaultsChanged: 'Custom credentials — write them down, there is no other built-in account.',
   },
   dashboard: {
     title: 'Dashboard',
@@ -291,6 +298,10 @@ export const en = {
       error: 'Client error',
       replaced: 'Replaced by new connection',
     },
+    bulkOk: '{command} sent to {n} PCs.',
+    bulkPartial: '{command}: {ok} OK, {failed} failed ({codes}).',
+    powerConfirmMany:
+      'This affects {n} PCs: {codes}. Running sessions keep billing on the server. Continue?',
   },
   employees: {
     title: 'Employees',
@@ -724,6 +735,17 @@ export const en = {
     presetClosing: 'We are closing in 15 minutes.',
     presetCome: 'Please come to the counter.',
     presetQuiet: 'Please keep the noise down.',
+    nSelected: '{n} PCs selected',
+    nPcs: '{n} PCs',
+    clearSelection: 'Clear selection',
+    multiHint: 'Actions apply to every selected PC.',
+    multiSelectHint: 'Drag a box, Ctrl+click or Shift+click to select several PCs · Ctrl+A all',
+    singleOnly: 'Select a single PC for this action',
+    noneStartable: 'No free PC in the selection',
+    startManyTitle: 'Start {n} PCs',
+    startManyHint: 'Prices shown for {code}; every PC is billed by its own pricing rule.',
+    startedMany: 'Session started on {n} PCs.',
+    startedPartial: 'Started on {ok}, failed on {failed}: {codes}',
   },
   settings: {
     title: 'Settings',

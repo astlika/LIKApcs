@@ -6,7 +6,7 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                                                                                                                             | Status (0.3.0)                                              |
+| App                | What it is                                                                                                                                                                                                             | Status (0.4.0)                                              |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                    | ✅ schema v12, 126 integration/unit tests                   |
 | **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings    | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
@@ -59,7 +59,7 @@ pnpm install
 cp .env.example apps/likapcs-server/.env   # set LIKAPCS_DATABASE_URL
 pnpm db:migrate
 pnpm dev:server                        # http://0.0.0.0:4700
-pnpm dev:admin                         # http://localhost:1420 → setup wizard
+pnpm dev:admin                         # http://localhost:1420 → setup wizard (owner pre-filled: admin / admin, editable)
 ```
 
 Full instructions: [docs/development-setup.md](docs/development-setup.md).

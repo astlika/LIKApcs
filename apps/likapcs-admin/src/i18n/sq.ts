@@ -96,6 +96,10 @@ export const sq: Dictionary = {
     logout: 'Dil',
     search: 'Kërko',
     searchHint: 'Ctrl+K',
+    switchStations: 'Stacionet',
+    switchPos: 'Arka',
+    quickSwitch: 'Ndërro ekranin',
+    quickSwitchHint: 'F9 kalon mes Stacioneve dhe Arkës — shitja e hapur ruhet.',
   },
   auth: {
     signIn: 'Hyr',
@@ -146,6 +150,10 @@ export const sq: Dictionary = {
     fullName: 'Emri i plotë',
     finish: 'Krijo llogarinë dhe vazhdo',
     done: 'Konfigurimi përfundoi. Mirë se vini!',
+    defaultsNote:
+      'Hyrja e parazgjedhur: përdoruesi {username} / fjalëkalimi {password}. Mund të hysh menjëherë me këto — fjalëkalimin e ndryshon më vonë nga menyja e përdoruesit (lart djathtas).',
+    defaultsChanged:
+      'Kredenciale të personalizuara — shënoji diku, nuk ka asnjë llogari tjetër të paracaktuar.',
   },
   dashboard: {
     title: 'Paneli',
@@ -300,6 +308,10 @@ export const sq: Dictionary = {
       error: 'Gabim i klientit',
       replaced: 'U zëvendësua nga një lidhje e re',
     },
+    bulkOk: '{command} u dërgua në {n} PC.',
+    bulkPartial: '{command}: {ok} OK, {failed} dështuan ({codes}).',
+    powerConfirmMany:
+      'Kjo prek {n} PC: {codes}. Seancat aktive vazhdojnë të faturohen në server. Vazhdon?',
   },
   employees: {
     title: 'Punonjësit',
@@ -733,6 +745,18 @@ export const sq: Dictionary = {
     presetClosing: 'Mbyllim pas 15 minutash.',
     presetCome: 'Ju lutem ejani te banaku.',
     presetQuiet: 'Ju lutem mos bëni zhurmë.',
+    nSelected: '{n} PC të zgjedhur',
+    nPcs: '{n} PC',
+    clearSelection: 'Pastro zgjedhjen',
+    multiHint: 'Veprimet zbatohen në çdo PC të zgjedhur.',
+    multiSelectHint:
+      'Tërhiq një kuti me mausin, Ctrl+klik ose Shift+klik për të zgjedhur disa PC · Ctrl+A të gjithë',
+    singleOnly: 'Zgjidh vetëm një PC për këtë veprim',
+    noneStartable: 'Asnjë PC i lirë në zgjedhje',
+    startManyTitle: 'Nis {n} PC',
+    startManyHint: 'Çmimet shfaqen për {code}; çdo PC faturohet sipas rregullit të vet.',
+    startedMany: 'Seanca nisi në {n} PC.',
+    startedPartial: 'Nisi në {ok}, dështoi në {failed}: {codes}',
   },
   settings: {
     title: 'Cilësimet',

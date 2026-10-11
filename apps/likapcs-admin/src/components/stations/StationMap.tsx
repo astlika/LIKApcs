@@ -1,7 +1,9 @@
 /**
  * PanCafe-style floor map: every station is a PC icon whose screen colour is its live state, with
  * the station number on the screen and the running timer / amount underneath. One click selects,
- * double-click (or Enter) runs the primary action, right-click opens the action menu.
+ * Ctrl+click adds/removes, Shift+click selects a range, double-click (or Enter) runs the primary
+ * action, right-click opens the action menu. Rubber-band selection lives in the page (it needs
+ * the scrolling canvas).
  */
 import { useMemo } from 'react';
 import type { StationStatus, StationSummary } from '@likapcs/shared';
@@ -9,8 +11,22 @@ import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useNow } from '../sessions/SessionPanel';
+import { mapOrder } from '../../lib/map-selection';
 
 export type MapStatus = StationStatus | 'expiring';
+
+/** Modifier keys held while clicking a tile (Ctrl/Cmd toggles, Shift selects a range). */
+export interface SelectModifiers {
+  toggle: boolean;
+  range: boolean;
+  /** Right-click: keep an existing multi-selection the tile is part of. */
+  keep?: boolean;
+}
+
+export const modifiersOf = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => ({
+  toggle: e.ctrlKey || e.metaKey,
+  range: e.shiftKey,
+});
 
 /** Resolve the colour-state shown on the icon (adds "expiring" for prepaid sessions < 5 min). */
 export function mapStatus(station: StationSummary, remaining: number | null): MapStatus {
@@ -114,7 +130,7 @@ export function StationTile({
   fetchedAt: number;
   selected: boolean;
   size: number;
-  onSelect: () => void;
+  onSelect: (mods: SelectModifiers) => void;
   onPrimary: () => void;
   onMenu: (x: number, y: number) => void;
 }) {
@@ -155,14 +171,16 @@ export function StationTile({
       aria-pressed={selected}
       aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
       style={{ width: size + 24 }}
-      onClick={onSelect}
+      onClick={(e) => onSelect(modifiersOf(e))}
       onDoubleClick={(e) => {
         e.preventDefault();
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
         onPrimary();
       }}
       onContextMenu={(e) => {
         e.preventDefault();
-        onSelect();
+        // Right-click keeps a multi-selection the tile belongs to (the page decides).
+        onSelect({ toggle: false, range: false, keep: true });
         onMenu(e.clientX, e.clientY);
       }}
       onKeyDown={(e) => {
@@ -227,7 +245,7 @@ export function StationTile({
 export function StationMap({
   stations,
   fetchedAt,
-  selectedId,
+  selectedIds,
   size,
   groupByZone,
   onSelect,
@@ -236,26 +254,22 @@ export function StationMap({
 }: {
   stations: StationSummary[];
   fetchedAt: number;
-  selectedId: string | null;
+  selectedIds: ReadonlySet<string>;
   size: number;
   groupByZone: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, mods: SelectModifiers) => void;
   onPrimary: (id: string) => void;
   onMenu: (id: string, x: number, y: number) => void;
 }) {
   const { t } = useI18n();
-  const groups = useMemo(() => {
-    if (!groupByZone) return [{ zone: null as string | null, items: stations }];
-    const map = new Map<string | null, StationSummary[]>();
-    for (const s of stations) {
-      const key = s.zone?.trim() || null;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(s);
-    }
-    return [...map.entries()]
-      .sort(([a], [b]) => (a ?? '\uffff').localeCompare(b ?? '\uffff'))
-      .map(([zone, items]) => ({ zone, items }));
-  }, [stations, groupByZone]);
+  const groups = useMemo(
+    () =>
+      mapOrder(stations, groupByZone).map((items) => ({
+        zone: groupByZone ? (items[0]?.zone?.trim() ?? null) || null : null,
+        items,
+      })),
+    [stations, groupByZone],
+  );
 
   return (
     <div className="pc-map">
@@ -270,9 +284,9 @@ export function StationMap({
                 key={s.id}
                 station={s}
                 fetchedAt={fetchedAt}
-                selected={s.id === selectedId}
+                selected={selectedIds.has(s.id)}
                 size={size}
-                onSelect={() => onSelect(s.id)}
+                onSelect={(mods) => onSelect(s.id, mods)}
                 onPrimary={() => onPrimary(s.id)}
                 onMenu={(x, y) => onMenu(s.id, x, y)}
               />

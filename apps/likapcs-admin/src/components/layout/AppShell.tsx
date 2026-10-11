@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
@@ -106,16 +106,24 @@ export function AppShell() {
     refetchInterval: 30_000,
   });
 
+  // F9 flips between the two operational screens from anywhere (the POS draft survives the trip,
+  // see PosCartProvider). Only offered to users who may open both.
+  const navigate = useNavigate();
+  const canSwitch = can(PERMISSIONS.STATIONS_VIEW) && can(PERMISSIONS.POS_SELL);
+  const switchTarget = location.pathname === '/pos' ? '/stations' : '/pos';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((v) => !v);
+      } else if (e.key === 'F9' && !e.ctrlKey && !e.altKey && !e.metaKey && canSwitch) {
+        e.preventDefault();
+        navigate(switchTarget);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  }, [canSwitch, switchTarget, navigate]);
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
@@ -344,6 +352,22 @@ export function AppShell() {
       <div className="main">
         <header className="topbar">
           <div className="topbar__title">{titles[location.pathname] ?? t('app.name')}</div>
+          {canSwitch && (
+            <div
+              className="quick-switch"
+              role="group"
+              aria-label={t('topbar.quickSwitch')}
+              title={t('topbar.quickSwitchHint')}
+            >
+              <NavLink to="/stations" className="quick-switch__btn" end>
+                <Monitor size={15} /> <span>{t('topbar.switchStations')}</span>
+              </NavLink>
+              <NavLink to="/pos" className="quick-switch__btn" end>
+                <ShoppingCart size={15} /> <span>{t('topbar.switchPos')}</span>
+              </NavLink>
+              <Kbd>F9</Kbd>
+            </div>
+          )}
           <div className="topbar__spacer" />
           {updates.update &&
             (updates.status === 'available' ||
