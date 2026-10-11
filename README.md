@@ -8,4 +8,4 @@ Machine-read by the LIKApcs auto-updater — **downloads are on the [releases pa
 | `latest-client.json` | LIKApcs-Client on the gaming PCs |
 | `SHA256SUMS.txt` | checksums of the current installers |
 
-Current version: **0.2.1**. Written by the Release workflow; do not edit by hand.
+Current version: **0.3.0**. Written by the Release workflow; do not edit by hand.
