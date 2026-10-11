@@ -33,7 +33,7 @@ describe('rankLanAddresses()', () => {
     const ranked = rankLanAddresses({
       Ethernet: [
         v4('10.0.0.5'),
-        { ...v4('10.0.0.5'), family: 'IPv6', address: 'fe80::1', cidr: 'fe80::1/64' },
+        { ...v4('10.0.0.5'), family: 'IPv6', address: 'fe80::1', cidr: 'fe80::1/64', scopeid: 0 },
       ],
       'Ethernet 2': [v4('10.0.0.5')],
     });

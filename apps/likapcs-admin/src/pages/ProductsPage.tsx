@@ -2,7 +2,7 @@
  * Products & inventory: catalogue list with search/category/low-stock filters, product editor
  * (barcodes, opening stock), stock adjustments / counts and the per-product movement ledger.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
@@ -34,6 +34,7 @@ import {
   type PendingImage,
 } from '../components/catalog/ProductImageField';
 import { useFormat } from '../lib/format';
+import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -80,6 +81,15 @@ export function ProductsPage() {
   const [movementsFor, setMovementsFor] = useState<ProductSummary | null>(null);
   const [deleting, setDeleting] = useState<ProductSummary | null>(null);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  // A scan on the list finds the product (exact barcode match in the search); while a dialog is
+  // open the dialog owns the scanner.
+  const dialogOpen = Boolean(editing || adjusting || movementsFor || deleting || categoriesOpen);
+  const onListScan = useCallback((code: string) => {
+    setQ(code);
+    setPage(1);
+  }, []);
+  useBarcodeScanner({ onScan: onListScan, focusTarget: searchRef, enabled: !dialogOpen });
 
   useEffect(() => {
     const h = setTimeout(() => setDebouncedQ(q.trim()), 250);
@@ -146,6 +156,7 @@ export function ProductsPage() {
       />
       <div className="toolbar">
         <Input
+          ref={searchRef}
           placeholder={t('products.search')}
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -545,11 +556,18 @@ function ProductDialog({
   });
   const existingBarcodes = existing.data?.barcodes ?? product?.barcodes ?? [];
 
-  const onAddBarcode = () => {
-    const code = newBarcode.trim();
+  const onAddBarcode = (scanned?: string) => {
+    const code = (scanned ?? newBarcode).trim();
     const packMilli = toMilli(newPack || '1');
     if (!/^[A-Za-z0-9._-]{3,64}$/.test(code) || !packMilli || packMilli < 1) {
       toast.error(t('common.invalid'));
+      return;
+    }
+    const known = product
+      ? existingBarcodes.some((b) => b.barcode === code)
+      : barcodes.some((b) => b.barcode === code);
+    if (known) {
+      toast.error(t('products.barcodeAlreadyListed', { code }));
       return;
     }
     const input: ProductBarcodeInput = {
@@ -562,6 +580,9 @@ function ProductDialog({
     setNewBarcode('');
     setNewPack('1');
   };
+  // Scanning anywhere in the dialog adds the barcode — whichever field had the focus (the code
+  // is removed from it again by the scanner hook), so "new product → scan → save" just works.
+  useBarcodeScanner({ onScan: onAddBarcode });
 
   const fe = (field: string) => fieldError(error, field);
   const valid =
@@ -863,6 +884,7 @@ function ProductDialog({
                     onAddBarcode();
                   }
                 }}
+                data-testid="product-barcode-input"
               />
             )}
           </Field>
@@ -878,7 +900,7 @@ function ProductDialog({
             )}
           </Field>
           <Button
-            onClick={onAddBarcode}
+            onClick={() => onAddBarcode()}
             loading={addBarcode.isPending}
             disabled={!newBarcode.trim()}
           >

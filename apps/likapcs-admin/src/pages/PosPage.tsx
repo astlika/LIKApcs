@@ -1,7 +1,12 @@
 /**
- * Point of sale. Keyboard-first: F2 search/scan field, F4 new sale, F6 payment, F8 complete,
- * Esc closes dialogs. USB barcode scanners act as keyboards — a fast burst ending in Enter is
- * looked up as a code; slower typing searches by name.
+ * Point of sale. Keyboard-first: F2 search/scan field, F4 new sale, F6 payment, F8 / Enter
+ * complete, Esc closes dialogs. USB barcode scanners act as keyboards — a fast burst ending in
+ * Enter is picked up anywhere on the page (`useBarcodeScanner`), whatever has the focus; slower
+ * typing in the search field searches by name.
+ *
+ * After a payment the "sale completed" screen shows the change due with Print / Finish and starts
+ * the next sale by itself after `pos.auto_finish_seconds`; printing is on demand unless
+ * `pos.auto_print_receipt` is on. Payment is cash only unless `pos.card_payments` is enabled.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -39,13 +44,14 @@ import {
   cartTotals,
   emptyCart,
   removeLine,
-  ScanBuffer,
   setLineDiscount,
   setQuantity,
   type Cart,
 } from '../lib/cart';
 import { useFormat } from '../lib/format';
+import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
@@ -65,6 +71,8 @@ import {
 } from '../components/ui/primitives';
 
 const QUICK_CASH = [500, 1000, 2000, 5000];
+/** A tendered amount this far above the total is a mistyped/scanned code, not money. */
+const MAX_OVERPAY_CENTS = 100_000_00;
 
 export function PosPage() {
   const { t } = useI18n();
@@ -73,6 +81,7 @@ export function PosPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
+  const settings = useAppSettings();
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
 
@@ -86,7 +95,14 @@ export function PosPage() {
   const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const scanner = useRef(new ScanBuffer());
+  // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
+  // typed code) always has somewhere to go. Deferred: dialogs are still unmounting when called.
+  const focusSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const el = searchRef.current;
+      if (el && document.activeElement !== el) el.focus();
+    });
+  }, []);
 
   const categories = useQuery({
     queryKey: ['catalog', 'categories'],
@@ -121,12 +137,28 @@ export function PosPage() {
     setResumedId(null);
     setSearch('');
     setDialog(null);
-  }, []);
+    focusSearch();
+  }, [focusSearch]);
 
-  const add = useCallback((product: ProductSummary, quantityMilli = 1000) => {
-    if (!product.isActive) return;
-    setCart((c) => addToCart(c, product, quantityMilli));
-  }, []);
+  const add = useCallback(
+    (product: ProductSummary, quantityMilli = 1000) => {
+      if (!product.isActive) return;
+      setCart((c) => addToCart(c, product, quantityMilli));
+      focusSearch();
+    },
+    [focusSearch],
+  );
+
+  // Leaving the "sale completed" screen: refresh what the sale changed (stock on the tiles, the
+  // sales list, dashboard and cash figures) only now, so the screen itself appears instantly.
+  const finishSale = useCallback(() => {
+    setReceipt(null);
+    resetCart();
+    void queryClient.invalidateQueries({ queryKey: ['products'] });
+    void queryClient.invalidateQueries({ queryKey: ['sales'] });
+    void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    void queryClient.invalidateQueries({ queryKey: ['cash'] });
+  }, [queryClient, resetCart]);
 
   const lookup = useMutation({
     mutationFn: (code: string) =>
@@ -145,6 +177,19 @@ export function PosPage() {
       );
     },
   });
+
+  // Scans are caught page-wide, whatever has the focus. A scan on the "sale completed" screen
+  // starts the next sale with that product; a scan while a dialog asks a question dismisses it;
+  // a scan during payment adds the product (the total in the payment dialog follows the cart).
+  const onScan = useCallback(
+    (code: string) => {
+      if (receipt) finishSale();
+      else if (dialog === 'confirmNew' || dialog === 'suspended') setDialog(null);
+      lookup.mutate(code);
+    },
+    [receipt, dialog, finishSale, lookup],
+  );
+  useBarcodeScanner({ onScan, focusTarget: searchRef });
 
   // Resume a parked sale from the Sales page (?resume=<id>).
   useEffect(() => {
@@ -198,28 +243,21 @@ export function PosPage() {
         else resetCart();
       } else if (e.key === 'F6') {
         e.preventDefault();
-        if (cart.lines.length && !receipt) setDialog('payment');
-      } else if (e.key === 'Escape' && receipt) {
-        setReceipt(null);
-        resetCart();
+        if (cart.lines.length && !receipt && !dialog) setDialog('payment');
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [cart.lines.length, receipt, resetCart]);
+  }, [cart.lines.length, receipt, dialog, resetCart]);
 
+  // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
+  // them first): a code is looked up exactly, otherwise the single visible match is added.
   const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Use the event's own timestamp: it reflects when the key was pressed, not when React got
-    // around to handling it, so a slow render cannot split a scanner burst.
-    if (e.key.length === 1) scanner.current.push(e.key, e.timeStamp);
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    const scanned = scanner.current.flush(e.timeStamp);
-    const code = (scanned ?? search).trim();
+    const code = search.trim();
     if (!code) return;
-    // A scan, or a code typed and confirmed with Enter, is looked up exactly; if the typed text is
-    // not a code the single visible match is added.
-    if (scanned || /^[A-Za-z0-9._-]{3,64}$/.test(code)) {
+    if (/^[A-Za-z0-9._-]{3,64}$/.test(code)) {
       lookup.mutate(code);
     } else if (products.data?.items.length === 1) {
       add(products.data.items[0]!);
@@ -382,17 +420,13 @@ export function PosPage() {
                   >
                     <Minus size={14} />
                   </button>
-                  <input
-                    className="input pos-line__qty-input num"
-                    inputMode="decimal"
-                    value={line.quantityMilli / 1000}
-                    onChange={(e) => {
-                      const q = Number(e.target.value.replace(',', '.'));
-                      if (Number.isFinite(q) && q >= 0) {
-                        setCart(setQuantity(cart, line.product.id, Math.round(q * 1000)));
-                      }
+                  <QtyInput
+                    quantityMilli={line.quantityMilli}
+                    label={t('pos.qty')}
+                    onCommit={(milli) => {
+                      setCart((c) => setQuantity(c, line.product.id, milli));
+                      focusSearch();
                     }}
-                    aria-label={t('pos.qty')}
                   />
                   <button
                     type="button"
@@ -516,23 +550,23 @@ export function PosPage() {
           cart={cart}
           resumedId={resumedId}
           totalCents={totals.totalCents}
-          onClose={() => setDialog(null)}
-          onCompleted={(sale, receiptData) => {
+          cardEnabled={settings['pos.card_payments']}
+          onClose={() => {
             setDialog(null);
-            toast.success(t('pos.completed', { receipt: sale.receiptNo ?? '' }));
-            void queryClient.invalidateQueries({ queryKey: ['products'] });
-            void queryClient.invalidateQueries({ queryKey: ['sales'] });
-            void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-            void queryClient.invalidateQueries({ queryKey: ['cash'] });
+            focusSearch();
+          }}
+          onCompleted={(_sale, receiptData) => {
+            setDialog(null);
             setReceipt(receiptData);
-            // Settings › POS & Printing › "Print receipt automatically".
-            if (receiptData.autoPrint) window.setTimeout(() => printReceipt(), 250);
           }}
         />
       )}
       <ConfirmDialog
         open={dialog === 'confirmNew'}
-        onClose={() => setDialog(null)}
+        onClose={() => {
+          setDialog(null);
+          focusSearch();
+        }}
         onConfirm={resetCart}
         title={t('pos.newSale')}
         body={t('pos.newSaleConfirm')}
@@ -540,7 +574,15 @@ export function PosPage() {
         danger
       />
       {dialog === 'suspended' && (
-        <Dialog open onClose={() => setDialog(null)} title={t('pos.suspended')} size="md">
+        <Dialog
+          open
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          title={t('pos.suspended')}
+          size="md"
+        >
           {(suspended.data?.items.length ?? 0) === 0 && (
             <p className="muted">{t('pos.noSuspended')}</p>
           )}
@@ -577,37 +619,172 @@ export function PosPage() {
           ))}
         </Dialog>
       )}
-      {receipt && (
-        <Dialog
-          open
-          onClose={() => {
-            setReceipt(null);
-            resetCart();
-          }}
-          title={t('pos.receipt')}
-          size="sm"
-          footer={
-            <>
-              <Button onClick={printReceipt}>
-                <Printer size={14} /> {t('pos.print')}
-              </Button>
-              <Button
-                variant="primary"
-                autoFocus
-                onClick={() => {
-                  setReceipt(null);
-                  resetCart();
-                }}
-              >
-                {t('pos.done')} <Kbd>Esc</Kbd>
-              </Button>
-            </>
-          }
-        >
-          <Receipt data={receipt} />
-        </Dialog>
-      )}
+      {receipt && <SaleDoneDialog receipt={receipt} onFinish={finishSale} />}
     </div>
+  );
+}
+
+// ─── Quantity field ────────────────────────────────────────────────────────────
+/**
+ * Edits the line quantity locally and commits on Enter / blur. Committing per keystroke made
+ * "0.5" impossible to type (the "0." step was rounded to 0 and the line vanished) and turned a
+ * scanner burst that landed in the field into an absurd quantity.
+ */
+function QtyInput({
+  quantityMilli,
+  label,
+  onCommit,
+}: {
+  quantityMilli: number;
+  label: string;
+  onCommit: (quantityMilli: number) => void;
+}) {
+  const shown = String(quantityMilli / 1000);
+  const [text, setText] = useState(shown);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setText(shown);
+  }, [shown, editing]);
+  const commit = () => {
+    setEditing(false);
+    const q = Number(text.replace(',', '.'));
+    if (text.trim() && Number.isFinite(q) && q >= 0 && q <= 1_000_000) {
+      const milli = Math.round(q * 1000);
+      if (milli !== quantityMilli) onCommit(milli);
+    } else setText(shown);
+  };
+  return (
+    <input
+      className="input pos-line__qty-input num"
+      inputMode="decimal"
+      value={text}
+      onFocus={(e) => {
+        setEditing(true);
+        e.currentTarget.select();
+      }}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        } else if (e.key === 'Escape') {
+          setText(shown);
+          setEditing(false);
+        }
+      }}
+      aria-label={label}
+    />
+  );
+}
+
+// ─── Sale completed ────────────────────────────────────────────────────────────
+/**
+ * Shown the moment the sale is saved: the change due in large type, the receipt preview, and
+ * Print / Finish. Finishing happens by itself after `autoFinishSeconds` (Settings › Printing;
+ * 0 waits for the cashier); pressing Print stops the countdown so the print dialog is never
+ * pulled away. Enter / Esc finish, P prints, scanning the next product finishes and starts the
+ * next sale with it (handled by the page's scanner hook).
+ */
+function SaleDoneDialog({ receipt, onFinish }: { receipt: ReceiptData; onFinish: () => void }) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const seconds = Math.max(0, Math.floor(receipt.autoFinishSeconds));
+  const [remaining, setRemaining] = useState(seconds);
+  const [counting, setCounting] = useState(seconds > 0);
+  const onFinishRef = useRef(onFinish);
+  onFinishRef.current = onFinish;
+
+  const print = useCallback(() => {
+    setCounting(false);
+    printReceipt();
+  }, []);
+
+  // Settings › Printing › "Print receipt automatically" — the countdown keeps running: the print
+  // dialog blocks the page while it is up, so the remaining seconds elapse after it closes.
+  useEffect(() => {
+    if (!receipt.autoPrint) return;
+    const h = window.setTimeout(() => printReceipt(), 150);
+    return () => window.clearTimeout(h);
+  }, [receipt.autoPrint]);
+
+  useEffect(() => {
+    if (!counting) return;
+    const h = window.setInterval(() => {
+      setRemaining((r) => {
+        if (r <= 1) {
+          window.clearInterval(h);
+          window.setTimeout(() => onFinishRef.current(), 0);
+          return 0;
+        }
+        return r - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(h);
+  }, [counting]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // `repeat`: the Enter that completed the payment may still be held down when this mounts.
+      if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onFinishRef.current();
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        print();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [print]);
+
+  const { sale } = receipt;
+  const tendered = sale.payments
+    .filter((p) => p.kind === 'sale')
+    .reduce((a, p) => a + p.amountCents, 0);
+  return (
+    <Dialog
+      open
+      onClose={onFinish}
+      title={t('pos.doneTitle')}
+      description={sale.receiptNo ?? undefined}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={print}>
+            <Printer size={14} /> {t('pos.print')} <Kbd>P</Kbd>
+          </Button>
+          <Button variant="primary" size="lg" onClick={onFinish} data-testid="pos-finish">
+            {counting ? t('pos.finishCountdown', { s: remaining }) : t('pos.finish')}{' '}
+            <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="pos-done">
+          <div className="pos-done__row">
+            <span>{t('pos.total')}</span>
+            <span className="num">{fmt.money(sale.totalCents)}</span>
+          </div>
+          <div className="pos-done__row">
+            <span>{t('pos.paid')}</span>
+            <span className="num">{fmt.money(tendered)}</span>
+          </div>
+          <div className="pos-done__change" data-testid="pos-change">
+            <span>{t('pos.change')}</span>
+            <strong className="num">{fmt.money(sale.changeCents)}</strong>
+          </div>
+        </div>
+        <p className="faint pos-done__hint">
+          {counting ? t('pos.autoFinishHint', { s: remaining }) : t('pos.finishHint')}
+        </p>
+        <div className="pos-done__receipt">
+          <Receipt data={receipt} />
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -616,12 +793,15 @@ function PaymentDialog({
   cart,
   resumedId,
   totalCents,
+  cardEnabled,
   onClose,
   onCompleted,
 }: {
   cart: Cart;
   resumedId: string | null;
   totalCents: number;
+  /** `pos.card_payments` — off: cash only, no method choice at all. */
+  cardEnabled: boolean;
   onClose: () => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
 }) {
@@ -629,19 +809,22 @@ function PaymentDialog({
   const fmt = useFormat();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  const [cashText, setCashText] = useState('');
+  // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
+  // sale is F6 → Enter.
+  const [cashText, setCashText] = useState((totalCents / 100).toFixed(2));
   const [cardText, setCardText] = useState('');
   const [reference, setReference] = useState('');
   const [method, setMethod] = useState<'cash' | 'card' | 'split'>('cash');
   const cashRef = useRef<HTMLInputElement>(null);
+  const effectiveMethod = cardEnabled ? method : 'cash';
 
   const cashCents = cashText.trim() ? parseMoneyInput(cashText) : 0;
   const cardCents = cardText.trim() ? parseMoneyInput(cardText) : 0;
   const payments: SalePaymentInput[] = [];
-  if (method === 'card')
+  if (effectiveMethod === 'card')
     payments.push({ method: 'card', amountCents: totalCents, reference: reference || undefined });
   else {
-    if (method === 'split' && cardCents && cardCents > 0)
+    if (effectiveMethod === 'split' && cardCents && cardCents > 0)
       payments.push({ method: 'card', amountCents: cardCents, reference: reference || undefined });
     if (cashCents && cashCents > 0) payments.push({ method: 'cash', amountCents: cashCents });
   }
@@ -650,7 +833,10 @@ function PaymentDialog({
     .filter((p) => p.method !== 'cash')
     .reduce((a, p) => a + p.amountCents, 0);
   const cardOver = nonCash > totalCents;
-  const covered = paid >= totalCents && !cardOver && cashCents !== null && cardCents !== null;
+  // A number far above the total is a barcode that landed in the field, not money.
+  const implausible = paid > totalCents + MAX_OVERPAY_CENTS;
+  const covered =
+    paid >= totalCents && !cardOver && !implausible && cashCents !== null && cardCents !== null;
   const change = covered ? paid - totalCents : 0;
 
   const complete = useMutation({
@@ -668,21 +854,25 @@ function PaymentDialog({
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
+  const submit = () => {
+    if (covered && !complete.isPending) complete.mutate();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F8') {
         e.preventDefault();
-        if (covered && !complete.isPending) complete.mutate();
+        submit();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [covered, complete]);
+  });
 
   useEffect(() => {
     cashRef.current?.focus();
-  }, [method]);
+    cashRef.current?.select();
+  }, [effectiveMethod]);
 
   return (
     <Dialog
@@ -700,7 +890,8 @@ function PaymentDialog({
             size="lg"
             disabled={!covered}
             loading={complete.isPending}
-            onClick={() => complete.mutate()}
+            onClick={submit}
+            data-testid="pos-complete"
           >
             {t('pos.complete')} <Kbd>F8</Kbd>
           </Button>
@@ -712,38 +903,44 @@ function PaymentDialog({
           <span>{t('pos.total')}</span>
           <span className="num">{fmt.money(totalCents)}</span>
         </div>
-        <div className="chips">
-          {(
-            [
-              ['cash', t('pos.cash'), <Banknote key="b" size={14} />],
-              ['card', t('pos.card'), <CreditCard key="c" size={14} />],
-              ['split', `${t('pos.cash')} + ${t('pos.card')}`, null],
-            ] as const
-          ).map(([value, label, icon]) => (
-            <button
-              key={value}
-              type="button"
-              className="chip"
-              aria-pressed={method === value}
-              onClick={() => setMethod(value)}
-            >
-              {icon} {label}
-            </button>
-          ))}
-        </div>
-        {method !== 'card' && (
+        {cardEnabled && (
+          <div className="chips" data-testid="pos-methods">
+            {(
+              [
+                ['cash', t('pos.cash'), <Banknote key="b" size={14} />],
+                ['card', t('pos.card'), <CreditCard key="c" size={14} />],
+                ['split', `${t('pos.cash')} + ${t('pos.card')}`, null],
+              ] as const
+            ).map(([value, label, icon]) => (
+              <button
+                key={value}
+                type="button"
+                className="chip"
+                aria-pressed={method === value}
+                onClick={() => setMethod(value)}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {effectiveMethod !== 'card' && (
           <>
             <div className="chips">
               <button
                 type="button"
                 className="chip"
-                onClick={() =>
+                onClick={() => {
                   setCashText(
                     (
-                      Math.max(0, totalCents - (method === 'split' ? (cardCents ?? 0) : 0)) / 100
+                      Math.max(
+                        0,
+                        totalCents - (effectiveMethod === 'split' ? (cardCents ?? 0) : 0),
+                      ) / 100
                     ).toFixed(2),
-                  )
-                }
+                  );
+                  cashRef.current?.focus();
+                }}
               >
                 {t('pos.exact')}
               </button>
@@ -752,13 +949,16 @@ function PaymentDialog({
                   key={c}
                   type="button"
                   className="chip"
-                  onClick={() => setCashText((c / 100).toFixed(2))}
+                  onClick={() => {
+                    setCashText((c / 100).toFixed(2));
+                    cashRef.current?.focus();
+                  }}
                 >
                   {fmt.money(c)}
                 </button>
               ))}
             </div>
-            <Field label={t('pos.tendered')}>
+            <Field label={t('pos.tendered')} hint={t('pos.tenderedHint')}>
               {(id) => (
                 <Input
                   id={id}
@@ -768,15 +968,23 @@ function PaymentDialog({
                   style={{ fontSize: 22, height: 48 }}
                   value={cashText}
                   onChange={(e) => setCashText(e.target.value)}
-                  aria-invalid={cashCents === null}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                  aria-invalid={cashCents === null || implausible}
+                  data-testid="pos-tendered"
                 />
               )}
             </Field>
           </>
         )}
-        {method !== 'cash' && (
+        {effectiveMethod !== 'cash' && (
           <div className="grid grid--2">
-            {method === 'split' && (
+            {effectiveMethod === 'split' && (
               <Field label={t('pos.card')}>
                 {(id) => (
                   <Input
@@ -803,7 +1011,8 @@ function PaymentDialog({
           </div>
         )}
         {cardOver && <Alert tone="danger">{t('pos.cardOver')}</Alert>}
-        {!covered && !cardOver && paid > 0 && (
+        {implausible && <Alert tone="danger">{t('pos.implausibleAmount')}</Alert>}
+        {!covered && !cardOver && !implausible && paid > 0 && (
           <div className="row row--between">
             <span className="muted">{t('pos.remaining')}</span>
             <strong className="num">{fmt.money(totalCents - paid)}</strong>

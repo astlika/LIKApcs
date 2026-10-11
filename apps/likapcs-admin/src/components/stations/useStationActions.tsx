@@ -37,6 +37,7 @@ import {
 import { api, ApiError } from '../../lib/api';
 import { projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
+import { usePaymentMethods } from '../../lib/payment-methods';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
@@ -442,6 +443,7 @@ export function QuickStartDialog({
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const { cardEnabled } = usePaymentMethods();
   const [customerName, setCustomerName] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [custom, setCustom] = useState('');
@@ -514,15 +516,17 @@ export function QuickStartDialog({
     <Dialog open onClose={onClose} title={t('map.startTitle', { code: station.code })} size="md">
       <div className="stack">
         <div className="row row--between row--wrap" style={{ gap: 10 }}>
-          <Segmented
-            value={method}
-            onChange={setMethod}
-            options={[
-              { value: 'cash', label: t('sessions.methods.cash') },
-              { value: 'card', label: t('sessions.methods.card') },
-            ]}
-            ariaLabel={t('sessions.paymentMethod')}
-          />
+          {cardEnabled && (
+            <Segmented
+              value={method}
+              onChange={setMethod}
+              options={[
+                { value: 'cash', label: t('sessions.methods.cash') },
+                { value: 'card', label: t('sessions.methods.card') },
+              ]}
+              ariaLabel={t('sessions.paymentMethod')}
+            />
+          )}
           <CustomerPicker
             value={customer}
             onChange={setCustomer}

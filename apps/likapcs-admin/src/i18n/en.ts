@@ -531,7 +531,16 @@ export const en = {
     reference: 'Reference',
     notEnough: 'Payments do not cover the total.',
     cardOver: 'Card amount cannot exceed the total.',
+    implausibleAmount: 'That amount is not plausible — check the cash received.',
+    tenderedHint: 'Enter completes the sale.',
     completed: 'Sale completed — {receipt}',
+    doneTitle: 'Sale completed',
+    paid: 'Paid',
+    finish: 'Finish',
+    finishCountdown: 'Finish ({s})',
+    autoFinishHint:
+      'The next sale starts by itself in {s} s — scan the next product or press Enter.',
+    finishHint: 'Press Finish or Enter for the next sale, or scan the next product.',
     parked: 'Sale parked.',
     voided: 'Parked sale discarded.',
     scanUnknown: 'No product with code {code}.',
@@ -540,7 +549,7 @@ export const en = {
     print: 'Print',
     done: 'Done',
     notes: 'Note',
-    shortcuts: 'F2 search · F4 new sale · F6 payment · F8 complete · Esc close',
+    shortcuts: 'F2 search · F4 new sale · F6 payment · F8 / Enter complete · Esc close',
     customer: 'Customer',
     walkIn: 'Walk-in customer',
     customerPlaceholder: 'Customer (optional) — name, phone or code',
@@ -580,6 +589,7 @@ export const en = {
     packQty: 'Pack qty',
     addBarcode: 'Add barcode',
     noBarcodes: 'No barcodes yet.',
+    barcodeAlreadyListed: 'Barcode {code} is already on this product.',
     image: 'Picture',
     imageHint:
       'Shown on POS tiles. JPEG, PNG, WebP or GIF; large photos are scaled down automatically.',
@@ -771,9 +781,14 @@ export const en = {
       receipts: 'Receipts (thermal printer)',
       receiptWidth: 'Receipt paper width',
       autoPrint: 'Print receipt automatically',
-      autoPrintHint: 'Opens the print dialog as soon as a sale is completed.',
-      scanIncrements: 'Scanning the same barcode again increases the quantity',
-      scanIncrementsHint: 'When off, every scan adds a new line.',
+      autoPrintHint:
+        'Opens the print dialog as soon as a sale is completed. Off: the cashier presses Print (or P) only when a receipt is wanted.',
+      autoFinish: 'Seconds before the next sale starts by itself',
+      autoFinishHint:
+        'After a payment the screen shows the change due with Print / Finish and then moves on by itself. 0 waits for the cashier.',
+      cardPayments: 'Accept card payments',
+      cardPaymentsHint:
+        'Off: every payment in the app is cash — card is not offered at the POS, for sessions, refunds, purchases or expenses.',
       invoices: 'Invoices (A4)',
       invoicesNote:
         'Invoices use the business details from the Business tab. Numbers are F-year-NNNNNN and are never reused.',
@@ -954,7 +969,7 @@ export const en = {
     salesCount: '{count} sales',
     refundsCount: '{count} refunds',
     noOpenShift: 'No open shift',
-    noOpenShiftHint: 'Open a shift to start taking cash. Card payments do not need a shift.',
+    noOpenShiftHint: 'Open a shift to start taking cash.',
     shiftOpened: 'Shift opened.',
     shiftClosed: 'Shift closed.',
     shiftRequiredNoPermission:

@@ -15,6 +15,7 @@ import {
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
+import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -37,7 +38,6 @@ import {
 } from '../components/ui/primitives';
 
 const PAGE_SIZE = 50;
-const EXPENSE_METHODS: PaymentMethod[] = ['cash', 'card', 'bank_transfer', 'other'];
 
 function todayLocal(): string {
   const d = new Date();
@@ -56,6 +56,7 @@ export function ExpensesPage() {
   const [to, setTo] = useState(todayLocal());
   const [category, setCategory] = useState('');
   const [method, setMethod] = useState<'' | PaymentMethod>('');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [q, setQ] = useState('');
   const [includeVoided, setIncludeVoided] = useState(false);
   const [page, setPage] = useState(1);
@@ -145,7 +146,7 @@ export function ExpensesPage() {
           aria-label={t('sessions.paymentMethod')}
         >
           <option value="">{t('expenses.allMethods')}</option>
-          {EXPENSE_METHODS.map((m) => (
+          {paymentMethods.map((m) => (
             <option key={m} value={m}>
               {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
             </option>
@@ -269,6 +270,7 @@ function ExpenseDialog({
   categories: ExpenseCategorySummary[];
   onClose: () => void;
 }) {
+  const { methods: paymentMethods } = usePaymentMethods();
   const { t, language } = useI18n();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -395,7 +397,7 @@ function ExpenseDialog({
                   setForm({ ...form, paymentMethod: e.target.value as PaymentMethod })
                 }
               >
-                {EXPENSE_METHODS.map((m) => (
+                {paymentMethods.map((m) => (
                   <option key={m} value={m}>
                     {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                   </option>

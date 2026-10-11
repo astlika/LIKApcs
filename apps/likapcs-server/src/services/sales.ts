@@ -334,6 +334,7 @@ export class SalesService {
       currency: s['locale.currency'],
       widthMm: s['pos.receipt_width_mm'],
       autoPrint: s['pos.auto_print_receipt'],
+      autoFinishSeconds: s['pos.auto_finish_seconds'],
       printedAt: new Date().toISOString(),
       isReprint: reprint,
     };

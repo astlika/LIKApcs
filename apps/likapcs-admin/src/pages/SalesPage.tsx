@@ -8,7 +8,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileText, Printer, Receipt as ReceiptIcon, RotateCcw, Undo2 } from 'lucide-react';
 import {
   PERMISSIONS,
-  SALE_PAYMENT_METHODS,
   SALE_STATUSES,
   type ReceiptData,
   type RefundRequest,
@@ -16,9 +15,11 @@ import {
   type SaleStatus,
   type SalesListResponse,
   type InvoiceData,
+  type PaymentMethod,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
 import { useFormat } from '../lib/format';
+import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -521,7 +522,8 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
   const [quantities, setQuantities] = useState<Record<number, string>>({});
   const [reason, setReason] = useState('');
   const [restock, setRestock] = useState(true);
-  const [method, setMethod] = useState<(typeof SALE_PAYMENT_METHODS)[number]>('cash');
+  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const { methods: refundMethods } = usePaymentMethods();
 
   const lines = sale.items.filter((i) => i.refundedMilli < i.quantityMilli);
   const items = lines
@@ -647,9 +649,9 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
               <Select
                 id={id}
                 value={method}
-                onChange={(e) => setMethod(e.target.value as (typeof SALE_PAYMENT_METHODS)[number])}
+                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
               >
-                {SALE_PAYMENT_METHODS.map((m) => (
+                {refundMethods.map((m) => (
                   <option key={m} value={m}>
                     {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                   </option>

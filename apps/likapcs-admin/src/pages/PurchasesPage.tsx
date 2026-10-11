@@ -9,7 +9,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, PackageCheck, Plus, ShoppingBag, Trash2, Wallet } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  PAYMENT_METHODS,
   PERMISSIONS,
   PURCHASE_PAYMENT_STATUSES,
   PURCHASE_STATUSES,
@@ -28,6 +27,7 @@ import {
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
+import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -338,6 +338,7 @@ function NewPurchaseDialog({
   const [receiveNow, setReceiveNow] = useState(true);
   const [payNow, setPayNow] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [payAmount, setPayAmount] = useState('');
   const [payRef, setPayRef] = useState('');
 
@@ -635,7 +636,7 @@ function NewPurchaseDialog({
                   value={payMethod}
                   onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
                 >
-                  {PAYMENT_METHODS.map((m) => (
+                  {paymentMethods.map((m) => (
                     <option key={m} value={m}>
                       {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                     </option>
@@ -760,6 +761,7 @@ function PurchaseDialog({ id, onClose }: { id: string; onClose: () => void }) {
   });
 
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [payAmount, setPayAmount] = useState('');
   const [payRef, setPayRef] = useState('');
   const due = p ? p.totalCents - p.paidCents : 0;
@@ -1023,7 +1025,7 @@ function PurchaseDialog({ id, onClose }: { id: string; onClose: () => void }) {
                     value={payMethod}
                     onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
                   >
-                    {PAYMENT_METHODS.map((m) => (
+                    {paymentMethods.map((m) => (
                       <option key={m} value={m}>
                         {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                       </option>

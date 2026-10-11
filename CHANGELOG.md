@@ -12,6 +12,23 @@ _Nothing yet._
 
 ### Added
 
+- **Barcode scans work anywhere on the POS.** Scans are recognised page-wide by their timing
+  (`useBarcodeScanner`), whatever has the focus: after tapping a product tile (where Enter used to
+  re-add _that_ tile), after a dialog closed (where the focus had dropped to nowhere), inside a
+  quantity field (the digits are taken out again), during payment (the product is added and the
+  total follows) and on the "sale completed" screen (the next sale starts with the scanned
+  product). A stray key with nothing focused is routed into the search field. The Products page
+  does the same: a scan on the list finds the product, a scan inside the product dialog adds the
+  barcode no matter which field was active.
+- **"Sale completed" screen.** The moment a sale is saved the POS shows the change due in large
+  type, the receipt preview and _Print_ (P) / _Finish_ (Enter, Esc). It moves on to the next sale
+  by itself after `pos.auto_finish_seconds` (default 5 s; 0 waits for the cashier); pressing
+  _Print_ stops the countdown. The product grid, sales list and cash figures refresh when the
+  screen closes, not while it opens, so it appears instantly.
+- **Cash-only by default.** `pos.card_payments` (Settings → POS & Printing → _Accept card
+  payments_, default off) removes card from every payment choice in the app — POS, session
+  billing, refunds, purchases and expenses. The API and schema still accept `card`, so turning it
+  on needs no migration.
 - **Pairing that explains itself.** Gaming Stations has a _Connect a PC_ dialog: the three steps,
   the main PC's LAN addresses to type into a client (click to copy, from the new
   `GET /system/network`), the Windows Firewall state of the main PC with an _Allow now_ button, and
@@ -66,6 +83,16 @@ _Nothing yet._
 
 ### Changed
 
+- **No more surprise printing.** `pos.auto_print_receipt` is off by default and migration 0012
+  switches existing installations off too: the print dialog used to pop up after every sale and
+  block the cashier for seconds. Turn it back on in Settings → POS & Printing if receipts must
+  always print; the countdown then resumes after the print dialog closes.
+- **Payment dialog.** The cash field is pre-filled with the exact total (typing replaces it) and
+  Enter completes the sale, so an exact cash sale is F6 → Enter. An amount more than €100 000 above
+  the total is rejected as a mistyped or mis-scanned code. The cart's quantity field commits on
+  Enter / blur (fractional quantities such as 0.5 could not be typed before).
+- `pos.scan_increments_quantity` is gone: the cart always merges repeated scans of a product into
+  one line; the toggle never did anything (removed by migration 0012).
 - **Faster, more robust main-PC start.** The embedded PostgreSQL is recognised as already running
   from its `postmaster.pid` (no `pg_ctl` round trip), a stale pid file after a crash is removed, the
   wait loop fails fast on authentication errors instead of retrying until the timeout (the cause of

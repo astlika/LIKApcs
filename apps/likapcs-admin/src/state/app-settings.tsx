@@ -10,7 +10,11 @@ import { useAuth } from './auth';
  */
 type Presentation = Pick<
   SettingsMap,
-  'business.name' | 'locale.currency' | 'locale.timezone' | 'locale.default_language'
+  | 'business.name'
+  | 'locale.currency'
+  | 'locale.timezone'
+  | 'locale.default_language'
+  | 'pos.card_payments'
 >;
 
 const AppSettingsContext = createContext<Presentation>({
@@ -18,6 +22,7 @@ const AppSettingsContext = createContext<Presentation>({
   'locale.currency': SETTING_DEFAULTS['locale.currency'],
   'locale.timezone': SETTING_DEFAULTS['locale.timezone'],
   'locale.default_language': SETTING_DEFAULTS['locale.default_language'],
+  'pos.card_payments': SETTING_DEFAULTS['pos.card_payments'],
 });
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
@@ -36,6 +41,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       'locale.timezone': s['locale.timezone'] ?? SETTING_DEFAULTS['locale.timezone'],
       'locale.default_language':
         s['locale.default_language'] ?? SETTING_DEFAULTS['locale.default_language'],
+      'pos.card_payments': s['pos.card_payments'] ?? SETTING_DEFAULTS['pos.card_payments'],
     };
   }, [publicQuery.data]);
   void status;

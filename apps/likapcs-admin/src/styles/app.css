@@ -1885,6 +1885,52 @@ body:has(.pos) .toasts {
   color: var(--success);
   font-size: 20px;
 }
+/* Sale completed: change due first, receipt preview below. */
+.pos-done {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+}
+.pos-done__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 15px;
+}
+.pos-done__change {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 22px;
+}
+.pos-done__change strong {
+  font-size: 34px;
+  line-height: 1;
+}
+.pos-done__hint {
+  margin: 0;
+  font-size: 12px;
+}
+.pos-done__receipt {
+  max-height: 38vh;
+  overflow: auto;
+  border-radius: var(--radius-md);
+}
+@media print {
+  .pos-done__receipt {
+    max-height: none;
+    overflow: visible;
+  }
+}
 .chip--static {
   cursor: default;
   display: inline-flex;

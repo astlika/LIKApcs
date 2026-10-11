@@ -43,9 +43,13 @@ export const SETTING_SCHEMAS = {
   /** How long a staff unlock (maintenance) keeps a station PC open before it locks again. */
   'stations.maintenance_minutes': z.number().int().min(1).max(480),
 
-  'pos.scan_increments_quantity': z.boolean(),
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
+  /** Open the print dialog as soon as a sale is completed (off: the cashier presses Print). */
   'pos.auto_print_receipt': z.boolean(),
+  /** Seconds the "sale completed" screen stays before the next sale starts by itself (0 = wait). */
+  'pos.auto_finish_seconds': z.number().int().min(0).max(60),
+  /** Offer card as a payment method. Off: every payment choice in the app is cash only. */
+  'pos.card_payments': z.boolean(),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -109,9 +113,10 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
   'stations.maintenance_minutes': 15,
 
-  'pos.scan_increments_quantity': true,
   'pos.receipt_width_mm': 80,
-  'pos.auto_print_receipt': true,
+  'pos.auto_print_receipt': false,
+  'pos.auto_finish_seconds': 5,
+  'pos.card_payments': false,
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',
@@ -140,6 +145,8 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'locale.currency',
   'locale.timezone',
   'stations.client_welcome_message',
+  // Which payment methods the app offers; every cashier needs it before any sale exists.
+  'pos.card_payments',
 ];
 
 /** Validates a partial settings patch; unknown keys are rejected. */

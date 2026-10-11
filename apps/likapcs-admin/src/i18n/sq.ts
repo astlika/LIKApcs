@@ -541,7 +541,15 @@ export const sq: Dictionary = {
     reference: 'Referenca',
     notEnough: 'Pagesat nuk e mbulojnë totalin.',
     cardOver: 'Shuma me kartë nuk mund ta kalojë totalin.',
+    implausibleAmount: 'Kjo shumë nuk është e besueshme — kontrolloni paratë e marra.',
+    tenderedHint: 'Enter e përfundon shitjen.',
     completed: 'Shitja u përfundua — {receipt}',
+    doneTitle: 'Shitja u krye',
+    paid: 'Paguar',
+    finish: 'Përfundo',
+    finishCountdown: 'Përfundo ({s})',
+    autoFinishHint: 'Shitja e re fillon vetë pas {s} s — skano produktin tjetër ose shtyp Enter.',
+    finishHint: 'Shtyp Përfundo ose Enter për shitjen e re, ose skano produktin tjetër.',
     parked: 'Shitja u parkua.',
     voided: 'Shitja e parkuar u hoq.',
     scanUnknown: 'Asnjë produkt me kodin {code}.',
@@ -550,7 +558,7 @@ export const sq: Dictionary = {
     print: 'Printo',
     done: 'Mbaroi',
     notes: 'Shënim',
-    shortcuts: 'F2 kërko · F4 shitje e re · F6 pagesa · F8 përfundo · Esc mbyll',
+    shortcuts: 'F2 kërko · F4 shitje e re · F6 pagesa · F8 / Enter përfundo · Esc mbyll',
     customer: 'Klienti',
     walkIn: 'Klient i rastit',
     customerPlaceholder: 'Klienti (opsional) — emri, telefoni ose kodi',
@@ -590,6 +598,7 @@ export const sq: Dictionary = {
     packQty: 'Sasia e pakos',
     addBarcode: 'Shto barkod',
     noBarcodes: 'Ende pa barkode.',
+    barcodeAlreadyListed: 'Barkodi {code} është tashmë te ky produkt.',
     image: 'Fotoja',
     imageHint:
       'Shfaqet në pllakat e POS-it. JPEG, PNG, WebP ose GIF; fotot e mëdha zvogëlohen automatikisht.',
@@ -778,10 +787,15 @@ export const sq: Dictionary = {
     printing: {
       receipts: 'Kuponët (printer termik)',
       receiptWidth: 'Gjerësia e letrës së kuponit',
-      autoPrint: 'Printo kuponin automatikisht',
-      autoPrintHint: 'Hap dialogun e printimit sapo përfundon një shitje.',
-      scanIncrements: 'Skanimi i të njëjtit barkod rrit sasinë',
-      scanIncrementsHint: 'Kur është e çaktivizuar, çdo skanim shton një rresht të ri.',
+      autoPrint: 'Printo faturën automatikisht',
+      autoPrintHint:
+        'Hap dialogun e printimit sapo të përfundojë shitja. Çaktivizuar: kasieri shtyp Printo (ose P) vetëm kur duhet faturë.',
+      autoFinish: 'Sekonda para se shitja e re të fillojë vetë',
+      autoFinishHint:
+        'Pas pagesës ekrani tregon kusurin me Printo / Përfundo dhe pastaj vazhdon vetë. 0 pret kasierin.',
+      cardPayments: 'Prano pagesa me kartë',
+      cardPaymentsHint:
+        'Çaktivizuar: çdo pagesë në aplikacion është me para në dorë — karta nuk ofrohet në arkë, për seanca, kthime, blerje apo shpenzime.',
       invoices: 'Faturat (A4)',
       invoicesNote:
         'Faturat përdorin të dhënat e biznesit nga skeda Biznesi. Numrat janë F-viti-NNNNNN dhe nuk ripërdoren kurrë.',
@@ -962,8 +976,7 @@ export const sq: Dictionary = {
     salesCount: '{count} shitje',
     refundsCount: '{count} kthime',
     noOpenShift: 'Nuk ka turn të hapur',
-    noOpenShiftHint:
-      'Hapni një turn për të filluar pranimin e parave. Pagesat me kartë nuk kanë nevojë për turn.',
+    noOpenShiftHint: 'Hapni një turn për të filluar pranimin e parave.',
     shiftOpened: 'Turni u hap.',
     shiftClosed: 'Turni u mbyll.',
     shiftRequiredNoPermission:

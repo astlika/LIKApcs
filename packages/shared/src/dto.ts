@@ -1001,6 +1001,8 @@ export interface ReceiptData {
   widthMm: 58 | 80;
   /** `pos.auto_print_receipt`: the POS opens the print dialog as soon as the receipt appears. */
   autoPrint: boolean;
+  /** `pos.auto_finish_seconds`: how long the "sale completed" screen waits before the next sale. */
+  autoFinishSeconds: number;
   printedAt: string;
   isReprint: boolean;
 }

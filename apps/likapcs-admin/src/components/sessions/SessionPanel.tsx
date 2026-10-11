@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, Pause, Play, Plus, Square, XCircle } from 'lucide-react';
 import {
-  PAYMENT_METHODS,
   PERMISSIONS,
   parseMoneyInput,
   priceForSeconds,
@@ -22,6 +21,7 @@ import {
 import { api, ApiError } from '../../lib/api';
 import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
+import { usePaymentMethods } from '../../lib/payment-methods';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
@@ -90,6 +90,7 @@ function StartSessionForm({
   const [customerName, setCustomerName] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [notes, setNotes] = useState('');
   // One request id per form instance: a retried click can never start two sessions.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
@@ -243,7 +244,7 @@ function StartSessionForm({
                 value={method}
                 onChange={(e) => setMethod(e.target.value as PaymentMethod)}
               >
-                {PAYMENT_METHODS.map((m) => (
+                {paymentMethods.map((m) => (
                   <option key={m} value={m}>
                     {t(`sessions.methods.${m}`)}
                   </option>
@@ -524,6 +525,7 @@ export function EndSessionDialog({
   const { can } = useAuth();
   const fmt = useFormat();
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [discount, setDiscount] = useState('');
   const postpaid = session.billingMode === 'postpaid';
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
@@ -581,7 +583,7 @@ export function EndSessionDialog({
                   value={method}
                   onChange={(e) => setMethod(e.target.value as PaymentMethod)}
                 >
-                  {PAYMENT_METHODS.map((m) => (
+                  {paymentMethods.map((m) => (
                     <option key={m} value={m}>
                       {t(`sessions.methods.${m}`)}
                     </option>
@@ -629,6 +631,7 @@ export function ExtendSessionDialog({
   const [packageId, setPackageId] = useState<string | null>(null);
   const [minutes, setMinutes] = useState('30');
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const { methods: paymentMethods } = usePaymentMethods();
   const [requestId] = useState(() => crypto.randomUUID());
   const minutesValue = Number.parseInt(minutes, 10);
   const minutesValid = Number.isInteger(minutesValue) && minutesValue > 0 && minutesValue <= 1440;
@@ -721,7 +724,7 @@ export function ExtendSessionDialog({
                 value={method}
                 onChange={(e) => setMethod(e.target.value as PaymentMethod)}
               >
-                {PAYMENT_METHODS.map((m) => (
+                {paymentMethods.map((m) => (
                   <option key={m} value={m}>
                     {t(`sessions.methods.${m}`)}
                   </option>

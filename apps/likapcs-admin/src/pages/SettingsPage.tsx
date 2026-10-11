@@ -448,11 +448,16 @@ export function SettingsPage() {
                   t('settings.printing.autoPrintHint'),
                 )}
               </div>
+              {number('pos.auto_finish_seconds', t('settings.printing.autoFinish'), {
+                min: 0,
+                max: 60,
+                hint: t('settings.printing.autoFinishHint'),
+              })}
               <div className="span-2">
                 {bool(
-                  'pos.scan_increments_quantity',
-                  t('settings.printing.scanIncrements'),
-                  t('settings.printing.scanIncrementsHint'),
+                  'pos.card_payments',
+                  t('settings.printing.cardPayments'),
+                  t('settings.printing.cardPaymentsHint'),
                 )}
               </div>
               {text('business.receipt_footer', t('settings.business.receiptFooter'), {
