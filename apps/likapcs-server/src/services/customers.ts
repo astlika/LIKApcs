@@ -31,6 +31,7 @@ interface CustomerRow {
   loyalty_points: number;
   wallet_balance_cents: string;
   balance_due_cents: string;
+  credit_limit_cents: string;
   notes: string | null;
   status: CustomerStatus;
   created_at: Date;
@@ -39,8 +40,8 @@ interface CustomerRow {
 
 const SELECT = `
   SELECT c.id, c.code, c.name, c.phone, c.email, c.membership, to_char(c.membership_until, 'YYYY-MM-DD') AS membership_until,
-         c.discount_bp, c.loyalty_points, c.wallet_balance_cents, c.balance_due_cents, c.notes, c.status,
-         c.created_at, c.updated_at
+         c.discount_bp, c.loyalty_points, c.wallet_balance_cents, c.balance_due_cents, c.credit_limit_cents, c.notes,
+         c.status, c.created_at, c.updated_at
     FROM customers c`;
 
 function toSummary(r: CustomerRow): CustomerSummary {
@@ -56,6 +57,7 @@ function toSummary(r: CustomerRow): CustomerSummary {
     loyaltyPoints: r.loyalty_points,
     walletBalanceCents: Number(r.wallet_balance_cents),
     balanceDueCents: Number(r.balance_due_cents),
+    creditLimitCents: Number(r.credit_limit_cents),
     notes: r.notes,
     status: r.status,
     createdAt: r.created_at.toISOString(),
@@ -162,8 +164,9 @@ export class CustomersService {
       ]);
       if (dup.rowCount) throw conflict('A customer with this code already exists');
       const r = await client.query<{ id: string }>(
-        `INSERT INTO customers (code, name, phone, email, membership, membership_until, discount_bp, notes, status, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        `INSERT INTO customers (code, name, phone, email, membership, membership_until, discount_bp, notes, status, created_by,
+           credit_limit_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
           code,
           input.name,
@@ -175,6 +178,7 @@ export class CustomersService {
           input.notes || null,
           input.status,
           actor.userId ?? null,
+          input.creditLimitCents,
         ],
       );
       await recordAudit(client, actor, {
@@ -210,6 +214,7 @@ export class CustomersService {
             discount_bp = COALESCE($12, discount_bp),
             notes = CASE WHEN $13::boolean THEN $14 ELSE notes END,
             status = COALESCE($15, status),
+            credit_limit_cents = COALESCE($16, credit_limit_cents),
             updated_at = now()
           WHERE id = $1`,
         [
@@ -228,6 +233,7 @@ export class CustomersService {
           patch.notes !== undefined,
           patch.notes || null,
           patch.status ?? null,
+          patch.creditLimitCents ?? null,
         ],
       );
       await recordAudit(client, actor, {

@@ -25,6 +25,8 @@ import { SalesService } from './services/sales.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { CustomersService } from './services/customers.js';
+import { DebtsService } from './services/debts.js';
+import { debtRoutes } from './routes/debts.js';
 import { ReportsService } from './services/reports.js';
 import { PurchasingService } from './services/purchasing.js';
 import { BackupService } from './services/backups.js';
@@ -65,6 +67,7 @@ export interface Services {
   cash: CashService;
   expenses: ExpensesService;
   customers: CustomersService;
+  debts: DebtsService;
   reports: ReportsService;
   purchasing: PurchasingService;
   backups: BackupService;
@@ -147,7 +150,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     settings,
     new ProductImageStore(path.join(config.uploadDir, 'products')),
   );
-  const sales = new SalesService(pool, settings, cash);
+  const debts = new DebtsService(pool, settings, cash);
+  const sales = new SalesService(pool, settings, cash, debts);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
   const reports = new ReportsService(pool, cash, settings);
@@ -193,6 +197,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cash,
     expenses,
     customers,
+    debts,
     reports,
     purchasing,
     backups,
@@ -241,6 +246,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(cashRoutes);
       await api.register(expenseRoutes);
       await api.register(customerRoutes);
+      await api.register(debtRoutes);
       await api.register(reportRoutes);
       await api.register(purchasingRoutes);
       await api.register(backupRoutes);

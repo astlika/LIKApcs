@@ -29,6 +29,7 @@ import { BackupsPage } from './pages/BackupsPage';
 import { UpdatesPage } from './pages/UpdatesPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { CustomersPage } from './pages/CustomersPage';
+import { DebtsPage } from './pages/DebtsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ShiftGuardProvider } from './state/shift-guard';
@@ -137,6 +138,7 @@ export function App() {
           <Route path="cash" element={<CashPage />} />
           <Route path="expenses" element={<ExpensesPage />} />
           <Route path="customers" element={<CustomersPage />} />
+          <Route path="debts" element={<DebtsPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />

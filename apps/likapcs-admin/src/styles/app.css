@@ -1993,6 +1993,42 @@ body:has(.pos) .toasts {
   color: var(--muted);
   font-size: 15px;
 }
+.pos-done__row--debt {
+  color: var(--warning);
+  font-weight: 600;
+}
+/* "Pay later" tender: the customer line and the on-the-tab summary. */
+.pos__change--credit {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.chip--credit[aria-pressed='true'] {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+.tender-credit {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+.tender-credit__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--warning);
+}
+.tender-credit__name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  color: var(--text);
+}
+.tender-credit__name .muted {
+  font-size: 12px;
+}
 .pos-done__change {
   display: flex;
   justify-content: space-between;
@@ -3099,4 +3135,26 @@ body:has(.pos) .toasts {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
   font-weight: 600;
+}
+
+/* ─── Debts ("pay later") ───────────────────────────────────────────────────── */
+.debt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.debt-head__amount {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.debt-head__meta {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  text-align: right;
+  font-size: 13px;
 }

@@ -6,7 +6,34 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **"Pay later" — customer debts (borxh).** Off by default (Settings › Point of sale › _Allow
+  "pay later"_). When on, every payment offers a **Pay later** tender for a selected customer:
+  the part not paid now becomes a debt with a due date (pre-filled from _Default due date_,
+  editable), the sale completes normally (stock, receipt, revenue) and the drawer is untouched.
+  Customers can carry a debt limit (0 = none); blocked customers get no credit; the server is the
+  authority for both. New **Debts** page (Finance): open / overdue / due today totals, filters,
+  search by customer, phone or receipt; **Collect** takes a full or partial repayment (cash with
+  change, or card when enabled), **Collect all** settles a customer's debts oldest-first from one
+  amount; detail shows what was bought and every repayment; new due date (`customers.manage`);
+  write-off with a reason (new `debts.write_off` permission — owner, admin, manager). Overdue
+  count shows as a badge on the nav item. Customers show _Owes_ in the list and detail; the
+  receipt and the "sale completed" screen print the debt and its due date. Cash shift totals break
+  repayments out as _debt payments_. Migration `0013` (`customer_debts`, `debt_payments`).
+
+### Changed
+
+- **POS — Enter pays.** Enter anywhere on the POS page (nothing focused, a tapped product tile,
+  the empty search field) opens the payment; Enter in the payment completes it; Enter on the
+  completed screen starts the next sale. F6 / F8 keep working as silent aliases. Enter in a field
+  that has text keeps its own meaning (search / quantity), and a scanner burst is never mistaken
+  for the pay key.
+- **POS — smarter cash suggestions.** The fixed 5 / 10 / 20 / 50 row is replaced by the
+  denominations a customer plausibly hands over for _this_ total, from 0.50 € to 50 € (0.20 → 0.50,
+  1, 2, 5…; 2.50 → 3, 4, 5, 10…; 7.30 → 7.50, 8, 10, 20, 50), plus _Exact_.
+- The payment UI is now one shared tender panel (POS today; session bills next), so cash, card,
+  split and pay-later behave the same everywhere.
 
 ## [0.5.1] - 2026-10-11
 

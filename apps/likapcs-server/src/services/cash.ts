@@ -297,7 +297,7 @@ export class CashService {
       amountCents: number;
       type: Extract<
         CashMovementType,
-        'sale' | 'refund' | 'expense' | 'supplier_payment' | 'correction'
+        'sale' | 'refund' | 'expense' | 'supplier_payment' | 'customer_payment' | 'correction'
       >;
       referenceType: string;
       referenceId: string;
@@ -458,9 +458,15 @@ export class CashService {
     const other = byType.rows
       .filter(
         (r) =>
-          !['opening', 'sale', 'refund', 'deposit', 'withdrawal', 'expense'].includes(
-            r.movement_type,
-          ),
+          ![
+            'opening',
+            'sale',
+            'refund',
+            'deposit',
+            'withdrawal',
+            'expense',
+            'customer_payment',
+          ].includes(r.movement_type),
       )
       .reduce((acc, r) => acc + Number(r.amount), 0);
     const movementsSum = byType.rows
@@ -473,6 +479,7 @@ export class CashService {
       depositsCents: sum('deposit'),
       withdrawalsCents: -sum('withdrawal'),
       expensesCents: -sum('expense'),
+      debtPaymentsCents: sum('customer_payment'),
       otherCents: other,
       expectedCashCents: openingCents + movementsSum,
       salesCount: bySource.rows.reduce((acc, r) => acc + Number(r.n), 0),

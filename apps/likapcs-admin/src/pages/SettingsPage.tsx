@@ -460,6 +460,19 @@ export function SettingsPage() {
                   t('settings.printing.cardPaymentsHint'),
                 )}
               </div>
+              <div className="span-2">
+                {bool(
+                  'pos.credit_sales',
+                  t('settings.printing.creditSales'),
+                  t('settings.printing.creditSalesHint'),
+                )}
+              </div>
+              {Boolean(current['pos.credit_sales']) &&
+                number('pos.credit_default_days', t('settings.printing.creditDays'), {
+                  min: 0,
+                  max: 365,
+                  hint: t('settings.printing.creditDaysHint'),
+                })}
               {text('business.receipt_footer', t('settings.business.receiptFooter'), {
                 hint: t('settings.business.receiptFooterHint'),
                 multiline: true,

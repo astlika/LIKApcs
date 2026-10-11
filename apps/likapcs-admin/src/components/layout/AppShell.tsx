@@ -34,10 +34,12 @@ import {
   Wallet,
   Wifi,
   WifiOff,
+  HandCoins,
 } from 'lucide-react';
 import {
   PERMISSIONS,
   type CashStatusResponse,
+  type DebtsOverview,
   type HealthResponse,
   type PermissionCode,
   type StationDeviceSummary,
@@ -102,6 +104,13 @@ export function AppShell() {
     queryFn: () => api<StationDeviceSummary[]>('/devices', { query: { status: 'pending' } }),
     enabled: can(PERMISSIONS.STATIONS_VIEW),
     refetchInterval: 30_000,
+  });
+  // Overdue "pay later" debts show as a badge so they are not forgotten.
+  const debtsOverview = useQuery({
+    queryKey: ['debts', 'overview'],
+    queryFn: () => api<DebtsOverview>('/debts/overview'),
+    enabled: can(PERMISSIONS.CUSTOMERS_VIEW),
+    refetchInterval: 60_000,
   });
   const cashStatus = useQuery({
     queryKey: ['cash', 'status'],
@@ -231,6 +240,13 @@ export function AppShell() {
           permission: PERMISSIONS.CUSTOMERS_VIEW,
         },
         {
+          to: '/debts',
+          icon: HandCoins,
+          label: t('nav.debts'),
+          permission: PERMISSIONS.CUSTOMERS_VIEW,
+          badge: debtsOverview.data?.overdueCount || undefined,
+        },
+        {
           to: '/reports',
           icon: BarChart3,
           label: t('nav.reports'),
@@ -288,6 +304,7 @@ export function AppShell() {
     '/expenses': t('nav.expenses'),
     '/invoices': t('nav.invoices'),
     '/customers': t('nav.customers'),
+    '/debts': t('nav.debts'),
     '/reports': t('nav.reports'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),

@@ -46,6 +46,7 @@ export const PERMISSIONS = {
   // Customers
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_MANAGE: 'customers.manage',
+  DEBTS_WRITE_OFF: 'debts.write_off',
 
   // Staff
   USERS_VIEW: 'users.view',

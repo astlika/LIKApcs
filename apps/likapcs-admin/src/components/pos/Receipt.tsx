@@ -112,6 +112,14 @@ export function Receipt({ data }: { data: ReceiptData }) {
             <span>{fmt.money(sale.changeCents)}</span>
           </div>
         )}
+        {sale.debt && (
+          <div className="receipt__line-note">
+            {t('receipt.debtNote', {
+              amount: fmt.money(sale.debt.amountCents),
+              date: fmt.date(sale.debt.dueDate),
+            })}
+          </div>
+        )}
         {sale.refundedCents > 0 && (
           <div className="receipt__line-note">
             {t('receipt.refundedNote', { amount: fmt.money(sale.refundedCents) })}

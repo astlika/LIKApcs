@@ -58,8 +58,14 @@ export function toDate(value: Date | string | number): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
-/** "09.10.2026" */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** "09.10.2026". A calendar date (`YYYY-MM-DD`) is shown as-is — it has no time zone. */
 export function formatDate(value: Date | string | number, options: DateFormatOptions = {}): string {
+  if (typeof value === 'string') {
+    const m = DATE_ONLY.exec(value);
+    if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+  }
   const p = getParts(toDate(value), options.timeZone);
   return `${pad2(p.day)}.${pad2(p.month)}.${p.year}`;
 }

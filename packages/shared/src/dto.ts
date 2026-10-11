@@ -863,7 +863,14 @@ export const SALE_STATUSES = [
   'void',
 ] as const;
 export type SaleStatus = (typeof SALE_STATUSES)[number];
-export const SALE_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other'] as const;
+/**
+ * Tenders a sale can be settled with. `credit` = "pay later": the amount becomes a customer debt
+ * (`customer_debts`) with a due date; it needs a customer on the sale and `pos.credit_sales` on.
+ */
+export const SALE_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'credit'] as const;
+export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
+/** Methods money can actually be handed back with. */
+export const REFUND_METHODS = ['cash', 'card', 'bank_transfer', 'other'] as const;
 
 export const saleItemInputSchema = z.object({
   productId: z.string().uuid(),
@@ -876,6 +883,8 @@ export const salePaymentInputSchema = z.object({
   method: z.enum(SALE_PAYMENT_METHODS),
   amountCents: z.number().int().min(1).max(100_000_000),
   reference: z.string().trim().max(80).optional(),
+  /** `credit` only: when the customer promised to pay (defaults to `pos.credit_default_days`). */
+  dueDate: isoDate.optional(),
 });
 export type SalePaymentInput = z.infer<typeof salePaymentInputSchema>;
 
@@ -903,7 +912,7 @@ export const refundSchema = z.object({
     .max(200),
   reason: z.string().trim().min(2).max(200),
   restock: z.boolean().default(true),
-  method: z.enum(SALE_PAYMENT_METHODS).default('cash'),
+  method: z.enum(REFUND_METHODS).default('cash'),
 });
 export type RefundRequest = z.infer<typeof refundSchema>;
 
@@ -986,6 +995,14 @@ export interface SaleDetail extends SaleSummary {
   items: SaleItemSummary[];
   payments: SalePaymentSummary[];
   refunds: RefundSummary[];
+  /** Present when (part of) the sale was put on the customer's tab ("pay later"). */
+  debt: {
+    id: string;
+    amountCents: number;
+    remainingCents: number;
+    dueDate: string;
+    status: DebtStatus;
+  } | null;
 }
 
 export interface SalesListResponse {
@@ -1063,6 +1080,8 @@ export interface CashShiftTotals {
   depositsCents: number;
   withdrawalsCents: number;
   expensesCents: number;
+  /** Cash received for customer debts ("pay later" repayments). */
+  debtPaymentsCents: number;
   otherCents: number;
   /** opening + Σ movements (what should be in the drawer right now / at close). */
   expectedCashCents: number;
@@ -1218,7 +1237,10 @@ export interface CustomerSummary {
   discountBp: number;
   loyaltyPoints: number;
   walletBalanceCents: number;
+  /** Open "pay later" debts (sum of remainders), kept in sync by the debts ledger. */
   balanceDueCents: number;
+  /** 0 = no limit. */
+  creditLimitCents: number;
   notes: string | null;
   status: CustomerStatus;
   createdAt: string;
@@ -1245,6 +1267,8 @@ export const customerSchema = z.object({
   membership: z.string().trim().max(40).nullable().optional(),
   membershipUntil: isoDate.nullable().optional(),
   discountBp: z.number().int().min(0).max(10_000).default(0),
+  /** Maximum outstanding debt ("pay later"); 0 = no limit. */
+  creditLimitCents: z.number().int().min(0).max(100_000_000).default(0),
   notes: z.string().trim().max(1000).nullable().optional(),
   status: z.enum(CUSTOMER_STATUSES).default('active'),
 });
@@ -1801,4 +1825,99 @@ export interface InvoiceData {
   currency: string;
   printedAt: string;
   isReprint: boolean;
+}
+
+// ─── Customer debts ("pay later") ───────────────────────────────────────────────
+export const DEBT_STATUSES = ['open', 'partial', 'paid', 'written_off'] as const;
+export type DebtStatus = (typeof DEBT_STATUSES)[number];
+
+export interface DebtSummary {
+  id: string;
+  customerId: string;
+  customerCode: string;
+  customerName: string;
+  customerPhone: string | null;
+  /** Sale or session bill that opened the debt (null for debts opened by hand). */
+  saleId: string | null;
+  receiptNo: string | null;
+  amountCents: number;
+  paidCents: number;
+  remainingCents: number;
+  status: DebtStatus;
+  /** YYYY-MM-DD */
+  dueDate: string;
+  /** Days past the due date for open debts (0 when not yet due). */
+  overdueDays: number;
+  notes: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+
+export interface DebtPaymentSummary {
+  id: string;
+  amountCents: number;
+  method: PaymentMethod;
+  reference: string | null;
+  receivedAt: string;
+  receivedByName: string | null;
+}
+
+export interface DebtDetail extends DebtSummary {
+  payments: DebtPaymentSummary[];
+  writtenOffReason: string | null;
+  /** Lines of the originating sale, for the "what was it" question at the counter. */
+  items: { description: string; quantityMilli: number; lineTotalCents: number }[];
+}
+
+export interface DebtsOverview {
+  openCents: number;
+  overdueCents: number;
+  dueTodayCents: number;
+  openCount: number;
+  overdueCount: number;
+  /** Distinct customers with an open debt. */
+  debtors: number;
+}
+
+export const DEBT_LIST_FILTERS = [
+  'open',
+  'overdue',
+  'due_today',
+  'paid',
+  'written_off',
+  'all',
+] as const;
+export const debtListQuerySchema = paginationQuerySchema.extend({
+  filter: z.enum(DEBT_LIST_FILTERS).default('open'),
+  customerId: uuidSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+});
+export type DebtListQuery = z.infer<typeof debtListQuerySchema>;
+
+export const debtPaymentSchema = z.object({
+  amountCents: z.number().int().min(1).max(100_000_000),
+  method: z.enum(REFUND_METHODS).default('cash'),
+  /** Cash handed over (≥ amount); the response reports the change to give back. */
+  tenderedCents: z.number().int().min(0).max(100_000_000).optional(),
+  reference: z.string().trim().max(80).optional(),
+  notes: z.string().trim().max(300).optional(),
+});
+export type DebtPaymentRequest = z.infer<typeof debtPaymentSchema>;
+
+export const debtRescheduleSchema = z.object({
+  dueDate: isoDate,
+  notes: z.string().trim().max(300).optional(),
+});
+export type DebtRescheduleRequest = z.infer<typeof debtRescheduleSchema>;
+
+export const debtWriteOffSchema = z.object({ reason: z.string().trim().min(2).max(200) });
+export type DebtWriteOffRequest = z.infer<typeof debtWriteOffSchema>;
+
+export interface DebtPaymentResult {
+  /** Debts touched by this payment (one, or several for a customer-level payment). */
+  debts: DebtDetail[];
+  paidCents: number;
+  changeCents: number;
+  customer: { id: string; name: string; balanceDueCents: number };
 }

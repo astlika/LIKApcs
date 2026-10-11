@@ -21,6 +21,11 @@ describe('date & time formatting', () => {
     expect(toIsoDate(instant, tz)).toBe('2026-10-09');
   });
 
+  it('shows a calendar date (YYYY-MM-DD) as-is, whatever the zone', () => {
+    expect(formatDate('2026-10-18', { timeZone: 'America/Los_Angeles' })).toBe('18.10.2026');
+    expect(formatDate('2026-10-18', { timeZone: 'Pacific/Auckland' })).toBe('18.10.2026');
+  });
+
   it('never renders 24:xx for midnight', () => {
     const midnight = new Date('2026-01-01T23:00:00Z'); // 00:00 in Belgrade (CET)
     expect(formatTime(midnight, { timeZone: 'Europe/Belgrade' })).toBe('00:00');

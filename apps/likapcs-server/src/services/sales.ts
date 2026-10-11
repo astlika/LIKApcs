@@ -17,6 +17,7 @@ import {
   type ReceiptData,
   type RefundRequest,
   type RefundSummary,
+  type DebtStatus,
   type SaleDetail,
   type SaleItemSummary,
   type SaleListQuery,
@@ -33,6 +34,7 @@ import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
+import type { DebtsService } from './debts.js';
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -127,6 +129,7 @@ export class SalesService {
     private readonly pool: DbPool,
     private readonly settings: SettingsService,
     private readonly cash: CashService,
+    private readonly debts: DebtsService,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -134,12 +137,37 @@ export class SalesService {
   async getById(id: string, db: Queryable = this.pool): Promise<SaleDetail> {
     const r = await db.query<SaleRow>(`${SALE_SELECT} WHERE s.id = $1`, [id]);
     if (!r.rows[0]) throw notFound('Sale');
-    const [items, payments, refunds] = await Promise.all([
+    const [items, payments, refunds, debt] = await Promise.all([
       this.items(id, db),
       this.payments(id, db),
       this.refunds(id, db),
+      this.debt(id, db),
     ]);
-    return { ...mapSale(r.rows[0]), items, payments, refunds };
+    return { ...mapSale(r.rows[0]), items, payments, refunds, debt };
+  }
+
+  private async debt(saleId: string, db: Queryable): Promise<SaleDetail['debt']> {
+    const r = await db.query<{
+      id: string;
+      amount_cents: string;
+      paid_cents: string;
+      status: DebtStatus;
+      due_date: string;
+    }>(
+      `SELECT id, amount_cents::text, paid_cents::text, status, to_char(due_date, 'YYYY-MM-DD') AS due_date
+         FROM customer_debts WHERE sale_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [saleId],
+    );
+    const d = r.rows[0];
+    if (!d) return null;
+    const open = d.status === 'open' || d.status === 'partial';
+    return {
+      id: d.id,
+      amountCents: Number(d.amount_cents),
+      remainingCents: open ? Number(d.amount_cents) - Number(d.paid_cents) : 0,
+      dueDate: d.due_date,
+      status: d.status,
+    };
   }
 
   private async items(saleId: string, db: Queryable): Promise<SaleItemSummary[]> {
@@ -791,6 +819,19 @@ export class SalesService {
           actor.userId,
         ],
       );
+    }
+    // "Pay later": the credit tenders become one debt on the customer's tab (validated there:
+    // feature on, customer active, within the credit limit). The drawer never sees this money.
+    const credit = payments.filter((p) => p.method === 'credit');
+    if (credit.length) {
+      await this.debts.open(client, {
+        customerId: input.customerId,
+        saleId,
+        amountCents: credit.reduce((acc, p) => acc + p.amountCents, 0),
+        dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
+        notes: receiptNo,
+        actor,
+      });
     }
     await client.query(
       `UPDATE sales SET status = 'completed', receipt_no = $2, subtotal_cents = $3, discount_cents = $4, tax_cents = $5,

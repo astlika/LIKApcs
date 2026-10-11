@@ -19,6 +19,7 @@ import {
   Truck,
   Users,
   Wallet,
+  HandCoins,
 } from 'lucide-react';
 import type { StationSummary } from '@likapcs/shared';
 import { PERMISSIONS } from '@likapcs/shared';
@@ -65,6 +66,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'expenses', label: t('nav.expenses'), kind: 'page', to: '/expenses', icon: Receipt },
       { id: 'invoices', label: t('nav.invoices'), kind: 'page', to: '/invoices', icon: FileText },
       { id: 'customers', label: t('nav.customers'), kind: 'page', to: '/customers', icon: Contact },
+      { id: 'debts', label: t('nav.debts'), kind: 'page', to: '/debts', icon: HandCoins },
       { id: 'reports', label: t('nav.reports'), kind: 'page', to: '/reports', icon: BarChart3 },
       { id: 'employees', label: t('nav.employees'), kind: 'page', to: '/employees', icon: Users },
       { id: 'audit', label: t('nav.audit'), kind: 'page', to: '/audit', icon: ScrollText },

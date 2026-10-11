@@ -15,6 +15,8 @@ type Presentation = Pick<
   | 'locale.timezone'
   | 'locale.default_language'
   | 'pos.card_payments'
+  | 'pos.credit_sales'
+  | 'pos.credit_default_days'
 >;
 
 const AppSettingsContext = createContext<Presentation>({
@@ -23,6 +25,8 @@ const AppSettingsContext = createContext<Presentation>({
   'locale.timezone': SETTING_DEFAULTS['locale.timezone'],
   'locale.default_language': SETTING_DEFAULTS['locale.default_language'],
   'pos.card_payments': SETTING_DEFAULTS['pos.card_payments'],
+  'pos.credit_sales': SETTING_DEFAULTS['pos.credit_sales'],
+  'pos.credit_default_days': SETTING_DEFAULTS['pos.credit_default_days'],
 });
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
@@ -42,6 +46,9 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       'locale.default_language':
         s['locale.default_language'] ?? SETTING_DEFAULTS['locale.default_language'],
       'pos.card_payments': s['pos.card_payments'] ?? SETTING_DEFAULTS['pos.card_payments'],
+      'pos.credit_sales': s['pos.credit_sales'] ?? SETTING_DEFAULTS['pos.credit_sales'],
+      'pos.credit_default_days':
+        s['pos.credit_default_days'] ?? SETTING_DEFAULTS['pos.credit_default_days'],
     };
   }, [publicQuery.data]);
   void status;

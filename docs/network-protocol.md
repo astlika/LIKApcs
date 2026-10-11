@@ -226,6 +226,31 @@ _Open shift_ dialog and retrying the original request once the shift exists.
 | `DELETE /customers/:id` | —                                                                            | archives (never deletes — sales keep their customer link)                                                             |
 
 `GET /sales?customerId=` and `GET /sessions?customerId=` filter history by customer.
+`POST /customers` / `PATCH` also take `creditLimitCents` (0 = no limit) — the cap on the customer's
+open "pay later" balance; summaries carry `balanceDueCents` (sum of open debt remainders).
+
+### Debts — "pay later" (`customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
+
+Off by default: `pos.credit_sales` must be on before any `credit` tender is accepted. A sale (or a
+session bill) paid with `payments: [{method: 'credit', amountCents, dueDate?}]` needs a
+`customerId`; the server opens one `customer_debts` row for the credit part (due date defaults to
+today + `pos.credit_default_days`), refuses blocked customers and anything over the customer's
+credit limit, and never touches the cash drawer for it. `credit` cannot exceed the total (no
+change on a debt). Sale details then carry `debt{id, amountCents, remainingCents, dueDate, status}`.
+
+| Route                           | Body / query                                                                 | Result                                                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /debts`                    | `?filter=open\|overdue\|due_today\|paid\|written_off\|all&customerId&q&page` | paginated debts with customer, receipt, amounts, `remainingCents`, `overdueDays`; open ones oldest due date first |
+| `GET /debts/overview`           | —                                                                            | `{openCents, overdueCents, dueTodayCents, openCount, overdueCount, debtors}`                                      |
+| `GET /debts/:id`                | —                                                                            | detail + `payments[]` (method, who, when) + `items[]` of the originating sale                                     |
+| `POST /debts/:id/pay`           | `{amountCents, method?, tenderedCents?, reference?, notes?}`                 | partial or full repayment; cash goes into the open shift as `customer_payment`; `changeCents` reported            |
+| `POST /customers/:id/debts/pay` | same body                                                                    | one amount settles the customer's open debts oldest-first (the last may stay `partial`)                           |
+| `POST /debts/:id/reschedule`    | `{dueDate, notes?}`                                                          | new due date (audited `debt.rescheduled`)                                                                         |
+| `POST /debts/:id/write-off`     | `{reason}`                                                                   | remaining amount forgiven, never counted as income (audited `debt.written_off`)                                   |
+
+Repayments are `payments` rows of kind `customer_payment` linked through `debt_payments`; shift
+totals show them as `debtPaymentsCents`. Every state change is audited (`debt.opened`, `debt.paid`,
+`debt.rescheduled`, `debt.written_off`).
 
 ### Suppliers & purchases (`purchases.view` to read; `suppliers.manage`, `purchases.manage`, `purchases.pay` to write)
 

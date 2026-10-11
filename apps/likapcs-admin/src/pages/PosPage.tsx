@@ -9,14 +9,15 @@
  *
  * After a payment the "sale completed" screen shows the change due with Print / Finish and starts
  * the next sale by itself after `pos.auto_finish_seconds`; printing is on demand unless
- * `pos.auto_print_receipt` is on. Payment is cash only unless `pos.card_payments` is enabled.
+ * `pos.auto_print_receipt` is on. Tenders come from the shared `TenderPanel`: cash only unless
+ * `pos.card_payments` is on; "pay later" (a customer debt with a due date) when `pos.credit_sales`
+ * is on and a customer is attached to the sale.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
-  CreditCard,
   Minus,
   PauseCircle,
   Plus,
@@ -36,7 +37,6 @@ import {
   type ProductSummary,
   type ReceiptData,
   type SaleDetail,
-  type SalePaymentInput,
   type SalesListResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
@@ -53,30 +53,23 @@ import {
 } from '../lib/cart';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
-import { suggestTenders } from '../lib/tender';
 import { useI18n } from '../i18n';
-import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
 import { usePosCart } from '../state/pos-cart';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
 import { CustomerPicker } from '../components/customers/CustomerPicker';
+import { TenderPanel, useTender } from '../components/payments/TenderPanel';
 import {
-  Alert,
   Badge,
   Button,
   ConfirmDialog,
   Dialog,
   EmptyState,
-  Field,
-  Input,
   Kbd,
   Loading,
 } from '../components/ui/primitives';
-
-/** A tendered amount this far above the total is a mistyped/scanned code, not money. */
-const MAX_OVERPAY_CENTS = 100_000_00;
 
 export function PosPage() {
   const { t } = useI18n();
@@ -85,7 +78,6 @@ export function PosPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const settings = useAppSettings();
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
 
@@ -580,7 +572,11 @@ export function PosPage() {
           cart={cart}
           resumedId={resumedId}
           totalCents={totals.totalCents}
-          cardEnabled={settings['pos.card_payments']}
+          customer={customer}
+          onCustomerChange={(c) => {
+            setCustomer(c);
+            setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
+          }}
           onClose={() => {
             setDialog(null);
             focusSearch();
@@ -770,8 +766,9 @@ function SaleDoneDialog({ receipt, onFinish }: { receipt: ReceiptData; onFinish:
   }, [print]);
 
   const { sale } = receipt;
+  // What the customer actually handed over now — "pay later" is not money in the drawer.
   const tendered = sale.payments
-    .filter((p) => p.kind === 'sale')
+    .filter((p) => p.kind === 'sale' && p.method !== 'credit')
     .reduce((a, p) => a + p.amountCents, 0);
   return (
     <Dialog
@@ -802,6 +799,17 @@ function SaleDoneDialog({ receipt, onFinish }: { receipt: ReceiptData; onFinish:
             <span>{t('pos.paid')}</span>
             <span className="num">{fmt.money(tendered)}</span>
           </div>
+          {sale.debt && (
+            <div className="pos-done__row pos-done__row--debt" data-testid="pos-done-debt">
+              <span>{t('pos.payLater')}</span>
+              <span className="num">
+                {t('pos.debtRecorded', {
+                  amount: fmt.money(sale.debt.amountCents),
+                  date: fmt.date(sale.debt.dueDate),
+                })}
+              </span>
+            </div>
+          )}
           <div className="pos-done__change" data-testid="pos-change">
             <span>{t('pos.change')}</span>
             <strong className="num">{fmt.money(sale.changeCents)}</strong>
@@ -823,55 +831,28 @@ function PaymentDialog({
   cart,
   resumedId,
   totalCents,
-  cardEnabled,
+  customer,
+  onCustomerChange,
   onClose,
   onCompleted,
 }: {
   cart: Cart;
   resumedId: string | null;
   totalCents: number;
-  /** `pos.card_payments` — off: cash only, no method choice at all. */
-  cardEnabled: boolean;
+  customer: CustomerSummary | null;
+  /** "Pay later" needs a customer; picking one here attaches it to the sale as well. */
+  onCustomerChange: (customer: CustomerSummary | null) => void;
   onClose: () => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
 }) {
   const { t } = useI18n();
-  const fmt = useFormat();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
-  // sale is Enter → Enter.
-  const [cashText, setCashText] = useState((totalCents / 100).toFixed(2));
-  const [cardText, setCardText] = useState('');
-  const [reference, setReference] = useState('');
-  const [method, setMethod] = useState<'cash' | 'card' | 'split'>('cash');
-  const cashRef = useRef<HTMLInputElement>(null);
-  const effectiveMethod = cardEnabled ? method : 'cash';
-
-  const cashCents = cashText.trim() ? parseMoneyInput(cashText) : 0;
-  const cardCents = cardText.trim() ? parseMoneyInput(cardText) : 0;
-  const payments: SalePaymentInput[] = [];
-  if (effectiveMethod === 'card')
-    payments.push({ method: 'card', amountCents: totalCents, reference: reference || undefined });
-  else {
-    if (effectiveMethod === 'split' && cardCents && cardCents > 0)
-      payments.push({ method: 'card', amountCents: cardCents, reference: reference || undefined });
-    if (cashCents && cashCents > 0) payments.push({ method: 'cash', amountCents: cashCents });
-  }
-  const paid = payments.reduce((a, p) => a + p.amountCents, 0);
-  const nonCash = payments
-    .filter((p) => p.method !== 'cash')
-    .reduce((a, p) => a + p.amountCents, 0);
-  const cardOver = nonCash > totalCents;
-  // A number far above the total is a barcode that landed in the field, not money.
-  const implausible = paid > totalCents + MAX_OVERPAY_CENTS;
-  const covered =
-    paid >= totalCents && !cardOver && !implausible && cashCents !== null && cardCents !== null;
-  const change = covered ? paid - totalCents : 0;
+  const tender = useTender({ totalCents, customer });
 
   const complete = useMutation({
     mutationFn: async () => {
-      const body = { ...cartToRequest(cart), payments };
+      const body = { ...cartToRequest(cart), payments: tender.payments };
       const sale = resumedId
         ? await api<SaleDetail>(`/sales/${resumedId}/complete`, { method: 'POST', body })
         : await api<SaleDetail>('/sales', { method: 'POST', body });
@@ -885,7 +866,7 @@ function PaymentDialog({
     },
   });
   const submit = () => {
-    if (covered && !complete.isPending) complete.mutate();
+    if (tender.covered && !complete.isPending) complete.mutate();
   };
 
   // Enter completes from anywhere in the dialog (a tapped chip, the method row); the tendered
@@ -907,11 +888,6 @@ function PaymentDialog({
     return () => document.removeEventListener('keydown', onKey);
   });
 
-  useEffect(() => {
-    cashRef.current?.focus();
-    cashRef.current?.select();
-  }, [effectiveMethod]);
-
   return (
     <Dialog
       open
@@ -926,146 +902,20 @@ function PaymentDialog({
           <Button
             variant="primary"
             size="lg"
-            disabled={!covered}
+            disabled={!tender.covered}
             loading={complete.isPending}
             onClick={submit}
             data-testid="pos-complete"
           >
-            {t('pos.complete')} <Kbd>Enter</Kbd>
+            {tender.mode === 'credit' && tender.creditCents > 0
+              ? t('pos.completeOnTab')
+              : t('pos.complete')}{' '}
+            <Kbd>Enter</Kbd>
           </Button>
         </>
       }
     >
-      <div className="stack">
-        <div className="pos__grand" style={{ fontSize: 26 }}>
-          <span>{t('pos.total')}</span>
-          <span className="num">{fmt.money(totalCents)}</span>
-        </div>
-        {cardEnabled && (
-          <div className="chips" data-testid="pos-methods">
-            {(
-              [
-                ['cash', t('pos.cash'), <Banknote key="b" size={14} />],
-                ['card', t('pos.card'), <CreditCard key="c" size={14} />],
-                ['split', `${t('pos.cash')} + ${t('pos.card')}`, null],
-              ] as const
-            ).map(([value, label, icon]) => (
-              <button
-                key={value}
-                type="button"
-                className="chip"
-                aria-pressed={method === value}
-                onClick={() => setMethod(value)}
-              >
-                {icon} {label}
-              </button>
-            ))}
-          </div>
-        )}
-        {effectiveMethod !== 'card' && (
-          <>
-            <div className="chips">
-              <button
-                type="button"
-                className="chip"
-                onClick={() => {
-                  setCashText(
-                    (
-                      Math.max(
-                        0,
-                        totalCents - (effectiveMethod === 'split' ? (cardCents ?? 0) : 0),
-                      ) / 100
-                    ).toFixed(2),
-                  );
-                  cashRef.current?.focus();
-                }}
-              >
-                {t('pos.exact')}
-              </button>
-              {suggestTenders(
-                Math.max(0, totalCents - (effectiveMethod === 'split' ? (cardCents ?? 0) : 0)),
-              ).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className="chip chip--tender"
-                  data-testid="pos-tender-chip"
-                  onClick={() => {
-                    setCashText((c / 100).toFixed(2));
-                    cashRef.current?.focus();
-                  }}
-                >
-                  {fmt.money(c)}
-                </button>
-              ))}
-            </div>
-            <Field label={t('pos.tendered')} hint={t('pos.tenderedHint')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  ref={cashRef}
-                  inputMode="decimal"
-                  className="num"
-                  style={{ fontSize: 22, height: 48 }}
-                  value={cashText}
-                  onChange={(e) => setCashText(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      submit();
-                    }
-                  }}
-                  aria-invalid={cashCents === null || implausible}
-                  data-testid="pos-tendered"
-                />
-              )}
-            </Field>
-          </>
-        )}
-        {effectiveMethod !== 'cash' && (
-          <div className="grid grid--2">
-            {effectiveMethod === 'split' && (
-              <Field label={t('pos.card')}>
-                {(id) => (
-                  <Input
-                    id={id}
-                    inputMode="decimal"
-                    className="num"
-                    value={cardText}
-                    onChange={(e) => setCardText(e.target.value)}
-                    aria-invalid={cardCents === null || cardOver}
-                  />
-                )}
-              </Field>
-            )}
-            <Field label={t('pos.reference')} optional>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={reference}
-                  maxLength={80}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
-        )}
-        {cardOver && <Alert tone="danger">{t('pos.cardOver')}</Alert>}
-        {implausible && <Alert tone="danger">{t('pos.implausibleAmount')}</Alert>}
-        {!covered && !cardOver && !implausible && paid > 0 && (
-          <div className="row row--between">
-            <span className="muted">{t('pos.remaining')}</span>
-            <strong className="num">{fmt.money(totalCents - paid)}</strong>
-          </div>
-        )}
-        {covered && (
-          <div className="pos__change">
-            <span>{t('pos.change')}</span>
-            <strong className="num">{fmt.money(change)}</strong>
-          </div>
-        )}
-      </div>
+      <TenderPanel tender={tender} onSubmit={submit} onCustomerChange={onCustomerChange} />
     </Dialog>
   );
 }

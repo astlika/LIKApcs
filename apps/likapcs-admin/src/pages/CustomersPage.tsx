@@ -4,11 +4,13 @@
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Archive, Pencil, Plus, UserRound } from 'lucide-react';
 import {
   CUSTOMER_STATUSES,
   PERMISSIONS,
   formatDuration,
+  parseMoneyInput,
   type CustomerDetail,
   type CustomerStatus,
   type CustomerSummary,
@@ -17,6 +19,7 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import {
@@ -123,6 +126,7 @@ export function CustomersPage() {
                 <th>{t('customers.phone')}</th>
                 <th>{t('customers.membership')}</th>
                 <th className="right">{t('customers.discount')}</th>
+                <th className="right">{t('customers.owes')}</th>
                 <th>{t('common.status')}</th>
                 <th>{t('common.created')}</th>
                 {canManage && <th className="right">{t('common.actions')}</th>}
@@ -155,6 +159,20 @@ export function CustomersPage() {
                     )}
                   </td>
                   <td className="right num">{c.discountBp ? `${c.discountBp / 100}%` : '—'}</td>
+                  <td className="right num">
+                    {c.balanceDueCents > 0 ? (
+                      <Link
+                        to={`/debts?customer=${c.id}`}
+                        className="text-danger"
+                        onClick={(e) => e.stopPropagation()}
+                        title={t('customers.viewDebts')}
+                      >
+                        <strong>{fmt.money(c.balanceDueCents)}</strong>
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>
                     <Badge tone={STATUS_TONE[c.status]}>
                       {t(`customers.status.${c.status}` as 'customers.status.active')}
@@ -213,8 +231,10 @@ function CustomerDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const creditEnabled = useAppSettings()['pos.credit_sales'];
   const [form, setForm] = useState({
     code: customer?.code ?? '',
     name: customer?.name ?? '',
@@ -223,15 +243,20 @@ function CustomerDialog({
     membership: customer?.membership ?? '',
     membershipUntil: customer?.membershipUntil ?? '',
     discountPct: customer ? String(customer.discountBp / 100) : '0',
+    creditLimit:
+      customer && customer.creditLimitCents > 0 ? (customer.creditLimitCents / 100).toFixed(2) : '',
     notes: customer?.notes ?? '',
     status: (customer?.status ?? 'active') as CustomerStatus,
   });
   const discountBp = Math.round(Number(form.discountPct.replace(',', '.')) * 100);
+  const creditLimitCents = form.creditLimit.trim() ? parseMoneyInput(form.creditLimit) : 0;
   const valid =
     form.name.trim().length > 0 &&
     Number.isFinite(discountBp) &&
     discountBp >= 0 &&
-    discountBp <= 10_000;
+    discountBp <= 10_000 &&
+    creditLimitCents !== null &&
+    creditLimitCents >= 0;
   const mutation = useMutation({
     mutationFn: () => {
       const body = {
@@ -242,6 +267,7 @@ function CustomerDialog({
         membership: form.membership.trim() || null,
         membershipUntil: form.membershipUntil || null,
         discountBp,
+        creditLimitCents: creditLimitCents ?? 0,
         notes: form.notes.trim() || null,
         status: form.status,
       };
@@ -399,6 +425,39 @@ function CustomerDialog({
             )}
           </Field>
         </div>
+        {creditEnabled && (
+          <div className="grid grid--2">
+            <Field
+              label={t('customers.creditLimit')}
+              hint={t('customers.creditLimitHint')}
+              error={creditLimitCents === null ? t('common.invalid') : undefined}
+            >
+              {(id, invalid) => (
+                <Input
+                  id={id}
+                  aria-invalid={invalid || undefined}
+                  inputMode="decimal"
+                  className="num"
+                  placeholder="0.00"
+                  value={form.creditLimit}
+                  onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
+                />
+              )}
+            </Field>
+            {customer && customer.balanceDueCents > 0 && (
+              <Field label={t('customers.owes')}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    className="num"
+                    value={fmt.money(customer.balanceDueCents)}
+                    readOnly
+                  />
+                )}
+              </Field>
+            )}
+          </div>
+        )}
         <Field label={t('common.notes')} optional>
           {(id, invalid) => (
             <Textarea
@@ -498,6 +557,19 @@ function CustomerDetailDialog({
           <div className="grid grid--stats">
             <StatTile label={t('customers.visits')} value={String(c.stats.salesCount)} />
             <StatTile label={t('customers.spent')} value={fmt.money(c.stats.salesTotalCents)} />
+            {(c.balanceDueCents > 0 || c.creditLimitCents > 0) && (
+              <StatTile
+                label={t('customers.owes')}
+                value={fmt.money(c.balanceDueCents)}
+                sub={
+                  c.creditLimitCents > 0
+                    ? `${t('customers.creditLimit')}: ${fmt.money(c.creditLimitCents)}`
+                    : `${t('customers.creditLimit')}: ${t('customers.noLimit')}`
+                }
+                tone={c.balanceDueCents > 0 ? 'danger' : undefined}
+                to={`/debts?customer=${c.id}`}
+              />
+            )}
             <StatTile
               label={t('customers.playTime')}
               value={formatDuration(c.stats.sessionsMinutes * 60)}
