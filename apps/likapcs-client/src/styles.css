@@ -186,37 +186,37 @@ html[data-mode='overlay'] body {
 }
 .lock__footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  min-height: 32px;
   color: var(--muted);
   font-size: 13px;
+}
+.offline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fcd34d;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.offline-pill i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+  animation: pulse 1.2s ease-in-out infinite;
 }
 .muted {
   color: var(--muted);
 }
 .small {
   font-size: 12.5px;
-}
-.dot {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.dot i {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--muted);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
-}
-.dot--on i {
-  background: var(--success);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
-}
-.dot--warn i {
-  background: var(--warning);
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
-  animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
   50% {
@@ -617,13 +617,14 @@ html:not([data-desktop='1']) .overlay {
   align-items: stretch;
   justify-content: center;
 }
+/* As a tray flyout the window has no OS frame: a 1px edge keeps it readable over any desktop. */
 .panel-window .panel {
   position: static;
   width: 100%;
   height: 100vh;
   max-height: 100vh;
   box-sizing: border-box;
-  border: none;
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 0;
   box-shadow: none;
 }

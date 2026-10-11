@@ -6,7 +6,7 @@
 
 Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gaming centres.
 
-| App                | What it is                                                                                                                                                                                                             | Status (0.5.0)                                              |
+| App                | What it is                                                                                                                                                                                                             | Status (0.5.1)                                              |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | **LIKApcs Server** | Local background service — PostgreSQL, HTTP API v1, realtime WebSocket, auth, session billing, POS, inventory, purchasing, cash register, reports, backups, updates (authoritative)                                    | ✅ schema v12, 128 integration/unit tests                   |
 | **LIKApcs Admin**  | Windows desktop app (React + Tauri) — dashboard, live station map, POS, sales & invoices, products, purchases, suppliers, cash register, expenses, customers, reports, backups, updates, employees, audit, settings    | ✅ 19 screens, EN/SQ, dark/light, keyboard-first POS        |
@@ -36,9 +36,10 @@ LIKApcs has exactly two installers. No separate database or server setup is need
    sessions and finds the server on the local network by itself. In the Admin app open _Gaming
    Stations → **Connect a PC**_: it shows the address to type on the lock screen if a PC does not
    find the server on its own, the firewall state, and the new PC waiting for approval — assign it
-   to a station and it is online. The client starts with Windows, lives in the notification area
-   (settings, update check), keeps the lock screen in front (Windows keys, Alt+Tab, Alt+F4 and Task
-   Manager are blocked while locked; staff unlock with Ctrl+Alt+A), shows the remaining time in a
+   to a station and it is online. The client starts with Windows and lives only in the notification
+   area — never on the taskbar or in Alt+Tab (left click on the tray icon toggles the settings
+   flyout, right click opens the menu), keeps the lock screen in front (Windows keys, Alt+Tab,
+   Alt+F4 and Task Manager are blocked while locked; staff unlock with Ctrl+Alt+A), shows the remaining time in a
    small widget during a session and executes staff commands (lock, unlock, message, restart, shut
    down, update) only after the server has authenticated them. Keeps itself up to date from GitHub
    Releases (signature-verified) — automatically while locked and idle, never during a session.

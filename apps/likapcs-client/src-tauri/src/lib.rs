@@ -2,7 +2,7 @@
 //!
 //! Thin native layer for the gaming-PC agent: kiosk window control (fullscreen lock screen with
 //! keyboard hardening and cover windows on extra monitors, a small always-on-top countdown
-//! widget, a centred settings panel), the tray icon, the machine identity, a DPAPI-backed secret
+//! widget, a settings flyout next to the tray), the tray icon, the machine identity, a DPAPI-backed secret
 //! store, LAN discovery of the server, staff-requested power actions and the signed
 //! auto-updater. All protocol logic lives in the TypeScript agent (`src/lib/agent.ts`).
 
@@ -13,13 +13,13 @@ use serde::{Deserialize, Serialize};
 use std::net::{SocketAddr, UdpSocket};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 
@@ -41,6 +41,10 @@ struct DeviceIdentity {
 struct KioskState {
     locked: Arc<AtomicBool>,
 }
+
+/// Screen position (physical pixels) of the last left click on the tray icon; the settings
+/// panel opens as a flyout next to it.
+struct PanelAnchor(Mutex<Option<(f64, f64)>>);
 
 #[cfg(windows)]
 pub(crate) fn hide_console(cmd: &mut Command) {
@@ -208,7 +212,8 @@ fn discover(timeout: Duration) -> Vec<serde_json::Value> {
 }
 
 fn apply_locked(window: &WebviewWindow) {
-    let _ = window.set_skip_taskbar(false);
+    // The client is never a "program" on the taskbar or in Alt+Tab — only the tray icon.
+    let _ = window.set_skip_taskbar(true);
     let _ = window.set_decorations(false);
     let _ = window.set_resizable(false);
     let _ = window.set_fullscreen(true);
@@ -238,15 +243,58 @@ fn apply_overlay(window: &WebviewWindow) {
     let _ = window.show();
 }
 
-/// Centred, always-on-top settings panel (opened from the tray while the PC is unlocked).
-fn apply_panel(window: &WebviewWindow) {
+/// Settings panel opened from the tray while the PC is unlocked: an always-on-top flyout next to
+/// the tray icon (bottom-right of the work area for the usual taskbar position), kept inside the
+/// work area of the monitor the click happened on. Centred when no monitor is known.
+fn apply_panel(app: &AppHandle, window: &WebviewWindow) {
     let _ = window.set_fullscreen(false);
     let _ = window.set_decorations(false);
     let _ = window.set_resizable(false);
-    let _ = window.set_skip_taskbar(false);
+    let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
-    let _ = window.set_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT));
-    let _ = window.center();
+
+    let anchor = app.state::<PanelAnchor>().0.lock().ok().and_then(|a| *a);
+    let monitor = anchor
+        .and_then(|(x, y)| app.monitor_from_point(x, y).ok().flatten())
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    match monitor {
+        Some(monitor) => {
+            let scale = monitor.scale_factor();
+            let work = monitor.work_area();
+            let margin = (12.0 * scale).round();
+            let left = work.position.x as f64;
+            let top = work.position.y as f64;
+            let right = left + work.size.width as f64;
+            let bottom = top + work.size.height as f64;
+            let width = (PANEL_WIDTH * scale)
+                .round()
+                .min(right - left - 2.0 * margin)
+                .max(1.0);
+            let height = (PANEL_HEIGHT * scale)
+                .round()
+                .min(bottom - top - 2.0 * margin)
+                .max(1.0);
+            // Without a click to anchor to (Ctrl+Alt+S), assume the tray's usual corner.
+            let (ax, ay) = anchor.unwrap_or((right, bottom));
+            // Horizontally right-aligned to the click, vertically on the taskbar's side.
+            let x = (ax - width + 48.0 * scale)
+                .max(left + margin)
+                .min(right - width - margin);
+            let y = if ay >= top + (bottom - top) / 2.0 {
+                bottom - height - margin
+            } else {
+                top + margin
+            };
+            let _ = window.set_size(PhysicalSize::new(width as u32, height as u32));
+            let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        }
+        None => {
+            let _ = window.set_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT));
+            let _ = window.center();
+        }
+    }
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
@@ -320,7 +368,7 @@ async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
             locked.store(false, Ordering::SeqCst);
             kiosk::set_enabled(false);
             update_covers(&app, false);
-            apply_panel(&window);
+            apply_panel(&app, &window);
         }
         other => return Err(format!("unknown window mode {other}")),
     }
@@ -430,6 +478,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(KioskState { locked: locked.clone() })
+        .manage(PanelAnchor(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             device_identity,
             secret_get,
@@ -464,13 +513,20 @@ pub fn run() {
                     let _ = app.emit("tray", id);
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // Left click = settings (the frontend toggles the panel); the context menu
+                    // stays on the right button.
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
+                        position,
                         ..
                     } = event
                     {
-                        let _ = tray.app_handle().emit("tray", "settings");
+                        let app = tray.app_handle();
+                        if let Ok(mut anchor) = app.state::<PanelAnchor>().0.lock() {
+                            *anchor = Some((position.x, position.y));
+                        }
+                        let _ = app.emit("tray", "settings");
                     }
                 });
             if let Some(icon) = app.default_window_icon() {

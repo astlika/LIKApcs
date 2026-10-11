@@ -8,6 +8,36 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.5.1] - 2026-10-11
+
+### Changed
+
+- **Client — clean lock screen.** The footer line (`LIKApcs Client <version> · <PC name> ·
+  Ctrl+Alt+S settings · Ctrl+Alt+A staff unlock`) and the connection dot are gone; the lock screen
+  shows only the business name, the clock, the station and the status card. The shortcuts are
+  staff knowledge (Admin → Settings explains Ctrl+Alt+A; the client's own settings panel still
+  opens with Ctrl+Alt+S). The only element that can appear at the bottom is a small amber pill
+  _"No connection to the server — reconnecting…"_ while the server is unreachable, so staff see
+  the problem at a glance.
+- **Client — never a "program".** The window is a tool window in every mode (`skipTaskbar` from
+  the first frame, kept across lock screen / countdown widget / settings panel): no taskbar
+  button, nothing in Alt+Tab — the tray icon is the client's only presence. The window still
+  cannot be closed or minimised while locked.
+- **Client — settings flyout from the tray.** The settings panel opens as an always-on-top flyout
+  next to the tray icon (anchored to the click, kept inside the work area of that monitor, DPI
+  aware; falls back to the centre of the screen when no monitor is known) instead of a centred
+  window. Ctrl+Alt+S opens the same flyout in the tray's usual corner. The flyout keeps its 1px
+  edge so it stays readable over any desktop.
+
+### Fixed
+
+- **Client — left click on the tray icon did nothing during a session.** The tray listener was
+  registered once with the state of the first render (locked), so during a customer session or a
+  staff unlock it never asked the native side to grow the 300×96 countdown widget into the panel;
+  the panel was marked open but nothing was visible. The handler now reads the live agent
+  snapshot, and a left click **toggles** the panel (open → close); a Windows double click is
+  coalesced into one toggle.
+
 ## [0.5.0] - 2026-10-11
 
 ### Added

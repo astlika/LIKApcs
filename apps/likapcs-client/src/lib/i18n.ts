@@ -121,7 +121,7 @@ const en = {
   traySettings: 'Settings…',
   trayUpdate: 'Check for updates',
   trayQuit: 'Quit LIKApcs Client',
-  shortcutsHint: 'Ctrl+Alt+S settings · Ctrl+Alt+A staff unlock',
+  offlineBanner: 'No connection to the server — reconnecting…',
 };
 const sq: typeof en = {
   station: 'Stacioni',
@@ -244,7 +244,7 @@ const sq: typeof en = {
   traySettings: 'Cilësimet…',
   trayUpdate: 'Kontrollo për përditësime',
   trayQuit: 'Mbyll LIKApcs Client',
-  shortcutsHint: 'Ctrl+Alt+S cilësimet · Ctrl+Alt+A zhbllokim nga stafi',
+  offlineBanner: 'Nuk ka lidhje me serverin — duke u rilidhur…',
 };
 
 export const dictionaries: Record<Language, typeof en> = { en, sq };

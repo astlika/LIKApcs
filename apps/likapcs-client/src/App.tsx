@@ -1,4 +1,11 @@
-import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from 'react';
 import { agent, type AgentSnapshot, type ManualConnectResult } from './lib/agent';
 import { discoverServers, isDesktopApp, onTrayAction, type TrayLabels } from './lib/native';
 import { candidateServerUrls, formatHMS, sessionView } from './lib/protocol';
@@ -40,24 +47,33 @@ export function App() {
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const locked = snap.state.mode === 'locked';
+  // Mirrors `settingsOpen` for the native tray listener, which is registered once and therefore
+  // never sees re-rendered state.
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
 
-  const closeSettings = () => {
+  const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     void agent.closePanel();
-  };
-  const openSettings = async () => {
+  }, []);
+  const openSettings = useCallback(async () => {
     setUnlockOpen(false);
-    if (snap.state.mode !== 'locked') await agent.openPanel();
+    // Read the live snapshot (not render-time props): during a session the window is the small
+    // countdown widget and must first grow into the panel, otherwise nothing would be visible.
+    if (agent.getSnapshot().state.mode !== 'locked') await agent.openPanel();
     setSettingsOpen(true);
-  };
+  }, []);
+  const toggleSettings = useCallback(() => {
+    if (settingsOpenRef.current) closeSettings();
+    else void openSettings();
+  }, [closeSettings, openSettings]);
 
   // Ctrl+Alt+S opens the settings panel; Ctrl+Alt+A the staff unlock (lock screen only).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (settingsOpen) closeSettings();
-        else void openSettings();
+        toggleSettings();
       }
       if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'a' && locked) {
         e.preventDefault();
@@ -71,15 +87,21 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsOpen, locked]);
+  }, [settingsOpen, locked, closeSettings, toggleSettings]);
 
-  // Tray menu (native) → actions. The native side already refuses "quit" while locked.
+  // Tray (native) → actions: a left click on the icon toggles the settings panel, the context
+  // menu offers settings / update / quit. The native side already refuses "quit" while locked.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let lastClick = 0;
     void onTrayAction((action) => {
-      if (action === 'settings') void openSettings();
-      else if (action === 'update') {
+      if (action === 'settings') {
+        // Windows reports a double click as two clicks — treat clicks within 350 ms as one.
+        const now = Date.now();
+        if (now - lastClick < 350) return;
+        lastClick = now;
+        toggleSettings();
+      } else if (action === 'update') {
         void openSettings();
         void agent.checkUpdates('manual');
       } else if (action === 'quit') {
@@ -94,8 +116,7 @@ export function App() {
       unlisten = fn;
     });
     return () => unlisten?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [openSettings, toggleSettings]);
 
   // Tray texts follow the language and status.
   useEffect(() => {
@@ -148,13 +169,15 @@ export function App() {
         )}
       </main>
 
+      {/* The lock screen carries no footer text at all; the only extra element is a small
+          pill while the server cannot be reached, so staff see the problem at a glance. */}
       <footer className="lock__footer">
-        <ConnectionDot snap={snap} t={t} />
-        <span className="muted">
-          LIKApcs Client {snap.version}
-          {snap.identity ? ` · ${snap.identity.hostname}` : ''}
-          {snap.paired ? ` · ${t('shortcutsHint')}` : ''}
-        </span>
+        {snap.phase.phase === 'offline' && (
+          <span className="offline-pill" role="status">
+            <i />
+            {t('offlineBanner')}
+          </span>
+        )}
       </footer>
 
       {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
@@ -385,24 +408,6 @@ function StatusCard({ snap, t }: { snap: AgentSnapshot; t: T }) {
         </div>
       );
   }
-}
-
-function ConnectionDot({ snap, t }: { snap: AgentSnapshot; t: T }) {
-  const p = snap.phase.phase;
-  const online = p === 'online' || p === 'updating';
-  const label =
-    p === 'online'
-      ? t('connected')
-      : p === 'offline'
-        ? t('offline')
-        : p === 'connecting'
-          ? t('connecting')
-          : '';
-  return (
-    <span className={`dot ${online ? 'dot--on' : p === 'offline' ? 'dot--warn' : 'dot--off'}`}>
-      <i /> {label}
-    </span>
-  );
 }
 
 /**
