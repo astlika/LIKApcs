@@ -1,8 +1,11 @@
 /**
- * Point of sale. Keyboard-first: F2 search/scan field, F4 new sale, F6 payment, F8 / Enter
- * complete, Esc closes dialogs. USB barcode scanners act as keyboards — a fast burst ending in
- * Enter is picked up anywhere on the page (`useBarcodeScanner`), whatever has the focus; slower
- * typing in the search field searches by name.
+ * Point of sale. Keyboard-first and Enter-driven: scan or tap the products, **Enter** opens the
+ * payment, **Enter** completes it (the exact amount is pre-filled, a tendered amount can be typed
+ * or tapped), Enter / auto-finish starts the next sale. F2 focuses the search/scan field, F4
+ * starts a new sale, Esc closes dialogs (F6 / F8 still work as silent aliases for old habits).
+ * USB barcode scanners act as keyboards — a fast burst ending in Enter is picked up anywhere on
+ * the page (`useBarcodeScanner`), whatever has the focus, and is never mistaken for the Enter
+ * that opens the payment; slower typing in the search field searches by name.
  *
  * After a payment the "sale completed" screen shows the change due with Print / Finish and starts
  * the next sale by itself after `pos.auto_finish_seconds`; printing is on demand unless
@@ -49,7 +52,8 @@ import {
   type Cart,
 } from '../lib/cart';
 import { useFormat } from '../lib/format';
-import { useBarcodeScanner } from '../lib/scanner';
+import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
+import { suggestTenders } from '../lib/tender';
 import { useI18n } from '../i18n';
 import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
@@ -71,7 +75,6 @@ import {
   Loading,
 } from '../components/ui/primitives';
 
-const QUICK_CASH = [500, 1000, 2000, 5000];
 /** A tendered amount this far above the total is a mistyped/scanned code, not money. */
 const MAX_OVERPAY_CENTS = 100_000_00;
 
@@ -238,7 +241,10 @@ export function PosPage() {
     });
   }, [params, setParams, setCart, setCustomer, setResumedId]);
 
-  // Global shortcuts.
+  // Global shortcuts. Enter opens the payment from anywhere on the page: a scanner burst never
+  // gets here (`useBarcodeScanner` swallows it first), text typed into a field keeps its own
+  // Enter (search looks the code up, a quantity field commits), and dialogs handle theirs.
+  // Capture phase, so a focused product tile is not "clicked" again by the same Enter.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
@@ -249,13 +255,25 @@ export function PosPage() {
         e.preventDefault();
         if (cart.lines.length) setDialog('confirmNew');
         else resetCart();
-      } else if (e.key === 'F6') {
+      } else if (e.key === 'Enter' || e.key === 'F6') {
+        if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+        const target = e.target instanceof Element ? e.target : null;
+        if (target?.closest('[role="dialog"]')) return;
+        if (e.key === 'Enter' && isEditableElement(target)) {
+          const value = 'value' in target ? String((target as HTMLInputElement).value) : '';
+          if (value.trim()) return;
+        }
         e.preventDefault();
-        if (cart.lines.length && !receipt && !dialog) setDialog('payment');
+        if (cart.lines.length && !receipt && !dialog) {
+          // The payment dialog mounts synchronously (discrete event): stop the same Enter from
+          // reaching its own listener and completing the sale in one go.
+          e.stopPropagation();
+          setDialog('payment');
+        }
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [cart.lines.length, receipt, dialog, resetCart]);
 
   // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
@@ -551,7 +569,7 @@ export function PosPage() {
             disabled={cart.lines.length === 0}
             onClick={() => setDialog('payment')}
           >
-            <Banknote size={16} /> {t('pos.pay')} <Kbd>F6</Kbd>
+            <Banknote size={16} /> {t('pos.pay')} <Kbd>Enter</Kbd>
           </Button>
         </div>
         <div className="pos__hint faint">{t('pos.shortcuts')}</div>
@@ -822,7 +840,7 @@ function PaymentDialog({
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
-  // sale is F6 → Enter.
+  // sale is Enter → Enter.
   const [cashText, setCashText] = useState((totalCents / 100).toFixed(2));
   const [cardText, setCardText] = useState('');
   const [reference, setReference] = useState('');
@@ -870,9 +888,17 @@ function PaymentDialog({
     if (covered && !complete.isPending) complete.mutate();
   };
 
+  // Enter completes from anywhere in the dialog (a tapped chip, the method row); the tendered
+  // field handles its own Enter. F8 stays as a silent alias. Key events older than the dialog
+  // (the Enter that opened it) are ignored.
+  const openedAt = useRef(performance.now());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F8') {
+      if (e.timeStamp <= openedAt.current) return;
+      if (
+        e.key === 'F8' ||
+        (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element))
+      ) {
         e.preventDefault();
         submit();
       }
@@ -905,7 +931,7 @@ function PaymentDialog({
             onClick={submit}
             data-testid="pos-complete"
           >
-            {t('pos.complete')} <Kbd>F8</Kbd>
+            {t('pos.complete')} <Kbd>Enter</Kbd>
           </Button>
         </>
       }
@@ -956,11 +982,14 @@ function PaymentDialog({
               >
                 {t('pos.exact')}
               </button>
-              {QUICK_CASH.map((c) => (
+              {suggestTenders(
+                Math.max(0, totalCents - (effectiveMethod === 'split' ? (cardCents ?? 0) : 0)),
+              ).map((c) => (
                 <button
                   key={c}
                   type="button"
-                  className="chip"
+                  className="chip chip--tender"
+                  data-testid="pos-tender-chip"
                   onClick={() => {
                     setCashText((c / 100).toFixed(2));
                     cashRef.current?.focus();

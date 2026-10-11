@@ -1615,6 +1615,15 @@ button.stat:hover {
     border-color var(--t-fast),
     background var(--t-fast);
 }
+/* Tender suggestions: bigger touch targets with tabular figures, the cashier taps the note. */
+.chip--tender {
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: center;
+}
 .chip:hover {
   border-color: var(--border-strong);
 }
