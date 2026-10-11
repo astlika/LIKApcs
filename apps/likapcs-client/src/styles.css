@@ -261,13 +261,171 @@ html[data-mode='overlay'] body {
 .overlay:active {
   cursor: grabbing;
 }
-/* Browser/dev mode: the window is not resized by Tauri, so mimic the 300×96 native widget. */
+/* Browser/dev mode: the window is not resized by Tauri, so mimic the native widget (size and
+   corner follow the same owner settings the native shell applies). */
 html:not([data-desktop='1']) .overlay {
   inset: 16px 16px auto auto;
   width: 300px;
   height: 96px;
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+html:not([data-desktop='1']) .overlay--small {
+  width: 264px;
+  height: 60px;
+}
+html:not([data-desktop='1']) .overlay--large {
+  width: 392px;
+  height: 128px;
+}
+html:not([data-desktop='1'])[data-widget-pos='top-left'] .overlay {
+  inset: 16px auto auto 16px;
+}
+html:not([data-desktop='1'])[data-widget-pos='bottom-left'] .overlay {
+  inset: auto auto 16px 16px;
+}
+html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
+  inset: auto 16px 16px auto;
+}
+
+/* ── size variants (typography scales with the window the native shell gives us) ── */
+.overlay--small {
+  padding: 7px 12px 0;
+}
+.overlay--small .overlay__time {
+  font-size: 24px;
+}
+.overlay--small .overlay__code {
+  font-size: 12px;
+}
+.overlay--small .overlay__label {
+  font-size: 10px;
+}
+.overlay--small .overlay__top {
+  min-height: 16px;
+}
+.overlay--small .overlay__bar {
+  margin: 4px -12px 0;
+}
+.overlay--large {
+  padding: 14px 18px 0;
+}
+.overlay--large .overlay__time {
+  font-size: 46px;
+}
+.overlay--large .overlay__code {
+  font-size: 15px;
+}
+.overlay--large .overlay__label {
+  font-size: 12px;
+}
+.overlay--large .overlay__mark {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+}
+.overlay--large .overlay__bar {
+  margin: 10px -18px 0;
+  height: 4px;
+}
+
+/* ── paid / owed (detailed style) ── */
+.overlay__money {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.overlay__money small {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.overlay__money strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.overlay__money--owed strong {
+  color: #fbbf24;
+}
+.overlay--small .overlay__money strong {
+  font-size: 13px;
+}
+.overlay--large .overlay__money strong {
+  font-size: 20px;
+}
+
+/* ── minimal style: one calm line ("PC 01 · 23 min · 1.50 €") ── */
+.overlay--minimal {
+  justify-content: center;
+  padding-top: 0;
+}
+.overlay__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.overlay__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.5);
+  flex: none;
+}
+.overlay__mini-time {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #f8fafc;
+}
+.overlay__mini-money {
+  font-size: 15px;
+  font-weight: 600;
+  color: #cbd5e1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay__mini-money--owed {
+  color: #fbbf24;
+}
+.overlay--minimal.overlay--small .overlay__line {
+  gap: 6px;
+}
+.overlay--minimal.overlay--small .overlay__mini-time {
+  font-size: 18px;
+}
+.overlay--minimal.overlay--small .overlay__mini-money {
+  font-size: 14px;
+}
+.overlay--minimal.overlay--normal .overlay__mini-time {
+  font-size: 26px;
+}
+.overlay--minimal.overlay--large .overlay__mini-time {
+  font-size: 34px;
+}
+.overlay--minimal.overlay--large .overlay__mini-money {
+  font-size: 20px;
+}
+.overlay--minimal .overlay__bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+}
+.overlay--minimal.overlay--low .overlay__mini-time {
+  color: #fbbf24;
+}
+.overlay--minimal.overlay--critical .overlay__mini-time {
+  color: #f87171;
+}
+.overlay--minimal.overlay--paused .overlay__mini-time {
+  color: var(--muted);
 }
 .overlay__top {
   display: flex;
@@ -432,6 +590,296 @@ html:not([data-desktop='1']) .overlay {
   border-radius: 50%;
   background: var(--warning);
   animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ─── Lock-screen product slideshow ─────────────────────────────────────────── */
+.lock--ads .lock__main {
+  gap: 18px;
+  justify-content: stretch;
+  min-height: 0;
+}
+.card--strip {
+  width: min(900px, 92vw);
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px 22px;
+  border-radius: 14px;
+  box-shadow: none;
+}
+.card--strip .card__title {
+  font-size: 15px;
+  white-space: nowrap;
+}
+.card--strip .card__text {
+  margin-top: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ads {
+  position: relative;
+  flex: 1;
+  width: min(1240px, 94vw);
+  min-height: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid var(--border);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.45);
+  isolation: isolate;
+  /* promote to its own layer so the crossing animations never repaint the whole lock screen */
+  transform: translateZ(0);
+}
+.ads[data-state='loading'] {
+  background: rgba(15, 23, 42, 0.2);
+}
+.ads__layer {
+  position: absolute;
+  inset: 0;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+/* Front layer animates in; the back layer stays put underneath (the incoming slide covers it),
+   so a slow GPU can never show a gap between the two. */
+.ads__layer.is-back {
+  z-index: 1;
+}
+.ads__layer.is-front {
+  z-index: 2;
+  animation-duration: 0.9s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+.ads__layer--slide-left.is-front {
+  animation-name: ads-in-left;
+}
+.ads__layer--slide-right.is-front {
+  animation-name: ads-in-right;
+}
+.ads__layer--fade.is-front {
+  animation-name: ads-in-fade;
+  animation-duration: 1.2s;
+}
+.ads__layer--zoom.is-front {
+  animation-name: ads-in-zoom;
+  animation-duration: 1.1s;
+}
+@keyframes ads-in-left {
+  from {
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes ads-in-right {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes ads-in-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ads-in-zoom {
+  from {
+    opacity: 0;
+    transform: scale3d(1.06, 1.06, 1);
+  }
+  to {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+}
+.ads__slide {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+}
+/* card: one product on an opaque card, photo contained on the left, text on the right */
+.ads__slide--card {
+  grid-template-columns: 1.1fr 1fr;
+  grid-template-rows: 100%;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+}
+.ads__slide--card img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  padding: 6%;
+  filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.5));
+}
+.ads__slide--card figcaption {
+  align-self: center;
+  padding: 0 8% 0 2%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ads__slide--card .ads__name {
+  font-size: clamp(32px, 4.6vw, 64px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.5px;
+}
+/* full: edge-to-edge photo, caption on a gradient at the bottom */
+.ads__slide--full {
+  background: #0b0f17;
+}
+.ads__slide--full img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ads__slide--full figcaption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 120px 5% 5%;
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  background: linear-gradient(180deg, transparent, rgba(2, 6, 23, 0.9));
+}
+.ads__slide--full .ads__name {
+  font-size: clamp(30px, 4vw, 56px);
+  font-weight: 800;
+  line-height: 1.05;
+  flex: 1;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+}
+.ads__slide--full .ads__cat {
+  position: absolute;
+  top: -40px;
+  left: 5%;
+}
+.ads__cat {
+  display: inline-block;
+  width: fit-content;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.25);
+  border: 1px solid rgba(129, 140, 248, 0.5);
+  color: #c7d2fe;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ads__price {
+  display: inline-block;
+  width: fit-content;
+  padding: 10px 22px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  font-size: clamp(22px, 2.6vw, 36px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 14px 40px rgba(99, 102, 241, 0.4);
+  white-space: nowrap;
+}
+/* grid: a classic box of up to four products */
+.ads__grid {
+  position: absolute;
+  inset: 0;
+  background: #0b0f17;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 18px;
+  padding: 18px;
+}
+.ads__cell {
+  margin: 0;
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid var(--border);
+  min-height: 0;
+}
+.ads__cell img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  padding: 10px;
+}
+.ads__cell figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px 16px;
+}
+.ads__cell .ads__name {
+  font-size: clamp(16px, 1.6vw, 24px);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ads__cell .ads__price {
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-size: clamp(15px, 1.5vw, 22px);
+  box-shadow: none;
+}
+.ads__station {
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  z-index: 3;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+}
+.ads__code {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #e0e7ff;
+}
+.ads__dots {
+  position: absolute;
+  bottom: 14px;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+.ads__dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transition: all 0.4s ease;
+}
+.ads__dots i.is-on {
+  width: 20px;
+  border-radius: 3px;
+  background: #fff;
 }
 
 /* ─── Technician panel ──────────────────────────────────────────────────────── */

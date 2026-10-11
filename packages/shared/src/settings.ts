@@ -1,9 +1,28 @@
 import { z } from 'zod';
+import type { ClientDisplayConfig } from './protocol.js';
 
 /**
  * Application settings stored in the `settings` table (one row per key, JSON value).
  * Every key has a validation schema and a default. Business identity is NEVER hardcoded.
  */
+
+export const CLIENT_WIDGET_SIZES = ['small', 'normal', 'large'] as const;
+export const CLIENT_WIDGET_POSITIONS = [
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+] as const;
+export const CLIENT_WIDGET_STYLES = ['minimal', 'detailed'] as const;
+export const CLIENT_LOCK_TITLES = ['brand', 'station'] as const;
+export const CLIENT_ADS_LAYOUTS = ['card', 'full', 'grid'] as const;
+export const CLIENT_ADS_TRANSITIONS = ['slide-left', 'slide-right', 'fade', 'zoom'] as const;
+export type ClientWidgetSize = (typeof CLIENT_WIDGET_SIZES)[number];
+export type ClientWidgetPosition = (typeof CLIENT_WIDGET_POSITIONS)[number];
+export type ClientWidgetStyle = (typeof CLIENT_WIDGET_STYLES)[number];
+export type ClientLockTitle = (typeof CLIENT_LOCK_TITLES)[number];
+export type ClientAdsLayout = (typeof CLIENT_ADS_LAYOUTS)[number];
+export type ClientAdsTransition = (typeof CLIENT_ADS_TRANSITIONS)[number];
 
 export const LANGUAGES = ['en', 'sq'] as const;
 export type Language = (typeof LANGUAGES)[number];
@@ -42,6 +61,25 @@ export const SETTING_SCHEMAS = {
   'stations.client_welcome_message': z.string().max(300),
   /** How long a staff unlock (maintenance) keeps a station PC open before it locks again. */
   'stations.maintenance_minutes': z.number().int().min(1).max(480),
+
+  // ── Client screen (LIKApcs-Client on the customer PC) ──────────────────────
+  /** Countdown widget during a session: footprint. */
+  'client.widget_size': z.enum(CLIENT_WIDGET_SIZES),
+  /** Countdown widget: which corner of the screen. */
+  'client.widget_position': z.enum(CLIENT_WIDGET_POSITIONS),
+  /** `minimal` = one line like "PC1 · 23 min"; `detailed` = timer, ends-at, paid / owed. */
+  'client.widget_style': z.enum(CLIENT_WIDGET_STYLES),
+  /** Show the paid amount (prepaid) / the running amount owed (postpaid) in the widget. */
+  'client.widget_show_payment': z.boolean(),
+  /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
+  'client.lock_title': z.enum(CLIENT_LOCK_TITLES),
+  /** Lock-screen slideshow of in-stock products with photos. */
+  'client.ads_enabled': z.boolean(),
+  /** `card` one product at a time; `full` edge-to-edge photo; `grid` a classic box of several. */
+  'client.ads_layout': z.enum(CLIENT_ADS_LAYOUTS),
+  'client.ads_transition': z.enum(CLIENT_ADS_TRANSITIONS),
+  'client.ads_interval_seconds': z.number().int().min(3).max(120),
+  'client.ads_show_price': z.boolean(),
 
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   /** Open the print dialog as soon as a sale is completed (off: the cashier presses Print). */
@@ -117,6 +155,17 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
   'stations.maintenance_minutes': 15,
 
+  'client.widget_size': 'normal',
+  'client.widget_position': 'top-right',
+  'client.widget_style': 'detailed',
+  'client.widget_show_payment': true,
+  'client.lock_title': 'brand',
+  'client.ads_enabled': false,
+  'client.ads_layout': 'card',
+  'client.ads_transition': 'slide-left',
+  'client.ads_interval_seconds': 8,
+  'client.ads_show_price': true,
+
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': false,
   'pos.auto_finish_seconds': 5,
@@ -155,6 +204,17 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'pos.card_payments',
   'pos.credit_sales',
   'pos.credit_default_days',
+  // Client screen: the Admin previews them; the client receives them through its own channel.
+  'client.widget_size',
+  'client.widget_position',
+  'client.widget_style',
+  'client.widget_show_payment',
+  'client.lock_title',
+  'client.ads_enabled',
+  'client.ads_layout',
+  'client.ads_transition',
+  'client.ads_interval_seconds',
+  'client.ads_show_price',
 ];
 
 /** Validates a partial settings patch; unknown keys are rejected. */
@@ -181,4 +241,41 @@ export function validateSettingsPatch(input: unknown): Partial<SettingsMap> {
   }
   if (issues.length) throw new z.ZodError(issues);
   return result;
+}
+
+/** Keys whose change must be pushed to every connected customer PC (`server.display`). */
+export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
+  'client.widget_size',
+  'client.widget_position',
+  'client.widget_style',
+  'client.widget_show_payment',
+  'client.lock_title',
+  'client.ads_enabled',
+  'client.ads_layout',
+  'client.ads_transition',
+  'client.ads_interval_seconds',
+  'client.ads_show_price',
+  'locale.currency',
+  'locale.default_language',
+  'business.name',
+  'stations.client_welcome_message',
+];
+
+/** The customer-screen configuration the client receives, derived from the settings map. */
+export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayConfig {
+  return {
+    widgetSize: settings['client.widget_size'],
+    widgetPosition: settings['client.widget_position'],
+    widgetStyle: settings['client.widget_style'],
+    widgetShowPayment: settings['client.widget_show_payment'],
+    lockTitle: settings['client.lock_title'],
+    currency: settings['locale.currency'],
+    ads: {
+      enabled: settings['client.ads_enabled'],
+      layout: settings['client.ads_layout'],
+      transition: settings['client.ads_transition'],
+      intervalSeconds: settings['client.ads_interval_seconds'],
+      showPrice: settings['client.ads_show_price'],
+    },
+  };
 }

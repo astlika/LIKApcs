@@ -6,9 +6,16 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from 'react';
+import { formatMoney, type ClientAdItem, type ClientDisplayConfig } from '@likapcs/shared';
 import { agent, type AgentSnapshot, type ManualConnectResult } from './lib/agent';
-import { discoverServers, isDesktopApp, onTrayAction, type TrayLabels } from './lib/native';
-import { candidateServerUrls, formatHMS, sessionView } from './lib/protocol';
+import {
+  discoverServers,
+  isDesktopApp,
+  onTrayAction,
+  setWidgetLayout,
+  type TrayLabels,
+} from './lib/native';
+import { candidateServerUrls, formatHMS, sessionView, type SessionView } from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
 
 function useAgent(): AgentSnapshot {
@@ -123,6 +130,13 @@ export function App() {
     agent.setTrayLabels(trayLabelsFor);
   }, []);
 
+  // Widget footprint / corner chosen by the owner → native window (moves live during a session).
+  const widgetSize = snap.state.display?.widgetSize ?? 'normal';
+  const widgetPosition = snap.state.display?.widgetPosition ?? 'top-right';
+  useEffect(() => {
+    void setWidgetLayout(widgetSize, widgetPosition);
+  }, [widgetSize, widgetPosition]);
+
   // Back to the lock screen (e.g. maintenance expired) while the panel was open: keep it open
   // there, the window is fullscreen again anyway.
   useEffect(() => {
@@ -142,25 +156,47 @@ export function App() {
     return <Overlay snap={snap} notice={notice?.text ?? null} />;
   }
 
+  const display = snap.state.display;
+  const lockTitle =
+    display?.lockTitle === 'station' && snap.state.station
+      ? snap.state.station.code
+      : snap.state.businessName || 'LIKApcs';
+  const showAds =
+    Boolean(display?.ads.enabled) &&
+    snap.ads.length > 0 &&
+    snap.paired &&
+    snap.phase.phase === 'online' &&
+    !settingsOpen &&
+    !unlockOpen;
+
   return (
-    <div className="lock">
+    <div className={`lock${showAds ? ' lock--ads' : ''}`}>
       <div className="lock__bg" />
       <header className="lock__header">
-        <div className="brand">
+        <div className="brand" data-testid="lock-title">
           <span className="brand__mark">L</span>
-          <span>{snap.state.businessName || 'LIKApcs'}</span>
+          <span>{lockTitle}</span>
         </div>
         <Clock serverNowMs={snap.serverNowMs} />
       </header>
 
       <main className="lock__main">
-        {snap.state.station && (
-          <div className="station">
-            <div className="station__code">{snap.state.station.code}</div>
-            <div className="station__name">{snap.state.station.name}</div>
-          </div>
+        {showAds && display ? (
+          <AdsSlideshow
+            items={snap.ads}
+            display={display}
+            language={snap.state.language}
+            station={snap.state.station}
+          />
+        ) : (
+          snap.state.station && (
+            <div className="station">
+              <div className="station__code">{snap.state.station.code}</div>
+              <div className="station__name">{snap.state.station.name}</div>
+            </div>
+          )
         )}
-        <StatusCard snap={snap} t={t} />
+        <StatusCard snap={snap} t={t} compact={showAds} />
         {notice && <div className="toast">{notice.text}</div>}
         {flash && (
           <div className="toast" role="status">
@@ -319,8 +355,25 @@ function Clock({ serverNowMs }: { serverNowMs: number }) {
   );
 }
 
-function StatusCard({ snap, t }: { snap: AgentSnapshot; t: T }) {
+function StatusCard({
+  snap,
+  t,
+  compact = false,
+}: {
+  snap: AgentSnapshot;
+  t: T;
+  compact?: boolean;
+}) {
   const { phase } = snap;
+  // While the slideshow is on, the online lock card shrinks to one line under the pictures.
+  if (compact && (phase.phase === 'online' || phase.phase === 'offline')) {
+    return (
+      <div className="card card--strip" data-testid="lock-strip">
+        <span className="card__title">{t('locked')}</span>
+        <span className="card__text">{snap.state.welcomeMessage || t('lockedHint')}</span>
+      </div>
+    );
+  }
   switch (phase.phase) {
     case 'starting':
     case 'connecting':
@@ -410,15 +463,45 @@ function StatusCard({ snap, t }: { snap: AgentSnapshot; t: T }) {
   }
 }
 
+/** "23 min" / "1h 05m" / "45 s" — the compact duration of the minimal widget. */
+function compactDuration(seconds: number, t: T): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  if (safe < 60) return `${safe} ${t('secShort')}`;
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  if (hours === 0) return `${minutes} ${t('minShort')}`;
+  return `${hours}${t('hourShort')} ${String(minutes).padStart(2, '0')}${t('minShort')}`;
+}
+
+/** Paid (prepaid) or running amount owed (postpaid) — null when the server gave no figure. */
+function moneyLine(
+  view: SessionView | null,
+  display: ClientDisplayConfig | null,
+  language: Language,
+  t: T,
+): { label: string; amount: string; kind: 'paid' | 'owed' } | null {
+  if (!view || !display?.widgetShowPayment) return null;
+  const options = { currency: display.currency, locale: language };
+  if (view.paidCents !== null)
+    return { label: t('paid'), amount: formatMoney(view.paidCents, options), kind: 'paid' };
+  if (view.owedCents !== null)
+    return { label: t('owed'), amount: formatMoney(view.owedCents, options), kind: 'owed' };
+  return null;
+}
+
 /**
- * Countdown widget. In the desktop app this is the whole (300×96) always-on-top window, draggable
- * by its surface (`data-tauri-drag-region`), so a staff message is shown inside it instead of a
- * toast. Everything displayed is derived from server time (see Clock) — the PC never computes
- * billing.
+ * Countdown widget. In the desktop app this is the whole always-on-top window (its size and
+ * corner follow the owner's settings), draggable by its surface (`data-tauri-drag-region`), so a
+ * staff message is shown inside it instead of a toast. Everything displayed is derived from server
+ * time and server-provided billing facts (see Clock / sessionView) — the PC never computes billing.
+ *
+ * Two styles: `detailed` (code + label, big timer, paid / owed, progress bar) and `minimal` (one
+ * calm line such as "PC 01 · 23 min · 1.50 €").
  */
 function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null }) {
   const t = (key: Key) => translate(snap.state.language, key);
   const session = snap.state.session;
+  const display = snap.state.display;
   const view = session ? sessionView(session, snap.serverNowMs) : null;
   const offline = snap.phase.phase === 'offline';
   const low = view?.kind === 'countdown' && !view.paused && view.seconds <= 300;
@@ -428,14 +511,19 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
     maintenance && Number.isFinite(maintenance.untilServerMs)
       ? Math.max(0, Math.round((maintenance.untilServerMs - snap.serverNowMs) / 1000))
       : null;
+  const minimal = display?.widgetStyle === 'minimal' && !maintenance && !notice;
+  const money = moneyLine(view, display, snap.state.language, t);
   // Progress of a prepaid session (fraction of planned time still left).
   let fraction: number | null = null;
   if (session?.endsAt && view?.kind === 'countdown') {
     const total = (Date.parse(session.endsAt) - Date.parse(session.startedAt)) / 1000;
     if (total > 0) fraction = Math.min(1, Math.max(0, view.seconds / total));
   }
+  const code = snap.state.station?.code ?? 'LIKApcs';
   const cls = [
     'overlay',
+    `overlay--${display?.widgetSize ?? 'normal'}`,
+    minimal ? 'overlay--minimal' : '',
     low ? 'overlay--low' : '',
     critical ? 'overlay--critical' : '',
     offline ? 'overlay--offline' : '',
@@ -445,12 +533,52 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
   ]
     .filter(Boolean)
     .join(' ');
+
+  if (minimal) {
+    const text = view ? (view.paused ? t('paused') : compactDuration(view.seconds, t)) : t('free');
+    return (
+      <div className={cls} data-tauri-drag-region data-testid="overlay">
+        <div className="overlay__line" data-tauri-drag-region>
+          <span className="overlay__mark" data-tauri-drag-region>
+            L
+          </span>
+          <span className="overlay__code" data-tauri-drag-region>
+            {code}
+          </span>
+          <span className="overlay__dot" aria-hidden />
+          <span className="overlay__mini-time" data-tauri-drag-region data-testid="overlay-time">
+            {text}
+          </span>
+          {money && (
+            <>
+              <span className="overlay__dot" aria-hidden />
+              <span
+                className={`overlay__mini-money overlay__mini-money--${money.kind}`}
+                data-tauri-drag-region
+                data-testid="overlay-money"
+                title={money.label}
+              >
+                {money.amount}
+              </span>
+            </>
+          )}
+          {offline && <span className="overlay__offline" title={t('offlineSession')} />}
+        </div>
+        {fraction !== null && (
+          <div className="overlay__bar" aria-hidden>
+            <span style={{ width: `${fraction * 100}%` }} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className={cls} data-tauri-drag-region>
+    <div className={cls} data-tauri-drag-region data-testid="overlay">
       <div className="overlay__top" data-tauri-drag-region>
         <span className="overlay__brand" data-tauri-drag-region>
           <span className="overlay__mark">L</span>
-          <span className="overlay__code">{snap.state.station?.code ?? 'LIKApcs'}</span>
+          <span className="overlay__code">{code}</span>
         </span>
         <span className="overlay__label" data-tauri-drag-region>
           {notice
@@ -496,9 +624,19 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
         </div>
       ) : view ? (
         <div className="overlay__main" data-tauri-drag-region>
-          <span className="overlay__time" data-tauri-drag-region>
+          <span className="overlay__time" data-tauri-drag-region data-testid="overlay-time">
             {formatHMS(view.seconds)}
           </span>
+          {money && (
+            <span
+              className={`overlay__money overlay__money--${money.kind}`}
+              data-tauri-drag-region
+              data-testid="overlay-money"
+            >
+              <small>{money.label}</small>
+              <strong>{money.amount}</strong>
+            </span>
+          )}
         </div>
       ) : (
         <div className="overlay__main" data-tauri-drag-region>
@@ -508,6 +646,188 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
       {fraction !== null && !notice && (
         <div className="overlay__bar" aria-hidden>
           <span style={{ width: `${fraction * 100}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Lock-screen product slideshow. Pictures are decoded *before* they are shown (an `Image()`
+ * preload gate per slide) and two layers cross over with CSS transforms only, so there is never a
+ * flash of an empty frame or a half-loaded photo. `layout`: `card` (one product on a glass card),
+ * `full` (edge-to-edge photo with a caption), `grid` (a classic box of up to four products that
+ * advances one page at a time). The interval, transition and price flag come from the owner.
+ */
+function AdsSlideshow({
+  items,
+  display,
+  language,
+  station,
+}: {
+  items: ClientAdItem[];
+  display: ClientDisplayConfig;
+  language: Language;
+  station: { code: string; name: string } | null;
+}) {
+  const { layout, transition, intervalSeconds, showPrice } = display.ads;
+  const perPage = layout === 'grid' ? 4 : 1;
+  const pages = Math.max(1, Math.ceil(items.length / perPage));
+  const [page, setPage] = useState(0);
+  const [ready, setReady] = useState<Record<string, boolean>>({});
+  const [layers, setLayers] = useState<{ a: number | null; b: number | null; front: 'a' | 'b' }>({
+    a: 0,
+    b: null,
+    front: 'a',
+  });
+  // The station pill repeats the PC code only when the lock title is the brand (never twice), and
+  // not over the grid's own frames.
+  const showPill = station !== null && display.lockTitle !== 'station' && layout !== 'grid';
+
+  // Preload every picture once; a slide only becomes eligible when all of its pictures decoded.
+  const requested = useRef(new Set<string>());
+  useEffect(() => {
+    for (const item of items) {
+      if (requested.current.has(item.imageUrl)) continue;
+      requested.current.add(item.imageUrl);
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => setReady((r) => ({ ...r, [item.id]: true }));
+      img.onerror = () => {
+        requested.current.delete(item.imageUrl); // retried on the next list refresh
+        setReady((r) => ({ ...r, [item.id]: false }));
+      };
+      img.src = item.imageUrl;
+    }
+  }, [items]);
+
+  const pageItems = useCallback(
+    (index: number) => items.slice(index * perPage, index * perPage + perPage),
+    [items, perPage],
+  );
+  const pageReady = useCallback(
+    (index: number) => {
+      const slice = pageItems(index);
+      return slice.length > 0 && slice.every((item) => ready[item.id] === true);
+    },
+    [pageItems, ready],
+  );
+
+  // Advance on the owner's interval — only onto a fully decoded page (skips broken pictures).
+  useEffect(() => {
+    if (pages <= 1) return;
+    const timer = window.setInterval(
+      () => {
+        setPage((current) => {
+          for (let step = 1; step <= pages; step += 1) {
+            const candidate = (current + step) % pages;
+            if (pageReady(candidate)) return candidate;
+          }
+          return current;
+        });
+      },
+      Math.max(3, intervalSeconds) * 1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [pages, intervalSeconds, pageReady]);
+
+  // The current page is not decoded yet (start-up, or its picture failed): jump to the first
+  // page that is, so the very first frame shown is a complete one.
+  const currentReady = pageReady(page);
+  useEffect(() => {
+    if (currentReady) return;
+    for (let i = 0; i < pages; i += 1) {
+      if (pageReady(i)) {
+        if (i !== page) setPage(i);
+        return;
+      }
+    }
+  }, [currentReady, pages, pageReady, page]);
+
+  // Two-layer crossfade: a *ready* incoming page is mounted on the back layer, then brought to
+  // the front; the old one slides / fades out underneath and is unmounted on the next change.
+  useEffect(() => {
+    if (!currentReady) return;
+    setLayers((l) => {
+      const frontIndex = l.front === 'a' ? l.a : l.b;
+      if (frontIndex === page) return l;
+      return l.front === 'a' ? { ...l, b: page, front: 'b' } : { ...l, a: page, front: 'a' };
+    });
+  }, [page, currentReady]);
+
+  const frontIndex = layers.front === 'a' ? layers.a : layers.b;
+  if (frontIndex === null || !pageReady(frontIndex)) {
+    return (
+      <div className={`ads ads--${layout}`} data-testid="ads" data-state="loading">
+        {showPill && (
+          <div className="ads__station">
+            <span className="ads__code">{station.code}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const money = (cents: number) =>
+    formatMoney(cents, { currency: display.currency, locale: language });
+  const renderPage = (index: number | null, key: 'a' | 'b') => {
+    if (index === null) return null;
+    const slice = pageItems(index);
+    const front = layers.front === key;
+    return (
+      <div
+        key={key}
+        className={`ads__layer ads__layer--${transition} ${front ? 'is-front' : 'is-back'}`}
+        aria-hidden={!front}
+        onAnimationEnd={(e) => {
+          // The incoming slide has fully covered the old one → drop the old layer entirely, so
+          // nothing can ever bleed through (and the GPU keeps exactly one picture to composite).
+          if (!front || e.target !== e.currentTarget) return;
+          setLayers((l) => (l.front === 'a' ? { ...l, b: null } : { ...l, a: null }));
+        }}
+      >
+        {layout === 'grid' ? (
+          <div className="ads__grid">
+            {slice.map((item) => (
+              <figure key={item.id} className="ads__cell">
+                <img src={item.imageUrl} alt="" draggable={false} />
+                <figcaption>
+                  <span className="ads__name">{item.name}</span>
+                  {showPrice && <span className="ads__price">{money(item.priceCents)}</span>}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : (
+          slice.map((item) => (
+            <figure key={item.id} className={`ads__slide ads__slide--${layout}`}>
+              <img src={item.imageUrl} alt="" draggable={false} />
+              <figcaption>
+                {item.categoryName && <span className="ads__cat">{item.categoryName}</span>}
+                <span className="ads__name">{item.name}</span>
+                {showPrice && <span className="ads__price">{money(item.priceCents)}</span>}
+              </figcaption>
+            </figure>
+          ))
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className={`ads ads--${layout}`} data-testid="ads" data-state="ready" data-page={page}>
+      {renderPage(layers.a, 'a')}
+      {renderPage(layers.b, 'b')}
+      {showPill && (
+        <div className="ads__station">
+          <span className="ads__code">{station.code}</span>
+        </div>
+      )}
+      {pages > 1 && (
+        <div className="ads__dots" aria-hidden>
+          {Array.from({ length: Math.min(pages, 12) }, (_, i) => (
+            <i key={i} className={i === page % 12 ? 'is-on' : ''} />
+          ))}
         </div>
       )}
     </div>

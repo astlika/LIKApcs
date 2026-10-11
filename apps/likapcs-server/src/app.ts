@@ -4,7 +4,11 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import fs from 'node:fs';
 import path from 'node:path';
-import { WS_CLOSE_CODES } from '@likapcs/shared';
+import {
+  CLIENT_DISPLAY_SETTING_KEYS,
+  WS_CLOSE_CODES,
+  clientDisplayFromSettings,
+} from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
 import type { DbPool } from './db/pool.js';
 import { getMigrationStatus } from './db/migrate.js';
@@ -267,6 +271,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   );
   await app.register(clientSocketRoutes);
   await app.register(adminSocketRoutes);
+
+  // Customer-screen settings → every connected PC, instantly (no reconnect needed).
+  settings.onChange((keys, all) => {
+    if (!keys.some((k) => CLIENT_DISPLAY_SETTING_KEYS.includes(k))) return;
+    hub.broadcastToDevices({
+      type: 'server.display',
+      display: clientDisplayFromSettings(all),
+      businessName: all['business.name'],
+      welcomeMessage: all['stations.client_welcome_message'],
+      language: all['locale.default_language'],
+    });
+  });
 
   // Presence → station status broadcasts
   hub.on('device.online', (presence) => void stations.broadcastStation(presence.stationId));

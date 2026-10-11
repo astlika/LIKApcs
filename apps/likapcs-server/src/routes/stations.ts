@@ -191,6 +191,16 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  /** Lock-screen slideshow items for the PC (products with photos, in stock). */
+  app.get(
+    '/client/ads',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request) => {
+      await deviceOf(request);
+      return { items: await services.catalog.lockScreenAds() };
+    },
+  );
+
   app.get(
     '/client/registration/:id',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },

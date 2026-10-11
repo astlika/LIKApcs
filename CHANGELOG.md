@@ -35,6 +35,30 @@ All notable changes to LIKApcs are documented here. The format follows
   `stoppedSecondsAgo` and `customerId` on end, `payment` in every session mutation response; the
   single `paymentMethod` field keeps working.
 
+- **PC hardware at a glance.** Clicking a PC on the Stations map shows a compact specs strip
+  under its name — _i5-12400F · RTX 3060 · 7.9/16 GB · 45 °C · 12 % CPU_ — and the station detail
+  dialog gets a full _Hardware_ block (processor with cores/threads, graphics card(s), memory in
+  use, disk free, CPU load, CPU/GPU temperature, Windows version) with small load bars. The client
+  reports the facts once at connect (`client.hello.hardware`, stored in `station_devices.hardware`)
+  and the live load with every heartbeat; whatever the PC does not expose shows as "—" — nothing is
+  guessed (temperatures in particular are rarely available on consumer Windows). Migration `0014`.
+
+- **Client screen settings** (Settings › _Client screen_, with a live preview of both the lock
+  screen and the session widget):
+  - **Countdown widget:** _Minimal_ (one calm line — `PC 01 · 23 min · 1.50 €`) or _Detailed_
+    (timer, label, progress bar); _Small / Normal / Large_; any of the four screen corners; optional
+    money line — the amount **paid** for a prepaid session or the running amount **to pay** on
+    open time (derived on the PC from the server's own terms and a billable-seconds snapshot,
+    frozen while paused; the server still bills).
+  - **Lock-screen title:** the business name or the PC code (e.g. _PC 01_) top-left.
+  - **Product slideshow on the locked PC:** in-stock products that have a photo, _one product
+    (card)_, _full-screen photo_ or _classic box (4 products)_; slide left / right, fade or zoom;
+    3–120 s per slide; prices on or off. Pictures are decoded before a slide may show and two
+    layers cross over with GPU transforms only, so there is never an empty frame or a half-loaded
+    photo. Off by default. New device endpoint `GET /client/ads`.
+  - Every change reaches all connected PCs the moment it is saved (`server.display` push) — no
+    reconnect, no restart; the widget even moves to its new corner during a session.
+
 ### Changed
 
 - **POS — Enter pays.** Enter anywhere on the POS page (nothing focused, a tapped product tile,

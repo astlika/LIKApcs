@@ -5,6 +5,7 @@ import {
   normalizeServerUrl,
   Clock,
   CommandGuard,
+  applyDisplay,
   applyWelcome,
   backoffMs,
   formatHMS,
@@ -179,7 +180,18 @@ describe('reduce()', () => {
       state,
       cmd({
         command: 'session.start',
-        payload: { sessionId: 'g1', startedAt: new Date(T0).toISOString(), endsAt },
+        payload: {
+          sessionId: 'g1',
+          startedAt: new Date(T0).toISOString(),
+          endsAt,
+          billing: {
+            billingMode: 'prepaid',
+            paidCents: 150,
+            terms: null,
+            billableSeconds: 0,
+            asOf: new Date(T0).toISOString(),
+          },
+        },
       }),
       T0,
     );
@@ -192,6 +204,8 @@ describe('reduce()', () => {
       seconds: 3540,
       paused: false,
       expired: false,
+      paidCents: 150,
+      owedCents: null,
     });
 
     r = reduce(state, cmd({ command: 'session.pause', payload: { sessionId: 'g1' } }), T0 + 60_000);
@@ -202,6 +216,8 @@ describe('reduce()', () => {
       seconds: 3540,
       paused: true,
       expired: false,
+      paidCents: 150,
+      owedCents: null,
     });
 
     r = reduce(
@@ -279,7 +295,104 @@ describe('reduce()', () => {
       seconds: 125,
       paused: false,
       expired: false,
+      // No billing snapshot from the server → the widget shows no money rather than a guess.
+      paidCents: null,
+      owedCents: null,
     });
+  });
+
+  it('postpaid sessions show a running amount derived from the server terms, frozen while paused', () => {
+    const terms = {
+      rateCentsPerHour: 120,
+      billingIncrementMinutes: 1,
+      minimumMinutes: 0,
+      minimumChargeCents: 0,
+      roundingMode: 'nearest' as const,
+      roundingIncrementCents: 1,
+    };
+    const state = applyWelcome(initialState, welcome);
+    let r = reduce(
+      state,
+      cmd({
+        command: 'session.start',
+        payload: {
+          sessionId: 'g4',
+          startedAt: new Date(T0).toISOString(),
+          endsAt: null,
+          billing: {
+            billingMode: 'postpaid',
+            paidCents: 0,
+            terms,
+            billableSeconds: 0,
+            asOf: new Date(T0).toISOString(),
+          },
+        },
+      }),
+      T0,
+    );
+    // 30 minutes at 1.20 €/h → 0.60 €
+    expect(sessionView(r.state.session!, T0 + 1_800_000).owedCents).toBe(60);
+    r = reduce(
+      r.state,
+      cmd({ command: 'session.pause', payload: { sessionId: 'g4' } }),
+      T0 + 1_800_000,
+    );
+    // Paused: time and money stand still.
+    expect(sessionView(r.state.session!, T0 + 3_600_000)).toMatchObject({
+      paused: true,
+      seconds: 1800,
+      owedCents: 60,
+    });
+    // Resume carries a fresh snapshot (billable seconds exclude the pause) → counting continues.
+    r = reduce(
+      r.state,
+      cmd({
+        command: 'session.resume',
+        payload: {
+          sessionId: 'g4',
+          endsAt: null,
+          billing: {
+            billingMode: 'postpaid',
+            paidCents: 0,
+            terms,
+            billableSeconds: 1800,
+            asOf: new Date(T0 + 3_600_000).toISOString(),
+          },
+        },
+      }),
+      T0 + 3_600_000,
+    );
+    expect(sessionView(r.state.session!, T0 + 5_400_000).owedCents).toBe(120);
+  });
+
+  it('server.display replaces the customer-screen configuration without touching the session', () => {
+    const state = { ...applyWelcome(initialState, welcome), mode: 'session' as const };
+    const next = applyDisplay(state, {
+      type: 'server.display',
+      display: {
+        widgetSize: 'small',
+        widgetPosition: 'bottom-left',
+        widgetStyle: 'minimal',
+        widgetShowPayment: false,
+        lockTitle: 'station',
+        currency: 'EUR',
+        ads: {
+          enabled: true,
+          layout: 'full',
+          transition: 'fade',
+          intervalSeconds: 5,
+          showPrice: false,
+        },
+      },
+      businessName: 'Arena 2',
+      welcomeMessage: 'Hi',
+      language: 'sq',
+    });
+    expect(next.mode).toBe('session');
+    expect(next.display?.widgetStyle).toBe('minimal');
+    expect(next.display?.ads.layout).toBe('full');
+    expect(next.businessName).toBe('Arena 2');
+    expect(next.language).toBe('sq');
   });
 
   it('lock/unlock/message/power/update produce the right effects', () => {

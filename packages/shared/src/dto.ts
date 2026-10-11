@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ALL_ROLE_CODES } from './permissions.js';
+import type { ClientMetrics, HardwareInfo } from './protocol.js';
 import { LANGUAGES } from './settings.js';
 
 /**
@@ -218,6 +219,10 @@ export interface StationDeviceSummary {
   lastSeenAt: string | null;
   lastIp: string | null;
   online: boolean;
+  /** CPU / GPU / RAM / OS as reported by the client at connection time; null until it connects. */
+  hardware: HardwareInfo | null;
+  /** Latest heartbeat load (`at` = when it was received); only meaningful while online. */
+  metrics: (ClientMetrics & { at: string }) | null;
 }
 
 export interface StationSummary {

@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
   clientMessageSchema,
+  clientDisplayFromSettings,
   isCompatibleWithServer,
   type ServerError,
   type ServerHeartbeatAck,
@@ -110,6 +111,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             connectedAt: now,
             lastHeartbeatAt: now,
             lastMetrics: null,
+            lastMetricsAt: null,
             locked: null,
             seq: 0,
             pending: new Map(),
@@ -126,6 +128,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             metrics: null,
             sessionId: null,
           });
+          if (message.hardware) await services.devices.saveHardware(device.id, message.hardware);
 
           const settings = await services.settings.getAll();
           const welcome: ServerWelcomeToClient = {
@@ -146,6 +149,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             businessName: settings['business.name'],
             session: await services.sessions.welcomePayload(device.station.id),
             maintenance: await services.stations.maintenanceOf(device.station.id),
+            display: clientDisplayFromSettings(settings),
           };
           send(socket, welcome);
           request.log.info(

@@ -3,8 +3,10 @@ import type { WebSocket } from 'ws';
 import {
   WS_CLOSE_CODES,
   type AdminEventName,
+  type ClientMetrics,
   type ServerCommand,
   type ServerEvent,
+  type ServerToClientMessage,
   type StationCommand,
 } from '@likapcs/shared';
 import { newId } from '../security/tokens.js';
@@ -25,7 +27,8 @@ export interface DevicePresence {
   socket: WebSocket;
   connectedAt: Date;
   lastHeartbeatAt: Date;
-  lastMetrics: Record<string, unknown> | null;
+  lastMetrics: ClientMetrics | null;
+  lastMetricsAt: Date | null;
   locked: boolean | null;
   /** Per-connection monotonically increasing command sequence (replay protection). */
   seq: number;
@@ -82,21 +85,35 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     this.emit('device.offline', { deviceId, stationId: existing.stationId, reason });
   }
 
-  touchDevice(
-    deviceId: string,
-    metrics: Record<string, unknown> | null,
-    locked: boolean | null,
-  ): void {
+  touchDevice(deviceId: string, metrics: ClientMetrics | null, locked: boolean | null): void {
     const presence = this.devices.get(deviceId);
     if (!presence) return;
     presence.lastHeartbeatAt = new Date();
-    if (metrics) presence.lastMetrics = metrics;
+    if (metrics) {
+      presence.lastMetrics = metrics;
+      presence.lastMetricsAt = presence.lastHeartbeatAt;
+    }
     if (locked !== null) presence.locked = locked;
     this.emit('device.heartbeat', presence);
   }
 
+  /** Latest live load the PC reported (CPU %, RAM, temperatures) — only while it is connected. */
+  deviceMetrics(deviceId: string): (ClientMetrics & { at: string }) | null {
+    const presence = this.devices.get(deviceId);
+    if (!presence?.lastMetrics || !presence.lastMetricsAt) return null;
+    return { ...presence.lastMetrics, at: presence.lastMetricsAt.toISOString() };
+  }
+
   getDevice(deviceId: string): DevicePresence | undefined {
     return this.devices.get(deviceId);
+  }
+
+  /** Fire-and-forget message to every connected PC (display settings, business name …). */
+  broadcastToDevices(message: ServerToClientMessage): void {
+    const data = JSON.stringify(message);
+    for (const presence of this.devices.values()) {
+      if (presence.socket.readyState === presence.socket.OPEN) presence.socket.send(data);
+    }
   }
 
   isDeviceOnline(deviceId: string): boolean {

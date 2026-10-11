@@ -10,8 +10,11 @@ import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { recordAudit, type AuditActor } from './audit.js';
 
+type SettingsListener = (changedKeys: SettingKey[], all: SettingsMap) => void;
+
 export class SettingsService {
   private cache: SettingsMap | null = null;
+  private readonly listeners = new Set<SettingsListener>();
 
   constructor(private readonly pool: DbPool) {}
 
@@ -61,6 +64,7 @@ export class SettingsService {
     const keys = Object.keys(patch) as SettingKey[];
     if (keys.length === 0) return this.getAll();
     const before = await this.getAll();
+    const changedKeys: SettingKey[] = [];
     await withTransaction(this.pool, async (client) => {
       const changed: Record<string, { from: unknown; to: unknown }> = {};
       for (const key of keys) {
@@ -72,6 +76,7 @@ export class SettingsService {
           [key, JSON.stringify(value), actor.userId ?? null],
         );
         changed[key] = { from: before[key], to: value };
+        changedKeys.push(key);
       }
       if (Object.keys(changed).length > 0) {
         await recordAudit(client, actor, {
@@ -82,7 +87,17 @@ export class SettingsService {
       }
     });
     this.cache = null;
-    return this.getAll();
+    const all = await this.getAll();
+    if (changedKeys.length > 0) {
+      for (const listener of this.listeners) listener(changedKeys, all);
+    }
+    return all;
+  }
+
+  /** Called after a successful `update()` with the keys whose value actually changed. */
+  onChange(listener: SettingsListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   invalidate(): void {

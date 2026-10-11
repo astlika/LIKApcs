@@ -3,9 +3,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Save, Undo2 } from 'lucide-react';
 import {
+  CLIENT_ADS_LAYOUTS,
+  CLIENT_ADS_TRANSITIONS,
+  CLIENT_LOCK_TITLES,
+  CLIENT_WIDGET_POSITIONS,
+  CLIENT_WIDGET_SIZES,
+  CLIENT_WIDGET_STYLES,
   PERMISSIONS,
   PROTOCOL_VERSION,
   SETTING_SCHEMAS,
+  clientDisplayFromSettings,
   type SettingKey,
   type SettingsMap,
   type SystemInfoResponse,
@@ -22,19 +29,23 @@ import {
   Field,
   Input,
   Loading,
+  Segmented,
   Select,
   Switch,
   Tabs,
   Textarea,
 } from '../components/ui/primitives';
+import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
 
-type TabId = 'business' | 'locale' | 'stations' | 'printing' | 'security' | 'system' | 'about';
+type TabId =
+  'business' | 'locale' | 'stations' | 'client' | 'printing' | 'security' | 'system' | 'about';
 const TAB_IDS: TabId[] = [
   'business',
   'locale',
   'stations',
+  'client',
   'printing',
   'security',
   'system',
@@ -419,6 +430,133 @@ export function SettingsPage() {
             })}
           </div>
         </Card>
+      )}
+
+      {tab === 'client' && (
+        <div className="client-screen">
+          <div className="stack">
+            <Card
+              title={t('settings.client.widgetTitle')}
+              subtitle={t('settings.client.widgetHint')}
+            >
+              <div className="form-grid">
+                <Field label={t('settings.client.widgetStyle')}>
+                  {() => (
+                    <Segmented
+                      value={current['client.widget_style']}
+                      options={CLIENT_WIDGET_STYLES.map((v) => ({
+                        value: v,
+                        label: t(`settings.client.style.${v}`),
+                      }))}
+                      onChange={(v) => !ro && set('client.widget_style', v)}
+                    />
+                  )}
+                </Field>
+                <Field label={t('settings.client.widgetSize')}>
+                  {() => (
+                    <Segmented
+                      value={current['client.widget_size']}
+                      options={CLIENT_WIDGET_SIZES.map((v) => ({
+                        value: v,
+                        label: t(`settings.client.size.${v}`),
+                      }))}
+                      onChange={(v) => !ro && set('client.widget_size', v)}
+                    />
+                  )}
+                </Field>
+                <Field label={t('settings.client.widgetPosition')} className="span-2">
+                  {() => (
+                    <Segmented
+                      value={current['client.widget_position']}
+                      options={CLIENT_WIDGET_POSITIONS.map((v) => ({
+                        value: v,
+                        label: t(`settings.client.position.${v}`),
+                      }))}
+                      onChange={(v) => !ro && set('client.widget_position', v)}
+                    />
+                  )}
+                </Field>
+                <div className="span-2">
+                  {bool(
+                    'client.widget_show_payment',
+                    t('settings.client.showPayment'),
+                    t('settings.client.showPaymentHint'),
+                  )}
+                </div>
+              </div>
+            </Card>
+            <Card
+              title={t('settings.client.lockTitle')}
+              subtitle={t('settings.client.lockTitleHint')}
+            >
+              <Segmented
+                value={current['client.lock_title']}
+                options={CLIENT_LOCK_TITLES.map((v) => ({
+                  value: v,
+                  label: t(`settings.client.title.${v}`),
+                }))}
+                onChange={(v) => !ro && set('client.lock_title', v)}
+              />
+            </Card>
+            <Card title={t('settings.client.adsTitle')} subtitle={t('settings.client.adsHint')}>
+              <div className="stack">
+                {bool('client.ads_enabled', t('settings.client.adsEnabled'))}
+                <div className="form-grid">
+                  <Field label={t('settings.client.adsLayout')} className="span-2">
+                    {() => (
+                      <Segmented
+                        value={current['client.ads_layout']}
+                        options={CLIENT_ADS_LAYOUTS.map((v) => ({
+                          value: v,
+                          label: t(`settings.client.layout.${v}`),
+                        }))}
+                        onChange={(v) => !ro && set('client.ads_layout', v)}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('settings.client.adsTransition')} className="span-2">
+                    {() => (
+                      <Segmented
+                        value={current['client.ads_transition']}
+                        options={CLIENT_ADS_TRANSITIONS.map((v) => ({
+                          value: v,
+                          label: t(`settings.client.transition.${v}`),
+                        }))}
+                        onChange={(v) => !ro && set('client.ads_transition', v)}
+                      />
+                    )}
+                  </Field>
+                  {number('client.ads_interval_seconds', t('settings.client.adsInterval'), {
+                    min: 3,
+                    max: 120,
+                  })}
+                  <div>{bool('client.ads_show_price', t('settings.client.adsShowPrice'))}</div>
+                </div>
+              </div>
+            </Card>
+          </div>
+          <div className="client-screen__preview">
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewSession')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="session"
+            />
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewLockTitle')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="locked"
+            />
+            <div className="faint" style={{ fontSize: 12 }}>
+              {t('settings.client.previewNote')}
+            </div>
+          </div>
+        </div>
       )}
 
       {tab === 'printing' && (

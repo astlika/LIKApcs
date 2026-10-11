@@ -230,12 +230,22 @@ describe('stations, device registration and realtime presence', () => {
     expect((await mismatch.closed()).code).toBe(WS_CLOSE_CODES.UNAUTHORIZED);
 
     const client = await openSocket(`${wsUrl}/ws/client`);
+    const hardware = {
+      cpu: 'Intel Core i5-12400F',
+      cpuCores: 6,
+      cpuThreads: 12,
+      gpus: ['NVIDIA GeForce RTX 3060'],
+      ramTotalMb: 16384,
+      os: 'Windows 11 Pro 23H2',
+      diskTotalMb: 953869,
+    };
     client.send({
       type: 'client.hello',
       token: deviceToken,
       appVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       machineId,
+      hardware,
     });
     const welcome = await client.next();
     expect(welcome).toMatchObject({
@@ -244,6 +254,16 @@ describe('stations, device registration and realtime presence', () => {
       heartbeatIntervalSeconds: 10,
       session: null,
       businessName: 'Test Arena',
+      // Customer-screen configuration travels with the welcome (defaults until the owner changes them)
+      display: {
+        widgetSize: 'normal',
+        widgetPosition: 'top-right',
+        widgetStyle: 'detailed',
+        widgetShowPayment: true,
+        lockTitle: 'brand',
+        currency: 'EUR',
+        ads: { enabled: false, layout: 'card', intervalSeconds: 8 },
+      },
     });
     expect(typeof welcome.serverTime).toBe('string');
 
@@ -257,12 +277,24 @@ describe('stations, device registration and realtime presence', () => {
     const station = await get<StationSummary>(`/api/v1/stations/${station1.id}`);
     expect(station.body.status).toBe('available');
     expect(station.body.device?.online).toBe(true);
+    // Hardware facts announced in the hello are persisted and shown on the station …
+    expect(station.body.device?.hardware).toEqual(hardware);
+    // … live load is unknown until the first heartbeat carries it.
+    expect(station.body.device?.metrics).toBeNull();
 
     client.send({
       type: 'client.heartbeat',
       ts: new Date().toISOString(),
       locked: true,
-      metrics: { cpuPercent: 12, memoryUsedMb: 2048 },
+      metrics: {
+        cpuPercent: 12,
+        memoryUsedMb: 2048,
+        memoryTotalMb: 16384,
+        diskFreeMb: 120000,
+        cpuTempC: 45,
+        gpuTempC: null,
+        uptimeSeconds: 3600,
+      },
     });
     expect((await client.next()).type).toBe('server.heartbeat_ack');
     await sleep(50);
@@ -271,6 +303,50 @@ describe('stations, device registration and realtime presence', () => {
       [registrationId],
     );
     expect(heartbeats.rows[0]!.locked).toBe(true);
+    const withMetrics = await get<StationSummary>(`/api/v1/stations/${station1.id}`);
+    expect(withMetrics.body.device?.metrics).toMatchObject({
+      cpuPercent: 12,
+      memoryUsedMb: 2048,
+      cpuTempC: 45,
+      gpuTempC: null,
+    });
+    expect(typeof withMetrics.body.device?.metrics?.at).toBe('string');
+    const devices = await get<StationSummary['device'][]>('/api/v1/devices');
+    expect(devices.body.find((d) => d?.id === registrationId)?.hardware).toEqual(hardware);
+
+    // Changing a customer-screen setting is pushed to every connected PC right away.
+    const patched = await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings',
+      headers: authHeader(owner.token),
+      payload: { 'client.widget_style': 'minimal', 'client.lock_title': 'station' },
+    });
+    expect(patched.statusCode).toBe(200);
+    const display = await client.next();
+    expect(display).toMatchObject({
+      type: 'server.display',
+      display: { widgetStyle: 'minimal', lockTitle: 'station', widgetSize: 'normal' },
+      businessName: 'Test Arena',
+      language: 'en',
+    });
+    // Unrelated settings do not wake the PCs up.
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings',
+      headers: authHeader(owner.token),
+      payload: { 'pos.auto_finish_seconds': 7 },
+    });
+
+    // Lock-screen slideshow feed: device-token authenticated, only products with a photo in stock.
+    const noToken = await ctx.app.inject({ method: 'GET', url: '/api/v1/client/ads' });
+    expect(noToken.statusCode).toBe(401);
+    const ads = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/client/ads',
+      headers: { authorization: `Bearer ${deviceToken}` },
+    });
+    expect(ads.statusCode).toBe(200);
+    expect(ads.json()).toEqual({ items: [] });
 
     // Server → device command round-trip with acknowledgement (used by session control in Phase 3/4)
     const commandPromise = ctx.app.hub.sendCommand(registrationId, 'message.show', {

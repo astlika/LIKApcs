@@ -1,5 +1,6 @@
 import {
   WS_CLOSE_CODES,
+  type HardwareInfo,
   type RegisterDeviceRequest,
   type RegisterDeviceResponse,
   type RegistrationPollResponse,
@@ -25,6 +26,7 @@ interface DeviceRow {
   approved_at: Date | null;
   last_seen_at: Date | null;
   last_ip: string | null;
+  hardware: HardwareInfo | null;
 }
 
 export interface AuthenticatedDevice {
@@ -34,7 +36,7 @@ export interface AuthenticatedDevice {
 }
 
 const DEVICE_COLUMNS =
-  'id, station_id, machine_id, hostname, os_info, app_version, status, registered_at, approved_at, last_seen_at, last_ip';
+  'id, station_id, machine_id, hostname, os_info, app_version, status, registered_at, approved_at, last_seen_at, last_ip, hardware';
 
 export class DevicesService {
   constructor(
@@ -57,7 +59,21 @@ export class DevicesService {
       lastSeenAt: row.last_seen_at?.toISOString() ?? null,
       lastIp: row.last_ip,
       online: this.hub.isDeviceOnline(row.id),
+      hardware: row.hardware,
+      metrics: this.hub.deviceMetrics(row.id),
     };
+  }
+
+  /**
+   * The PC's static hardware facts (CPU, GPU, RAM, OS, disk) as announced with `client.hello`.
+   * Stored as reported — values the OS did not expose stay absent, nothing is guessed.
+   */
+  async saveHardware(deviceId: string, hardware: HardwareInfo): Promise<void> {
+    await this.pool.query(
+      `UPDATE station_devices SET hardware = $2::jsonb WHERE id = $1
+        AND hardware IS DISTINCT FROM $2::jsonb`,
+      [deviceId, JSON.stringify(hardware)],
+    );
   }
 
   // ─── Client-facing registration flow ─────────────────────────────────────────

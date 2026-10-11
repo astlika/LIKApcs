@@ -12,6 +12,9 @@
 import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
+  type ClientAdItem,
+  type ClientMetrics,
+  type HardwareInfo,
   type RegisterDeviceResponse,
   type RegistrationPollResponse,
   type ServerCommand,
@@ -24,6 +27,8 @@ import {
   deviceIdentity,
   discoverServers,
   firstReachable,
+  hardwareInfo,
+  hardwareMetrics,
   powerAction,
   probeServer,
   quitApp,
@@ -42,6 +47,7 @@ import {
 import {
   Clock,
   CommandGuard,
+  applyDisplay,
   applyWelcome,
   backoffMs,
   candidateServerUrls,
@@ -92,6 +98,8 @@ export interface AgentSnapshot {
   autoUpdate: boolean;
   /** Which native window layout is showing ('panel' = settings opened from the tray). */
   windowMode: WindowMode;
+  /** Lock-screen slideshow items (absolute image URLs); empty when the owner disabled ads. */
+  ads: ClientAdItem[];
 }
 
 export type ManualConnectResult =
@@ -122,6 +130,7 @@ const PROBE_TIMEOUT_MS = 2500;
 const UPDATE_FIRST_CHECK_MS = 2 * 60_000;
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const UPDATE_RETRY_MS = 30 * 60_000;
+const ADS_REFRESH_MS = 60 * 60_000;
 
 type Listener = () => void;
 
@@ -142,6 +151,7 @@ export class Agent {
     updateError: null,
     autoUpdate: true,
     windowMode: 'locked',
+    ads: [],
   };
   private readonly listeners = new Set<Listener>();
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -158,6 +168,11 @@ export class Agent {
   private wake: (() => void) | null = null;
   private readonly startedAt = Date.now();
   private tick: ReturnType<typeof setInterval> | null = null;
+  private hardware: HardwareInfo | null = null;
+  private metricsInFlight = false;
+  private ads: ClientAdItem[] = [];
+  private adsLoadedAt = 0;
+  private adsLoading = false;
 
   // ─── store ────────────────────────────────────────────────────────────────
   subscribe = (listener: Listener): (() => void) => {
@@ -251,6 +266,10 @@ export class Agent {
     const language = (await secretGet(KEYS.language)) === 'sq' ? 'sq' : 'en';
     const autoUpdate = (await secretGet(KEYS.autoUpdate)) !== 'off';
     this.set({ identity, machineId, autoUpdate, state: { ...this.snapshot.state, language } });
+    // Hardware facts are collected once (GPU names need a short WMI query) and sent with every hello.
+    void hardwareInfo().then((hardware) => {
+      this.hardware = hardware;
+    });
     this.tick = setInterval(() => this.onTick(), 1000);
     this.scheduleUpdateCheck(UPDATE_FIRST_CHECK_MS);
     void this.loop();
@@ -672,6 +691,7 @@ export class Agent {
             appVersion: APP_VERSION,
             protocolVersion: PROTOCOL_VERSION,
             machineId: this.snapshot.machineId,
+            ...(this.hardware ? { hardware: this.hardware } : {}),
           }),
         );
       };
@@ -695,11 +715,17 @@ export class Agent {
             this.set({ lastError: null, serverNowMs: this.clock.now() });
             this.setPhase({ phase: 'online' });
             this.startHeartbeat();
+            this.refreshAds(true);
             break;
           }
           case 'server.heartbeat_ack':
             this.clock.sync(message.serverTime);
             this.lastAckAt = Date.now();
+            break;
+          case 'server.display':
+            this.setState(applyDisplay(this.snapshot.state, message));
+            void secretSet(KEYS.language, message.language);
+            this.refreshAds(true);
             break;
           case 'server.command':
             this.handleCommand(message);
@@ -738,15 +764,71 @@ export class Agent {
         this.closeSocket(4000, 'heartbeat timeout');
         return;
       }
-      const { state } = this.snapshot;
-      this.send({
-        type: 'client.heartbeat',
-        ts: new Date(this.clock.now()).toISOString(),
-        sessionId: state.session?.id ?? null,
-        locked: state.mode === 'locked',
-        metrics: { uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000) },
-      });
+      void this.sendHeartbeat();
     }, this.heartbeatIntervalMs);
+  }
+
+  /** One heartbeat with the live load attached (never waits on a slow sensor read twice). */
+  private async sendHeartbeat(): Promise<void> {
+    let live: Omit<ClientMetrics, 'uptimeSeconds'> | null = null;
+    if (!this.metricsInFlight) {
+      this.metricsInFlight = true;
+      try {
+        live = await hardwareMetrics();
+      } finally {
+        this.metricsInFlight = false;
+      }
+    }
+    const { state } = this.snapshot;
+    this.send({
+      type: 'client.heartbeat',
+      ts: new Date(this.clock.now()).toISOString(),
+      sessionId: state.session?.id ?? null,
+      locked: state.mode === 'locked',
+      metrics: { ...(live ?? {}), uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000) },
+    });
+  }
+
+  // ─── Lock-screen slideshow ───────────────────────────────────────────────────
+
+  /** Products with photos for the lock screen; refreshed on connect, on display changes, hourly. */
+  private refreshAds(force = false): void {
+    const { pairing, state } = this.snapshot;
+    if (!pairing || !state.display?.ads.enabled) {
+      if (!state.display?.ads.enabled && this.ads.length > 0) this.setAds([]);
+      return;
+    }
+    if (this.adsLoading || (!force && Date.now() - this.adsLoadedAt < ADS_REFRESH_MS)) return;
+    this.adsLoading = true;
+    void (async () => {
+      try {
+        const token = await secretGet(KEYS.token);
+        if (!token) return;
+        const res = await this.api<{ items: ClientAdItem[] }>(pairing, '/client/ads', {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (res.status === 200 && res.body) {
+          this.adsLoadedAt = Date.now();
+          this.setAds(
+            res.body.items.map((item) => ({
+              ...item,
+              imageUrl: `${pairing.serverUrl}${item.imageUrl}`,
+            })),
+          );
+        }
+      } catch {
+        /* keep the previous list; the next refresh will retry */
+      } finally {
+        this.adsLoading = false;
+      }
+    })();
+  }
+
+  private setAds(ads: ClientAdItem[]): void {
+    // Same list again (hourly refresh) → no re-render, the slideshow keeps its rhythm.
+    if (JSON.stringify(ads) === JSON.stringify(this.ads)) return;
+    this.ads = ads;
+    this.set({ ads });
   }
 
   private handleCommand(command: ServerCommand): void {
@@ -902,6 +984,8 @@ export class Agent {
     if (state.notice && state.notice.untilServerMs <= now) next = { ...next, notice: null };
     if (next !== state) this.setState(next);
     this.set({ serverNowMs: now });
+    // Hourly slideshow refresh while locked (new products / photos appear without a reconnect).
+    if (next.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();
   }
 }
 

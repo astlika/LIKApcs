@@ -6,6 +6,7 @@
 //! store, LAN discovery of the server, staff-requested power actions and the signed
 //! auto-updater. All protocol logic lives in the TypeScript agent (`src/lib/agent.ts`).
 
+mod hardware;
 mod kiosk;
 mod secrets;
 
@@ -25,8 +26,7 @@ use tauri_plugin_autostart::MacosLauncher;
 
 const DISCOVERY_PORT: u16 = 4701;
 const DISCOVERY_REQUEST: &[u8] = b"LIKAPCS_DISCOVER_V1";
-const OVERLAY_WIDTH: f64 = 300.0;
-const OVERLAY_HEIGHT: f64 = 96.0;
+const OVERLAY_MARGIN: f64 = 16.0;
 const PANEL_WIDTH: f64 = 560.0;
 const PANEL_HEIGHT: f64 = 720.0;
 
@@ -40,6 +40,46 @@ struct DeviceIdentity {
 
 struct KioskState {
     locked: Arc<AtomicBool>,
+}
+
+/// Countdown widget footprint and corner, chosen by the owner in Admin → Settings → Client screen
+/// (`client.widget_size` / `client.widget_position`). Logical pixels; the window follows the
+/// monitor scale factor.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WidgetSize {
+    Small,
+    Normal,
+    Large,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WidgetPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Clone, Copy)]
+struct WidgetLayout {
+    size: WidgetSize,
+    position: WidgetPosition,
+}
+
+impl WidgetLayout {
+    fn dimensions(self) -> (f64, f64) {
+        match self.size {
+            WidgetSize::Small => (264.0, 60.0),
+            WidgetSize::Normal => (300.0, 96.0),
+            WidgetSize::Large => (392.0, 128.0),
+        }
+    }
+}
+
+struct WidgetState {
+    layout: Mutex<WidgetLayout>,
+    /// True while the window is in `overlay` mode (so a layout change re-applies at once).
+    overlay: AtomicBool,
 }
 
 /// Screen position (physical pixels) of the last left click on the tray icon; the settings
@@ -130,6 +170,28 @@ async fn device_identity() -> DeviceIdentity {
     })
     .await
     .unwrap_or(DeviceIdentity { machine_id: None, hostname: "unknown-pc".into(), os_info: "unknown".into() })
+}
+
+/// Static hardware facts for the server (sent with `client.hello`); cached after the first call.
+#[tauri::command]
+async fn hardware_info(
+    state: tauri::State<'_, Arc<hardware::HardwareState>>,
+) -> Result<hardware::HardwareInfo, String> {
+    let s = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || hardware::info(&s))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Live load / temperatures for the heartbeat.
+#[tauri::command]
+async fn hardware_metrics(
+    state: tauri::State<'_, Arc<hardware::HardwareState>>,
+) -> Result<hardware::HardwareMetrics, String> {
+    let s = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || hardware::metrics(&s))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -223,24 +285,66 @@ fn apply_locked(window: &WebviewWindow) {
     let _ = window.set_focus();
 }
 
-fn apply_overlay(window: &WebviewWindow) {
+fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
+    let (width, height) = layout.dimensions();
     let _ = window.set_fullscreen(false);
     let _ = window.set_decorations(false);
     let _ = window.set_resizable(false);
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
-    let _ = window.set_size(LogicalSize::new(OVERLAY_WIDTH, OVERLAY_HEIGHT));
-    // Top-right corner of the monitor the window is on.
-    let (mut x, mut y) = (16.0, 16.0);
+    let _ = window.set_size(LogicalSize::new(width, height));
+    // The chosen corner of the work area (taskbar excluded) of the monitor the window is on.
+    let (mut x, mut y) = (OVERLAY_MARGIN, OVERLAY_MARGIN);
     if let Ok(Some(monitor)) = window.current_monitor() {
         let scale = monitor.scale_factor();
-        let size = monitor.size().to_logical::<f64>(scale);
-        let pos = monitor.position().to_logical::<f64>(scale);
-        x = pos.x + size.width - OVERLAY_WIDTH - 16.0;
-        y = pos.y + 16.0;
+        let work = monitor.work_area();
+        let size = work.size.to_logical::<f64>(scale);
+        let pos = work.position.to_logical::<f64>(scale);
+        let right = pos.x + size.width - width - OVERLAY_MARGIN;
+        let bottom = pos.y + size.height - height - OVERLAY_MARGIN;
+        let (cx, cy) = match layout.position {
+            WidgetPosition::TopLeft => (pos.x + OVERLAY_MARGIN, pos.y + OVERLAY_MARGIN),
+            WidgetPosition::TopRight => (right, pos.y + OVERLAY_MARGIN),
+            WidgetPosition::BottomLeft => (pos.x + OVERLAY_MARGIN, bottom),
+            WidgetPosition::BottomRight => (right, bottom),
+        };
+        x = cx;
+        y = cy;
     }
     let _ = window.set_position(LogicalPosition::new(x, y));
     let _ = window.show();
+}
+
+/// Owner changed the widget size / corner (pushed by the server): remember it and, when the
+/// widget is showing right now, move it immediately.
+#[tauri::command]
+async fn set_widget_layout(
+    app: AppHandle,
+    state: tauri::State<'_, WidgetState>,
+    size: String,
+    position: String,
+) -> Result<(), String> {
+    let size = match size.as_str() {
+        "small" => WidgetSize::Small,
+        "normal" => WidgetSize::Normal,
+        "large" => WidgetSize::Large,
+        other => return Err(format!("unknown widget size {other}")),
+    };
+    let position = match position.as_str() {
+        "top-left" => WidgetPosition::TopLeft,
+        "top-right" => WidgetPosition::TopRight,
+        "bottom-left" => WidgetPosition::BottomLeft,
+        "bottom-right" => WidgetPosition::BottomRight,
+        other => return Err(format!("unknown widget position {other}")),
+    };
+    let layout = WidgetLayout { size, position };
+    *state.layout.lock().map_err(|_| "widget state poisoned")? = layout;
+    if state.overlay.load(Ordering::SeqCst) {
+        if let Some(window) = app.get_webview_window("main") {
+            apply_overlay(&window, layout);
+        }
+    }
+    Ok(())
 }
 
 /// Settings panel opened from the tray while the PC is unlocked: an always-on-top flyout next to
@@ -351,6 +455,8 @@ fn update_covers(app: &AppHandle, locked: bool) {
 async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("main window missing")?;
     let locked = app.state::<KioskState>().locked.clone();
+    let widget = app.state::<WidgetState>();
+    widget.overlay.store(mode == "overlay", Ordering::SeqCst);
     match mode.as_str() {
         "locked" => {
             locked.store(true, Ordering::SeqCst);
@@ -362,7 +468,8 @@ async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
             locked.store(false, Ordering::SeqCst);
             kiosk::set_enabled(false);
             update_covers(&app, false);
-            apply_overlay(&window);
+            let layout = *widget.layout.lock().map_err(|_| "widget state poisoned")?;
+            apply_overlay(&window, layout);
         }
         "panel" => {
             locked.store(false, Ordering::SeqCst);
@@ -479,8 +586,19 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(KioskState { locked: locked.clone() })
         .manage(PanelAnchor(Mutex::new(None)))
+        .manage(Arc::new(hardware::HardwareState::new()))
+        .manage(WidgetState {
+            layout: Mutex::new(WidgetLayout {
+                size: WidgetSize::Normal,
+                position: WidgetPosition::TopRight,
+            }),
+            overlay: AtomicBool::new(false),
+        })
         .invoke_handler(tauri::generate_handler![
             device_identity,
+            hardware_info,
+            hardware_metrics,
+            set_widget_layout,
             secret_get,
             secret_set,
             secret_delete,

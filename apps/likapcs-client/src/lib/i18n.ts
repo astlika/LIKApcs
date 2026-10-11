@@ -122,6 +122,11 @@ const en = {
   trayUpdate: 'Check for updates',
   trayQuit: 'Quit LIKApcs Client',
   offlineBanner: 'No connection to the server — reconnecting…',
+  paid: 'Paid',
+  owed: 'To pay',
+  minShort: 'min',
+  secShort: 's',
+  hourShort: 'h',
 };
 const sq: typeof en = {
   station: 'Stacioni',
@@ -245,6 +250,11 @@ const sq: typeof en = {
   trayUpdate: 'Kontrollo për përditësime',
   trayQuit: 'Mbyll LIKApcs Client',
   offlineBanner: 'Nuk ka lidhje me serverin — duke u rilidhur…',
+  paid: 'Paguar',
+  owed: 'Për pagesë',
+  minShort: 'min',
+  secShort: 's',
+  hourShort: 'h',
 };
 
 export const dictionaries: Record<Language, typeof en> = { en, sq };

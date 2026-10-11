@@ -6,7 +6,14 @@
  *  - reduce(): applies welcome data and commands to the client state and returns the side
  *    effects the shell has to perform (power actions, update, lock/unlock the window…).
  */
-import type { ServerCommand, ServerWelcomeToClient } from '@likapcs/shared';
+import {
+  priceForSeconds,
+  type ClientDisplayConfig,
+  type ClientSessionBilling,
+  type ServerCommand,
+  type ServerDisplay,
+  type ServerWelcomeToClient,
+} from '@likapcs/shared';
 
 // ─── Command guard ──────────────────────────────────────────────────────────────
 export type GuardDecision =
@@ -79,6 +86,8 @@ export interface SessionState {
   pausedAt: string | null;
   /** Remaining seconds frozen at pause time (paused sessions do not count down). */
   remainingAtPauseSeconds: number | null;
+  /** Display-only money facts from the server (paid amount / postpaid terms); null = unknown. */
+  billing: ClientSessionBilling | null;
 }
 
 export interface Notice {
@@ -104,6 +113,8 @@ export interface ClientState {
   businessName: string;
   welcomeMessage: string;
   language: 'en' | 'sq';
+  /** Customer-screen look (widget, lock title, slideshow); null until the first welcome. */
+  display: ClientDisplayConfig | null;
 }
 
 export const initialState: ClientState = {
@@ -115,6 +126,7 @@ export const initialState: ClientState = {
   businessName: '',
   welcomeMessage: '',
   language: 'en',
+  display: null,
 };
 
 export type Effect =
@@ -143,6 +155,7 @@ function sessionFromWelcome(w: ServerWelcomeToClient['session']): SessionState |
     endsAt: w.endsAt,
     pausedAt: w.pausedAt,
     remainingAtPauseSeconds: w.status === 'paused' ? w.remainingSeconds : null,
+    billing: billingOf(w.billing),
   };
 }
 
@@ -169,6 +182,7 @@ export function applyWelcome(state: ClientState, welcome: ServerWelcomeToClient)
     businessName: welcome.businessName,
     welcomeMessage: welcome.welcomeMessage,
     language: welcome.language,
+    display: welcome.display ?? state.display,
     session,
     maintenance,
     // No session ⇒ locked — unless the server itself says a staff maintenance unlock is still in
@@ -177,8 +191,33 @@ export function applyWelcome(state: ClientState, welcome: ServerWelcomeToClient)
   };
 }
 
+/** `server.display`: the owner changed a customer-screen setting (or renamed the business). */
+export function applyDisplay(state: ClientState, message: ServerDisplay): ClientState {
+  return {
+    ...state,
+    display: message.display,
+    businessName: message.businessName,
+    welcomeMessage: message.welcomeMessage,
+    language: message.language,
+  };
+}
+
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** Accepts the server's billing snapshot only when it is well-formed; anything else → unknown. */
+function billingOf(v: unknown): ClientSessionBilling | null {
+  if (!v || typeof v !== 'object') return null;
+  const b = v as Record<string, unknown>;
+  if (b.billingMode !== 'prepaid' && b.billingMode !== 'postpaid') return null;
+  const paidCents = num(b.paidCents);
+  const billableSeconds = num(b.billableSeconds);
+  const asOf = str(b.asOf);
+  if (paidCents === null || billableSeconds === null || !asOf) return null;
+  const terms =
+    b.terms && typeof b.terms === 'object' ? (b.terms as ClientSessionBilling['terms']) : null;
+  return { billingMode: b.billingMode, paidCents, terms, billableSeconds, asOf };
+}
 
 export function reduce(
   state: ClientState,
@@ -224,6 +263,7 @@ export function reduce(
             endsAt,
             pausedAt: null,
             remainingAtPauseSeconds: null,
+            billing: billingOf(p.billing),
           },
         },
         effects: [{ type: 'event', event: 'unlocked', payload: { sessionId: id } }],
@@ -259,6 +299,7 @@ export function reduce(
           mode: 'session',
           session: {
             ...state.session,
+            billing: billingOf(p.billing) ?? state.session.billing,
             status: 'active',
             pausedAt: null,
             endsAt: str(p.endsAt) ?? state.session.endsAt,
@@ -274,7 +315,12 @@ export function reduce(
         return { state, effects: [], ok: false, error: 'no matching session' };
       const endsAt = str(p.endsAt);
       if (!endsAt) return { state, effects: [], ok: false, error: 'endsAt missing' };
-      return { state: { ...state, session: { ...state.session, endsAt } }, effects: [], ok: true };
+      const billing = billingOf(p.billing) ?? state.session.billing;
+      return {
+        state: { ...state, session: { ...state.session, endsAt, billing } },
+        effects: [],
+        ok: true,
+      };
     }
     case 'session.end':
       return {
@@ -318,9 +364,14 @@ export interface SessionView {
   paused: boolean;
   /** True when a prepaid session has reached zero (the client locks itself locally). */
   expired: boolean;
+  /** Prepaid: amount already paid. null when the server did not say. */
+  paidCents: number | null;
+  /** Postpaid: running amount owed, derived from the server's terms + snapshot. null = unknown. */
+  owedCents: number | null;
 }
 
 export function sessionView(session: SessionState, serverNowMs: number): SessionView {
+  const money = sessionMoney(session, serverNowMs);
   if (session.endsAt) {
     const remaining =
       session.status === 'paused' && session.remainingAtPauseSeconds !== null
@@ -331,6 +382,7 @@ export function sessionView(session: SessionState, serverNowMs: number): Session
       seconds: Math.max(0, remaining),
       paused: session.status === 'paused',
       expired: session.status === 'active' && remaining <= 0,
+      ...money,
     };
   }
   const reference =
@@ -340,7 +392,31 @@ export function sessionView(session: SessionState, serverNowMs: number): Session
     seconds: Math.max(0, Math.round((reference - Date.parse(session.startedAt)) / 1000)),
     paused: session.status === 'paused',
     expired: false,
+    ...money,
   };
+}
+
+/**
+ * Display-only money: prepaid shows what was paid; postpaid counts billable seconds on from the
+ * server's snapshot (frozen while paused) and prices them with the server's own terms. The real
+ * invoice is always computed by the server when the session ends.
+ */
+function sessionMoney(
+  session: SessionState,
+  serverNowMs: number,
+): Pick<SessionView, 'paidCents' | 'owedCents'> {
+  const b = session.billing;
+  if (!b) return { paidCents: null, owedCents: null };
+  if (b.billingMode === 'prepaid') return { paidCents: b.paidCents, owedCents: null };
+  if (!b.terms) return { paidCents: null, owedCents: null };
+  const reference =
+    session.status === 'paused' && session.pausedAt ? Date.parse(session.pausedAt) : serverNowMs;
+  const since = Math.max(0, Math.round((reference - Date.parse(b.asOf)) / 1000));
+  try {
+    return { paidCents: null, owedCents: priceForSeconds(b.billableSeconds + since, b.terms) };
+  } catch {
+    return { paidCents: null, owedCents: null };
+  }
 }
 
 export function formatHMS(totalSeconds: number): string {

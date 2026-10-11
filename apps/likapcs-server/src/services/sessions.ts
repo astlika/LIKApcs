@@ -25,6 +25,7 @@ import {
   splitInclusiveTax,
   type EndSessionRequest,
   type ExtendSessionRequest,
+  type ClientSessionBilling,
   type PricingTerms,
   type SessionEventSummary,
   type SessionListQuery,
@@ -104,6 +105,21 @@ export type SessionMutationResult = SessionMutationResponse;
 
 export interface SessionActorContext extends AuditActor {
   permissions?: Set<string>;
+}
+
+/**
+ * Money facts the PC may *display* (never decide): prepaid → the amount paid for the booked time;
+ * postpaid → the terms plus a billable-seconds snapshot it counts on from. See ClientSessionBilling.
+ */
+export function clientBillingOf(session: SessionSummary): ClientSessionBilling {
+  const prepaid = session.billingMode === 'prepaid';
+  return {
+    billingMode: session.billingMode,
+    paidCents: prepaid ? (session.quotedPriceCents ?? 0) : 0,
+    terms: prepaid ? null : session.terms,
+    billableSeconds: session.billableSeconds,
+    asOf: new Date().toISOString(),
+  };
 }
 
 export function termsFromRow(row: SessionRow): PricingTerms {
@@ -436,6 +452,7 @@ export class SessionsService {
         sessionId: session.id,
         startedAt: session.startedAt,
         endsAt: session.endsAt,
+        billing: clientBillingOf(session),
       },
       actor,
     );
@@ -507,7 +524,7 @@ export class SessionsService {
     const ack = await this.mirror(
       session,
       'session.resume',
-      { sessionId: id, endsAt: session.endsAt },
+      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session) },
       actor,
     );
     await this.broadcast(session);
@@ -582,7 +599,7 @@ export class SessionsService {
     const ack = await this.mirror(
       session,
       'session.extend',
-      { sessionId: id, endsAt: session.endsAt },
+      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session) },
       actor,
     );
     await this.broadcast(session);
@@ -776,6 +793,7 @@ export class SessionsService {
       endsAt: live.endsAt,
       pausedAt: live.pausedAt,
       remainingSeconds: remaining,
+      billing: clientBillingOf(live),
     };
   }
 

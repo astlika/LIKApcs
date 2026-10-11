@@ -1,4 +1,13 @@
 import { z } from 'zod';
+import type { PricingTerms } from './billing.js';
+import type {
+  ClientAdsLayout,
+  ClientAdsTransition,
+  ClientLockTitle,
+  ClientWidgetPosition,
+  ClientWidgetSize,
+  ClientWidgetStyle,
+} from './settings.js';
 
 /**
  * Real-time protocol (WebSocket, JSON text frames). See docs/network-protocol.md.
@@ -26,12 +35,41 @@ export const WS_CLOSE_CODES = {
 } as const;
 
 // ─── Client → Server ───────────────────────────────────────────────────────────
+const label = z.string().trim().max(120);
+const mb = z.number().int().min(0).max(1_000_000_000);
+const temp = z.number().min(-50).max(200);
+
+/** Static facts about the PC, sent once per connection. Missing = the OS did not expose it. */
+export const hardwareInfoSchema = z.object({
+  cpu: label.nullable().optional(),
+  cpuCores: z.number().int().min(1).max(1024).nullable().optional(),
+  cpuThreads: z.number().int().min(1).max(4096).nullable().optional(),
+  gpus: z.array(label).max(4).default([]),
+  ramTotalMb: mb.nullable().optional(),
+  os: label.nullable().optional(),
+  diskTotalMb: mb.nullable().optional(),
+});
+export type HardwareInfo = z.infer<typeof hardwareInfoSchema>;
+
+/** Live load, sent with every heartbeat. Temperatures only where the platform has sensors. */
+export const clientMetricsSchema = z.object({
+  cpuPercent: z.number().min(0).max(100).nullable().optional(),
+  memoryUsedMb: mb.nullable().optional(),
+  memoryTotalMb: mb.nullable().optional(),
+  diskFreeMb: mb.nullable().optional(),
+  cpuTempC: temp.nullable().optional(),
+  gpuTempC: temp.nullable().optional(),
+  uptimeSeconds: z.number().int().min(0).optional(),
+});
+export type ClientMetrics = z.infer<typeof clientMetricsSchema>;
+
 export const clientHelloSchema = z.object({
   type: z.literal('client.hello'),
   token: z.string().min(16).max(512),
   appVersion: z.string().min(1).max(32),
   protocolVersion: z.number().int(),
   machineId: z.string().min(8).max(128),
+  hardware: hardwareInfoSchema.optional(),
 });
 
 export const clientHeartbeatSchema = z.object({
@@ -39,13 +77,7 @@ export const clientHeartbeatSchema = z.object({
   ts: z.string().datetime({ offset: true }),
   sessionId: z.string().uuid().nullable().optional(),
   locked: z.boolean().optional(),
-  metrics: z
-    .object({
-      cpuPercent: z.number().min(0).max(100).optional(),
-      memoryUsedMb: z.number().int().min(0).optional(),
-      uptimeSeconds: z.number().int().min(0).optional(),
-    })
-    .optional(),
+  metrics: clientMetricsSchema.optional(),
 });
 
 export const clientAckSchema = z.object({
@@ -122,9 +154,65 @@ export interface ServerWelcomeToClient {
     endsAt: string | null;
     pausedAt: string | null;
     remainingSeconds: number | null;
+    billing?: ClientSessionBilling;
   };
   /** … unless a staff unlock (maintenance) grant is in force, which survives reconnects. */
   maintenance?: null | { until: string; byName: string | null };
+  /** How the customer screen looks (widget, lock title, product slideshow). Added in 0.6.0. */
+  display?: ClientDisplayConfig;
+}
+
+/**
+ * What the PC needs to show money in the countdown widget without ever deciding it: the amount
+ * already paid (prepaid) or the terms + a billable-seconds snapshot the running cost is derived
+ * from (postpaid). The server stays authoritative — the final price is always computed there.
+ */
+export interface ClientSessionBilling {
+  billingMode: 'prepaid' | 'postpaid';
+  /** Prepaid: amount paid for the booked time (grows with extensions). Postpaid: 0. */
+  paidCents: number;
+  /** Postpaid: pricing terms the running amount is derived from; null for prepaid. */
+  terms: PricingTerms | null;
+  /** Billable seconds at `asOf` (pauses excluded) — the client counts on from there. */
+  billableSeconds: number;
+  asOf: string;
+}
+
+/** Customer-screen look & feel, derived from the `client.*` settings (see settings.ts). */
+export interface ClientDisplayConfig {
+  widgetSize: ClientWidgetSize;
+  widgetPosition: ClientWidgetPosition;
+  widgetStyle: ClientWidgetStyle;
+  widgetShowPayment: boolean;
+  lockTitle: ClientLockTitle;
+  currency: string;
+  ads: {
+    enabled: boolean;
+    layout: ClientAdsLayout;
+    transition: ClientAdsTransition;
+    intervalSeconds: number;
+    showPrice: boolean;
+  };
+}
+
+/** Pushed to every connected PC when a `client.*` (or related) setting changes. */
+export interface ServerDisplay {
+  type: 'server.display';
+  display: ClientDisplayConfig;
+  /** Business name / welcome text travel along so a rename shows up without a reconnect. */
+  businessName: string;
+  welcomeMessage: string;
+  language: 'en' | 'sq';
+}
+
+/** Lock-screen slideshow item (`GET /client/ads`, device-token authenticated). */
+export interface ClientAdItem {
+  id: string;
+  name: string;
+  priceCents: number;
+  /** Server-relative URL (`/api/v1/files/products/…`). */
+  imageUrl: string;
+  categoryName: string | null;
 }
 
 export interface ServerHeartbeatAck {
@@ -150,7 +238,7 @@ export interface ServerError {
 }
 
 export type ServerToClientMessage =
-  ServerWelcomeToClient | ServerHeartbeatAck | ServerCommand | ServerError;
+  ServerWelcomeToClient | ServerHeartbeatAck | ServerCommand | ServerDisplay | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
 export const ADMIN_EVENTS = [

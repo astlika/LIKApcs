@@ -3,7 +3,7 @@
  * fallback (localStorage secrets, no window control, no power actions) so the agent logic can be
  * exercised against a real server without the native app.
  */
-import type { HealthResponse } from '@likapcs/shared';
+import type { ClientMetrics, HardwareInfo, HealthResponse } from '@likapcs/shared';
 
 export interface DeviceIdentity {
   /** Stable per-machine identifier (Windows MachineGuid); null when it cannot be read. */
@@ -56,9 +56,41 @@ export async function secretDelete(name: string): Promise<void> {
   window.localStorage.removeItem(LS_PREFIX + name);
 }
 
+/** Static hardware facts (CPU, GPU, RAM, OS, disk). Fields the OS does not expose stay absent. */
+export async function hardwareInfo(): Promise<HardwareInfo | null> {
+  if (!isDesktopApp()) return null;
+  try {
+    return await invoke<HardwareInfo>('hardware_info');
+  } catch {
+    return null;
+  }
+}
+
+/** Live load (CPU %, RAM, free disk, temperatures) — null outside the desktop app or on failure. */
+export async function hardwareMetrics(): Promise<Omit<ClientMetrics, 'uptimeSeconds'> | null> {
+  if (!isDesktopApp()) return null;
+  try {
+    return await invoke<Omit<ClientMetrics, 'uptimeSeconds'>>('hardware_metrics');
+  } catch {
+    return null;
+  }
+}
+
 export async function discoverServers(timeoutMs = 2500): Promise<DiscoveredServer[]> {
   if (!isDesktopApp()) return [];
   return invoke<DiscoveredServer[]>('discover_servers', { timeoutMs });
+}
+
+/** Countdown widget footprint + corner (owner setting). Browser dev mode mirrors it via CSS. */
+export async function setWidgetLayout(size: string, position: string): Promise<void> {
+  document.documentElement.dataset.widgetSize = size;
+  document.documentElement.dataset.widgetPos = position;
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('set_widget_layout', { size, position });
+  } catch {
+    /* an older native shell without the command keeps the default corner */
+  }
 }
 
 export async function setWindowMode(mode: WindowMode): Promise<void> {

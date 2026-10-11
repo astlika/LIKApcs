@@ -3,6 +3,7 @@ import {
   priceForSeconds,
   type ActiveSessionSummary,
   type CreateStationRequest,
+  type HardwareInfo,
   type PricingTerms,
   type StationDeviceSummary,
   type StationMaintenance,
@@ -36,6 +37,7 @@ interface StationRow {
   device_approved_at: Date | null;
   device_last_seen_at: Date | null;
   device_last_ip: string | null;
+  device_hardware: HardwareInfo | null;
   session_id: string | null;
   session_customer_name: string | null;
   session_billing_mode: 'prepaid' | 'postpaid' | null;
@@ -57,7 +59,7 @@ const STATION_SELECT = `
          d.id AS device_id, d.machine_id AS device_machine_id, d.hostname AS device_hostname,
          d.os_info AS device_os_info, d.app_version AS device_app_version, d.status AS device_status,
          d.registered_at AS device_registered_at, d.approved_at AS device_approved_at,
-         d.last_seen_at AS device_last_seen_at, d.last_ip AS device_last_ip,
+         d.last_seen_at AS device_last_seen_at, d.last_ip AS device_last_ip, d.hardware AS device_hardware,
          g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name,
          g.billing_mode AS session_billing_mode, g.status AS session_status, g.started_at AS session_started_at,
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at,
@@ -141,6 +143,8 @@ export class StationsService {
           lastSeenAt: row.device_last_seen_at?.toISOString() ?? null,
           lastIp: row.device_last_ip,
           online,
+          hardware: row.device_hardware,
+          metrics: this.hub.deviceMetrics(row.device_id),
         }
       : null;
 

@@ -8,6 +8,7 @@
 import type {
   CategoryInput,
   CategorySummary,
+  ClientAdItem,
   InventoryMovementSummary,
   ProductInput,
   ProductListQuery,
@@ -77,6 +78,43 @@ export class CatalogService {
     private readonly settings: SettingsService,
     readonly images: ProductImageStore,
   ) {}
+
+  /**
+   * Lock-screen slideshow: active products that have a photo and are in stock (untracked stock
+   * counts as available). Cheap enough to serve on every lock; the client refreshes hourly.
+   */
+  async lockScreenAds(limit = 40): Promise<ClientAdItem[]> {
+    const result = await this.pool.query<{
+      id: string;
+      name: string;
+      selling_price_cents: string | number;
+      image_path: string;
+      category_name: string | null;
+    }>(
+      `SELECT p.id, p.name, p.selling_price_cents, p.image_path, c.name AS category_name
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active AND p.image_path IS NOT NULL
+          AND (NOT p.track_stock OR p.stock_milli > 0)
+        ORDER BY p.updated_at DESC
+        LIMIT $1`,
+      [limit],
+    );
+    return result.rows.flatMap((row) => {
+      const imageUrl = ProductImageStore.urlFor(row.image_path);
+      return imageUrl
+        ? [
+            {
+              id: row.id,
+              name: row.name,
+              priceCents: Number(row.selling_price_cents),
+              imageUrl,
+              categoryName: row.category_name,
+            },
+          ]
+        : [];
+    });
+  }
 
   // ─── Tax categories ─────────────────────────────────────────────────────────
 

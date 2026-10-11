@@ -57,6 +57,7 @@ import { formatHms, projectSession } from '../lib/session-time';
 import { storage } from '../lib/storage';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
+import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import {
@@ -833,6 +834,7 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
             {station.device.hostname ?? station.device.machineId.slice(0, 10)}
           </span>
         )}
+        {station.device && <HardwareStrip device={station.device} />}
       </span>
     );
   }
@@ -859,6 +861,7 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
       </span>
       <span className="num">{fmt.money(live.currentPriceCents)}</span>
       {live.customerName && <span className="muted">{live.customerName}</span>}
+      {station.device && <HardwareStrip device={station.device} />}
     </span>
   );
 }
@@ -1270,11 +1273,17 @@ function StationDetailDialog({
                     {device.machineId}
                   </div>
                 </div>
-                {device.osInfo && (
-                  <div className="faint" style={{ fontSize: 12 }}>
-                    {device.osInfo}
+                <div>
+                  <div className="muted" style={{ marginBottom: 6 }}>
+                    {t('stations.hw.title')}
                   </div>
-                )}
+                  <HardwareDetails device={device} />
+                  {!device.hardware?.os && device.osInfo && (
+                    <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+                      {device.osInfo}
+                    </div>
+                  )}
+                </div>
                 {device.status === 'approved' && (
                   <DeviceCommands station={station} online={device.online} onDone={onChanged} />
                 )}

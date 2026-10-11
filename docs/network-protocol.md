@@ -68,6 +68,9 @@ re-read `/auth/me`.
 
 `GET /settings/public` (public keys only, no auth), `GET /settings` (full map),
 `PATCH /settings` (partial map; every key validated by the shared schema; audited with old → new).
+Changing any `client.*` key (or `business.name`, `stations.client_welcome_message`,
+`locale.default_language`, `locale.currency`) additionally pushes `server.display` to every connected
+gaming PC (see §4).
 
 ### Stations & devices (`stations.view` / `stations.manage` / `devices.manage`)
 
@@ -363,6 +366,7 @@ isolated iframe, so the A4 layout never depends on the application stylesheet.
 | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (Ctrl+Alt+A). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC |
 | POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                        |
+| GET    | `/client/ads`          | lock-screen slideshow feed (0.6.0): `{items: [{id, name, priceCents, imageUrl, categoryName}]}` — active products that have a photo and are in stock (untracked stock counts as available), newest first, max 40. `imageUrl` is server-relative (`/api/v1/files/products/…`, public). The client loads it on connect, on every `server.display` and hourly while locked                                             |
 
 The PC never evaluates credentials or permissions itself; it only relays them over the pinned,
 device-authenticated connection and shows the server's answer.
@@ -394,14 +398,31 @@ blindly, so a missed event can never leave the UI permanently wrong.
 
 ```
 Client → Server  { "type": "client.hello", "token": "<device token>", "appVersion": "0.1.0",
-                   "protocolVersion": 1, "machineId": "<same id used at registration>" }
+                   "protocolVersion": 1, "machineId": "<same id used at registration>",
+                   "hardware"?: { "cpu", "cpuCores", "cpuThreads", "gpus": [...], "ramTotalMb", "os", "diskTotalMb" } }
 Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVersion": "…", "serverTime": "…",
                    "station": { "id", "number", "code", "name" },
                    "heartbeatIntervalSeconds": 10, "offlineAfterSeconds": 30,
                    "language": "sq", "welcomeMessage": "…", "businessName": "…",
-                   "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds" },
-                   "maintenance": null | { "until": "…", "byName": "…" } }
+                   "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds",
+                                       "billing"?: { "billingMode", "paidCents", "terms", "billableSeconds", "asOf" } },
+                   "maintenance": null | { "until": "…", "byName": "…" },
+                   "display": { "widgetSize", "widgetPosition", "widgetStyle", "widgetShowPayment", "lockTitle",
+                                "currency", "ads": { "enabled", "layout", "transition", "intervalSeconds", "showPrice" } } }
 ```
+
+`hardware` (0.6.0) is the PC's static specification as the OS reports it — fields the OS does not
+expose are simply absent, nothing is guessed. The server stores it in `station_devices.hardware`
+and shows it in the Admin (Stations → selected PC, and the station detail dialog).
+
+`session.billing` (0.6.0) carries **display-only** money facts: for a prepaid session the amount
+paid for the booked time, for an open (postpaid) session the pricing terms plus a billable-seconds
+snapshot (`asOf`) that the widget counts on from, frozen while paused. The same object travels in the
+`session.start` / `session.resume` / `session.extend` command payloads. The real invoice is always
+computed by the server when the session ends — the PC never bills.
+
+`display` (0.6.0) mirrors the `client.*` settings (countdown widget size / corner / style /
+paid-or-owed line, lock-screen title brand-or-station-code, product slideshow) plus the currency.
 
 Failure codes (`server.error` is sent first, then the socket closes):
 
@@ -424,8 +445,12 @@ the grace period, as a safety measure).
 
 ```
 Client → Server  { "type": "client.heartbeat", "ts": "…", "sessionId": null, "locked": true,
-                   "metrics": { "cpuPercent": 12, "memoryUsedMb": 2048, "uptimeSeconds": 120 } }
+                   "metrics": { "cpuPercent": 12, "memoryUsedMb": 2048, "memoryTotalMb": 16384, "diskFreeMb": 120000,
+                                "cpuTempC": 45, "gpuTempC": null, "uptimeSeconds": 120 } }
 Server → Client  { "type": "server.heartbeat_ack", "serverTime": "…" }
+
+Server → Client  { "type": "server.display", "display": {...same shape as in server.welcome...},
+                   "businessName": "…", "welcomeMessage": "…", "language": "sq" }
 
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"
@@ -438,6 +463,13 @@ Client → Server  { "type": "client.ack", "commandId": "<uuid>", "ok": true }
 Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "session_expired_locally"
                             | "maintenance_ended" | "update_status" | "error", "payload": {...} }
 ```
+
+Every `metrics` field except `uptimeSeconds` is optional / nullable (temperatures in particular are
+rarely exposed on consumer Windows installs). The server keeps the **latest** sample per connected PC
+in memory and serves it as `device.metrics` (with `at`) on `/stations` and `/devices`; it is `null`
+while the PC is offline. `server.display` is pushed to every connected PC the moment a `client.*`
+setting (or the business name / welcome text / default language / currency) changes, so the owner
+sees the result on the gaming PCs without a reconnect.
 
 `maintenance_ended {reason: 'expired' | 'staff'}` is informational: the PC reports that it locked
 itself at the end of a staff grant (or that staff pressed _Lock_); the server's own sweep and the

@@ -202,12 +202,15 @@ export function Badge({
 
 export function Card({
   title,
+  subtitle,
   actions,
   children,
   flush,
   className = '',
 }: {
   title?: ReactNode;
+  /** One quiet line under the title explaining what the card controls. */
+  subtitle?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   flush?: boolean;
@@ -217,7 +220,10 @@ export function Card({
     <section className={`card ${className}`}>
       {(title || actions) && (
         <header className="card__header">
-          <h3 className="card__title">{title}</h3>
+          <div className="card__heading">
+            <h3 className="card__title">{title}</h3>
+            {subtitle && <p className="card__subtitle">{subtitle}</p>}
+          </div>
           {actions}
         </header>
       )}
