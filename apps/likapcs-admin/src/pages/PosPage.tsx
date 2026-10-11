@@ -21,7 +21,6 @@ import {
   Minus,
   PauseCircle,
   Plus,
-  Printer,
   ScanLine,
   ShoppingCart,
   Trash2,
@@ -58,7 +57,7 @@ import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
 import { usePosCart } from '../state/pos-cart';
-import { Receipt, printReceipt } from '../components/pos/Receipt';
+import { SaleDoneDialog } from '../components/pos/SaleDoneDialog';
 import { CustomerPicker } from '../components/customers/CustomerPicker';
 import { TenderPanel, useTender } from '../components/payments/TenderPanel';
 import {
@@ -701,128 +700,6 @@ function QtyInput({
       }}
       aria-label={label}
     />
-  );
-}
-
-// ─── Sale completed ────────────────────────────────────────────────────────────
-/**
- * Shown the moment the sale is saved: the change due in large type, the receipt preview, and
- * Print / Finish. Finishing happens by itself after `autoFinishSeconds` (Settings › Printing;
- * 0 waits for the cashier); pressing Print stops the countdown so the print dialog is never
- * pulled away. Enter / Esc finish, P prints, scanning the next product finishes and starts the
- * next sale with it (handled by the page's scanner hook).
- */
-function SaleDoneDialog({ receipt, onFinish }: { receipt: ReceiptData; onFinish: () => void }) {
-  const { t } = useI18n();
-  const fmt = useFormat();
-  const seconds = Math.max(0, Math.floor(receipt.autoFinishSeconds));
-  const [remaining, setRemaining] = useState(seconds);
-  const [counting, setCounting] = useState(seconds > 0);
-  const onFinishRef = useRef(onFinish);
-  onFinishRef.current = onFinish;
-
-  const print = useCallback(() => {
-    setCounting(false);
-    printReceipt();
-  }, []);
-
-  // Settings › Printing › "Print receipt automatically" — the countdown keeps running: the print
-  // dialog blocks the page while it is up, so the remaining seconds elapse after it closes.
-  useEffect(() => {
-    if (!receipt.autoPrint) return;
-    const h = window.setTimeout(() => printReceipt(), 150);
-    return () => window.clearTimeout(h);
-  }, [receipt.autoPrint]);
-
-  useEffect(() => {
-    if (!counting) return;
-    const h = window.setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          window.clearInterval(h);
-          window.setTimeout(() => onFinishRef.current(), 0);
-          return 0;
-        }
-        return r - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(h);
-  }, [counting]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // `repeat`: the Enter that completed the payment may still be held down when this mounts.
-      if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        onFinishRef.current();
-      } else if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault();
-        print();
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [print]);
-
-  const { sale } = receipt;
-  // What the customer actually handed over now — "pay later" is not money in the drawer.
-  const tendered = sale.payments
-    .filter((p) => p.kind === 'sale' && p.method !== 'credit')
-    .reduce((a, p) => a + p.amountCents, 0);
-  return (
-    <Dialog
-      open
-      onClose={onFinish}
-      title={t('pos.doneTitle')}
-      description={sale.receiptNo ?? undefined}
-      size="sm"
-      footer={
-        <>
-          <Button onClick={print}>
-            <Printer size={14} /> {t('pos.print')} <Kbd>P</Kbd>
-          </Button>
-          <Button variant="primary" size="lg" onClick={onFinish} data-testid="pos-finish">
-            {counting ? t('pos.finishCountdown', { s: remaining }) : t('pos.finish')}{' '}
-            <Kbd>Enter</Kbd>
-          </Button>
-        </>
-      }
-    >
-      <div className="stack">
-        <div className="pos-done">
-          <div className="pos-done__row">
-            <span>{t('pos.total')}</span>
-            <span className="num">{fmt.money(sale.totalCents)}</span>
-          </div>
-          <div className="pos-done__row">
-            <span>{t('pos.paid')}</span>
-            <span className="num">{fmt.money(tendered)}</span>
-          </div>
-          {sale.debt && (
-            <div className="pos-done__row pos-done__row--debt" data-testid="pos-done-debt">
-              <span>{t('pos.payLater')}</span>
-              <span className="num">
-                {t('pos.debtRecorded', {
-                  amount: fmt.money(sale.debt.amountCents),
-                  date: fmt.date(sale.debt.dueDate),
-                })}
-              </span>
-            </div>
-          )}
-          <div className="pos-done__change" data-testid="pos-change">
-            <span>{t('pos.change')}</span>
-            <strong className="num">{fmt.money(sale.changeCents)}</strong>
-          </div>
-        </div>
-        <p className="faint pos-done__hint">
-          {counting ? t('pos.autoFinishHint', { s: remaining }) : t('pos.finishHint')}
-        </p>
-        <div className="pos-done__receipt">
-          <Receipt data={receipt} />
-        </div>
-      </div>
-    </Dialog>
   );
 }
 

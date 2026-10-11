@@ -32,8 +32,13 @@ import {
   type SessionQuoteResponse,
   type SessionSummary,
   type ClientAckSummary,
+  type SalePaymentInput,
   type SessionMutationResponse,
+  SESSION_STOP_CLOCK_GRACE_SECONDS,
+  type SessionPaymentSummary,
   type StartSessionRequest,
+  SaleMathError,
+  settlePayments,
 } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -44,6 +49,7 @@ import { nextDocumentNumber } from './documents.js';
 import type { PricingService } from './pricing.js';
 import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
+import type { DebtsService } from './debts.js';
 import type { StationsService } from './stations.js';
 
 interface SessionRow {
@@ -132,6 +138,7 @@ export class SessionsService {
     private readonly pricing: PricingService,
     private readonly stations: StationsService,
     private readonly cash: CashService,
+    private readonly debts: DebtsService,
     private readonly log: {
       info: (o: unknown, m?: string) => void;
       warn: (o: unknown, m?: string) => void;
@@ -342,6 +349,7 @@ export class SessionsService {
     if (!station.isEnabled) throw conflict('Station is disabled');
     const quote = await this.quote(req, now);
     const plannedSeconds = quote.minutes ? quote.minutes * 60 : null;
+    let payment: SessionPaymentSummary | null = null;
 
     const session = await withTransaction(this.pool, async (client) => {
       const live = await client.query(
@@ -390,11 +398,12 @@ export class SessionsService {
           description: `${station.code} · ${quote.minutes} min (prepaid${quote.package ? `: ${quote.package.name}` : ''})`,
           priceCents: quote.priceCents,
           discountCents: 0,
-          paymentMethod: req.paymentMethod,
+          tenders: req,
           customerId: req.customerId ?? null,
           actor,
           at: now,
         });
+        payment = sale.payment;
         await client.query(
           `UPDATE gaming_sessions SET sale_id = $2, billed_at = $3, final_price_cents = $4 WHERE id = $1 AND billed_at IS NULL`,
           [id, sale.saleId, now, quote.priceCents],
@@ -403,7 +412,7 @@ export class SessionsService {
           saleId: sale.saleId,
           receiptNo: sale.receiptNo,
           amountCents: quote.priceCents,
-          paymentMethod: req.paymentMethod,
+          methods: sale.methods,
         });
       }
       await recordAudit(client, actor, {
@@ -431,7 +440,7 @@ export class SessionsService {
       actor,
     );
     await this.broadcast(session);
-    return { session, client: ack };
+    return { session, client: ack, payment };
   }
 
   async pause(
@@ -511,6 +520,7 @@ export class SessionsService {
     actor: SessionActorContext,
   ): Promise<SessionMutationResult> {
     const now = new Date();
+    let payment: SessionPaymentSummary | null = null;
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.billing_mode !== 'prepaid')
@@ -541,11 +551,12 @@ export class SessionsService {
         description: `${row.station_code} · +${quote.minutes} min (extension${quote.package ? `: ${quote.package.name}` : ''})`,
         priceCents: quote.priceCents,
         discountCents: 0,
-        paymentMethod: req.paymentMethod,
+        tenders: req,
         customerId: row.customer_id,
         actor,
         at: now,
       });
+      payment = sale.payment;
       await client.query(
         `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
            quoted_price_cents = quoted_price_cents + $3, final_price_cents = final_price_cents + $3, version = version + 1
@@ -575,7 +586,7 @@ export class SessionsService {
       actor,
     );
     await this.broadcast(session);
-    return { session, client: ack };
+    return { session, client: ack, payment };
   }
 
   /** Staff stop. Postpaid sessions are billed here, exactly once. */
@@ -585,16 +596,38 @@ export class SessionsService {
     actor: SessionActorContext,
     at: Date = new Date(),
   ): Promise<SessionMutationResult> {
+    let payment: SessionPaymentSummary | null = null;
+    const requestedAt = at;
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session already ${row.status}`);
+      // Staff may stop the clock when they open the checkout, within a bounded window: the price
+      // the customer was told is the price billed, but the server decides how far back "now" goes.
+      let at = requestedAt;
+      if (req.stoppedSecondsAgo && row.billing_mode === 'postpaid' && row.status === 'active') {
+        const back = Math.min(req.stoppedSecondsAgo, SESSION_STOP_CLOCK_GRACE_SECONDS) * 1000;
+        at = new Date(Math.max(row.started_at.getTime(), requestedAt.getTime() - back));
+      }
       const seconds = billableSeconds({
         startedAt: row.started_at,
         endedAt: at,
         totalPausedSeconds: row.total_paused_seconds,
         pausedAt: row.paused_at,
       });
+      if (req.customerId && req.customerId !== row.customer_id) {
+        const found = await client.query<{ status: string }>(
+          'SELECT status FROM customers WHERE id = $1',
+          [req.customerId],
+        );
+        if (!found.rows[0] || found.rows[0].status === 'archived')
+          throw badRequest('Customer not found');
+        await client.query(
+          'UPDATE gaming_sessions SET customer_id = $2, customer_name = NULL WHERE id = $1',
+          [id, req.customerId],
+        );
+        row.customer_id = req.customerId;
+      }
       if (row.billing_mode === 'postpaid') {
         if (row.billed_at) throw conflict('Session is already billed');
         const price = priceForSeconds(seconds, termsFromRow(row));
@@ -607,11 +640,12 @@ export class SessionsService {
           description: describe(row, seconds),
           priceCents: price,
           discountCents: req.discountCents,
-          paymentMethod: req.paymentMethod,
+          tenders: req,
           customerId: row.customer_id,
           actor,
           at,
         });
+        payment = sale.payment;
         const updated = await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
              discount_cents = $4, final_price_cents = $5, sale_id = $6, billed_at = $2, paused_at = NULL, notes = COALESCE($7, notes),
@@ -632,7 +666,7 @@ export class SessionsService {
           saleId: sale.saleId,
           receiptNo: sale.receiptNo,
           amountCents: final,
-          paymentMethod: req.paymentMethod,
+          methods: sale.methods,
         });
       } else {
         await client.query(
@@ -656,7 +690,7 @@ export class SessionsService {
     });
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
-    return { session, client: ack };
+    return { session, client: ack, payment };
   }
 
   /** Postpaid only: stop without charging (wrong station, test, customer left immediately). */
@@ -895,6 +929,12 @@ export class SessionsService {
    * One completed sale with a single gaming line and its payment. Gaming prices are tax-inclusive
    * at the default rate (the quoted price is what the customer pays).
    */
+  /**
+   * Writes the sale that bills a session (one line, tax split out of the inclusive price) and
+   * settles it with the given tenders — exactly like a POS sale: cash minus change goes into the
+   * open shift, card/other count as non-cash, `credit` opens a debt on the session's customer.
+   * `tenders.payments` wins over the single `paymentMethod` (turned into one exact tender).
+   */
   private async recordSale(
     client: DbClient,
     input: {
@@ -902,20 +942,43 @@ export class SessionsService {
       description: string;
       priceCents: number;
       discountCents: number;
-      paymentMethod: string;
+      tenders: { paymentMethod: string; payments?: SalePaymentInput[] };
       customerId: string | null;
       actor: AuditActor;
       at: Date;
     },
-  ): Promise<{ saleId: string; receiptNo: string }> {
+  ): Promise<{
+    saleId: string;
+    receiptNo: string;
+    methods: string[];
+    payment: SessionPaymentSummary;
+  }> {
     const total = input.priceCents - input.discountCents;
+    const payments: SalePaymentInput[] =
+      total > 0
+        ? (input.tenders.payments ?? [
+            {
+              method: input.tenders.paymentMethod as SalePaymentInput['method'],
+              amountCents: total,
+            },
+          ])
+        : [];
+    let settled = { paidCents: 0, changeCents: 0 };
+    if (total > 0) {
+      try {
+        settled = settlePayments(total, payments);
+      } catch (err) {
+        if (err instanceof SaleMathError) throw badRequest(err.message, { code: 'PAYMENT' });
+        throw err;
+      }
+    }
     const rateBp = await this.settings.get('tax.default_rate_bp');
     const { tax } = splitInclusiveTax(total, rateBp);
     const receiptNo = await nextDocumentNumber(client, 'receipt', input.at);
     const sale = await client.query<{ id: string }>(
       `INSERT INTO sales (receipt_no, status, source, customer_id, cashier_user_id, subtotal_cents, discount_cents, tax_cents,
          total_cents, paid_cents, change_cents, discount_authorized_by, completed_at)
-       VALUES ($1, 'completed', 'gaming', $2, $3, $4, $5, $6, $7, $7, 0, $8, $9) RETURNING id`,
+       VALUES ($1, 'completed', 'gaming', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [
         receiptNo,
         input.customerId,
@@ -924,6 +987,8 @@ export class SessionsService {
         input.discountCents,
         tax,
         total,
+        settled.paidCents,
+        settled.changeCents,
         input.discountCents > 0 ? input.actor.userId : null,
         input.at,
       ],
@@ -942,32 +1007,70 @@ export class SessionsService {
         splitInclusiveTax(input.priceCents, rateBp).tax,
       ],
     );
+    let creditCents = 0;
+    let dueDate: string | null = null;
     if (total > 0) {
+      const cashTendered = payments
+        .filter((p) => p.method === 'cash')
+        .reduce((acc, p) => acc + p.amountCents, 0);
       const shiftId = await this.cash.attachTender(client, {
-        method: input.paymentMethod,
-        amountCents: total,
+        method: cashTendered > 0 ? 'cash' : (payments[0]?.method ?? 'other'),
+        amountCents: cashTendered - settled.changeCents,
         type: 'sale',
         referenceType: 'sale',
         referenceId: saleId,
         reason: `${receiptNo} · ${input.description}`,
         actorUserId: input.actor.userId ?? null,
       });
-      await client.query(
-        `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, shift_id, received_at, created_by)
-         VALUES ('sale', $1, $2, $3, $4, $5, $6, $7)`,
-        [
-          input.paymentMethod,
-          total,
+      for (const [i, p] of payments.entries()) {
+        await client.query(
+          `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, reference, shift_id, received_at, created_by)
+           VALUES ('sale', $1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            p.method,
+            p.amountCents,
+            saleId,
+            input.customerId,
+            p.reference ?? null,
+            shiftId,
+            new Date(input.at.getTime() + i),
+            input.actor.userId,
+          ],
+        );
+      }
+      const credit = payments.filter((p) => p.method === 'credit');
+      if (credit.length) {
+        creditCents = credit.reduce((acc, p) => acc + p.amountCents, 0);
+        const debtId = await this.debts.open(client, {
+          customerId: input.customerId,
           saleId,
-          input.customerId,
-          shiftId,
-          input.at,
-          input.actor.userId,
-        ],
-      );
+          amountCents: creditCents,
+          dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
+          notes: `${receiptNo} · ${input.description}`,
+          actor: input.actor,
+        });
+        const d = await client.query<{ due_date: string }>(
+          `SELECT to_char(due_date, 'YYYY-MM-DD') AS due_date FROM customer_debts WHERE id = $1`,
+          [debtId],
+        );
+        dueDate = d.rows[0]?.due_date ?? null;
+      }
       await client.query('UPDATE sales SET shift_id = $2 WHERE id = $1', [saleId, shiftId]);
     }
-    return { saleId, receiptNo };
+    return {
+      saleId,
+      receiptNo,
+      methods: [...new Set(payments.map((p) => p.method))],
+      payment: {
+        saleId,
+        receiptNo,
+        totalCents: total,
+        paidCents: settled.paidCents,
+        changeCents: settled.changeCents,
+        creditCents,
+        dueDate,
+      },
+    };
   }
 
   private async deviceForStation(stationId: string): Promise<string | null> {

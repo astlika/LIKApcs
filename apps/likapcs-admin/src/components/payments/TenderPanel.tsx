@@ -87,6 +87,14 @@ export function useTender({ totalCents, customer, allowCredit = true }: TenderIn
   const [cardText, setCardText] = useState('');
   const [reference, setReference] = useState('');
   const [dueDate, setDueDate] = useState(() => dueDateFromToday(defaultDays));
+  // The total can move while the panel is open (a session quote re-priced, a discount typed).
+  // An untouched exact amount follows it; an amount the cashier typed is left alone.
+  const [seenTotal, setSeenTotal] = useState(totalCents);
+  if (seenTotal !== totalCents) {
+    setSeenTotal(totalCents);
+    const untouched = cashText.trim() === '' || cashText === (seenTotal / 100).toFixed(2);
+    if (untouched && mode !== 'credit') setCashText((totalCents / 100).toFixed(2));
+  }
 
   const modes: TenderMode[] = ['cash'];
   if (cardEnabled) modes.push('card', 'split');

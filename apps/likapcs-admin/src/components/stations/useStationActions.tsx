@@ -11,6 +11,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowLeft,
   Clock,
   Info,
   Lock,
@@ -32,6 +33,7 @@ import {
   type GamingPackageSummary,
   type CustomerSummary,
   type PaymentMethod,
+  type SalePaymentInput,
   type SessionMutationResponse,
   type SessionQuoteResponse,
   type SessionSummary,
@@ -49,14 +51,26 @@ import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { isShiftRequired, useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
+import { TenderPanel, useTender } from '../payments/TenderPanel';
+import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
   EndSessionDialog,
   ExtendSessionDialog,
   notifyClientAck,
+  paidFrom,
   useNow,
 } from '../sessions/SessionPanel';
-import { Button, ConfirmDialog, Dialog, Field, Input, Loading, Segmented } from '../ui/primitives';
+import {
+  Button,
+  ConfirmDialog,
+  Dialog,
+  Field,
+  Input,
+  Kbd,
+  Loading,
+  Segmented,
+} from '../ui/primitives';
 
 export type StationActionId =
   | 'start'
@@ -94,6 +108,8 @@ type Flow =
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
+  /** Money changed hands: change / receipt / Print / Finish, like the POS. */
+  | { kind: 'paid'; paid: SessionPaid }
   | null;
 
 export function useStationActions(
@@ -157,7 +173,8 @@ export function useStationActions(
       };
       toast.success(messages[action] ?? t('common.saving'));
       notifyClientAck(result, toast, t);
-      setFlow(null);
+      const paid = paidFrom(result);
+      setFlow(paid ? { kind: 'paid', paid } : null);
       refresh();
     },
     onError: (err, variables) => {
@@ -483,12 +500,14 @@ export function useStationActions(
           station={station}
           others={multi ? group.filter((s) => s.id !== station.id) : []}
           onClose={close}
-          onStarted={() => {
-            close();
+          onStarted={(result) => {
+            const paid = result ? paidFrom(result) : null;
+            setFlow(paid ? { kind: 'paid', paid } : null);
             refresh();
           }}
         />
       )}
+      {flow.kind === 'paid' && <SessionPaidDialog paid={flow.paid} onFinish={close} />}
       {flow.kind === 'end' && (
         <SessionFlow sessionId={flow.sessionId} onClose={close}>
           {(s, elapsed, livePrice) => (
@@ -620,7 +639,8 @@ export function QuickStartDialog({
   /** Further PCs that get the same choice (multi-selection); each is billed by its own rule. */
   others?: StationSummary[];
   onClose: () => void;
-  onStarted: () => void;
+  /** The single start's result (to show the "paid" dialog); undefined for bulk starts. */
+  onStarted: (result?: SessionMutationResponse) => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
@@ -632,6 +652,13 @@ export function QuickStartDialog({
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [custom, setCustom] = useState('');
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  // Single PC, prepaid: the tile picks the time, then the tender step takes the money (cash with
+  // change, card, pay later) — the same panel as the POS. Bulk starts and open time skip it.
+  const [pending, setPending] = useState<{
+    body: Record<string, unknown>;
+    label: string;
+    totalCents: number;
+  } | null>(null);
   // Only PCs that can actually take a session; the server is still the judge.
   const startTargets = useMemo(
     () => [station, ...others].filter((s) => s.isEnabled && !s.activeSession),
@@ -681,10 +708,10 @@ export function QuickStartDialog({
       method: 'POST',
       body: {
         stationId: target.id,
+        paymentMethod: method,
         ...body,
         customerId: customer?.id,
         customerName: customer ? undefined : customerName.trim() || undefined,
-        paymentMethod: method,
         // One idempotency key per PC so a retry never double-starts any of them.
         clientRequestId: bulk ? `${requestId}:${target.number}` : requestId,
       },
@@ -714,7 +741,7 @@ export function QuickStartDialog({
       if (single) {
         toast.success(t('sessions.started', { code: station.code }));
         notifyClientAck(single, toast, t);
-        onStarted();
+        onStarted(single);
         return;
       }
       const sum = summarizeBulk(outcomes);
@@ -737,6 +764,32 @@ export function QuickStartDialog({
     },
   });
   const noPricing = openQuote && !openQuote.rule;
+  /** A tile was chosen: start now (bulk / open time / free) or take the money first. */
+  const choose = (body: Record<string, unknown>, label: string, totalCents: number) => {
+    if (bulk || totalCents <= 0) start.mutate(body);
+    else setPending({ body, label, totalCents });
+  };
+
+  if (pending) {
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title={t('map.startTitle', { code: station.code })}
+        description={pending.label}
+        size="md"
+      >
+        <QuickStartTender
+          totalCents={pending.totalCents}
+          customer={customer}
+          onCustomerChange={setCustomer}
+          busy={start.isPending}
+          onBack={() => setPending(null)}
+          onStart={(payments) => start.mutate({ ...pending.body, payments })}
+        />
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -758,7 +811,7 @@ export function QuickStartDialog({
           </p>
         )}
         <div className="row row--between row--wrap" style={{ gap: 10 }}>
-          {cardEnabled && (
+          {bulk && cardEnabled && (
             <Segmented
               value={method}
               onChange={setMethod}
@@ -786,6 +839,7 @@ export function QuickStartDialog({
             className="start-tile start-tile--open"
             disabled={start.isPending || !openQuote?.rule}
             onClick={() => start.mutate({ billingMode: 'postpaid' })}
+            data-testid="quick-start-open"
           >
             <Clock size={22} />
             <span className="start-tile__title">{t('map.openTime')}</span>
@@ -801,7 +855,14 @@ export function QuickStartDialog({
               type="button"
               className="start-tile"
               disabled={start.isPending}
-              onClick={() => start.mutate({ billingMode: 'prepaid', packageId: p.id })}
+              onClick={() =>
+                choose(
+                  { billingMode: 'prepaid', packageId: p.id },
+                  `${p.name} · ${p.durationMinutes} min`,
+                  p.priceCents,
+                )
+              }
+              data-testid="quick-start-package"
             >
               <Timer size={22} />
               <span className="start-tile__title">{p.name}</span>
@@ -818,7 +879,10 @@ export function QuickStartDialog({
                 type="button"
                 className="start-tile"
                 disabled={start.isPending || !q?.rule}
-                onClick={() => start.mutate({ billingMode: 'prepaid', minutes })}
+                onClick={() =>
+                  choose({ billingMode: 'prepaid', minutes }, `${minutes} min`, q?.priceCents ?? 0)
+                }
+                data-testid="quick-start-minutes"
               >
                 <Timer size={22} />
                 <span className="start-tile__title">
@@ -843,7 +907,11 @@ export function QuickStartDialog({
                 onChange={(e) => setCustom(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && customValid && customQuote.data?.rule)
-                    start.mutate({ billingMode: 'prepaid', minutes: customMinutes });
+                    choose(
+                      { billingMode: 'prepaid', minutes: customMinutes },
+                      `${customMinutes} min`,
+                      customQuote.data.priceCents,
+                    );
                 }}
               />
             )}
@@ -852,7 +920,14 @@ export function QuickStartDialog({
             variant="primary"
             disabled={!customValid || !customQuote.data?.rule}
             loading={start.isPending}
-            onClick={() => start.mutate({ billingMode: 'prepaid', minutes: customMinutes })}
+            onClick={() =>
+              customQuote.data &&
+              choose(
+                { billingMode: 'prepaid', minutes: customMinutes },
+                `${customMinutes} min`,
+                customQuote.data.priceCents,
+              )
+            }
           >
             <Play size={14} /> {t('map.start')}
             {customValid && customQuote.data ? ` · ${fmt.money(customQuote.data.priceCents)}` : ''}
@@ -865,6 +940,58 @@ export function QuickStartDialog({
         )}
       </div>
     </Dialog>
+  );
+}
+
+/** Second step of the quick start: the shared tender panel for the chosen time. */
+function QuickStartTender({
+  totalCents,
+  customer,
+  onCustomerChange,
+  busy,
+  onBack,
+  onStart,
+}: {
+  totalCents: number;
+  customer: CustomerSummary | null;
+  onCustomerChange: (customer: CustomerSummary | null) => void;
+  busy: boolean;
+  onBack: () => void;
+  onStart: (payments: SalePaymentInput[]) => void;
+}) {
+  const { t } = useI18n();
+  const tender = useTender({ totalCents, customer });
+  const submit = () => {
+    if (tender.covered && !busy) onStart(tender.payments);
+  };
+  return (
+    <div className="stack">
+      <TenderPanel
+        tender={tender}
+        onSubmit={submit}
+        onCustomerChange={onCustomerChange}
+        testId="quick-start"
+      />
+      <div className="row row--between" style={{ marginTop: 4 }}>
+        <Button onClick={onBack}>
+          <ArrowLeft size={14} /> {t('common.back')}
+        </Button>
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={!tender.covered}
+          loading={busy}
+          onClick={submit}
+          data-testid="quick-start-submit"
+        >
+          <Play size={14} />{' '}
+          {tender.mode === 'credit' && tender.creditCents > 0
+            ? t('pos.completeOnTab')
+            : t('map.start')}{' '}
+          <Kbd>Enter</Kbd>
+        </Button>
+      </div>
+    </div>
   );
 }
 

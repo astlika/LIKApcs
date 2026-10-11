@@ -22,6 +22,19 @@ All notable changes to LIKApcs are documented here. The format follows
   receipt and the "sale completed" screen print the debt and its due date. Cash shift totals break
   repayments out as _debt payments_. Migration `0013` (`customer_debts`, `debt_payments`).
 
+- **Sessions pay like the POS.** Starting a prepaid session, extending it and ending a postpaid
+  one use the same tender panel as a sale: cash with change suggestions (only the net cash reaches
+  the drawer), card when enabled, **Pay later** on the session's customer when enabled (a walk-in
+  can be attached to a customer right at checkout). The quick start from the map picks the time
+  first and takes the money second; "open time" starts at once. After each payment the same
+  "Payment recorded" screen as the POS shows the change or the debt and its due date, with
+  Print / Finish and the auto-finish countdown. Ending a postpaid session **stops the clock the
+  moment the checkout opens** — the amount quoted to the customer is the amount billed while the
+  money is counted (server-bounded: at most 10 minutes back, never while paused). New
+  `GET /sessions/:id/receipt` (stations.control). API: `payments[]` on start / extend / end,
+  `stoppedSecondsAgo` and `customerId` on end, `payment` in every session mutation response; the
+  single `paymentMethod` field keeps working.
+
 ### Changed
 
 - **POS — Enter pays.** Enter anywhere on the POS page (nothing focused, a tapped product tile,

@@ -9,6 +9,7 @@ import {
   startSessionSchema,
   uuidSchema,
 } from '@likapcs/shared';
+import { notFound } from '../errors.js';
 
 /**
  * Gaming sessions. Starting/pausing/extending/ending needs stations.control; a discount on a
@@ -65,6 +66,13 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       actorOf(request),
     ),
   );
+  /** Receipt of the session's bill — for the "paid" dialog after a prepaid start / extension or a
+   * postpaid end. Needs stations.control only: whoever may take the money may print its receipt. */
+  app.get('/sessions/:id/receipt', control, async (request) => {
+    const session = await services.sessions.getById(idParams.parse(request.params).id);
+    if (!session.saleId) throw notFound('Session has no bill');
+    return services.sales.receipt(session.saleId, actorOf(request), false);
+  });
   app.post('/sessions/:id/cancel', control, async (request) => {
     const { reason } = z.object({ reason: z.string().trim().min(2).max(200) }).parse(request.body);
     return services.sessions.cancel(idParams.parse(request.params).id, actorOf(request), reason);

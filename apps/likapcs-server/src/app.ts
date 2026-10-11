@@ -144,13 +144,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const commands = new CommandsService(pool, hub, maintenance);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
-  const sessions = new SessionsService(pool, hub, settings, pricing, stations, cash, app.log);
+  const debts = new DebtsService(pool, settings, cash);
+  const sessions = new SessionsService(
+    pool,
+    hub,
+    settings,
+    pricing,
+    stations,
+    cash,
+    debts,
+    app.log,
+  );
   const catalog = new CatalogService(
     pool,
     settings,
     new ProductImageStore(path.join(config.uploadDir, 'products')),
   );
-  const debts = new DebtsService(pool, settings, cash);
   const sales = new SalesService(pool, settings, cash, debts);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);

@@ -533,11 +533,21 @@ export const sessionQuoteSchema = z
   });
 export type SessionQuoteRequest = z.infer<typeof sessionQuoteSchema>;
 
+/**
+ * How a session bill is paid. Either the full `payments` array (same shape as a POS sale: cash
+ * with change, card, split, `credit` = pay later) or the older single `paymentMethod`, which the
+ * server turns into one exact tender. When both are present `payments` wins.
+ */
+const sessionTenders = {
+  paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  payments: z.lazy(() => z.array(salePaymentInputSchema).min(1).max(5)).optional(),
+};
+
 export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   customerId: z.string().uuid().optional(),
   customerName: z.string().trim().max(80).optional(),
   /** Prepaid only: how the customer pays now. */
-  paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  ...sessionTenders,
   notes: z.string().trim().max(500).optional(),
   /** Idempotency key: a retried request never starts a second session. */
   clientRequestId: z.string().min(8).max(64).optional(),
@@ -553,7 +563,7 @@ export const extendSessionSchema = z
       .min(1)
       .max(24 * 60)
       .optional(),
-    paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+    ...sessionTenders,
     clientRequestId: z.string().min(8).max(64).optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
@@ -562,10 +572,23 @@ export const extendSessionSchema = z
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
 
+/** How far back staff may "stop the clock" before the end request actually arrives. */
+export const SESSION_STOP_CLOCK_GRACE_SECONDS = 10 * 60;
+
 export const endSessionSchema = z.object({
   /** Postpaid only: discount applied by staff with the pos.discount permission. */
   discountCents: z.number().int().min(0).max(1_000_000).default(0),
-  paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  /**
+   * Postpaid only: how many seconds before this request staff stopped the clock (opened the
+   * checkout), so the amount quoted to the customer is the amount billed while the money is
+   * counted. A duration rather than a timestamp so Admin/Server clock skew cannot shift it. The
+   * server bounds it: never before the start, ignored while paused, never more than
+   * `SESSION_STOP_CLOCK_GRACE_SECONDS`.
+   */
+  stoppedSecondsAgo: z.number().int().min(0).max(86_400).optional(),
+  /** Attach the customer at checkout (a walk-in session that ends with "pay later"). */
+  customerId: z.string().uuid().optional(),
+  ...sessionTenders,
   notes: z.string().trim().max(500).optional(),
 });
 export type EndSessionRequest = z.infer<typeof endSessionSchema>;
@@ -632,10 +655,25 @@ export interface ClientAckSummary {
   error?: string;
 }
 
+/** Money side of a session transition that produced a bill (prepaid start/extend, postpaid end). */
+export interface SessionPaymentSummary {
+  saleId: string;
+  receiptNo: string;
+  totalCents: number;
+  /** Sum of tenders (cash counted as handed over, before change). */
+  paidCents: number;
+  changeCents: number;
+  /** Part put on the customer's tab ("pay later"), 0 otherwise. */
+  creditCents: number;
+  dueDate: string | null;
+}
+
 export interface SessionMutationResponse {
   session: SessionSummary;
   /** null when no client PC is connected to the station. */
   client: ClientAckSummary | null;
+  /** Present when this transition billed something. */
+  payment?: SessionPaymentSummary | null;
 }
 
 export interface SessionEventSummary {

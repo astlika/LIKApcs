@@ -114,17 +114,35 @@ available for that station). Deleting a rule/package that sessions already refer
 
 ### Gaming sessions (`stations.view` to read, `stations.control` to act)
 
-| Route                          | Body                                                                                 | Result                                              |
-| ------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| `POST /sessions/quote`         | `{stationId, billingMode, packageId? \| minutes?}`                                   | `{minutes, priceCents, rule, package, terms}`       |
-| `POST /sessions`               | quote fields + `customerName?, customerId?, paymentMethod, notes?, clientRequestId?` | `201 {session, client}` — prepaid is paid here      |
-| `POST /sessions/:id/pause`     | —                                                                                    | `{session, client}`                                 |
-| `POST /sessions/:id/resume`    | —                                                                                    | prepaid `endsAt` shifted by the paused time         |
-| `POST /sessions/:id/extend`    | `{packageId? \| minutes?, paymentMethod, clientRequestId?}` (prepaid only)           | new sale + receipt                                  |
-| `POST /sessions/:id/end`       | `{discountCents?, paymentMethod?}`                                                   | postpaid billed exactly once; `409` if already over |
-| `POST /sessions/:id/cancel`    | `{reason}` (postpaid only)                                                           | no charge                                           |
-| `GET /sessions`                | `?status&stationId&from&to&page&pageSize`                                            | `{items, total, page, pageSize}`                    |
-| `GET /sessions/:id`, `/events` | —                                                                                    | summary / event timeline (incl. PC acks)            |
+| Route                          | Body                                                                            | Result                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `POST /sessions/quote`         | `{stationId, billingMode, packageId? \| minutes?}`                              | `{minutes, priceCents, rule, package, terms}`           |
+| `POST /sessions`               | quote fields + `customerName?, customerId?, notes?, clientRequestId?` + tenders | `201 {session, client, payment}` — prepaid is paid here |
+| `POST /sessions/:id/pause`     | —                                                                               | `{session, client, payment: null}`                      |
+| `POST /sessions/:id/resume`    | —                                                                               | prepaid `endsAt` shifted by the paused time             |
+| `POST /sessions/:id/extend`    | `{packageId? \| minutes?, clientRequestId?}` + tenders (prepaid only)           | new sale + receipt                                      |
+| `POST /sessions/:id/end`       | `{discountCents?, stoppedSecondsAgo?, customerId?}` + tenders                   | postpaid billed exactly once; `409` if already over     |
+| `POST /sessions/:id/cancel`    | `{reason}` (postpaid only)                                                      | no charge                                               |
+| `GET /sessions`                | `?status&stationId&from&to&page&pageSize`                                       | `{items, total, page, pageSize}`                        |
+| `GET /sessions/:id`, `/events` | —                                                                               | summary / event timeline (incl. PC acks)                |
+| `GET /sessions/:id/receipt`    | —                                                                               | `ReceiptData` of the session's bill (`404` if none)     |
+
+**Tenders.** A session bill is paid exactly like a POS sale: `payments: [{method, amountCents,
+reference?, dueDate?}]` (1–5 entries; `cash`, `card`, `credit`). Cash above the total is change
+(only the net cash reaches the drawer); `credit` is "pay later" and needs the session's customer
+(`customerId` on start, or `customerId` sent with `/end` to attach one at checkout) — it opens a
+`customer_debts` row exactly as a POS credit sale does, with the same `CREDIT_DISABLED` /
+`CREDIT_LIMIT` / blocked-customer refusals. The legacy single `paymentMethod` (default `cash`) is
+still accepted and means one exact tender; when both are present `payments` wins. The response's
+`payment` is `{saleId, receiptNo, totalCents, paidCents, changeCents, creditCents, dueDate}` or
+`null` when nothing was billed (postpaid start, prepaid end, pause/resume).
+
+**Stopping the clock.** A postpaid `/end` may carry `stoppedSecondsAgo`: how many seconds before
+the request the operator opened the checkout. The server bills up to that moment — the amount the
+customer was told is the amount charged while the money is counted — but bounds it itself: never
+before the start, ignored while the session is paused, and at most
+`SESSION_STOP_CLOCK_GRACE_SECONDS` (10 minutes). It is a duration, not a timestamp, so Admin/Server
+clock skew cannot move it.
 
 `client` in a mutation response is `{commandId, command, ok, error?}` for the command mirrored to
 the PC, or `null` when no client is connected (the session still runs on the server and the PC

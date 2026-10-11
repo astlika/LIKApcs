@@ -1,9 +1,11 @@
 /**
  * Session controls for one station: start (prepaid with a live quote, or postpaid), pause, resume,
- * extend, end (with payment method and optional discount) and cancel. All amounts and timers are
+ * extend, end and cancel. Money is taken exactly like the POS: the shared `TenderPanel` (cash with
+ * change, card when enabled, "pay later" on the session's customer when enabled) and the same
+ * "done" dialog with the change, the receipt and Print / Finish. All amounts and timers are
  * authoritative on the server; this panel only mirrors them and ticks locally between refreshes.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, Pause, Play, Plus, Square, XCircle } from 'lucide-react';
 import {
@@ -12,7 +14,6 @@ import {
   priceForSeconds,
   type GamingPackageSummary,
   type CustomerSummary,
-  type PaymentMethod,
   type SessionMutationResponse,
   type SessionQuoteResponse,
   type SessionSummary,
@@ -21,12 +22,14 @@ import {
 import { api, ApiError } from '../../lib/api';
 import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
-import { usePaymentMethods } from '../../lib/payment-methods';
+import { isEditableElement } from '../../lib/scanner';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
+import { TenderPanel, useTender } from '../payments/TenderPanel';
+import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 import {
   Alert,
   Badge,
@@ -34,9 +37,9 @@ import {
   Dialog,
   Field,
   Input,
+  Kbd,
   Loading,
   Segmented,
-  Select,
   Textarea,
 } from '../ui/primitives';
 
@@ -52,6 +55,44 @@ export function useNow(intervalMs = 1000): number {
   return now;
 }
 
+/**
+ * The customer attached to a session, as a full summary (balance and credit limit) so the tender
+ * panel can offer "pay later" and check the limit before the server does. A picker in the panel
+ * may replace it for walk-in sessions.
+ */
+export function useSessionCustomer(session: SessionSummary | null) {
+  const [picked, setPicked] = useState<CustomerSummary | null>(null);
+  const customerId = session?.customerId ?? null;
+  const attached = useQuery({
+    queryKey: ['customers', customerId],
+    queryFn: () => api<CustomerSummary>(`/customers/${customerId}`),
+    enabled: customerId !== null,
+    staleTime: 15_000,
+  });
+  return {
+    customer: picked ?? attached.data ?? null,
+    /** Set when the operator picked someone other than the attached customer. */
+    pickedId: picked && picked.id !== customerId ? picked.id : undefined,
+    setCustomer: setPicked,
+  };
+}
+
+/** Enter anywhere in a dialog (outside text fields) runs `submit`; events older than the dialog are ignored. */
+function useEnterSubmits(submit: () => void) {
+  const openedAt = useRef(performance.now());
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.timeStamp <= openedAt.current) return;
+      if (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element)) {
+        e.preventDefault();
+        submit();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+}
+
 export function SessionPanel({
   station,
   onChanged,
@@ -61,24 +102,44 @@ export function SessionPanel({
 }) {
   const { t } = useI18n();
   const { can } = useAuth();
+  // Lives here, not in the start form / active view: ending a session swaps those two, and the
+  // "paid" dialog must survive the swap.
+  const [paid, setPaid] = useState<SessionPaid | null>(null);
   const live = station.activeSession;
   if (!can(PERMISSIONS.STATIONS_CONTROL) && !live) {
     return <p className="muted">{t('sessions.noSession')}</p>;
   }
-  return live ? (
-    <ActiveSession sessionId={live.id} station={station} onChanged={onChanged} />
-  ) : (
-    <StartSessionForm station={station} onChanged={onChanged} />
+  return (
+    <>
+      {live ? (
+        <ActiveSession
+          sessionId={live.id}
+          station={station}
+          onChanged={onChanged}
+          onPaid={setPaid}
+        />
+      ) : (
+        <StartSessionForm station={station} onChanged={onChanged} onPaid={setPaid} />
+      )}
+      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+    </>
   );
+}
+
+/** Where a successful start / extend / end lands: the "paid" dialog when money changed hands. */
+export function paidFrom(result: SessionMutationResponse): SessionPaid | null {
+  return result.payment ? { sessionId: result.session.id, payment: result.payment } : null;
 }
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
 function StartSessionForm({
   station,
   onChanged,
+  onPaid,
 }: {
   station: StationSummary;
   onChanged: () => void;
+  onPaid: (paid: SessionPaid | null) => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
@@ -89,8 +150,6 @@ function StartSessionForm({
   const [minutes, setMinutes] = useState('60');
   const [customerName, setCustomerName] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const { methods: paymentMethods } = usePaymentMethods();
   const [notes, setNotes] = useState('');
   // One request id per form instance: a retried click can never start two sessions.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
@@ -121,6 +180,8 @@ function StartSessionForm({
     enabled: quoteBody !== null,
     staleTime: 10_000,
   });
+  const prepaid = mode === 'prepaid';
+  const tender = useTender({ totalCents: prepaid ? (quote.data?.priceCents ?? 0) : 0, customer });
 
   const start = useMutation({
     mutationFn: () =>
@@ -130,7 +191,7 @@ function StartSessionForm({
           ...quoteBody,
           customerId: customer?.id,
           customerName: customer ? undefined : customerName.trim() || undefined,
-          paymentMethod: method,
+          ...(prepaid ? { payments: tender.payments } : {}),
           notes: notes.trim() || undefined,
           clientRequestId: requestId,
         },
@@ -141,6 +202,7 @@ function StartSessionForm({
       setRequestId(crypto.randomUUID());
       setCustomerName('');
       setNotes('');
+      onPaid(paidFrom(result));
       onChanged();
     },
     onError: (err) => {
@@ -152,6 +214,10 @@ function StartSessionForm({
   const noRule = quote.data && !quote.data.rule && (mode === 'postpaid' || !packageId);
   const endsAt =
     quote.data?.minutes != null ? new Date(Date.now() + quote.data.minutes * 60_000) : null;
+  const ready = !!quoteBody && !!quote.data && station.isEnabled && (!prepaid || tender.covered);
+  const submit = () => {
+    if (ready && !start.isPending) start.mutate();
+  };
 
   return (
     <div className="stack">
@@ -168,7 +234,7 @@ function StartSessionForm({
         ariaLabel={t('sessions.duration')}
       />
 
-      {mode === 'prepaid' && (
+      {prepaid && (
         <Field label={t('sessions.duration')}>
           {(id) => (
             <>
@@ -236,35 +302,18 @@ function StartSessionForm({
             />
           )}
         </Field>
-        {mode === 'prepaid' && (
-          <Field label={t('sessions.paymentMethod')}>
-            {(id) => (
-              <Select
-                id={id}
-                value={method}
-                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-              >
-                {paymentMethods.map((m) => (
-                  <option key={m} value={m}>
-                    {t(`sessions.methods.${m}`)}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        )}
+        <Field label={t('sessions.notes')} optional>
+          {(id) => (
+            <Textarea
+              id={id}
+              rows={1}
+              value={notes}
+              maxLength={500}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          )}
+        </Field>
       </div>
-      <Field label={t('sessions.notes')} optional>
-        {(id) => (
-          <Textarea
-            id={id}
-            rows={2}
-            value={notes}
-            maxLength={500}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        )}
-      </Field>
 
       {quote.isFetching && !quote.data && <Loading />}
       {quote.isError && (
@@ -294,24 +343,35 @@ function StartSessionForm({
               <span className="num">{fmt.time(endsAt)}</span>
             </div>
           )}
-          <div className="quote__row quote__row--total">
-            <span>{mode === 'prepaid' ? t('sessions.quote') : t('sessions.quoteRate')}</span>
-            <strong className="num">
-              {mode === 'prepaid'
-                ? fmt.money(quote.data.priceCents)
-                : `${fmt.money(quote.data.terms.rateCentsPerHour)}${t('sessions.perHour')}`}
-            </strong>
-          </div>
+          {!prepaid && (
+            <div className="quote__row quote__row--total">
+              <span>{t('sessions.quoteRate')}</span>
+              <strong className="num">
+                {fmt.money(quote.data.terms.rateCentsPerHour)}
+                {t('sessions.perHour')}
+              </strong>
+            </div>
+          )}
         </div>
+      )}
+      {prepaid && quote.data && quote.data.priceCents > 0 && (
+        <TenderPanel
+          tender={tender}
+          onSubmit={submit}
+          onCustomerChange={setCustomer}
+          autoFocus={false}
+          testId="session-start"
+        />
       )}
 
       {!station.device?.online && <Alert tone="warning">{t('sessions.offlineWarning')}</Alert>}
       <Button
         variant="primary"
         size="lg"
-        disabled={!quoteBody || !quote.data || !station.isEnabled}
+        disabled={!ready}
         loading={start.isPending}
-        onClick={() => start.mutate()}
+        onClick={submit}
+        data-testid="session-start-submit"
       >
         <Play size={16} /> {t('sessions.start')}
       </Button>
@@ -324,10 +384,12 @@ function ActiveSession({
   sessionId,
   station,
   onChanged,
+  onPaid,
 }: {
   sessionId: string;
   station: StationSummary;
   onChanged: () => void;
+  onPaid: (paid: SessionPaid | null) => void;
 }) {
   const { t } = useI18n();
   const { can } = useAuth();
@@ -368,6 +430,7 @@ function ActiveSession({
       toast.success(messages[action] ?? t('pricing.saved'));
       notifyClientAck(result, toast, t);
       setDialog(null);
+      onPaid(paidFrom(result));
       refresh();
     },
     onError: (err, variables) => {
@@ -466,7 +529,7 @@ function ActiveSession({
               <Plus size={14} /> {t('sessions.extend')}
             </Button>
           )}
-          <Button variant="primary" onClick={() => setDialog('end')}>
+          <Button variant="primary" onClick={() => setDialog('end')} data-testid="session-end">
             <Square size={14} /> {t('sessions.end')}
           </Button>
           {s.billingMode === 'postpaid' && (
@@ -506,6 +569,13 @@ function ActiveSession({
   );
 }
 
+// ─── End ───────────────────────────────────────────────────────────────────────
+/**
+ * Postpaid: the clock stops the moment this opens — the amount shown is the amount billed while
+ * the money is counted (the server honours it within its own bounded window via
+ * `stoppedSecondsAgo`) — then the shared tender panel takes the payment. Prepaid: nothing to pay,
+ * just a confirmation.
+ */
 export function EndSessionDialog({
   session,
   elapsedSeconds,
@@ -524,33 +594,61 @@ export function EndSessionDialog({
   const { t } = useI18n();
   const { can } = useAuth();
   const fmt = useFormat();
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const { methods: paymentMethods } = usePaymentMethods();
-  const [discount, setDiscount] = useState('');
   const postpaid = session.billingMode === 'postpaid';
+  // Frozen at open: the first render's live values and the moment they were taken.
+  const [stopped] = useState(() => ({
+    at: Date.now(),
+    elapsedSeconds,
+    priceCents: livePrice,
+  }));
+  const [discount, setDiscount] = useState('');
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
-  const discountInvalid = discountCents === null || discountCents < 0 || discountCents > livePrice;
-  const total = postpaid ? Math.max(0, livePrice - (discountCents ?? 0)) : 0;
+  const discountInvalid =
+    discountCents === null || discountCents < 0 || discountCents > stopped.priceCents;
+  const total = postpaid ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
+  const { customer, pickedId, setCustomer } = useSessionCustomer(session);
+  const tender = useTender({ totalCents: total, customer });
+  const ready = !postpaid || (!discountInvalid && tender.covered);
+  const submit = () => {
+    if (!ready || busy) return;
+    onConfirm(
+      postpaid
+        ? {
+            discountCents: discountCents ?? 0,
+            payments: tender.payments,
+            stoppedSecondsAgo: Math.max(0, Math.floor((Date.now() - stopped.at) / 1000)),
+            customerId: pickedId,
+          }
+        : {},
+    );
+  };
+  useEnterSubmits(submit);
+
   return (
     <Dialog
       open
       onClose={onClose}
       title={t('sessions.endTitle')}
-      description={t('sessions.endBody')}
+      description={postpaid ? t('sessions.clockStoppedHint') : t('sessions.endBody')}
+      size={postpaid ? 'md' : 'sm'}
       footer={
         <>
-          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
           <Button
             variant="primary"
+            size="lg"
             loading={busy}
-            disabled={postpaid && discountInvalid}
-            onClick={() =>
-              onConfirm(
-                postpaid ? { discountCents: discountCents ?? 0, paymentMethod: method } : {},
-              )
-            }
+            disabled={!ready}
+            onClick={submit}
+            data-testid="session-end-confirm"
           >
-            <Square size={14} /> {t('sessions.end')}
+            <Square size={14} />{' '}
+            {postpaid && tender.mode === 'credit' && tender.creditCents > 0
+              ? t('pos.completeOnTab')
+              : t('sessions.end')}{' '}
+            <Kbd>Enter</Kbd>
           </Button>
         </>
       }
@@ -559,62 +657,54 @@ export function EndSessionDialog({
         <div className="quote">
           <div className="quote__row">
             <span className="muted">{t('sessions.billable')}</span>
-            <span className="num">{formatHms(elapsedSeconds)}</span>
+            <span className="num">{formatHms(stopped.elapsedSeconds)}</span>
           </div>
-          {postpaid && (
+          {postpaid && (discountCents ?? 0) > 0 && (
             <div className="quote__row">
               <span className="muted">{t('sessions.currentPrice')}</span>
-              <span className="num">{fmt.money(livePrice)}</span>
+              <span className="num">{fmt.money(stopped.priceCents)}</span>
             </div>
           )}
-          <div className="quote__row quote__row--total">
-            <span>{postpaid ? t('sessions.total') : t('sessions.paid')}</span>
-            <strong className="num">
-              {fmt.money(postpaid ? total : session.currentPriceCents)}
-            </strong>
-          </div>
+          {!postpaid && (
+            <div className="quote__row quote__row--total">
+              <span>{t('sessions.paid')}</span>
+              <strong className="num">{fmt.money(session.currentPriceCents)}</strong>
+            </div>
+          )}
         </div>
-        {postpaid && (
-          <div className="grid grid--2">
-            <Field label={t('sessions.paymentMethod')}>
-              {(id) => (
-                <Select
-                  id={id}
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-                >
-                  {paymentMethods.map((m) => (
-                    <option key={m} value={m}>
-                      {t(`sessions.methods.${m}`)}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            {can(PERMISSIONS.POS_DISCOUNT) && (
-              <Field
-                label={t('sessions.discount')}
-                optional
-                error={discount.trim() && discountInvalid ? t('common.invalid') : undefined}
-              >
-                {(id) => (
-                  <Input
-                    id={id}
-                    inputMode="decimal"
-                    placeholder="0.00"
-                    value={discount}
-                    onChange={(e) => setDiscount(e.target.value)}
-                  />
-                )}
-              </Field>
+        {postpaid && can(PERMISSIONS.POS_DISCOUNT) && (
+          <Field
+            label={t('sessions.discount')}
+            optional
+            error={discount.trim() && discountInvalid ? t('common.invalid') : undefined}
+          >
+            {(id) => (
+              <Input
+                id={id}
+                inputMode="decimal"
+                placeholder="0.00"
+                value={discount}
+                style={{ maxWidth: 160 }}
+                onChange={(e) => setDiscount(e.target.value)}
+                data-testid="session-end-discount"
+              />
             )}
-          </div>
+          </Field>
+        )}
+        {postpaid && (
+          <TenderPanel
+            tender={tender}
+            onSubmit={submit}
+            onCustomerChange={setCustomer}
+            testId="session-end"
+          />
         )}
       </div>
     </Dialog>
   );
 }
 
+// ─── Extend ────────────────────────────────────────────────────────────────────
 export function ExtendSessionDialog({
   session,
   busy,
@@ -630,8 +720,6 @@ export function ExtendSessionDialog({
   const fmt = useFormat();
   const [packageId, setPackageId] = useState<string | null>(null);
   const [minutes, setMinutes] = useState('30');
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const { methods: paymentMethods } = usePaymentMethods();
   const [requestId] = useState(() => crypto.randomUUID());
   const minutesValue = Number.parseInt(minutes, 10);
   const minutesValid = Number.isInteger(minutesValue) && minutesValue > 0 && minutesValue <= 1440;
@@ -651,24 +739,35 @@ export function ExtendSessionDialog({
       }),
     enabled: body !== null,
   });
+  const { customer, setCustomer } = useSessionCustomer(session);
+  const tender = useTender({ totalCents: quote.data?.priceCents ?? 0, customer });
+  const ready = !!body && !!quote.data && tender.covered;
+  const submit = () => {
+    if (ready && !busy)
+      onConfirm({ ...body, payments: tender.payments, clientRequestId: requestId });
+  };
+  useEnterSubmits(submit);
   return (
     <Dialog
       open
       onClose={onClose}
       title={t('sessions.extendTitle')}
       description={t('sessions.extendBody')}
+      size="md"
       footer={
         <>
-          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
           <Button
             variant="primary"
+            size="lg"
             loading={busy}
-            disabled={!body || !quote.data}
-            onClick={() =>
-              onConfirm({ ...body, paymentMethod: method, clientRequestId: requestId })
-            }
+            disabled={!ready}
+            onClick={submit}
+            data-testid="session-extend-confirm"
           >
-            <Plus size={14} /> {t('sessions.extend')}
+            <Plus size={14} /> {t('sessions.extend')} <Kbd>Enter</Kbd>
           </Button>
         </>
       }
@@ -701,47 +800,41 @@ export function ExtendSessionDialog({
             </button>
           ))}
         </div>
-        <div className="grid grid--2">
-          <Field label={t('sessions.customMinutes')}>
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={1}
-                max={1440}
-                value={minutes}
-                onChange={(e) => {
-                  setPackageId(null);
-                  setMinutes(e.target.value);
-                }}
-              />
-            )}
-          </Field>
-          <Field label={t('sessions.paymentMethod')}>
-            {(id) => (
-              <Select
-                id={id}
-                value={method}
-                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-              >
-                {paymentMethods.map((m) => (
-                  <option key={m} value={m}>
-                    {t(`sessions.methods.${m}`)}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
+        <Field label={t('sessions.customMinutes')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="number"
+              min={1}
+              max={1440}
+              value={minutes}
+              style={{ maxWidth: 160 }}
+              onChange={(e) => {
+                setPackageId(null);
+                setMinutes(e.target.value);
+              }}
+            />
+          )}
+        </Field>
         {quote.data && (
-          <div className="quote">
-            <div className="quote__row quote__row--total">
-              <span>
-                {t('sessions.quote')} · {quote.data.minutes} min
-              </span>
-              <strong className="num">{fmt.money(quote.data.priceCents)}</strong>
+          <>
+            <div className="quote">
+              <div className="quote__row">
+                <span className="muted">{t('sessions.quote')}</span>
+                <span className="num">
+                  {quote.data.minutes} min
+                  {quote.data.package && ` · ${quote.data.package.name}`}
+                </span>
+              </div>
             </div>
-          </div>
+            <TenderPanel
+              tender={tender}
+              onSubmit={submit}
+              onCustomerChange={setCustomer}
+              autoFocus={false}
+              testId="session-extend"
+            />
+          </>
         )}
       </div>
     </Dialog>
