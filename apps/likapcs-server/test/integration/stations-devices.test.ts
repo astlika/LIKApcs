@@ -314,6 +314,23 @@ describe('stations, device registration and realtime presence', () => {
     const devices = await get<StationSummary['device'][]>('/api/v1/devices');
     expect(devices.body.find((d) => d?.id === registrationId)?.hardware).toEqual(hardware);
 
+    // Specs that were still being read at hello time arrive as an event: stored, Admin refreshed.
+    const lateHardware = { ...hardware, gpus: ['NVIDIA GeForce RTX 4070'], cpuTempC: undefined };
+    client.send({ type: 'client.event', event: 'hardware', payload: lateHardware });
+    const hardwareChanged = await admin.next();
+    expect(hardwareChanged).toMatchObject({
+      type: 'server.event',
+      event: 'station.changed',
+      payload: { id: station1.id, device: { hardware: { gpus: ['NVIDIA GeForce RTX 4070'] } } },
+    });
+    const afterEvent = await get<StationSummary>(`/api/v1/stations/${station1.id}`);
+    expect(afterEvent.body.device?.hardware?.gpus).toEqual(['NVIDIA GeForce RTX 4070']);
+    // A malformed payload is ignored, not fatal for the connection.
+    client.send({ type: 'client.event', event: 'hardware', payload: { cpu: 42 } });
+    await sleep(50);
+    const unchanged = await get<StationSummary>(`/api/v1/stations/${station1.id}`);
+    expect(unchanged.body.device?.hardware?.gpus).toEqual(['NVIDIA GeForce RTX 4070']);
+
     // Changing a customer-screen setting is pushed to every connected PC right away.
     const patched = await ctx.app.inject({
       method: 'PATCH',

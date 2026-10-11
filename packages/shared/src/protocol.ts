@@ -96,6 +96,8 @@ export const clientEventSchema = z.object({
     'maintenance_ended',
     'update_status',
     'error',
+    /** Static hardware facts that were not ready at `client.hello` (payload: `HardwareInfo`). */
+    'hardware',
   ]),
   payload: z.record(z.unknown()).default({}),
 });

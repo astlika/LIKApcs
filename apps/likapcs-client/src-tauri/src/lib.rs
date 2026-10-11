@@ -173,23 +173,25 @@ async fn device_identity() -> DeviceIdentity {
 }
 
 /// Static hardware facts for the server (sent with `client.hello`); cached after the first call.
+/// The sampling itself happens on the hardware worker threads (see `hardware.rs` — never on the
+/// UI thread); this only waits for the answer, off the UI thread as well.
 #[tauri::command]
 async fn hardware_info(
     state: tauri::State<'_, Arc<hardware::HardwareState>>,
 ) -> Result<hardware::HardwareInfo, String> {
     let s = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || hardware::info(&s))
+    tauri::async_runtime::spawn_blocking(move || s.info())
         .await
         .map_err(|e| e.to_string())
 }
 
-/// Live load / temperatures for the heartbeat.
+/// Live load / temperatures for the heartbeat (same threading rules as `hardware_info`).
 #[tauri::command]
 async fn hardware_metrics(
     state: tauri::State<'_, Arc<hardware::HardwareState>>,
 ) -> Result<hardware::HardwareMetrics, String> {
     let s = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || hardware::metrics(&s))
+    tauri::async_runtime::spawn_blocking(move || s.metrics())
         .await
         .map_err(|e| e.to_string())
 }
@@ -570,8 +572,93 @@ async fn power_action(action: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Where a crash is written: `%LOCALAPPDATA%\LIKApcs-Client\crash.log` (the temp dir elsewhere).
+fn crash_log_path() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("LIKApcs-Client").join("crash.log")
+}
+
+#[cfg(windows)]
+fn show_fatal_box(text: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    };
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let text = wide(text);
+    let title = wide("LIKApcs Client");
+    // SAFETY: both buffers are NUL-terminated and outlive the call.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND,
+        );
+    }
+}
+#[cfg(not(windows))]
+fn show_fatal_box(text: &str) {
+    eprintln!("{text}");
+}
+
+fn append_crash_log(line: &str) -> std::path::PathBuf {
+    let path = crash_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        use std::io::Write;
+        let unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[unix {unix}] LIKApcs-Client {} {line}", env!("CARGO_PKG_VERSION"));
+    }
+    path
+}
+
+/// The window is a WebView2 view: without the runtime there is nothing to show. Windows 10 PCs
+/// that never received the Edge updates (or installed the client offline) lack it — say so in
+/// plain words instead of dying with a cryptic error.
+#[cfg(windows)]
+fn ensure_webview2() {
+    if let Err(err) = tauri::webview_version() {
+        let text = format!(
+            "LIKApcs Client needs the Microsoft Edge WebView2 Runtime, which is not installed on this PC ({err}).\n\nRun LIKApcs-Client-Setup.exe again while the PC is connected to the internet (the installer downloads it), or install the \"Evergreen Bootstrapper\" from https://developer.microsoft.com/microsoft-edge/webview2/ — then start LIKApcs Client again."
+        );
+        let path = append_crash_log(&format!("cannot start: {text}"));
+        show_fatal_box(&format!("{text}\n\n(Logged to {})", path.display()));
+        std::process::exit(1);
+    }
+}
+#[cfg(not(windows))]
+fn ensure_webview2() {}
+
+/// A crash must never be silent on a gaming PC: whatever panics (release builds abort right
+/// after) is appended to `crash.log`, the kiosk policies are undone so the machine is left usable,
+/// and the staff see a message that says where the log is.
+fn install_crash_reporter() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info.to_string();
+        let path = append_crash_log(&format!("crashed: {message}"));
+        kiosk::restore();
+        show_fatal_box(&format!(
+            "LIKApcs Client {} stopped unexpectedly.\n\n{message}\n\nDetails were written to:\n{}\n\nStart the client again from the Start menu; if this repeats, send the file above to support.",
+            env!("CARGO_PKG_VERSION"),
+            path.display()
+        ));
+        previous(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_crash_reporter();
+    ensure_webview2();
     let locked = Arc::new(AtomicBool::new(true));
 
     tauri::Builder::default()
@@ -586,6 +673,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(KioskState { locked: locked.clone() })
         .manage(PanelAnchor(Mutex::new(None)))
+        // Cheap handle only — the sysinfo/WMI workers start lazily on their own threads
+        // (hardware.rs explains why they must never touch this, the UI, thread).
         .manage(Arc::new(hardware::HardwareState::new()))
         .manage(WidgetState {
             layout: Mutex::new(WidgetLayout {

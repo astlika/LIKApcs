@@ -461,8 +461,13 @@ Client → Server  { "type": "client.ack", "commandId": "<uuid>", "ok": true }
                  { "type": "client.ack", "commandId": "<uuid>", "ok": false, "error": "…" }
 
 Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "session_expired_locally"
-                            | "maintenance_ended" | "update_status" | "error", "payload": {...} }
+                            | "maintenance_ended" | "update_status" | "error" | "hardware", "payload": {...} }
 ```
+
+`hardware` (0.6.1) carries the same `HardwareInfo` object as `client.hello.hardware`, for the case
+where the PC finished reading its specs (the GPU lookup takes a moment on first start) after it
+had already said hello. The server stores it and broadcasts `station.changed`; a malformed payload
+is ignored.
 
 Every `metrics` field except `uptimeSeconds` is optional / nullable (temperatures in particular are
 rarely exposed on consumer Windows installs). The server keeps the **latest** sample per connected PC

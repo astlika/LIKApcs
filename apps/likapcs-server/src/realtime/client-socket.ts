@@ -5,6 +5,7 @@ import {
   WS_CLOSE_CODES,
   clientMessageSchema,
   clientDisplayFromSettings,
+  hardwareInfoSchema,
   isCompatibleWithServer,
   type ServerError,
   type ServerHeartbeatAck,
@@ -232,6 +233,15 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                 'error',
                 message.payload,
               );
+            }
+            if (message.event === 'hardware') {
+              // The PC finished reading its specs after it had already said hello (the GPU
+              // lookup takes a moment on first start): store them and refresh the Admin.
+              const parsed = hardwareInfoSchema.safeParse(message.payload);
+              if (parsed.success) {
+                await services.devices.saveHardware(presence.deviceId, parsed.data);
+                await services.stations.broadcastStation(presence.stationId);
+              }
             }
             request.log.info({ deviceId: presence.deviceId, event: message.event }, 'client event');
             break;

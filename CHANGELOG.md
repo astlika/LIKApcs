@@ -8,6 +8,39 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.6.1] - 2026-10-11
+
+### Fixed
+
+- **LIKApcs-Client did not start on Windows (0.6.0 regression).** The hardware sampler was built
+  on the UI thread while the app started; on Windows its temperature probe (WMI) initialises that
+  thread's COM apartment as multi-threaded, after which the window layer cannot create the lock
+  screen (`OleInitialize` → `RPC_E_CHANGED_MODE`) and the process ended before anything was on
+  screen. All hardware sampling now lives on two private worker threads that start on first use
+  — CPU / RAM / disk on one, the temperature probe on another that only refreshes a cache — and
+  the UI thread never touches `sysinfo`. Callers wait with a timeout and fall back to "unknown",
+  so a slow sensor can never delay a heartbeat or the lock screen.
+  **Gaming PCs that already run 0.6.0 cannot update themselves** (they never get as far as the
+  updater): run `LIKApcs-Client-Setup.exe` 0.6.1 on each of them once — pairing, settings and
+  autostart are kept and the PC reconnects by itself. PCs still on 0.5.1 update on their own.
+
+### Added
+
+- **Client start-up safety net.** Anything fatal is appended to
+  `%LOCALAPPDATA%\LIKApcs-Client\crash.log`, the kiosk policies (Task Manager) are undone so
+  the machine is left usable, and a message box tells the staff where the log is. A missing
+  Microsoft Edge WebView2 Runtime (Windows 10 images that never got the Edge updates, or an
+  offline install) is reported in plain words with the two ways to fix it instead of a silent exit.
+- Hardware specs reach the Admin even when the PC finishes reading them after its first hello
+  (`client.event` `hardware`; the Admin's specs strip updates live).
+
+### Changed
+
+- Client: drag-and-drop on the lock-screen window is disabled (nothing ever used it; one OLE
+  dependency less on the UI thread).
+- Temperatures are read between heartbeats; the first heartbeat after start reports none and the
+  next one carries the reading (when the machine exposes any — most consumer Windows PCs do not).
+
 ## [0.6.0] - 2026-10-11
 
 ### Added

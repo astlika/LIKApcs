@@ -266,9 +266,14 @@ export class Agent {
     const language = (await secretGet(KEYS.language)) === 'sq' ? 'sq' : 'en';
     const autoUpdate = (await secretGet(KEYS.autoUpdate)) !== 'off';
     this.set({ identity, machineId, autoUpdate, state: { ...this.snapshot.state, language } });
-    // Hardware facts are collected once (GPU names need a short WMI query) and sent with every hello.
+    // Hardware facts are collected once (GPU names need a short WMI query) and sent with every
+    // hello. The first hello usually wins the race, so when the facts arrive while we are already
+    // online they go out as an event — the Admin shows the specs without waiting for a reconnect.
     void hardwareInfo().then((hardware) => {
       this.hardware = hardware;
+      if (hardware && this.snapshot.phase.phase === 'online') {
+        this.send({ type: 'client.event', event: 'hardware', payload: hardware });
+      }
     });
     this.tick = setInterval(() => this.onTick(), 1000);
     this.scheduleUpdateCheck(UPDATE_FIRST_CHECK_MS);
