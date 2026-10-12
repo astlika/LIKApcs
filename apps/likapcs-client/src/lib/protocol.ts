@@ -132,6 +132,8 @@ export const initialState: ClientState = {
 export type Effect =
   | { type: 'power'; action: 'restart' | 'shutdown' }
   | { type: 'update' }
+  /** Turn the Windows side of Wake-on-LAN on, then report + re-send hardware facts. */
+  | { type: 'wol_configure' }
   | {
       type: 'event';
       event: 'locked' | 'unlocked' | 'maintenance_ended';
@@ -347,6 +349,8 @@ export function reduce(
       return { state, effects: [{ type: 'power', action: 'shutdown' }], ok: true };
     case 'update.apply':
       return { state, effects: [{ type: 'update' }], ok: true };
+    case 'wol.configure':
+      return { state, effects: [{ type: 'wol_configure' }], ok: true };
     default:
       return {
         state,

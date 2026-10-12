@@ -962,7 +962,7 @@ export class SessionsService {
       discountCents: number;
       tenders: { paymentMethod: string; payments?: SalePaymentInput[] };
       customerId: string | null;
-      actor: AuditActor;
+      actor: AuditActor & { permissions?: ReadonlySet<string> };
       at: Date;
     },
   ): Promise<{

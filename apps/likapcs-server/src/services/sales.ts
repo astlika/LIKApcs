@@ -30,6 +30,7 @@ import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import { ACTIVE_PROMO_SQL } from './ads.js';
 import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 import type { SettingsService } from './settings.js';
@@ -89,6 +90,8 @@ interface ProductForSale {
   name: string;
   sku: string;
   selling_price_cents: string | number;
+  /** Live promo price (Admin › Ads) or null — see ACTIVE_PROMO_SQL. */
+  promo_price_cents: string | number | null;
   price_includes_tax: boolean;
   average_cost_cents: string | number;
   purchase_cost_cents: string | number;
@@ -635,7 +638,8 @@ export class SalesService {
     const unique = [...new Set(ids)].sort();
     const r = await client.query<ProductForSale>(
       `SELECT p.id, p.name, p.sku, p.selling_price_cents, p.price_includes_tax, p.average_cost_cents, p.purchase_cost_cents,
-              p.track_stock, p.allow_negative_stock, p.is_active, tc.rate_bp AS tax_rate_bp
+              p.track_stock, p.allow_negative_stock, p.is_active, tc.rate_bp AS tax_rate_bp,
+              ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents
          FROM products p LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
         WHERE p.id = ANY($1::uuid[]) ORDER BY p.id ${lock ? 'FOR UPDATE OF p' : ''}`,
       [unique],
@@ -651,7 +655,8 @@ export class SalesService {
   }
 
   /**
-   * Prices and tax always come from the product rows. Cashier-entered discounts need
+   * Prices and tax always come from the product rows — a live promo (Admin › Ads) replaces the
+   * regular price, so the screen, the shelf and the receipt agree. Cashier-entered discounts need
    * `pos.discount`; a customer's configured default discount (`customers.discount_bp`) is applied by
    * the server itself when no explicit sale discount was entered — it was authorised when the
    * customer record was set up, so no extra permission is required.
@@ -670,7 +675,7 @@ export class SalesService {
     const lines = input.items.map((i) => {
       const p = products.get(i.productId)!;
       return {
-        unitPriceCents: Number(p.selling_price_cents),
+        unitPriceCents: Number(p.promo_price_cents ?? p.selling_price_cents),
         quantityMilli: i.quantityMilli,
         discountCents: i.discountCents,
         taxRateBp: p.tax_rate_bp ?? defaultRate,

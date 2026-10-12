@@ -61,7 +61,7 @@ describe('session payments', () => {
       method: 'PATCH',
       url: '/api/v1/settings',
       headers: H(),
-      payload: { 'pos.credit_sales': true, 'pos.credit_default_days': 3 },
+      payload: { 'pos.credit_default_days': 3 },
     });
   }, 30_000);
 

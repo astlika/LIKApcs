@@ -74,32 +74,59 @@ gaming PC (see §4).
 
 ### Stations & devices (`stations.view` / `stations.manage` / `devices.manage`)
 
-| Method | Path                            | Notes                                                                                |
-| ------ | ------------------------------- | ------------------------------------------------------------------------------------ |
-| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                           |
-| GET    | `/stations/:id`                 |                                                                                      |
-| GET    | `/stations/:id/connection-logs` | last 100 connect/disconnect events                                                   |
-| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                           |
-| PATCH  | `/stations/:id`                 | partial                                                                              |
-| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead  |
-| GET    | `/devices?status=pending`       | registrations                                                                        |
-| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                      |
-| POST   | `/devices/:id/reject`           |                                                                                      |
-| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                     |
-| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret    |
-| POST   | `/stations/:id/command`         | staff command to the connected client PC — see _Staff commands_ below                |
-| POST   | `/devices/update-outdated`      | `devices.manage` — sends `update.apply` to every online client older than the server |
+| Method | Path                            | Notes                                                                                       |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                                  |
+| GET    | `/stations/:id`                 |                                                                                             |
+| GET    | `/stations/:id/connection-logs` | last 100 connect/disconnect events                                                          |
+| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                                  |
+| PATCH  | `/stations/:id`                 | partial                                                                                     |
+| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead         |
+| GET    | `/devices?status=pending`       | registrations                                                                               |
+| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                             |
+| POST   | `/devices/:id/reject`           |                                                                                             |
+| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                            |
+| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret           |
+| POST   | `/stations/:id/command`         | staff command to the connected client PC — see _Staff commands_ below                       |
+| POST   | `/devices/update-outdated`      | `devices.manage` — sends `update.apply` to every online client older than the server        |
+| POST   | `/stations/:id/wake`            | `stations.power` — Wake-on-LAN magic packet for an **offline** PC — see _Wake-on-LAN_ below |
+| POST   | `/stations/wake-all`            | `stations.power` — same for every enabled, offline PC with a MAC on record                  |
 
 #### Staff commands (`POST /stations/:id/command`)
 
-Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'update.apply'}` or
-`{command: 'message.show', text (1–300), durationSeconds? (3–600, default 20)}`. Permissions:
+Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'update.apply' | 'wol.configure'}`
+or `{command: 'message.show', text (1–300), durationSeconds? (3–600, default 20)}`. Permissions:
 `stations.control` for all of them, additionally `stations.power` for `power.*` and
 `devices.manage` for `update.apply`. The call waits for the client's acknowledgement (15 s) and
 returns `{commandId, command, ok, error?}`; `409 STATION_OFFLINE` when no client is connected.
 Every call is audited as `station.command.<command>` (a refused/unanswered command is a warning).
-Session commands (`session.*`) are never issued through this route — they are mirrored by the
-sessions service (below) so that the server state and the PC never disagree.
+
+`wol.configure` (0.7.0) makes the PC switch the Windows side of Wake-on-LAN on: _wake on magic
+packet_ for every physical adapter and Fast startup off. The client acknowledges at once (the
+command was accepted), does the work on a worker thread — it needs administrator rights, so a UAC
+prompt may appear on the PC's screen — and then reports `client.event wol_configured {ok, message,
+elevated}` (audited as `station.wol_configured`) followed by a fresh `hardware` event, which is
+what updates the readiness badge in the Admin.
+
+#### Wake-on-LAN (`POST /stations/:id/wake`, `POST /stations/wake-all`)
+
+The server — not the Admin — sends the classic magic packet (UDP, `FF×6 + MAC×16`, 102 bytes) so
+it always leaves from inside the LAN: to the limited broadcast `255.255.255.255`, to the directed
+broadcast of every IPv4 network the server is attached to and unicast to the PC's last known IP,
+on ports 9 and 7, three times 150 ms apart. The MAC comes from the adapters the client reported in
+`hardware.network` (`wakeReadiness()` in `@likapcs/shared` picks the adapter that carried the last
+connection, else a wired one — Wi-Fi almost never wakes a PC).
+
+- `POST /stations/:id/wake` → `200 {stationId, code, mac, targets[], warnings[]}`; `warnings` lists
+  readiness problems the server knows about (`wol_off`, `fast_startup`, `wol_unknown`) — the packet
+  is still sent, trying costs nothing. `409 STATION_ONLINE` when the PC is connected,
+  `409 NO_MAC` when no adapter was ever reported (device of a 0.6.x client, or no device).
+- `POST /stations/wake-all` → `200 {sent: [...same objects], skipped: [{stationId, code, reason:
+'online' | 'no_mac' | 'no_device'}]}` — never fails as a whole.
+- Audited as `station.wake` / `station.wake_all`. Whether the PC actually starts also depends on
+  its BIOS/UEFI — see `docs/wake-on-lan.md`.
+  Session commands (`session.*`) are never issued through this route — they are mirrored by the
+  sessions service (below) so that the server state and the PC never disagree.
 
 `unlock` (permission `stations.unlock`, also required for the Admin button) is a **maintenance
 grant**, never a free session: the server records `maintenance_until/by` on the station, the station
@@ -134,7 +161,7 @@ available for that station). Deleting a rule/package that sessions already refer
 reference?, dueDate?}]` (1–5 entries; `cash`, `card`, `credit`). Cash above the total is change
 (only the net cash reaches the drawer); `credit` is "pay later" and needs the session's customer
 (`customerId` on start, or `customerId` sent with `/end` to attach one at checkout) — it opens a
-`customer_debts` row exactly as a POS credit sale does, with the same `CREDIT_DISABLED` /
+`customer_debts` row exactly as a POS credit sale does, with the same `CREDIT_FORBIDDEN` /
 `CREDIT_LIMIT` / blocked-customer refusals. The legacy single `paymentMethod` (default `cash`) is
 still accepted and means one exact tender; when both are present `payments` wins. The response's
 `payment` is `{saleId, receiptNo, totalCents, paidCents, changeCents, creditCents, dueDate}` or
@@ -168,21 +195,43 @@ opens a `pending` run, later events update it; `none`/`unavailable` close it qui
 
 ### Catalogue & inventory (`products.view` to read, `products.manage` to write, `inventory.adjust` for stock)
 
-| Route                                                                  | Notes                                                                                                                                                                                                                                                             |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET/POST /catalog/tax-categories`                                     | VAT classes (`rateBp`, `isDefault`). A product without a tax category uses the default class, or `tax.default_rate_bp` when none exists                                                                                                                           |
-| `GET/POST /catalog/categories`, `PATCH/DELETE /catalog/categories/:id` | `productCount` included; deleting leaves products uncategorised                                                                                                                                                                                                   |
-| `GET /products`                                                        | `?q` (name/SKU/brand/barcode), `categoryId`, `lowStock`, `active=active\|inactive\|all`, `page`, `pageSize≤500` → `{items, total, page, pageSize}`                                                                                                                |
-| `GET /products/lookup?code=`                                           | Scanner path: barcode first, then SKU → `{product, quantityMilli, matchedBy}` (`quantityMilli` is the pack size of a case barcode); `404` when unknown                                                                                                            |
-| `POST /products`                                                       | `sku` optional (generated `SKU-NNNNNN`), `barcodes[]`, `initialStockMilli` (recorded as an `initial` movement) → `201`                                                                                                                                            |
-| `GET/PATCH/DELETE /products/:id`                                       | `DELETE` → `{archived: true}` when the product was ever sold or moved (it is deactivated instead of removed), `{archived: false}` when it was really deleted                                                                                                      |
-| `POST /products/:id/barcodes`, `DELETE …/:barcodeId`                   | barcodes are unique across all products                                                                                                                                                                                                                           |
-| `PUT /products/:id/image`                                              | `products.manage`; raw body with `content-type: image/png\|jpeg\|webp\|gif` (≤ 5 MB, format sniffed from the bytes). Replaces and deletes the previous file → `ProductSummary` with the new `imageUrl`                                                            |
-| `POST /products/:id/image/from-url`                                    | `{url}` — the **server** downloads the picture (http/https only, ≤ 5 MB, 10 s, private/loopback addresses refused) so the Admin never embeds third-party URLs                                                                                                     |
-| `DELETE /products/:id/image`                                           | removes the file → `imageUrl: null`. Deleting a never-sold product also deletes its picture file                                                                                                                                                                  |
-| `GET /files/products/:name`                                            | **public, no token** (POS tiles, future kiosk screens): immutable file names (`<24 hex>.<ext>`), `Cache-Control: public, max-age=31536000, immutable`. Files live in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are **not** part of database backups |
-| `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                               |
-| `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                           |
+| Route                                                                  | Notes                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET/POST /catalog/tax-categories`                                     | VAT classes (`rateBp`, `isDefault`). A product without a tax category uses the default class, or `tax.default_rate_bp` when none exists                                                                                                                                  |
+| `GET/POST /catalog/categories`, `PATCH/DELETE /catalog/categories/:id` | `productCount` included; deleting leaves products uncategorised                                                                                                                                                                                                          |
+| `GET /products`                                                        | `?q` (name/SKU/brand/barcode), `categoryId`, `lowStock`, `active=active\|inactive\|all`, `page`, `pageSize≤500` → `{items, total, page, pageSize}`. Every `ProductSummary` carries `promoPriceCents` (0.7.0): the price a live product ad charges right now, else `null` |
+| `GET /products/lookup?code=`                                           | Scanner path: barcode first, then SKU → `{product, quantityMilli, matchedBy}` (`quantityMilli` is the pack size of a case barcode); `404` when unknown                                                                                                                   |
+| `POST /products`                                                       | `sku` optional (generated `SKU-NNNNNN`), `barcodes[]`, `initialStockMilli` (recorded as an `initial` movement) → `201`                                                                                                                                                   |
+| `GET/PATCH/DELETE /products/:id`                                       | `DELETE` → `{archived: true}` when the product was ever sold or moved (it is deactivated instead of removed), `{archived: false}` when it was really deleted                                                                                                             |
+| `POST /products/:id/barcodes`, `DELETE …/:barcodeId`                   | barcodes are unique across all products                                                                                                                                                                                                                                  |
+| `PUT /products/:id/image`                                              | `products.manage`; raw body with `content-type: image/png\|jpeg\|webp\|gif` (≤ 5 MB, format sniffed from the bytes). Replaces and deletes the previous file → `ProductSummary` with the new `imageUrl`                                                                   |
+| `POST /products/:id/image/from-url`                                    | `{url}` — the **server** downloads the picture (http/https only, ≤ 5 MB, 10 s, private/loopback addresses refused) so the Admin never embeds third-party URLs                                                                                                            |
+| `DELETE /products/:id/image`                                           | removes the file → `imageUrl: null`. Deleting a never-sold product also deletes its picture file                                                                                                                                                                         |
+| `GET /files/products/:name`                                            | **public, no token** (POS tiles, future kiosk screens): immutable file names (`<24 hex>.<ext>`), `Cache-Control: public, max-age=31536000, immutable`. Files live in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are **not** part of database backups        |
+| `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                                      |
+| `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                                  |
+
+### Ads — customer-screen slideshow & promo prices (0.7.0; `products.view` to read, `products.manage` to change)
+
+The owner curates what the locked gaming PCs show (Admin › Ads). `product` ads point at a product
+(one ad per product) and may carry `promoPriceCents` (must stay below the regular price); `custom`
+ads are free slides (`title`, `body`, own picture). Both have `badge`, `startsAt`/`endsAt`
+(open ended when null), `enabled` and a manual order. **A live promo is the price the POS charges**
+(`ACTIVE_PROMO_SQL`: enabled, inside the window, below the regular price) — the server derives it in
+`POST /sales` and session bills exactly as it does regular prices; the POS only sends product ids.
+`state` tells why an ad is (not) on the screens: `live`, `disabled`, `scheduled`, `expired`,
+`unavailable` (product archived or out of stock — it comes back by itself). Every change pushes
+`server.display` to all connected PCs, which refetch `/client/ads`. Migration 0016 turned the 0.6.x
+behaviour (every active product with a photo) into product ads, so screens did not change on upgrade.
+
+| Route                                                           | Body / query                                                                               | Result                                                                                     |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `GET /ads`                                                      | —                                                                                          | `{items: AdSummary[]}` in display order                                                    |
+| `POST /ads`                                                     | `{kind, productId?, title?, body?, promoPriceCents?, badge?, startsAt?, endsAt?, enabled}` | `201 AdSummary`; `409 AD_EXISTS` (product already advertised), `400 PROMO_NOT_BELOW_PRICE` |
+| `GET/PATCH/DELETE /ads/:id`                                     | patch: everything but `kind`/`productId` (nullable fields clear)                           | `AdSummary` / `204`                                                                        |
+| `PUT /ads/order`                                                | `{ids[]}` — listed ids first, the rest keep following                                      | `{items}`                                                                                  |
+| `POST /ads/products/all`                                        | —                                                                                          | `{created, items}` — one product ad per active product with a photo that had none          |
+| `PUT /ads/:id/image`, `POST …/image/from-url`, `DELETE …/image` | custom slides; same store/limits as product pictures                                       | `AdSummary`                                                                                |
 
 ### Sales / POS (`pos.sell`; `pos.discount`, `pos.suspend`, `pos.refund`, `pos.reprint` for the matching actions)
 
@@ -250,9 +299,11 @@ _Open shift_ dialog and retrying the original request once the shift exists.
 `POST /customers` / `PATCH` also take `creditLimitCents` (0 = no limit) — the cap on the customer's
 open "pay later" balance; summaries carry `balanceDueCents` (sum of open debt remainders).
 
-### Debts — "pay later" (`customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
+### Debts — "pay later" (`debts.give` to sell on credit; `customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
 
-Off by default: `pos.credit_sales` must be on before any `credit` tender is accepted. A sale (or a
+Permission-gated: a `credit` tender is accepted only from a user whose role has `debts.give`
+(seeded for owner, administrator, manager and cashier; revocable per role under Employees › Roles) —
+otherwise the whole sale is refused with `403 {code: 'CREDIT_FORBIDDEN'}`. A sale (or a
 session bill) paid with `payments: [{method: 'credit', amountCents, dueDate?}]` needs a
 `customerId`; the server opens one `customer_debts` row for the credit part (due date defaults to
 today + `pos.credit_default_days`), refuses blocked customers and anything over the customer's
@@ -362,11 +413,11 @@ isolated iframe, so the A4 layout never depends on the application stylesheet.
 
 ### Client PC → server, with the device token (`Authorization: Bearer <device token>`)
 
-| Method | Path                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (Ctrl+Alt+A). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC |
-| POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                        |
-| GET    | `/client/ads`          | lock-screen slideshow feed (0.6.0): `{items: [{id, name, priceCents, imageUrl, categoryName}]}` — active products that have a photo and are in stock (untracked stock counts as available), newest first, max 40. `imageUrl` is server-relative (`/api/v1/files/products/…`, public). The client loads it on connect, on every `server.display` and hourly while locked                                             |
+| Method | Path                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (Ctrl+Alt+A). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC                                                                                                                                                                           |
+| POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| GET    | `/client/ads`          | lock-screen slideshow feed: `{items: [{id, kind, name, body, priceCents, oldPriceCents, badge, imageUrl, categoryName}]}` — the owner's **live** ads in display order (0.7.0; was "every active product with a photo" in 0.6.x). Product items: `priceCents` is the promo price while a promo is live and `oldPriceCents` the crossed-out regular one (else null); custom slides have `priceCents: null` and may have `imageUrl: null` (text slide). `imageUrl` is server-relative (`/api/v1/files/products/…`, public). Loaded on connect, on every `server.display` and hourly while locked |
 
 The PC never evaluates credentials or permissions itself; it only relays them over the pinned,
 device-authenticated connection and shows the server's answer.
@@ -399,7 +450,9 @@ blindly, so a missed event can never leave the UI permanently wrong.
 ```
 Client → Server  { "type": "client.hello", "token": "<device token>", "appVersion": "0.1.0",
                    "protocolVersion": 1, "machineId": "<same id used at registration>",
-                   "hardware"?: { "cpu", "cpuCores", "cpuThreads", "gpus": [...], "ramTotalMb", "os", "diskTotalMb" } }
+                   "hardware"?: { "cpu", "cpuCores", "cpuThreads", "gpus": [...], "ramTotalMb", "os", "diskTotalMb",
+                                  "network": [{ "name", "description", "mac", "ipv4", "up", "wakeOnMagicPacket" }],
+                                  "fastStartup" } }
 Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVersion": "…", "serverTime": "…",
                    "station": { "id", "number", "code", "name" },
                    "heartbeatIntervalSeconds": 10, "offlineAfterSeconds": 30,
@@ -413,7 +466,11 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
 
 `hardware` (0.6.0) is the PC's static specification as the OS reports it — fields the OS does not
 expose are simply absent, nothing is guessed. The server stores it in `station_devices.hardware`
-and shows it in the Admin (Stations → selected PC, and the station detail dialog).
+and shows it in the Admin (Stations → selected PC, and the station detail dialog). `network`
+(0.7.0) lists the physical adapters — MAC normalised to `AA:BB:CC:DD:EE:FF`, current IPv4, link
+state and the Windows "wake on magic packet" flag (`null` = could not be read) — and `fastStartup`
+mirrors the Windows Fast-startup switch; both feed the Wake-on-LAN readiness in the Admin and the
+MAC the server addresses. Older clients send neither (`network` defaults to `[]`).
 
 `session.billing` (0.6.0) carries **display-only** money facts: for a prepaid session the amount
 paid for the booked time, for an open (postpaid) session the pricing terms plus a billable-seconds
@@ -455,13 +512,14 @@ Server → Client  { "type": "server.display", "display": {...same shape as in s
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"
                             | "session.end" | "lock" | "unlock" | "message.show"
-                            | "power.restart" | "power.shutdown" | "update.apply",
+                            | "power.restart" | "power.shutdown" | "update.apply" | "wol.configure",
                    "payload": {...}, "issuedAt": "…", "expiresAt": "…" }
 Client → Server  { "type": "client.ack", "commandId": "<uuid>", "ok": true }
                  { "type": "client.ack", "commandId": "<uuid>", "ok": false, "error": "…" }
 
 Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "session_expired_locally"
-                            | "maintenance_ended" | "update_status" | "error" | "hardware", "payload": {...} }
+                            | "maintenance_ended" | "update_status" | "error" | "hardware"
+                            | "wol_configured", "payload": {...} }
 ```
 
 `hardware` (0.6.1) carries the same `HardwareInfo` object as `client.hello.hardware`, for the case
@@ -473,8 +531,9 @@ Every `metrics` field except `uptimeSeconds` is optional / nullable (temperature
 rarely exposed on consumer Windows installs). The server keeps the **latest** sample per connected PC
 in memory and serves it as `device.metrics` (with `at`) on `/stations` and `/devices`; it is `null`
 while the PC is offline. `server.display` is pushed to every connected PC the moment a `client.*`
-setting (or the business name / welcome text / default language / currency) changes, so the owner
-sees the result on the gaming PCs without a reconnect.
+setting (or the business name / welcome text / default language / currency) changes — and whenever an
+ad changes (the PCs refetch `/client/ads` on it) — so the owner sees the result on the gaming PCs
+without a reconnect.
 
 `maintenance_ended {reason: 'expired' | 'staff'}` is informational: the PC reports that it locked
 itself at the end of a staff grant (or that staff pressed _Lock_); the server's own sweep and the

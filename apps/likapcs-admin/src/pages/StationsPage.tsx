@@ -28,11 +28,13 @@ import {
   Wifi,
   WifiOff,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   PERMISSIONS,
   isNewerVersion,
   type ClientUpdatePushResponse,
+  type StationWakeAllResponse,
   type StationCommandRequest,
   type StationCommandResponse,
   type StationDeviceSummary,
@@ -58,6 +60,8 @@ import { storage } from '../lib/storage';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
+import { WakePanel } from '../components/stations/WakePanel';
+import { isWakeable } from '../components/stations/useStationActions';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import {
@@ -124,6 +128,7 @@ export function StationsPage() {
   const [params, setParams] = useSearchParams();
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
+  const canPower = can(PERMISSIONS.STATIONS_POWER);
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -154,6 +159,30 @@ export function StationsPage() {
     mutationFn: () => api<ClientUpdatePushResponse>('/devices/update-outdated', { method: 'POST' }),
     onSuccess: (r) =>
       toast.success(t('stations.updateClientsDone', { sent: r.sent, n: r.outdated })),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+  // Wake-on-LAN for every offline PC with a MAC on record (one server call, one toast).
+  const wakeableCount = useMemo(
+    () => (stations.data ?? []).filter((s) => s.isEnabled && isWakeable(s)).length,
+    [stations.data],
+  );
+  const wakeAll = useMutation({
+    mutationFn: () => api<StationWakeAllResponse>('/stations/wake-all', { method: 'POST' }),
+    onSuccess: (r) => {
+      // Only PCs that *should* have been wakeable are worth a warning: online ones and stations
+      // without any paired device are simply not candidates.
+      const skipped = r.skipped.filter((x) => x.reason === 'no_mac');
+      if (skipped.length === 0) toast.success(t('stations.wake.sentMany', { n: r.sent.length }));
+      else
+        toast.toast(
+          'warning',
+          t('stations.wake.sentManyPartial', {
+            ok: r.sent.length,
+            skipped: skipped.length,
+            codes: skipped.map((x) => x.code).join(', '),
+          }),
+        );
+    },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
@@ -494,6 +523,15 @@ export function StationsPage() {
         {canDevices && outdatedOnline > 0 && (
           <Button onClick={() => pushUpdates.mutate()} loading={pushUpdates.isPending}>
             <DownloadCloud size={16} /> {t('stations.updateClients', { n: outdatedOnline })}
+          </Button>
+        )}
+        {canPower && wakeableCount > 0 && (
+          <Button
+            onClick={() => wakeAll.mutate()}
+            loading={wakeAll.isPending}
+            data-testid="wake-all"
+          >
+            <Zap size={16} /> {t('stations.wake.actionAll', { n: wakeableCount })}
           </Button>
         )}
         {canManage && (
@@ -1285,6 +1323,9 @@ function StationDetailDialog({
                   )}
                 </div>
                 {device.status === 'approved' && (
+                  <WakePanel station={station} onChanged={onChanged} />
+                )}
+                {device.status === 'approved' && (
                   <DeviceCommands station={station} online={device.online} onDone={onChanged} />
                 )}
                 {canDevices && (
@@ -1423,6 +1464,7 @@ const COMMAND_LABEL = {
   'power.restart': 'stations.commands.powerRestart',
   'power.shutdown': 'stations.commands.powerShutdown',
   'update.apply': 'stations.commands.updateApply',
+  'wol.configure': 'stations.commands.wolConfigure',
 } as const;
 
 /** Lock / unlock / message / power / update — each one is a server command acknowledged by the PC. */

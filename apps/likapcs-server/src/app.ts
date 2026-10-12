@@ -8,6 +8,7 @@ import {
   CLIENT_DISPLAY_SETTING_KEYS,
   WS_CLOSE_CODES,
   clientDisplayFromSettings,
+  type SettingsMap,
 } from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
 import type { DbPool } from './db/pool.js';
@@ -17,11 +18,14 @@ import errorHandlerPlugin from './plugins/error-handler.js';
 import { AppError } from './errors.js';
 import { RealtimeHub } from './realtime/hub.js';
 import { CommandsService } from './services/commands.js';
+import { WakeService, type WakeSender } from './services/wake.js';
 import { PricingService } from './services/pricing.js';
 import { SessionsService } from './services/sessions.js';
 import { pricingRoutes } from './routes/pricing.js';
+import { adsRoutes } from './routes/ads.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { salesRoutes } from './routes/sales.js';
+import { AdsService } from './services/ads.js';
 import { CatalogService } from './services/catalog.js';
 import { MaintenanceService } from './services/maintenance.js';
 import { ProductImageStore } from './services/product-images.js';
@@ -66,6 +70,7 @@ export interface Services {
   pricing: PricingService;
   sessions: SessionsService;
   catalog: CatalogService;
+  ads: AdsService;
   maintenance: MaintenanceService;
   sales: SalesService;
   cash: CashService;
@@ -84,6 +89,7 @@ export interface Services {
   audit: AuditQueryService;
   dashboard: DashboardService;
   commands: CommandsService;
+  wake: WakeService;
 }
 
 declare module 'fastify' {
@@ -118,6 +124,8 @@ export interface BuildAppOptions {
   updateFeedBaseUrl?: string;
   /** Set to false in tests: no start-up update check against the feed. */
   updateCheckOnStartup?: boolean;
+  /** Wake-on-LAN packet sender (tests inject a recorder instead of UDP). */
+  wakeSender?: WakeSender;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -146,6 +154,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const maintenance = new MaintenanceService(pool, hub, stations, auth, users, settings);
   const commands = new CommandsService(pool, hub, maintenance);
+  const wake = new WakeService(pool, stations, options.wakeSender);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
   const debts = new DebtsService(pool, settings, cash);
@@ -159,11 +168,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     debts,
     app.log,
   );
-  const catalog = new CatalogService(
-    pool,
-    settings,
-    new ProductImageStore(path.join(config.uploadDir, 'products')),
-  );
+  const productImages = new ProductImageStore(path.join(config.uploadDir, 'products'));
+  const catalog = new CatalogService(pool, settings, productImages);
+  const ads = new AdsService(pool, productImages);
   const sales = new SalesService(pool, settings, cash, debts);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
@@ -202,10 +209,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     audit,
     dashboard,
     commands,
+    wake,
     maintenance,
     pricing,
     sessions,
     catalog,
+    ads,
     sales,
     cash,
     expenses,
@@ -255,6 +264,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
       await api.register(catalogRoutes);
+      await api.register(adsRoutes);
       await api.register(salesRoutes);
       await api.register(cashRoutes);
       await api.register(expenseRoutes);
@@ -273,8 +283,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(adminSocketRoutes);
 
   // Customer-screen settings → every connected PC, instantly (no reconnect needed).
-  settings.onChange((keys, all) => {
-    if (!keys.some((k) => CLIENT_DISPLAY_SETTING_KEYS.includes(k))) return;
+  const pushDisplay = (all: SettingsMap) =>
     hub.broadcastToDevices({
       type: 'server.display',
       display: clientDisplayFromSettings(all),
@@ -282,6 +291,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       welcomeMessage: all['stations.client_welcome_message'],
       language: all['locale.default_language'],
     });
+  settings.onChange((keys, all) => {
+    if (!keys.some((k) => CLIENT_DISPLAY_SETTING_KEYS.includes(k))) return;
+    pushDisplay(all);
+  });
+  // Ads changed → same push; the PCs refetch `/client/ads` on it.
+  ads.onChange(() => {
+    void settings
+      .getAll()
+      .then(pushDisplay)
+      .catch((err: unknown) => app.log.warn({ err }, 'ads push failed'));
   });
 
   // Presence → station status broadcasts

@@ -27,6 +27,7 @@ const product = (over: Partial<ProductSummary>): ProductSummary => ({
   purchaseCostCents: 90,
   averageCostCents: 90,
   sellingPriceCents: 150,
+  promoPriceCents: null,
   priceIncludesTax: true,
   imageUrl: null,
   stockMilli: 10_000,

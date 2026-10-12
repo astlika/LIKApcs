@@ -25,11 +25,13 @@ import {
   Square,
   Timer,
   XCircle,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import {
   PERMISSIONS,
   priceForSeconds,
+  wakeReadiness,
   type GamingPackageSummary,
   type CustomerSummary,
   type PaymentMethod,
@@ -40,6 +42,8 @@ import {
   type StationCommandRequest,
   type StationCommandResponse,
   type StationSummary,
+  type StationWakeResponse,
+  type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import { projectSession } from '../../lib/session-time';
@@ -84,7 +88,13 @@ export type StationActionId =
   | 'message'
   | 'restart'
   | 'shutdown'
+  | 'wake'
   | 'details';
+
+/** Offline PC with a MAC on record — the only kind a magic packet can help. */
+export function isWakeable(s: StationSummary): boolean {
+  return !!s.device && !s.device.online && !!wakeReadiness(s.device.hardware, s.device.lastIp).mac;
+}
 
 export interface StationAction {
   id: StationActionId;
@@ -201,6 +211,55 @@ export function useStationActions(
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
+  // Wake-on-LAN: the server sends the magic packet; one toast per outcome.
+  const issueText = useCallback(
+    (issues: WakeIssue[]) => issues.map((i) => t(`stations.wake.issue.${i}`)).join(', '),
+    [t],
+  );
+  const wake = useMutation({
+    mutationFn: (stationId: string) =>
+      api<StationWakeResponse>(`/stations/${stationId}/wake`, { method: 'POST' }),
+    onSuccess: (r) => {
+      if (r.warnings.length === 0) toast.success(t('stations.wake.sent', { code: r.code }));
+      else
+        toast.toast(
+          'warning',
+          t('stations.wake.sentWarn', { code: r.code, issues: issueText(r.warnings) }),
+        );
+      onChanged();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+  const wakeMany = useMutation({
+    mutationFn: async (): Promise<BulkOutcome[]> =>
+      Promise.all(
+        group.filter(isWakeable).map(async (s): Promise<BulkOutcome> => {
+          try {
+            await api<StationWakeResponse>(`/stations/${s.id}/wake`, { method: 'POST' });
+            return { station: s, ok: true };
+          } catch (err) {
+            return {
+              station: s,
+              ok: false,
+              error: err instanceof ApiError ? err.message : String(err),
+            };
+          }
+        }),
+      ),
+    onSuccess: (results) => {
+      const sum = summarizeBulk(results);
+      if (sum.failed === 0) toast.success(t('stations.wake.sentMany', { n: sum.ok }));
+      else
+        toast.error(
+          t('stations.wake.sentManyPartial', {
+            ok: sum.ok,
+            skipped: sum.failed,
+            codes: sum.failedCodes.join(', '),
+          }),
+        );
+      onChanged();
+    },
+  });
   // Same command to every online PC of the selection, in parallel; one toast with the outcome.
   const commandMany = useMutation({
     mutationFn: async (body: StationCommandRequest): Promise<BulkOutcome[]> =>
@@ -253,8 +312,10 @@ export function useStationActions(
   const enabled = !!station?.isEnabled;
   const unlockable =
     online && !live && (station?.status === 'available' || station?.status === 'locked');
+  const wakeable = !!station && isWakeable(station);
   // Bulk eligibility: what the selection as a whole can do.
   const groupOnline = group.filter((s) => s.device?.online).length;
+  const groupWakeable = group.filter(isWakeable).length;
   const groupStartable = group.filter((s) => s.isEnabled && !s.activeSession).length;
   const groupUnlockable =
     groupOnline > 0 &&
@@ -328,6 +389,14 @@ export function useStationActions(
           bar: true,
           enabled: canPower && !noneOnline,
           hint: noneOnline ? offlineHint : undefined,
+        },
+        {
+          id: 'wake',
+          label: `${t('map.wake')} (${groupWakeable})`,
+          icon: Zap,
+          bar: groupWakeable > 0,
+          enabled: canPower && groupWakeable > 0,
+          hint: groupWakeable === 0 ? t('stations.wake.noMac') : undefined,
         },
         {
           id: 'details',
@@ -410,6 +479,20 @@ export function useStationActions(
         hint: online ? undefined : offlineHint,
       },
       {
+        // Offline PC: the server can send a Wake-on-LAN magic packet (needs a MAC on record).
+        id: 'wake',
+        label: t('map.wake'),
+        icon: Zap,
+        bar: !online,
+        enabled: canPower && wakeable,
+        tone: wakeable ? 'primary' : undefined,
+        hint: online
+          ? t('stations.wake.alreadyOnline')
+          : wakeable
+            ? undefined
+            : t('stations.wake.noMac'),
+      },
+      {
         id: 'cancel',
         label: t('sessions.cancel'),
         icon: XCircle,
@@ -425,6 +508,7 @@ export function useStationActions(
     online,
     enabled,
     unlockable,
+    wakeable,
     canControl,
     canPower,
     t,
@@ -433,6 +517,7 @@ export function useStationActions(
     groupOnline,
     groupStartable,
     groupUnlockable,
+    groupWakeable,
   ]);
 
   const primary: StationActionId | null = !station
@@ -483,15 +568,24 @@ export function useStationActions(
         case 'shutdown':
           setFlow({ kind: 'power', command: 'power.shutdown' });
           break;
+        case 'wake':
+          if (multi) wakeMany.mutate();
+          else wake.mutate(station.id);
+          break;
         case 'details':
           onDetails(station.id);
           break;
       }
     },
-    [station, actions, live, sessionAct, command, commandMany, multi, onDetails],
+    [station, actions, live, sessionAct, command, commandMany, wake, wakeMany, multi, onDetails],
   );
 
-  const busy = sessionAct.isPending || command.isPending || commandMany.isPending;
+  const busy =
+    sessionAct.isPending ||
+    command.isPending ||
+    commandMany.isPending ||
+    wake.isPending ||
+    wakeMany.isPending;
   const close = () => setFlow(null);
   const dialogs: ReactNode = station && flow && (
     <>

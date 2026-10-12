@@ -278,7 +278,8 @@ describe('stations, device registration and realtime presence', () => {
     expect(station.body.status).toBe('available');
     expect(station.body.device?.online).toBe(true);
     // Hardware facts announced in the hello are persisted and shown on the station …
-    expect(station.body.device?.hardware).toEqual(hardware);
+    // (`network` is filled with [] for clients that do not report adapters yet)
+    expect(station.body.device?.hardware).toEqual({ ...hardware, network: [] });
     // … live load is unknown until the first heartbeat carries it.
     expect(station.body.device?.metrics).toBeNull();
 
@@ -312,7 +313,10 @@ describe('stations, device registration and realtime presence', () => {
     });
     expect(typeof withMetrics.body.device?.metrics?.at).toBe('string');
     const devices = await get<StationSummary['device'][]>('/api/v1/devices');
-    expect(devices.body.find((d) => d?.id === registrationId)?.hardware).toEqual(hardware);
+    expect(devices.body.find((d) => d?.id === registrationId)?.hardware).toEqual({
+      ...hardware,
+      network: [],
+    });
 
     // Specs that were still being read at hello time arrive as an event: stored, Admin refreshed.
     const lateHardware = { ...hardware, gpus: ['NVIDIA GeForce RTX 4070'], cpuTempC: undefined };

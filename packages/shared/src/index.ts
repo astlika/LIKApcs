@@ -7,3 +7,4 @@ export * from './protocol.js';
 export * from './version.js';
 export * from './billing.js';
 export * from './sale-math.js';
+export * from './wake.js';

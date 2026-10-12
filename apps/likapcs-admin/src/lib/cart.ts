@@ -74,14 +74,25 @@ export function removeLine(cart: Cart, productId: string): Cart {
  * mirrors the server rule: a customer's default discount applies only when no explicit sale
  * discount was entered (see `customerDiscountCents` in the shared package).
  */
+/** What one unit costs right now: a live promo (Admin › Ads) or the regular price. */
+export function unitPriceOf(
+  product: Pick<ProductSummary, 'sellingPriceCents' | 'promoPriceCents'>,
+): number {
+  const promo = product.promoPriceCents;
+  return promo !== null && promo !== undefined && promo < product.sellingPriceCents
+    ? promo
+    : product.sellingPriceCents;
+}
+
 export function cartTotals(
   cart: Cart,
   memberDiscountBp = 0,
 ): SaleTotals & { memberDiscount: boolean } {
   const lines = cart.lines.map((l) => {
-    const gross = Math.round((l.product.sellingPriceCents * l.quantityMilli) / 1000);
+    const unit = unitPriceOf(l.product);
+    const gross = Math.round((unit * l.quantityMilli) / 1000);
     return {
-      unitPriceCents: l.product.sellingPriceCents,
+      unitPriceCents: unit,
       quantityMilli: l.quantityMilli,
       discountCents: Math.min(l.discountCents, gross),
       taxRateBp: l.product.taxRateBp,

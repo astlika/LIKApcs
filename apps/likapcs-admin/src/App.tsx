@@ -21,6 +21,7 @@ import { AuditLogPage } from './pages/AuditLogPage';
 import { PosPage } from './pages/PosPage';
 import { SalesPage } from './pages/SalesPage';
 import { ProductsPage } from './pages/ProductsPage';
+import { AdsPage } from './pages/AdsPage';
 import { CashPage } from './pages/CashPage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { PurchasesPage } from './pages/PurchasesPage';
@@ -133,6 +134,7 @@ export function App() {
           <Route path="pos" element={<PosPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="products" element={<ProductsPage />} />
+          <Route path="ads" element={<AdsPage />} />
           <Route path="purchases" element={<PurchasesPage />} />
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="cash" element={<CashPage />} />

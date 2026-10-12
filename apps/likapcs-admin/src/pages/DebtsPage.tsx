@@ -35,7 +35,6 @@ import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { suggestTenders } from '../lib/tender';
 import { useI18n } from '../i18n';
-import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useShiftGuard } from '../state/shift-guard';
 import { useToast } from '../state/toast';
@@ -74,7 +73,6 @@ export function DebtsPage() {
   const { t } = useI18n();
   const fmt = useFormat();
   const { can } = useAuth();
-  const settings = useAppSettings();
   const canCollect = can(PERMISSIONS.POS_SELL);
   const [params, setParams] = useSearchParams();
   const customerId = params.get('customer') ?? undefined;
@@ -105,7 +103,7 @@ export function DebtsPage() {
   return (
     <>
       <PageHeader title={t('debts.title')} subtitle={t('debts.subtitle')} />
-      {!settings['pos.credit_sales'] && (
+      {!can(PERMISSIONS.DEBTS_GIVE) && (
         <div style={{ marginBottom: 14 }}>
           <Alert tone="info">{t('debts.disabledHint')}</Alert>
         </div>

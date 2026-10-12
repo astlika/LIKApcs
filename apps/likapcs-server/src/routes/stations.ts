@@ -92,6 +92,22 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  // ─── Wake-on-LAN (0.7.0) ─────────────────────────────────────────────────────
+  app.post(
+    '/stations/wake-all',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_POWER) },
+    async (request) => services.wake.wakeAll(actorOf(request)),
+  );
+
+  app.post(
+    '/stations/:id/wake',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_POWER) },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      return services.wake.wake(id, actorOf(request));
+    },
+  );
+
   app.post(
     '/devices/update-outdated',
     { preHandler: app.requirePermission(PERMISSIONS.DEVICES_MANAGE) },
@@ -191,13 +207,13 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  /** Lock-screen slideshow items for the PC (products with photos, in stock). */
+  /** Lock-screen slideshow for the PC: the owner's ads (Admin › Ads), live ones only, in order. */
   app.get(
     '/client/ads',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
     async (request) => {
       await deviceOf(request);
-      return { items: await services.catalog.lockScreenAds() };
+      return { items: await services.ads.clientFeed() };
     },
   );
 

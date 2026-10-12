@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
 import type { ClientMetrics, HardwareInfo } from './protocol.js';
 import { LANGUAGES } from './settings.js';
@@ -378,6 +379,7 @@ export const DIRECT_STATION_COMMANDS = [
   'power.restart',
   'power.shutdown',
   'update.apply',
+  'wol.configure',
 ] as const;
 export type DirectStationCommand = (typeof DIRECT_STATION_COMMANDS)[number];
 
@@ -392,8 +394,24 @@ export const stationCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('power.restart') }),
   z.object({ command: z.literal('power.shutdown') }),
   z.object({ command: z.literal('update.apply') }),
+  z.object({ command: z.literal('wol.configure') }),
 ]);
 export type StationCommandRequest = z.infer<typeof stationCommandSchema>;
+
+/** `POST /stations/:id/wake` — one magic-packet burst for an offline PC (0.7.0). */
+export interface StationWakeResponse {
+  stationId: string;
+  code: string;
+  mac: string;
+  /** Where the packets went (broadcasts of every server interface, the limited broadcast, last IP). */
+  targets: string[];
+  /** Readiness problems the server knows about (the packets were still sent). */
+  warnings: WakeIssue[];
+}
+export interface StationWakeAllResponse {
+  sent: StationWakeResponse[];
+  skipped: { stationId: string; code: string; reason: 'online' | 'no_mac' | 'no_device' }[];
+}
 
 export interface StationCommandResponse {
   commandId: string;
@@ -802,6 +820,11 @@ export interface ProductSummary {
   purchaseCostCents: number;
   averageCostCents: number;
   sellingPriceCents: number;
+  /**
+   * Price the POS charges right now when a product ad with a promo is live (always below
+   * `sellingPriceCents`), otherwise null. Derived by the server — never sent by the POS.
+   */
+  promoPriceCents: number | null;
   priceIncludesTax: boolean;
   stockMilli: number;
   minStockMilli: number;
@@ -908,7 +931,7 @@ export const SALE_STATUSES = [
 export type SaleStatus = (typeof SALE_STATUSES)[number];
 /**
  * Tenders a sale can be settled with. `credit` = "pay later": the amount becomes a customer debt
- * (`customer_debts`) with a due date; it needs a customer on the sale and `pos.credit_sales` on.
+ * (`customer_debts`) with a due date; it needs a customer on the sale and the `debts.give` permission.
  */
 export const SALE_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'credit'] as const;
 export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
@@ -1963,4 +1986,90 @@ export interface DebtPaymentResult {
   paidCents: number;
   changeCents: number;
   customer: { id: string; name: string; balanceDueCents: number };
+}
+
+// Ads — the customer-screen slideshow (`ads` table, migration 0016)
+
+export const AD_KINDS = ['product', 'custom'] as const;
+export type AdKind = (typeof AD_KINDS)[number];
+
+const adBadge = z.string().trim().min(1).max(16).nullable().optional();
+const adInstant = z.string().datetime({ offset: true }).nullable().optional();
+
+/**
+ * Create / update body. `product` ads: `productId` (one ad per product) and an optional
+ * `promoPriceCents` that must stay below the product's selling price — while the ad is active the
+ * POS charges it. `custom` ads: `title` (+ `body`), picture uploaded separately.
+ */
+export const adInputSchema = z
+  .object({
+    kind: z.enum(AD_KINDS),
+    productId: uuidSchema.nullable().optional(),
+    title: z.string().trim().min(1).max(80).nullable().optional(),
+    body: z.string().trim().max(300).nullable().optional(),
+    promoPriceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+    badge: adBadge,
+    startsAt: adInstant,
+    endsAt: adInstant,
+    enabled: z.boolean().default(true),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind === 'product' && !v.productId)
+      ctx.addIssue({ code: 'custom', path: ['productId'], message: 'Choose a product' });
+    if (v.kind === 'custom' && !v.title)
+      ctx.addIssue({ code: 'custom', path: ['title'], message: 'A title is required' });
+    if (v.kind === 'custom' && v.promoPriceCents != null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['promoPriceCents'],
+        message: 'Only product ads carry a promo price',
+      });
+    if (v.startsAt && v.endsAt && new Date(v.endsAt) <= new Date(v.startsAt))
+      ctx.addIssue({ code: 'custom', path: ['endsAt'], message: 'Must end after it starts' });
+  });
+export type AdInput = z.infer<typeof adInputSchema>;
+export const adPatchSchema = adInputSchema
+  .innerType()
+  .omit({ kind: true, productId: true })
+  .partial();
+export type AdPatch = z.infer<typeof adPatchSchema>;
+
+export const adReorderSchema = z.object({ ids: z.array(uuidSchema).min(1).max(500) });
+export type AdReorderRequest = z.infer<typeof adReorderSchema>;
+
+/** Why an ad is (not) on the screens right now — shown as a status chip in Admin. */
+export const AD_STATES = ['live', 'disabled', 'scheduled', 'expired', 'unavailable'] as const;
+export type AdState = (typeof AD_STATES)[number];
+
+export interface AdSummary {
+  id: string;
+  kind: AdKind;
+  /** Product ads */
+  productId: string | null;
+  productName: string | null;
+  productSku: string | null;
+  productPriceCents: number | null;
+  productInStock: boolean | null;
+  productActive: boolean | null;
+  promoPriceCents: number | null;
+  /** Custom ads */
+  title: string | null;
+  body: string | null;
+  /** Picture: the custom ad's own upload, or the product's photo. Server-relative URL. */
+  imageUrl: string | null;
+  badge: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  enabled: boolean;
+  sortOrder: number;
+  /** `live` = currently part of the client feed. */
+  state: AdState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `POST /ads/products/all` — every active product with a photo that has no ad yet. */
+export interface AdBulkResult {
+  created: number;
+  items: AdSummary[];
 }

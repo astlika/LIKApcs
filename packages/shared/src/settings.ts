@@ -89,7 +89,6 @@ export const SETTING_SCHEMAS = {
   /** Offer card as a payment method. Off: every payment choice in the app is cash only. */
   'pos.card_payments': z.boolean(),
   /** Offer "pay later" (customer debt with a due date) in POS and session bills. */
-  'pos.credit_sales': z.boolean(),
   /** Pre-filled due date for a new debt: today + this many days. */
   'pos.credit_default_days': z.number().int().min(0).max(365),
 
@@ -170,7 +169,6 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.auto_print_receipt': false,
   'pos.auto_finish_seconds': 5,
   'pos.card_payments': false,
-  'pos.credit_sales': false,
   'pos.credit_default_days': 7,
 
   'printing.invoice_due_days': 0,
@@ -202,7 +200,6 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'stations.client_welcome_message',
   // Which payment methods the app offers; every cashier needs it before any sale exists.
   'pos.card_payments',
-  'pos.credit_sales',
   'pos.credit_default_days',
   // Client screen: the Admin previews them; the client receives them through its own channel.
   'client.widget_size',

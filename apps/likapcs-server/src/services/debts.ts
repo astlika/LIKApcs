@@ -8,7 +8,7 @@
  * movement so the drawer stays right. `customers.balance_due_cents` always equals the sum of
  * the open remainders and is maintained here, inside the same transaction as the ledger rows.
  *
- * Rules: the feature is off unless `pos.credit_sales` is on; only active customers get credit;
+ * Rules: the seller needs `debts.give`; only active customers get credit;
  * a non-zero `credit_limit_cents` caps the outstanding balance; nothing is ever deleted — a debt
  * that will not be paid is written off with a reason (audited).
  */
@@ -26,9 +26,10 @@ import type {
   Paginated,
   PaymentMethod,
 } from '@likapcs/shared';
+import { PERMISSIONS } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { badRequest, conflict, notFound } from '../errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
@@ -119,12 +120,13 @@ export class DebtsService {
       amountCents: number;
       dueDate?: string | null;
       notes?: string | null;
-      actor: AuditActor;
+      /** Whoever sells; `permissions` decides whether credit may be given at all. */
+      actor: AuditActor & { permissions?: ReadonlySet<string> };
     },
   ): Promise<string> {
-    if (!(await this.settings.get('pos.credit_sales')))
-      throw conflict('Pay later is disabled in Settings → Point of sale', {
-        code: 'CREDIT_DISABLED',
+    if (!input.actor.permissions?.has(PERMISSIONS.DEBTS_GIVE))
+      throw forbidden('Selling on credit needs the "Give debt" permission (Employees → Roles)', {
+        code: 'CREDIT_FORBIDDEN',
       });
     if (!input.customerId)
       throw badRequest('Pay later needs a customer on the sale', {

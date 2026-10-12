@@ -16,6 +16,7 @@ import type {
   Paginated,
   ProductSummary,
   SaleDetail,
+  RoleSummary,
 } from '@likapcs/shared';
 import { authHeader, createTestContext, login, runSetup, type TestContext } from '../helpers.js';
 
@@ -31,7 +32,7 @@ describe('customer debts (pay later)', () => {
 
   const call = <T>(
     token: string,
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     url: string,
     payload?: Record<string, unknown>,
   ) =>
@@ -100,21 +101,36 @@ describe('customer debts (pay later)', () => {
     await ctx.close();
   });
 
-  it('refuses credit tenders while pos.credit_sales is off', async () => {
+  it('refuses credit tenders from a role without debts.give (and restores it)', async () => {
+    const roles = await call<RoleSummary[]>(owner.token, 'GET', '/roles');
+    const cashierRole = roles.body.find((r) => r.code === 'cashier')!;
+    expect(cashierRole.permissions).toContain('debts.give'); // seeded by migration 0015
+    const without = cashierRole.permissions.filter((p) => p !== 'debts.give');
+    expect(
+      (
+        await call(owner.token, 'PUT', `/roles/${cashierRole.id}/permissions`, {
+          permissions: without,
+        })
+      ).status,
+    ).toBe(200);
     const r = await sell(cashier.token, arben.id, [{ method: 'credit', amountCents: 300 }]);
-    expect(r.status).toBe(409);
+    expect(r.status).toBe(403);
     expect((r.body as unknown as { error: { details: { code: string } } }).error.details.code).toBe(
-      'CREDIT_DISABLED',
+      'CREDIT_FORBIDDEN',
     );
     const n = await ctx.pool.query<{ n: string }>('SELECT count(*)::text AS n FROM sales');
     expect(Number(n.rows[0]!.n)).toBe(0); // the whole sale rolled back
+    expect(
+      (
+        await call(owner.token, 'PUT', `/roles/${cashierRole.id}/permissions`, {
+          permissions: cashierRole.permissions,
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it('opens a debt for a credit sale: customer required, blocked refused, limit enforced, drawer untouched', async () => {
-    await call(owner.token, 'PATCH', '/settings', {
-      'pos.credit_sales': true,
-      'pos.credit_default_days': 10,
-    });
+    await call(owner.token, 'PATCH', '/settings', { 'pos.credit_default_days': 10 });
     const cashBefore = await expectedCash();
 
     const noCustomer = await sell(cashier.token, null, [{ method: 'credit', amountCents: 300 }]);

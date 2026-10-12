@@ -12,6 +12,7 @@ import {
   type ServerWelcomeToClient,
 } from '@likapcs/shared';
 import type { DevicePresence } from './hub.js';
+import { recordAudit } from '../services/audit.js';
 import { shouldPushUpdate } from '../services/commands.js';
 import { SERVER_VERSION } from '../version.js';
 
@@ -232,6 +233,30 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                 presence.stationId,
                 'error',
                 message.payload,
+              );
+            }
+            if (message.event === 'wol_configured') {
+              // The PC tried to switch Wake-on-LAN on (Admin → "Enable WoL"); keep the outcome
+              // in the audit log — the readiness badge itself follows from the hardware event.
+              const p = message.payload as { ok?: unknown; message?: unknown; elevated?: unknown };
+              await recordAudit(
+                app.pool,
+                {
+                  deviceId: presence.deviceId,
+                  label: `client ${presence.deviceId.slice(0, 8)}`,
+                  ip,
+                },
+                {
+                  action: 'station.wol_configured',
+                  entityType: 'station',
+                  entityId: presence.stationId,
+                  details: {
+                    ok: p.ok === true,
+                    message: String(p.message ?? ''),
+                    elevated: p.elevated === true,
+                  },
+                  severity: p.ok === true ? 'info' : 'warning',
+                },
               );
             }
             if (message.event === 'hardware') {

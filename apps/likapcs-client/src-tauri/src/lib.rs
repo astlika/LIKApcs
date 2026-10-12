@@ -9,6 +9,7 @@
 mod hardware;
 mod kiosk;
 mod secrets;
+mod wol;
 
 use serde::{Deserialize, Serialize};
 use std::net::{SocketAddr, UdpSocket};
@@ -183,6 +184,37 @@ async fn hardware_info(
     tauri::async_runtime::spawn_blocking(move || s.info())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Outcome of `wol_configure` together with the re-read hardware facts for the server.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WolConfigureResult {
+    ok: bool,
+    message: String,
+    elevated: bool,
+    hardware: hardware::HardwareInfo,
+}
+
+/// Admin → `wol.configure`: turn on "wake on magic packet" + turn off Fast startup (may raise a
+/// UAC prompt on this PC). Blocking PowerShell work, so off the UI thread like the rest.
+#[tauri::command]
+async fn wol_configure(
+    state: tauri::State<'_, Arc<hardware::HardwareState>>,
+) -> Result<WolConfigureResult, String> {
+    let s = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = wol::configure();
+        let hardware = s.refresh_network();
+        WolConfigureResult {
+            ok: outcome.ok,
+            message: outcome.message,
+            elevated: outcome.elevated,
+            hardware,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Live load / temperatures for the heartbeat (same threading rules as `hardware_info`).
@@ -687,6 +719,7 @@ pub fn run() {
             device_identity,
             hardware_info,
             hardware_metrics,
+            wol_configure,
             set_widget_layout,
             secret_get,
             secret_set,

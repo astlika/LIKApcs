@@ -189,6 +189,31 @@ export async function quitApp(force = false): Promise<void> {
   await invoke<void>('quit_app', { force });
 }
 
+export interface WolConfigureResult {
+  ok: boolean;
+  message: string;
+  /** True when Windows had to ask for administrator confirmation (UAC) on this PC. */
+  elevated: boolean;
+  /** Fresh hardware facts (adapters re-read) — null outside the desktop app. */
+  hardware: HardwareInfo | null;
+}
+
+/**
+ * Switches "wake on magic packet" on for every physical adapter and Fast startup off. Needs
+ * admin rights on the PC: the native side tries directly and falls back to a UAC prompt.
+ */
+export async function wolConfigure(): Promise<WolConfigureResult> {
+  if (!isDesktopApp()) {
+    return {
+      ok: false,
+      message: 'not available in the browser build',
+      elevated: false,
+      hardware: null,
+    };
+  }
+  return invoke<WolConfigureResult>('wol_configure');
+}
+
 export async function powerAction(action: 'restart' | 'shutdown'): Promise<void> {
   if (!isDesktopApp()) {
     console.info(`[dev] power action ignored: ${action}`);

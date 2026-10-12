@@ -8,7 +8,6 @@
 import type {
   CategoryInput,
   CategorySummary,
-  ClientAdItem,
   InventoryMovementSummary,
   ProductInput,
   ProductListQuery,
@@ -22,6 +21,7 @@ import type {
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
+import { ACTIVE_PROMO_SQL } from './ads.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ProductImageStore } from './product-images.js';
 import type { SettingsService } from './settings.js';
@@ -53,6 +53,7 @@ interface ProductRow {
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
+  promo_price_cents: string | null;
   barcodes:
     { id: string; barcode: string; is_primary: boolean; quantity_milli: string | number }[] | null;
 }
@@ -64,6 +65,7 @@ const PRODUCT_SELECT = `
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
          p.storage_location, p.image_path, p.is_active, p.created_at, p.updated_at,
+         ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
             FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes
@@ -78,43 +80,6 @@ export class CatalogService {
     private readonly settings: SettingsService,
     readonly images: ProductImageStore,
   ) {}
-
-  /**
-   * Lock-screen slideshow: active products that have a photo and are in stock (untracked stock
-   * counts as available). Cheap enough to serve on every lock; the client refreshes hourly.
-   */
-  async lockScreenAds(limit = 40): Promise<ClientAdItem[]> {
-    const result = await this.pool.query<{
-      id: string;
-      name: string;
-      selling_price_cents: string | number;
-      image_path: string;
-      category_name: string | null;
-    }>(
-      `SELECT p.id, p.name, p.selling_price_cents, p.image_path, c.name AS category_name
-         FROM products p
-         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.is_active AND p.image_path IS NOT NULL
-          AND (NOT p.track_stock OR p.stock_milli > 0)
-        ORDER BY p.updated_at DESC
-        LIMIT $1`,
-      [limit],
-    );
-    return result.rows.flatMap((row) => {
-      const imageUrl = ProductImageStore.urlFor(row.image_path);
-      return imageUrl
-        ? [
-            {
-              id: row.id,
-              name: row.name,
-              priceCents: Number(row.selling_price_cents),
-              imageUrl,
-              categoryName: row.category_name,
-            },
-          ]
-        : [];
-    });
-  }
 
   // ─── Tax categories ─────────────────────────────────────────────────────────
 
@@ -286,6 +251,7 @@ export class CatalogService {
       purchaseCostCents: Number(row.purchase_cost_cents),
       averageCostCents: Number(row.average_cost_cents),
       sellingPriceCents: Number(row.selling_price_cents),
+      promoPriceCents: row.promo_price_cents === null ? null : Number(row.promo_price_cents),
       priceIncludesTax: row.price_includes_tax,
       stockMilli: stock,
       minStockMilli: min,

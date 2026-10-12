@@ -8,10 +8,10 @@
  *               (`suggestTenders`) for what the customer plausibly hands over; change shown live.
  *   card        only when `pos.card_payments` is on; the full amount, optional reference.
  *   split       cash + card.
- *   credit      "pay later" — only when `pos.credit_sales` is on. Needs a customer; the part not
- *               paid in cash now goes on the customer's tab with a due date (pre-filled from
- *               `pos.credit_default_days`). The limit is checked here for a clear message and
- *               again on the server (the authority).
+ *   credit      "pay later" — for cashiers holding `debts.give`. Needs a named customer (picked or
+ *               created on the spot); the part not paid in cash now goes on the customer's tab
+ *               with a due date (pre-filled from `pos.credit_default_days`). The limit is checked
+ *               here for a clear message and again on the server (the authority).
  *
  * `useTender` owns the state and the arithmetic (pure, integer cents); `TenderPanel` renders it.
  * Keep the two together: a dialog calls the hook, reads `tender.covered` / `tender.payments` for
@@ -20,11 +20,12 @@
 import { Banknote, CalendarClock, CreditCard, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CustomerSummary, SalePaymentInput } from '@likapcs/shared';
-import { parseMoneyInput } from '@likapcs/shared';
+import { PERMISSIONS, parseMoneyInput } from '@likapcs/shared';
 import { useI18n } from '../../i18n';
 import { useFormat } from '../../lib/format';
 import { suggestTenders } from '../../lib/tender';
 import { useAppSettings } from '../../state/app-settings';
+import { useAuth } from '../../state/auth';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { Alert, Field, Input } from '../ui/primitives';
 
@@ -43,7 +44,7 @@ export interface TenderInput {
   totalCents: number;
   /** Customer attached to the sale / session (required for "pay later"). */
   customer: CustomerSummary | null;
-  /** Hide "pay later" even when the setting is on (e.g. contexts without a customer concept). */
+  /** Hide "pay later" even for cashiers who may give it (contexts without a customer concept). */
   allowCredit?: boolean;
 }
 
@@ -77,8 +78,9 @@ export interface Tender {
 
 export function useTender({ totalCents, customer, allowCredit = true }: TenderInput): Tender {
   const settings = useAppSettings();
+  const { can } = useAuth();
   const cardEnabled = settings['pos.card_payments'];
-  const creditEnabled = allowCredit && settings['pos.credit_sales'];
+  const creditEnabled = allowCredit && can(PERMISSIONS.DEBTS_GIVE);
   const defaultDays = settings['pos.credit_default_days'];
   const [mode, setMode] = useState<TenderMode>('cash');
   // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
@@ -259,6 +261,7 @@ export function TenderPanel({
                   value={null}
                   onChange={onCustomerChange}
                   placeholder={t('pos.customerPlaceholder')}
+                  allowCreate
                   autoFocus
                 />
               )}

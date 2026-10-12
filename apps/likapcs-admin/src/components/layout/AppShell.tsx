@@ -35,6 +35,7 @@ import {
   Wifi,
   WifiOff,
   HandCoins,
+  Megaphone,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -193,6 +194,12 @@ export function AppShell() {
           permission: PERMISSIONS.PRODUCTS_VIEW,
         },
         {
+          to: '/ads',
+          icon: Megaphone,
+          label: t('nav.ads'),
+          permission: PERMISSIONS.PRODUCTS_VIEW,
+        },
+        {
           to: '/purchases',
           icon: ShoppingBag,
           label: t('nav.purchases'),
@@ -297,6 +304,7 @@ export function AppShell() {
     '/pos': t('nav.pos'),
     '/sales': t('nav.sales'),
     '/products': t('nav.products'),
+    '/ads': t('nav.ads'),
     '/purchases': t('nav.purchases'),
     '/suppliers': t('nav.suppliers'),
     '/pricing': t('nav.pricing'),

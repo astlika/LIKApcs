@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
 import type { LoginResponse } from '@likapcs/shared';
-import { buildApp } from '../src/app.js';
+import { buildApp, type BuildAppOptions } from '../src/app.js';
 import { loadConfig, type ServerConfig } from '../src/config.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { createPool, type DbPool } from '../src/db/pool.js';
@@ -16,6 +16,7 @@ export interface TestContext {
 /** Drops and recreates the public schema, applies all migrations, builds a non-listening app. */
 export async function createTestContext(
   overrides: Partial<ServerConfig> = {},
+  buildOverrides: Partial<BuildAppOptions> = {},
 ): Promise<TestContext> {
   const config = { ...loadConfig(), ...overrides };
   if (!config.databaseUrl || !/likapcs_test/.test(config.databaseUrl)) {
@@ -31,6 +32,7 @@ export async function createTestContext(
     sessionTicker: false,
     backupScheduler: false,
     updateCheckOnStartup: false,
+    ...buildOverrides,
   });
   await app.ready();
   return {

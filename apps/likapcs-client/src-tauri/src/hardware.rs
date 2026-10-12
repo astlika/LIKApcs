@@ -29,6 +29,7 @@
 //! Callers wait with a timeout; when a worker is busy or gone the caller gets defaults (all
 //! `None`) and the agent carries on.
 
+use crate::wol::{self, NetworkAdapter, WolFacts};
 use serde::Serialize;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::Mutex;
@@ -45,6 +46,10 @@ pub struct HardwareInfo {
     pub ram_total_mb: Option<u64>,
     pub os: Option<String>,
     pub disk_total_mb: Option<u64>,
+    /// Physical network adapters with MAC — what Wake-on-LAN needs (0.7.0, see `wol.rs`).
+    pub network: Vec<NetworkAdapter>,
+    /// Windows "Fast startup"; `None` when unknown.
+    pub fast_startup: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -74,20 +79,49 @@ enum Request {
 /// first request, and then only on the worker threads.
 pub struct HardwareState {
     sampler: Mutex<Option<SyncSender<Request>>>,
+    /// Network adapters + Fast startup, read once (PowerShell) and refreshed after `wol.configure`.
+    wol: Mutex<Option<WolFacts>>,
 }
 
 impl HardwareState {
     pub fn new() -> Self {
-        Self { sampler: Mutex::new(None) }
+        Self { sampler: Mutex::new(None), wol: Mutex::new(None) }
     }
 
-    /// Static facts; computed once by the sampler and cached there.
+    /// Static facts; computed once by the sampler and cached there. Network facts come from a
+    /// separate, cached PowerShell pass (worker thread only — see the module docs).
     pub fn info(&self) -> HardwareInfo {
         let (reply_tx, reply_rx) = sync_channel(1);
-        if !self.submit(Request::Info(reply_tx)) {
-            return HardwareInfo::default();
+        let mut info = if self.submit(Request::Info(reply_tx)) {
+            reply_rx.recv_timeout(INFO_TIMEOUT).unwrap_or_default()
+        } else {
+            HardwareInfo::default()
+        };
+        let facts = self.wol_facts(false);
+        info.network = facts.adapters;
+        info.fast_startup = facts.fast_startup;
+        info
+    }
+
+    /// Re-reads the adapters (after `wol.configure`) and returns the full, fresh info.
+    pub fn refresh_network(&self) -> HardwareInfo {
+        self.wol_facts(true);
+        self.info()
+    }
+
+    fn wol_facts(&self, force: bool) -> WolFacts {
+        if !force {
+            if let Ok(guard) = self.wol.lock() {
+                if let Some(cached) = guard.as_ref() {
+                    return cached.clone();
+                }
+            }
         }
-        reply_rx.recv_timeout(INFO_TIMEOUT).unwrap_or_default()
+        let fresh = wol::facts();
+        if let Ok(mut guard) = self.wol.lock() {
+            *guard = Some(fresh.clone());
+        }
+        fresh
     }
 
     /// One sample for the heartbeat.
@@ -242,6 +276,8 @@ fn collect_info(sys: &mut System, disks: &Disks) -> HardwareInfo {
         ram_total_mb: if ram > 0 { Some(ram) } else { None },
         os,
         disk_total_mb,
+        network: Vec::new(),
+        fast_startup: None,
     }
 }
 

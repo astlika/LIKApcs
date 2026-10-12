@@ -39,6 +39,28 @@ const label = z.string().trim().max(120);
 const mb = z.number().int().min(0).max(1_000_000_000);
 const temp = z.number().min(-50).max(200);
 
+/** Colon-separated upper-case MAC (`AA:BB:CC:DD:EE:FF`) — the client normalises before sending. */
+export const macAddressSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toUpperCase().replace(/-/g, ':'))
+  .pipe(z.string().regex(/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/, 'MAC address'));
+
+/**
+ * One physical network adapter of the PC (0.7.0, for Wake-on-LAN). `wakeOnMagicPacket` is what
+ * Windows reports for the adapter's power management (`null` = could not be read); the BIOS side
+ * cannot be read at all — see docs/wake-on-lan.md.
+ */
+export const networkAdapterSchema = z.object({
+  name: label,
+  description: label.nullable().optional(),
+  mac: macAddressSchema,
+  ipv4: z.string().trim().max(45).nullable().optional(),
+  up: z.boolean().nullable().optional(),
+  wakeOnMagicPacket: z.boolean().nullable().optional(),
+});
+export type NetworkAdapterInfo = z.infer<typeof networkAdapterSchema>;
+
 /** Static facts about the PC, sent once per connection. Missing = the OS did not expose it. */
 export const hardwareInfoSchema = z.object({
   cpu: label.nullable().optional(),
@@ -48,6 +70,10 @@ export const hardwareInfoSchema = z.object({
   ramTotalMb: mb.nullable().optional(),
   os: label.nullable().optional(),
   diskTotalMb: mb.nullable().optional(),
+  /** Physical adapters with their MAC — what Wake-on-LAN needs (0.7.0). */
+  network: z.array(networkAdapterSchema).max(8).default([]),
+  /** Windows "Fast startup" (hiberboot). While on, most PCs ignore magic packets after a shutdown. */
+  fastStartup: z.boolean().nullable().optional(),
 });
 export type HardwareInfo = z.infer<typeof hardwareInfoSchema>;
 
@@ -98,6 +124,8 @@ export const clientEventSchema = z.object({
     'error',
     /** Static hardware facts that were not ready at `client.hello` (payload: `HardwareInfo`). */
     'hardware',
+    /** Outcome of a `wol.configure` command (payload: `{ok, message, elevated}`), hardware follows. */
+    'wol_configured',
   ]),
   payload: z.record(z.unknown()).default({}),
 });
@@ -134,6 +162,8 @@ export const STATION_COMMANDS = [
   'power.restart',
   'power.shutdown',
   'update.apply',
+  /** Turn on "wake on magic packet" + turn off Fast startup on the PC (may need admin consent there). */
+  'wol.configure',
 ] as const;
 export type StationCommand = (typeof STATION_COMMANDS)[number];
 
@@ -207,13 +237,26 @@ export interface ServerDisplay {
   language: 'en' | 'sq';
 }
 
-/** Lock-screen slideshow item (`GET /client/ads`, device-token authenticated). */
+/**
+ * Lock-screen slideshow item (`GET /client/ads`, device-token authenticated) — the owner's
+ * curated list (Admin › Ads). `product` items carry the current price and, during a promo, the
+ * crossed-out regular price in `oldPriceCents`; `custom` items are free slides. `imageUrl` is null
+ * for text-only slides.
+ */
 export interface ClientAdItem {
   id: string;
+  kind: 'product' | 'custom';
+  /** Product name or slide title. */
   name: string;
-  priceCents: number;
-  /** Server-relative URL (`/api/v1/files/products/…`). */
-  imageUrl: string;
+  /** Slide text (custom) — null for products. */
+  body: string | null;
+  /** Price shown (promo price while a promo is live); null for custom slides. */
+  priceCents: number | null;
+  /** Regular price when `priceCents` is a promo, otherwise null. */
+  oldPriceCents: number | null;
+  badge: string | null;
+  /** Server-relative URL (`/api/v1/files/products/…`), or null for a text slide. */
+  imageUrl: string | null;
   categoryName: string | null;
 }
 

@@ -20,6 +20,7 @@ import {
   Users,
   Wallet,
   HandCoins,
+  Megaphone,
 } from 'lucide-react';
 import type { StationSummary } from '@likapcs/shared';
 import { PERMISSIONS } from '@likapcs/shared';
@@ -54,6 +55,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'stations', label: t('nav.stations'), kind: 'page', to: '/stations', icon: Monitor },
       { id: 'pos', label: t('nav.pos'), kind: 'page', to: '/pos', icon: ShoppingCart },
       { id: 'products', label: t('nav.products'), kind: 'page', to: '/products', icon: Package },
+      { id: 'ads', label: t('nav.ads'), kind: 'page', to: '/ads', icon: Megaphone },
       {
         id: 'purchases',
         label: t('nav.purchases'),

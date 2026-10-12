@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { Save, Undo2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Megaphone, Save, Undo2 } from 'lucide-react';
 import {
   CLIENT_ADS_LAYOUTS,
   CLIENT_ADS_TRANSITIONS,
@@ -498,7 +498,15 @@ export function SettingsPage() {
                 onChange={(v) => !ro && set('client.lock_title', v)}
               />
             </Card>
-            <Card title={t('settings.client.adsTitle')} subtitle={t('settings.client.adsHint')}>
+            <Card
+              title={t('settings.client.adsTitle')}
+              subtitle={t('settings.client.adsHint')}
+              actions={
+                <Link to="/ads" className="btn btn--sm">
+                  <Megaphone size={14} /> {t('settings.client.manageAds')}
+                </Link>
+              }
+            >
               <div className="stack">
                 {bool('client.ads_enabled', t('settings.client.adsEnabled'))}
                 <div className="form-grid">
@@ -598,19 +606,11 @@ export function SettingsPage() {
                   t('settings.printing.cardPaymentsHint'),
                 )}
               </div>
-              <div className="span-2">
-                {bool(
-                  'pos.credit_sales',
-                  t('settings.printing.creditSales'),
-                  t('settings.printing.creditSalesHint'),
-                )}
-              </div>
-              {Boolean(current['pos.credit_sales']) &&
-                number('pos.credit_default_days', t('settings.printing.creditDays'), {
-                  min: 0,
-                  max: 365,
-                  hint: t('settings.printing.creditDaysHint'),
-                })}
+              {number('pos.credit_default_days', t('settings.printing.creditDays'), {
+                min: 0,
+                max: 365,
+                hint: t('settings.printing.creditDaysHint'),
+              })}
               {text('business.receipt_footer', t('settings.business.receiptFooter'), {
                 hint: t('settings.business.receiptFooterHint'),
                 multiline: true,

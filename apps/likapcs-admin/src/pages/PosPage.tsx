@@ -10,8 +10,8 @@
  * After a payment the "sale completed" screen shows the change due with Print / Finish and starts
  * the next sale by itself after `pos.auto_finish_seconds`; printing is on demand unless
  * `pos.auto_print_receipt` is on. Tenders come from the shared `TenderPanel`: cash only unless
- * `pos.card_payments` is on; "pay later" (a customer debt with a due date) when `pos.credit_sales`
- * is on and a customer is attached to the sale.
+ * `pos.card_payments` is on; "pay later" (a customer debt with a due date) when the cashier's role
+ * has `debts.give` and a customer is attached to the sale (a new customer can be added inline by name).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -49,6 +49,7 @@ import {
   setLineDiscount,
   setQuantity,
   type Cart,
+  unitPriceOf,
 } from '../lib/cart';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
@@ -385,7 +386,14 @@ export function PosPage() {
                   </div>
                 </div>
                 <div className="tile__meta">
-                  <span className="num">{fmt.money(p.sellingPriceCents)}</span>
+                  {p.promoPriceCents !== null && p.promoPriceCents < p.sellingPriceCents ? (
+                    <span className="num tile__promo" data-testid="tile-promo">
+                      <s className="faint">{fmt.money(p.sellingPriceCents)}</s>{' '}
+                      <strong className="text-success">{fmt.money(p.promoPriceCents)}</strong>
+                    </span>
+                  ) : (
+                    <span className="num">{fmt.money(p.sellingPriceCents)}</span>
+                  )}
                   {p.trackStock && (
                     <span
                       className={`tile__stock ${out ? 'text-danger' : p.lowStock ? 'text-warning' : 'faint'}`}
@@ -427,7 +435,10 @@ export function PosPage() {
                 <div className="pos-line__main">
                   <div className="pos-line__name">{line.product.name}</div>
                   <div className="pos-line__price faint num">
-                    {fmt.money(line.product.sellingPriceCents)} × {line.quantityMilli / 1000}
+                    {fmt.money(unitPriceOf(line.product))} × {line.quantityMilli / 1000}
+                    {unitPriceOf(line.product) < line.product.sellingPriceCents && (
+                      <span className="text-success"> · {t('pos.promo')}</span>
+                    )}
                   </div>
                 </div>
                 <div className="pos-line__qty">

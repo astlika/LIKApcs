@@ -60,6 +60,10 @@ const REQUIRED_TABLES = [
   'application_versions',
   'update_history',
   'schema_migrations',
+  // added after the original specification
+  'customer_debts',
+  'debt_payments',
+  'ads',
 ];
 
 describe('database migrations', () => {

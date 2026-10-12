@@ -6,13 +6,16 @@
  * the box. Typing searches by name, phone or code; picking a row calls `onChange(customer)`.
  * With `allowFreeText` the typed text is kept when nothing is picked (gaming sessions store it as
  * `customerName`, so a walk-in can still be labelled "Arben" without creating a record).
+ * With `allowCreate` (needs `customers.manage`) the list ends with "Add customer «Arben»": one
+ * click creates the record (name only — phone and the rest can follow under Customers) and picks
+ * it. That is how a debt gets a named customer in the two seconds a cashier has for it.
  */
-import { useQuery } from '@tanstack/react-query';
-import { Search, UserRound, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Search, UserRound, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { CustomerSummary, Paginated } from '@likapcs/shared';
 import { PERMISSIONS } from '@likapcs/shared';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../state/auth';
 import { useI18n } from '../../i18n';
 import { Badge } from '../ui/primitives';
@@ -25,6 +28,8 @@ export interface CustomerPickerProps {
   text?: string;
   onTextChange?: (text: string) => void;
   allowFreeText?: boolean;
+  /** Offer "Add customer «text»" when nothing matches exactly (requires `customers.manage`). */
+  allowCreate?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
   disabled?: boolean;
@@ -39,6 +44,7 @@ export function CustomerPicker({
   text = '',
   onTextChange,
   allowFreeText = false,
+  allowCreate = false,
   placeholder,
   autoFocus,
   disabled,
@@ -47,7 +53,9 @@ export function CustomerPicker({
 }: CustomerPickerProps) {
   const { t } = useI18n();
   const { can } = useAuth();
+  const queryClient = useQueryClient();
   const canSearch = can(PERMISSIONS.CUSTOMERS_VIEW);
+  const canCreate = allowCreate && can(PERMISSIONS.CUSTOMERS_MANAGE);
   const listId = useId();
   const [local, setLocal] = useState(text);
   const [debounced, setDebounced] = useState('');
@@ -72,6 +80,32 @@ export function CustomerPicker({
     placeholderData: (prev) => prev,
   });
   const items = debounced.length > 0 ? (results.data?.items ?? []) : [];
+  // "Add «Arben»" is offered once the search has answered and no row is that exact name.
+  const createName = local.trim().replace(/\s+/g, ' ');
+  const offerCreate =
+    canCreate &&
+    createName.length >= 2 &&
+    debounced === createName &&
+    !results.isFetching &&
+    !items.some(
+      (c) => c.name.localeCompare(createName, undefined, { sensitivity: 'accent' }) === 0,
+    );
+  const optionCount = items.length + (offerCreate ? 1 : 0);
+
+  const create = useMutation({
+    mutationFn: (name: string) =>
+      api<CustomerSummary>('/customers', { method: 'POST', body: { name } }),
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ['customers'] });
+      pick(created);
+    },
+  });
+  const createError =
+    create.error instanceof ApiError
+      ? create.error.message
+      : create.error
+        ? String(create.error)
+        : null;
 
   useEffect(() => setActive(0), [debounced]);
 
@@ -148,16 +182,19 @@ export function CustomerPicker({
           if (allowFreeText) onTextChange?.(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' && items.length) {
+          if (e.key === 'ArrowDown' && optionCount) {
             e.preventDefault();
             setOpen(true);
-            setActive((a) => Math.min(a + 1, items.length - 1));
-          } else if (e.key === 'ArrowUp' && items.length) {
+            setActive((a) => Math.min(a + 1, optionCount - 1));
+          } else if (e.key === 'ArrowUp' && optionCount) {
             e.preventDefault();
             setActive((a) => Math.max(a - 1, 0));
           } else if (e.key === 'Enter' && open && items[active]) {
             e.preventDefault();
             pick(items[active]!);
+          } else if (e.key === 'Enter' && open && offerCreate && active === items.length) {
+            e.preventDefault();
+            if (!create.isPending) create.mutate(createName);
           } else if (e.key === 'Escape' && open) {
             e.stopPropagation();
             setOpen(false);
@@ -196,7 +233,28 @@ export function CustomerPicker({
               </div>
             </li>
           ))}
-          {items.length === 0 && !results.isFetching && (
+          {offerCreate && (
+            <li
+              role="option"
+              aria-selected={active === items.length}
+              className={`customer-picker__item customer-picker__item--create ${
+                active === items.length ? 'is-active' : ''
+              }`}
+              onMouseEnter={() => setActive(items.length)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => !create.isPending && create.mutate(createName)}
+              data-testid="customer-create"
+            >
+              <Plus size={14} />
+              <span>
+                {create.isPending
+                  ? t('customers.pickerCreating')
+                  : t('customers.pickerCreate', { name: createName })}
+              </span>
+            </li>
+          )}
+          {createError && <li className="customer-picker__empty text-danger">{createError}</li>}
+          {items.length === 0 && !results.isFetching && !offerCreate && (
             <li className="customer-picker__empty">
               {t('customers.pickerNoResults')}
               {allowFreeText && <span className="faint"> · {t('customers.pickerFreeText')}</span>}

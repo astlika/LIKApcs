@@ -39,6 +39,7 @@ import {
   setWindowMode,
   sha256Hex,
   trayUpdate,
+  wolConfigure,
   type DeviceIdentity,
   type TrayLabels,
   type UpdateCheck,
@@ -98,7 +99,7 @@ export interface AgentSnapshot {
   autoUpdate: boolean;
   /** Which native window layout is showing ('panel' = settings opened from the tray). */
   windowMode: WindowMode;
-  /** Lock-screen slideshow items (absolute image URLs); empty when the owner disabled ads. */
+  /** Lock-screen slideshow items (absolute image URLs, null for text slides); empty when ads are off. */
   ads: ClientAdItem[];
 }
 
@@ -796,7 +797,7 @@ export class Agent {
 
   // ─── Lock-screen slideshow ───────────────────────────────────────────────────
 
-  /** Products with photos for the lock screen; refreshed on connect, on display changes, hourly. */
+  /** The owner's ads (Admin › Ads) for the lock screen; refreshed on connect, on `server.display`, hourly. */
   private refreshAds(force = false): void {
     const { pairing, state } = this.snapshot;
     if (!pairing || !state.display?.ads.enabled) {
@@ -817,7 +818,7 @@ export class Agent {
           this.setAds(
             res.body.items.map((item) => ({
               ...item,
-              imageUrl: `${pairing.serverUrl}${item.imageUrl}`,
+              imageUrl: item.imageUrl ? `${pairing.serverUrl}${item.imageUrl}` : null,
             })),
           );
         }
@@ -881,6 +882,24 @@ export class Agent {
       case 'update':
         await this.selfUpdate('command');
         break;
+      case 'wol_configure': {
+        // Can take a while (UAC prompt on this PC); the ack already went out, the outcome is
+        // reported as an event and the adapters are re-sent so the Admin's badge updates.
+        const outcome = await wolConfigure().catch((err: unknown) => ({
+          ok: false,
+          message: String(err),
+          elevated: false,
+          hardware: null,
+        }));
+        this.send({
+          type: 'client.event',
+          event: 'wol_configured',
+          payload: { ok: outcome.ok, message: outcome.message, elevated: outcome.elevated },
+        });
+        if (outcome.hardware)
+          this.send({ type: 'client.event', event: 'hardware', payload: outcome.hardware });
+        break;
+      }
     }
   }
 

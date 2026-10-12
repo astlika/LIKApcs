@@ -19,7 +19,6 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
-import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import {
@@ -234,7 +233,6 @@ function CustomerDialog({
   const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const creditEnabled = useAppSettings()['pos.credit_sales'];
   const [form, setForm] = useState({
     code: customer?.code ?? '',
     name: customer?.name ?? '',
@@ -425,39 +423,37 @@ function CustomerDialog({
             )}
           </Field>
         </div>
-        {creditEnabled && (
-          <div className="grid grid--2">
-            <Field
-              label={t('customers.creditLimit')}
-              hint={t('customers.creditLimitHint')}
-              error={creditLimitCents === null ? t('common.invalid') : undefined}
-            >
-              {(id, invalid) => (
+        <div className="grid grid--2">
+          <Field
+            label={t('customers.creditLimit')}
+            hint={t('customers.creditLimitHint')}
+            error={creditLimitCents === null ? t('common.invalid') : undefined}
+          >
+            {(id, invalid) => (
+              <Input
+                id={id}
+                aria-invalid={invalid || undefined}
+                inputMode="decimal"
+                className="num"
+                placeholder="0.00"
+                value={form.creditLimit}
+                onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
+              />
+            )}
+          </Field>
+          {customer && customer.balanceDueCents > 0 && (
+            <Field label={t('customers.owes')}>
+              {(id) => (
                 <Input
                   id={id}
-                  aria-invalid={invalid || undefined}
-                  inputMode="decimal"
                   className="num"
-                  placeholder="0.00"
-                  value={form.creditLimit}
-                  onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
+                  value={fmt.money(customer.balanceDueCents)}
+                  readOnly
                 />
               )}
             </Field>
-            {customer && customer.balanceDueCents > 0 && (
-              <Field label={t('customers.owes')}>
-                {(id) => (
-                  <Input
-                    id={id}
-                    className="num"
-                    value={fmt.money(customer.balanceDueCents)}
-                    readOnly
-                  />
-                )}
-              </Field>
-            )}
-          </div>
-        )}
+          )}
+        </div>
         <Field label={t('common.notes')} optional>
           {(id, invalid) => (
             <Textarea

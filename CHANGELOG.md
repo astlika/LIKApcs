@@ -8,6 +8,70 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.7.0] - 2026-10-12
+
+Update both apps: run **Update** in LIKApcs (Admin) first — it updates the server and applies
+migrations 0015–0016 — then the gaming PCs update themselves (or click **Update clients** in
+Stations). Older clients keep working; Wake-on-LAN needs the 0.7.0 client on the PC.
+
+### Added
+
+- **Ads on the customer screens, managed from the Admin (Ads page).** Choose which products the
+  locked gaming PCs advertise, give each one a **promo price** (must be below the regular price) and
+  a badge ("-33 %" is suggested), schedule it (from / until), switch it on and off, and order the
+  slides by drag or arrows. **Custom slides** carry a free title, text and picture (upload or link,
+  same store as product photos) for anything that is not a product. The page shows every slide's
+  state — live, off, scheduled, expired or unavailable (product archived / out of stock — comes back
+  by itself) — with a live preview. The master switch and the look (card / full / grid, interval,
+  transition) stay in Settings → Client screen, which now links to the Ads page.
+- **A live promo price is charged automatically in the POS.** Tiles and cart lines show the promo
+  price with the regular one crossed out; the server itself prices the sale from the live promo
+  (`ACTIVE_PROMO_SQL` is the single definition), so no cashier step and no client can bypass it.
+  `ProductSummary.promoPriceCents` tells the Admin what is in force.
+- **Customer screens render the curated feed**: product slides with badge, promo and crossed-out
+  regular price, custom text or picture slides, in all three layouts; any change in the Admin
+  reaches every PC within a second (`server.display` push → `/client/ads` refetch).
+- **Wake-on-LAN — power on PCs from LIKApcs.** Offline PCs get a **Power on** button (station bar,
+  context menu and PC details) and the Stations toolbar a **Power on all (n)**; the **server** sends
+  the magic packets from inside the LAN (limited + directed broadcasts + the PC's last IP, ports 9
+  and 7, three bursts). The client now reports its physical network adapters (MAC, IPv4, link,
+  Windows "wake on magic packet" flag) and the Fast-startup switch, from which the Admin shows a
+  readiness badge (Ready / Not ready with the reason / Unknown) and the MAC it will address. **Enable
+  Wake-on-LAN** (PC online) sends `wol.configure`: the client switches the adapter flag on and Fast
+  startup off — it needs administrator rights, so a UAC prompt may appear on the PC and the outcome
+  is reported back and audited. The BIOS/UEFI part cannot be automated; `docs/wake-on-lan.md` walks
+  through it per vendor. Everything is permission-gated (`stations.power`) and audited
+  (`station.wake`, `station.wake_all`, `station.wol_configured`).
+- **Debts need a permission.** New permission **Give debt** (`debts.give`; migration 0015 grants it
+  to owner, administrator, manager and cashier). Without it the "Pay later" tender is hidden in the
+  POS and at session end, and the server answers `403 CREDIT_FORBIDDEN`.
+- **Debts are registered by customer name — from the POS and from the stations alike.** The tender
+  panel's customer picker searches by name/phone and creates a new customer inline from just a name
+  when nobody matches; session end uses the very same panel as the POS.
+
+### Changed
+
+- The customer-screen slideshow no longer shows "every product with a photo": it shows the ads the
+  owner configured. Migration 0016 turns the existing behaviour into product ads (one per active
+  product with a photo), so screens look the same right after the update until you curate.
+- `GET /client/ads` items now carry `kind`, `body`, `badge`, `oldPriceCents`, and `imageUrl` may be
+  `null` (text slide). `hardware` in `client.hello` / `client.event hardware` gained `network[]` and
+  `fastStartup`; `STATION_COMMANDS` gained `wol.configure`; new `client.event wol_configured`.
+- Settings → Client screen: the ads card is reduced to the master switch, the look and a
+  **Manage ads** link; wording updated from "products" to "slides/ads".
+
+### Removed
+
+- Setting `pos.credit_sales` (0.6.0, default off — in practice nobody found it). "Pay later" is
+  now governed by the `debts.give` permission; `pos.credit_default_days` stays.
+
+### Database
+
+- `0015_debts_permission.sql` — permission `debts.give` seeded into owner / administrator /
+  manager / cashier; setting row `pos.credit_sales` deleted.
+- `0016_ads.sql` — table `ads` (product | custom, promo price, badge, schedule, enabled, sort
+  order, image key) + carry-over of the 0.6.x slideshow as product ads.
+
 ## [0.6.1] - 2026-10-11
 
 ### Fixed

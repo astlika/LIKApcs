@@ -685,19 +685,25 @@ function AdsSlideshow({
   const showPill = station !== null && display.lockTitle !== 'station' && layout !== 'grid';
 
   // Preload every picture once; a slide only becomes eligible when all of its pictures decoded.
+  // Text-only slides (custom ads without a picture) are ready at once.
   const requested = useRef(new Set<string>());
   useEffect(() => {
     for (const item of items) {
-      if (requested.current.has(item.imageUrl)) continue;
-      requested.current.add(item.imageUrl);
+      const url = item.imageUrl;
+      if (!url) {
+        setReady((r) => (r[item.id] === true ? r : { ...r, [item.id]: true }));
+        continue;
+      }
+      if (requested.current.has(url)) continue;
+      requested.current.add(url);
       const img = new Image();
       img.decoding = 'async';
       img.onload = () => setReady((r) => ({ ...r, [item.id]: true }));
       img.onerror = () => {
-        requested.current.delete(item.imageUrl); // retried on the next list refresh
+        requested.current.delete(url); // retried on the next list refresh
         setReady((r) => ({ ...r, [item.id]: false }));
       };
-      img.src = item.imageUrl;
+      img.src = url;
     }
   }, [items]);
 
@@ -770,6 +776,16 @@ function AdsSlideshow({
 
   const money = (cents: number) =>
     formatMoney(cents, { currency: display.currency, locale: language });
+  /** Price block: promo = crossed-out regular + new price; plain otherwise; nothing for slides. */
+  const price = (item: ClientAdItem) =>
+    showPrice && item.priceCents !== null ? (
+      <span className={`ads__pricing ${item.oldPriceCents !== null ? 'ads__pricing--promo' : ''}`}>
+        {item.oldPriceCents !== null && <s className="ads__old">{money(item.oldPriceCents)}</s>}
+        <span className="ads__price">{money(item.priceCents)}</span>
+      </span>
+    ) : null;
+  const badge = (item: ClientAdItem) =>
+    item.badge ? <span className="ads__badge">{item.badge}</span> : null;
   const renderPage = (index: number | null, key: 'a' | 'b') => {
     if (index === null) return null;
     const slice = pageItems(index);
@@ -789,23 +805,43 @@ function AdsSlideshow({
         {layout === 'grid' ? (
           <div className="ads__grid">
             {slice.map((item) => (
-              <figure key={item.id} className="ads__cell">
-                <img src={item.imageUrl} alt="" draggable={false} />
+              <figure
+                key={item.id}
+                className={`ads__cell ${item.imageUrl ? '' : 'ads__cell--text'}`}
+                data-kind={item.kind}
+              >
+                {item.imageUrl ? (
+                  <img src={item.imageUrl} alt="" draggable={false} />
+                ) : (
+                  <div className="ads__blank" aria-hidden />
+                )}
+                {badge(item)}
                 <figcaption>
                   <span className="ads__name">{item.name}</span>
-                  {showPrice && <span className="ads__price">{money(item.priceCents)}</span>}
+                  {item.body && <span className="ads__body">{item.body}</span>}
+                  {price(item)}
                 </figcaption>
               </figure>
             ))}
           </div>
         ) : (
           slice.map((item) => (
-            <figure key={item.id} className={`ads__slide ads__slide--${layout}`}>
-              <img src={item.imageUrl} alt="" draggable={false} />
+            <figure
+              key={item.id}
+              className={`ads__slide ads__slide--${layout} ${item.imageUrl ? '' : 'ads__slide--text'}`}
+              data-kind={item.kind}
+            >
+              {item.imageUrl ? (
+                <img src={item.imageUrl} alt="" draggable={false} />
+              ) : (
+                <div className="ads__blank" aria-hidden />
+              )}
+              {badge(item)}
               <figcaption>
                 {item.categoryName && <span className="ads__cat">{item.categoryName}</span>}
                 <span className="ads__name">{item.name}</span>
-                {showPrice && <span className="ads__price">{money(item.priceCents)}</span>}
+                {item.body && <span className="ads__body">{item.body}</span>}
+                {price(item)}
               </figcaption>
             </figure>
           ))

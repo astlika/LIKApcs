@@ -417,6 +417,9 @@ describe('reduce()', () => {
     expect(reduce(state, cmd({ command: 'update.apply' }), T0).effects).toEqual([
       { type: 'update' },
     ]);
+    expect(reduce(state, cmd({ command: 'wol.configure' }), T0).effects).toEqual([
+      { type: 'wol_configure' },
+    ]);
     state = msg.state;
     expect(state.mode).toBe('locked');
   });
