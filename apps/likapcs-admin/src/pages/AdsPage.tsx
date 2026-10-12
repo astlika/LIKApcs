@@ -17,10 +17,15 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  CalendarDays,
   Check,
+  Clock3,
+  Copy,
+  Film,
   GripVertical,
   ImageIcon,
   Megaphone,
+  MonitorSmartphone,
   Package,
   Pencil,
   Plus,
@@ -28,24 +33,30 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   AdBulkResult,
   AdInput,
   AdKind,
   AdPatch,
+  AdStyle,
   AdSummary,
   AdTheme,
   CategorySummary,
   ProductSummary,
   SettingsMap,
+  StationSummary,
 } from '@likapcs/shared';
 import {
   AD_DURATION_MAX_SECONDS,
   AD_DURATION_MIN_SECONDS,
+  AD_STYLES,
   AD_THEMES,
+  AD_VIDEO_MAX_BYTES,
   PERMISSIONS,
   parseMoneyInput,
 } from '@likapcs/shared';
@@ -62,6 +73,7 @@ import {
   Input,
   Loading,
   PageHeader,
+  Segmented,
   Switch,
   Textarea,
 } from '../components/ui/primitives';
@@ -81,6 +93,7 @@ const STATE_TONE: Record<
   scheduled: 'info',
   expired: 'warning',
   unavailable: 'danger',
+  off_hours: 'info',
 };
 
 /** Theme swatches — the same two base tones the client uses (see client styles `.ads__theme--*`). */
@@ -117,6 +130,12 @@ export function AdsPage() {
     queryFn: () => api<Partial<SettingsMap>>('/settings/public', { auth: false }),
   });
   const slideshowOn = publicSettings.data?.['client.ads_enabled'] ?? false;
+  const defaultStyle: AdStyle = publicSettings.data?.['client.ads_style'] ?? 'hero';
+  const stations = useQuery({
+    queryKey: ['stations'],
+    queryFn: () => api<StationSummary[]>('/stations'),
+    staleTime: 30_000,
+  });
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['ads'] });
@@ -150,6 +169,16 @@ export function AdsPage() {
     mutationFn: (ids: string[]) =>
       api<{ items: AdSummary[] }>('/ads/order', { method: 'PUT', body: { ids } }),
     onSuccess: (data) => queryClient.setQueryData(['ads'], data),
+    onError,
+  });
+  const duplicate = useMutation({
+    mutationFn: (id: string) => api<AdSummary>(`/ads/${id}/duplicate`, { method: 'POST' }),
+    onSuccess: (copy) => {
+      invalidate();
+      setSelectedId(copy.id);
+      setDialog({ kind: 'custom', ad: copy });
+      toast.success(t('ads.duplicated'));
+    },
     onError,
   });
   // The first ads landing while the slideshow is off: switch it on, so "I added ads but the PCs
@@ -226,6 +255,18 @@ export function AdsPage() {
     if (a.startsAt && a.endsAt) return `${fmt.dateTime(a.startsAt)} – ${fmt.dateTime(a.endsAt)}`;
     if (a.startsAt) return t('ads.from', { when: fmt.dateTime(a.startsAt) });
     return t('ads.until', { when: fmt.dateTime(a.endsAt) });
+  };
+  const weeklyText = (a: AdSummary) => {
+    const parts: string[] = [];
+    if (a.daysMask !== 127)
+      parts.push(
+        [0, 1, 2, 3, 4, 5, 6]
+          .filter((d) => a.daysMask & (1 << d))
+          .map((d) => t(`ads.dayShort.${DAYS[d]!}`))
+          .join(' '),
+      );
+    if (a.timeFrom && a.timeTo) parts.push(`${a.timeFrom}–${a.timeTo}`);
+    return parts.join(' · ');
   };
 
   return (
@@ -380,7 +421,28 @@ export function AdsPage() {
                       '—'
                     )}
                   </span>
-                  <span className="ads-row__when muted">{scheduleText(a)}</span>
+                  <span className="ads-row__when muted">
+                    {scheduleText(a)}
+                    {weeklyText(a) && (
+                      <span className="ads-row__weekly" data-testid="ad-weekly">
+                        <CalendarDays size={11} /> {weeklyText(a)}
+                      </span>
+                    )}
+                    <span className="ads-row__flags">
+                      {a.stationIds.length > 0 && (
+                        <Badge tone="default">
+                          <MonitorSmartphone size={11} />{' '}
+                          {t('ads.stationsSome', { n: a.stationIds.length })}
+                        </Badge>
+                      )}
+                      {a.videoUrl && (
+                        <Badge tone="default">
+                          <Film size={11} /> {t('ads.video')}
+                        </Badge>
+                      )}
+                      {a.weight > 1 && <Badge tone="accent">{a.weight}×</Badge>}
+                    </span>
+                  </span>
                   <span className="ads-row__state">
                     <Badge tone={STATE_TONE[a.state]} dot>
                       {stateLabel(a)}
@@ -431,6 +493,18 @@ export function AdsPage() {
                           icon
                           size="sm"
                           variant="ghost"
+                          aria-label={t('ads.duplicate')}
+                          title={t('ads.duplicate')}
+                          disabled={duplicate.isPending}
+                          onClick={() => duplicate.mutate(a.id)}
+                          data-testid="ad-duplicate"
+                        >
+                          <Copy size={14} />
+                        </Button>
+                        <Button
+                          icon
+                          size="sm"
+                          variant="ghost"
                           aria-label={t('common.delete')}
                           title={t('common.delete')}
                           onClick={() => setDeleting(a)}
@@ -447,7 +521,7 @@ export function AdsPage() {
           </Card>
           <div className="ads-side">
             <Card title={t('ads.previewTitle')} subtitle={t('ads.previewHint')}>
-              {selected ? <AdPreview ad={selected} /> : null}
+              {selected ? <AdPreview ad={selected} defaultStyle={defaultStyle} /> : null}
               {selected && selected.state !== 'live' && (
                 <p className="muted" style={{ marginTop: 10, fontSize: 13 }}>
                   {t(`ads.stateHint.${selected.state}` as 'ads.stateHint.disabled')}
@@ -483,6 +557,8 @@ export function AdsPage() {
           ad={dialog.ad}
           product={dialog.product ?? null}
           defaultIntervalSeconds={publicSettings.data?.['client.ads_interval_seconds'] ?? 8}
+          defaultStyle={defaultStyle}
+          stations={stations.data ?? []}
           onClose={() => setDialog(null)}
           onSaved={(saved, created) => {
             invalidate();
@@ -510,43 +586,94 @@ export function AdsPage() {
 }
 
 /** How the slide reads on the PC (card layout): picture, badge, name, old → new price or text. */
-function AdPreview({ ad }: { ad: AdSummary }) {
+/**
+ * How the slide reads on a PC, in its style (poster / hero / split / banner) with the accent
+ * colour and the call-to-action — a scaled mock of the client's slide, same class names idea.
+ */
+export function AdPreview({
+  ad,
+  defaultStyle,
+  overrides,
+}: {
+  ad: AdSummary;
+  defaultStyle: AdStyle;
+  /** Live values while editing (dialog), before they are saved. */
+  overrides?: Partial<
+    Pick<AdSummary, 'style' | 'accent' | 'cta' | 'badge' | 'title' | 'body' | 'theme'> & {
+      imageUrl: string | null;
+      videoUrl: string | null;
+      promoPriceCents: number | null;
+    }
+  >;
+}) {
   const fmt = useFormat();
+  const { t } = useI18n();
+  const a = { ...ad, ...overrides };
+  const style: AdStyle = a.style ?? defaultStyle;
   const promo =
-    ad.kind === 'product' &&
-    ad.promoPriceCents !== null &&
-    ad.productPriceCents !== null &&
-    ad.promoPriceCents < ad.productPriceCents;
-  const name = ad.kind === 'product' ? ad.productName : ad.title;
-  const src = fileUrl(ad.imageUrl);
+    a.kind === 'product' &&
+    a.promoPriceCents !== null &&
+    a.productPriceCents !== null &&
+    a.promoPriceCents < a.productPriceCents;
+  const name = a.kind === 'product' ? a.productName : a.title;
+  const src = fileUrl(a.imageUrl);
+  const video = a.videoUrl ? (fileUrl(a.videoUrl) ?? a.videoUrl) : null;
+  const price =
+    a.kind === 'product' && a.productPriceCents !== null ? (
+      <span className="ad-prev__price" style={a.accent ? { background: a.accent } : undefined}>
+        {promo && <s>{fmt.money(a.productPriceCents)}</s>}
+        <b>{fmt.money(promo ? a.promoPriceCents! : a.productPriceCents)}</b>
+      </span>
+    ) : null;
+  const media = video ? (
+    <video className="ad-prev__media" src={video} muted autoPlay loop playsInline />
+  ) : src ? (
+    <img className="ad-prev__media" src={src} alt="" draggable={false} />
+  ) : (
+    <div className="ad-prev__media ad-prev__media--blank">
+      {a.kind === 'product' ? <Package size={34} /> : <ImageIcon size={34} />}
+    </div>
+  );
   return (
     <div
-      className={`ad-preview ${src ? '' : 'ad-preview--text'}`}
-      style={themeStyle(ad.theme)}
+      className={`ad-prev ad-prev--${style} ${src || video ? '' : 'ad-prev--nomedia'}`}
+      style={themeStyle(a.theme)}
       data-testid="ad-preview"
-      data-theme={ad.theme ?? 'midnight'}
+      data-style={style}
+      data-theme={a.theme ?? 'midnight'}
     >
-      {src ? <img src={src} alt="" draggable={false} /> : <div className="ad-preview__blank" />}
-      {ad.badge && <span className="ad-preview__badge">{ad.badge}</span>}
-      <div className="ad-preview__caption">
-        <strong>{name}</strong>
-        {ad.body && <span>{ad.body}</span>}
-        {ad.kind === 'product' && ad.productPriceCents !== null && (
-          <span className="ad-preview__price">
-            {promo && <s>{fmt.money(ad.productPriceCents)}</s>}
-            <b>{fmt.money(promo ? ad.promoPriceCents! : ad.productPriceCents)}</b>
-          </span>
-        )}
+      {media}
+      {a.badge && (
+        <span className="ad-prev__badge" style={a.accent ? { background: a.accent } : undefined}>
+          {a.badge}
+        </span>
+      )}
+      <div className="ad-prev__text">
+        <strong className="ad-prev__name">{name}</strong>
+        {a.body && <span className="ad-prev__body">{a.body}</span>}
+        {price}
+        {a.cta && <span className="ad-prev__cta">{a.cta}</span>}
       </div>
+      <span className="ad-prev__style">{t(`ads.styles.${style}`)}</span>
     </div>
   );
 }
+
+type PendingVideo =
+  | { kind: 'upload'; file: File; previewUrl: string }
+  | { kind: 'link'; url: string }
+  | { kind: 'remove' }
+  | null;
+
+const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 function AdDialog({
   kind,
   ad,
   product: initialProduct,
   defaultIntervalSeconds,
+  defaultStyle,
+  stations,
   onClose,
   onSaved,
 }: {
@@ -555,6 +682,8 @@ function AdDialog({
   /** New product ad: the product chosen in the browser. */
   product: ProductSummary | null;
   defaultIntervalSeconds: number;
+  defaultStyle: AdStyle;
+  stations: StationSummary[];
   onClose: () => void;
   onSaved: (ad: AdSummary, created: boolean) => void;
 }) {
@@ -580,9 +709,46 @@ function AdDialog({
     startsAt: toLocalInput(ad?.startsAt ?? null),
     endsAt: toLocalInput(ad?.endsAt ?? null),
     enabled: ad?.enabled ?? true,
+    // 0.10.0
+    style: (ad?.style ?? '') as AdStyle | '',
+    accent: ad?.accent ?? '',
+    cta: ad?.cta ?? '',
+    weight: (ad?.weight ?? 1) as 1 | 2 | 3,
+    daysMask: ad?.daysMask ?? 127,
+    timeFrom: ad?.timeFrom ?? '',
+    timeTo: ad?.timeTo ?? '',
+    stationIds: ad?.stationIds ?? ([] as string[]),
   });
   const [pendingImage, setPendingImage] = useState<PendingImage>(null);
+  const [pendingVideo, setPendingVideo] = useState<PendingVideo>(null);
+  const [videoLink, setVideoLink] = useState('');
+  const videoInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const videoMb = Math.round(AD_VIDEO_MAX_BYTES / 1024 / 1024);
+  const currentVideo =
+    pendingVideo?.kind === 'remove'
+      ? null
+      : pendingVideo?.kind === 'link'
+        ? pendingVideo.url
+        : pendingVideo?.kind === 'upload'
+          ? pendingVideo.previewUrl
+          : (ad?.videoUrl ?? null);
+  const pickVideo = (file: File | null) => {
+    if (!file) return;
+    if (!['video/mp4', 'video/webm'].includes(file.type)) {
+      setError(t('ads.videoBadType'));
+      return;
+    }
+    if (file.size > AD_VIDEO_MAX_BYTES) {
+      setError(t('ads.videoTooLarge', { mb: videoMb }));
+      return;
+    }
+    setPendingVideo({ kind: 'upload', file, previewUrl: URL.createObjectURL(file) });
+  };
+  const hoursInvalid =
+    (form.timeFrom === '') !== (form.timeTo === '') ||
+    (form.timeFrom !== '' && form.timeFrom === form.timeTo);
+  const videoLinkInvalid = videoLink.trim() !== '' && !/^https?:\/\/\S+$/i.test(videoLink.trim());
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
@@ -610,16 +776,26 @@ function AdDialog({
     !windowInvalid &&
     !titleMissing &&
     !productMissing &&
-    !durationInvalid;
+    !durationInvalid &&
+    !hoursInvalid &&
+    !videoLinkInvalid &&
+    form.daysMask > 0;
   const discountPct =
     promoCents !== null && product && product.priceCents > 0 && promoCents < product.priceCents
       ? Math.round((1 - promoCents / product.priceCents) * 100)
       : null;
 
   useEffect(() => setError(null), [form]);
+  useEffect(
+    () => () => {
+      if (pendingVideo?.kind === 'upload') URL.revokeObjectURL(pendingVideo.previewUrl);
+    },
+    [pendingVideo],
+  );
 
   const save = useMutation({
     mutationFn: async (): Promise<AdSummary> => {
+      const link = videoLink.trim();
       const common = {
         body: form.body.trim() || null,
         badge: form.badge.trim() || null,
@@ -628,6 +804,16 @@ function AdDialog({
         startsAt: startIso,
         endsAt: endIso,
         enabled: form.enabled,
+        style: form.style || null,
+        accent: form.accent || null,
+        cta: form.cta.trim() || null,
+        weight: form.weight,
+        daysMask: form.daysMask,
+        timeFrom: form.timeFrom || null,
+        timeTo: form.timeTo || null,
+        stationIds: form.stationIds,
+        // A link replaces an upload; "remove" clears both; otherwise the upload (if any) follows.
+        ...(link ? { videoUrl: link } : pendingVideo?.kind === 'remove' ? { videoUrl: null } : {}),
       };
       let saved: AdSummary;
       if (ad) {
@@ -645,6 +831,17 @@ function AdDialog({
           ...(kind === 'product' ? { productId: product!.id, promoPriceCents: promoCents } : {}),
         };
         saved = await api<AdSummary>('/ads', { method: 'POST', body: input });
+      }
+      if (pendingVideo?.kind === 'upload' && !link) {
+        saved = await apiUpload<AdSummary>(
+          `/ads/${saved.id}/video`,
+          pendingVideo.file,
+          {},
+          {
+            method: 'PUT',
+            contentType: pendingVideo.file.type,
+          },
+        );
       }
       if (kind === 'custom' && pendingImage) {
         if (pendingImage.kind === 'upload') {
@@ -825,6 +1022,87 @@ function AdDialog({
           )}
         </Field>
         <Field
+          label={t('ads.style')}
+          hint={t('ads.styleHint', { style: t(`ads.styles.${defaultStyle}`) })}
+          className="span-2"
+        >
+          {() => (
+            <div className="ad-styles" role="radiogroup" data-testid="ad-styles">
+              {(['', ...AD_STYLES] as const).map((st) => (
+                <button
+                  key={st || 'default'}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.style === st}
+                  className={`ad-style ${form.style === st ? 'is-on' : ''}`}
+                  title={st ? t(`ads.styleHints.${st}`) : t(`ads.styleHints.${defaultStyle}`)}
+                  onClick={() => set('style', st)}
+                  data-testid={`ad-style-${st || 'default'}`}
+                >
+                  <span className={`ad-style__thumb ad-style__thumb--${st || defaultStyle}`}>
+                    <i />
+                    <b />
+                  </span>
+                  <span className="ad-style__label">
+                    {st ? t(`ads.styles.${st}`) : t('ads.styleDefault')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Field>
+        <Field label={t('ads.accent')} hint={t('ads.accentHint')} optional>
+          {(id) => (
+            <div className="row" style={{ gap: 8 }}>
+              <input
+                id={id}
+                type="color"
+                className="ad-accent"
+                value={form.accent || '#f59e0b'}
+                onChange={(e) => set('accent', e.target.value)}
+                data-testid="ad-accent"
+              />
+              <Input
+                value={form.accent}
+                placeholder="#RRGGBB"
+                maxLength={7}
+                style={{ maxWidth: 120 }}
+                onChange={(e) => set('accent', e.target.value.trim())}
+              />
+              {form.accent && (
+                <Button size="sm" variant="ghost" onClick={() => set('accent', '')}>
+                  {t('ads.accentReset')}
+                </Button>
+              )}
+            </div>
+          )}
+        </Field>
+        <Field label={t('ads.cta')} hint={t('ads.ctaHint')} optional>
+          {(id) => (
+            <Input
+              id={id}
+              maxLength={60}
+              placeholder={t('ads.ctaDefault')}
+              value={form.cta}
+              onChange={(e) => set('cta', e.target.value)}
+              data-testid="ad-cta"
+            />
+          )}
+        </Field>
+        <Field label={t('ads.weight')} hint={t('ads.weightHint')}>
+          {() => (
+            <Segmented
+              value={String(form.weight) as '1' | '2' | '3'}
+              options={([1, 2, 3] as const).map((w) => ({
+                value: String(w) as '1' | '2' | '3',
+                label: t(`ads.weights.w${w}`),
+              }))}
+              onChange={(v) => set('weight', Number(v) as 1 | 2 | 3)}
+              testId="ad-weight"
+            />
+          )}
+        </Field>
+        <Field
           label={t('ads.duration')}
           hint={t('ads.durationHint', { n: defaultIntervalSeconds })}
           optional
@@ -891,6 +1169,178 @@ function AdDialog({
             />
           )}
         </Field>
+        <Field label={t('ads.days')} hint={t('ads.daysHint')} className="span-2">
+          {() => (
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} data-testid="ad-days">
+              {DAYS.map((name, d) => {
+                const on = (form.daysMask & (1 << d)) !== 0;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    className="chip"
+                    aria-pressed={on}
+                    onClick={() =>
+                      set('daysMask', on ? form.daysMask & ~(1 << d) : form.daysMask | (1 << d))
+                    }
+                    data-testid={`ad-day-${d}`}
+                  >
+                    {t(`ads.dayShort.${name}`)}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={form.daysMask === 127}
+                onClick={() => set('daysMask', 127)}
+              >
+                {t('ads.daysAll')}
+              </button>
+            </div>
+          )}
+        </Field>
+        <Field
+          label={t('ads.hours')}
+          hint={t('ads.hoursHint')}
+          className="span-2"
+          optional
+          error={hoursInvalid ? t('ads.hoursInvalid') : undefined}
+        >
+          {() => (
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <Clock3 size={14} className="muted" />
+              <span className="muted">{t('ads.hoursFrom')}</span>
+              <Input
+                type="time"
+                value={form.timeFrom}
+                onChange={(e) => set('timeFrom', e.target.value)}
+                style={{ maxWidth: 130 }}
+                data-testid="ad-time-from"
+              />
+              <span className="muted">{t('ads.hoursTo')}</span>
+              <Input
+                type="time"
+                value={form.timeTo}
+                onChange={(e) => set('timeTo', e.target.value)}
+                style={{ maxWidth: 130 }}
+                data-testid="ad-time-to"
+              />
+              {(form.timeFrom || form.timeTo) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    set('timeFrom', '');
+                    set('timeTo', '');
+                  }}
+                >
+                  {t('ads.hoursAllDay')}
+                </Button>
+              )}
+            </div>
+          )}
+        </Field>
+        {stations.length > 0 && (
+          <Field label={t('ads.stations')} hint={t('ads.stationsHint')} className="span-2">
+            {() => (
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} data-testid="ad-stations">
+                <button
+                  type="button"
+                  className="chip"
+                  aria-pressed={form.stationIds.length === 0}
+                  onClick={() => set('stationIds', [])}
+                >
+                  {t('ads.stationsAll')}
+                </button>
+                {stations.map((st) => {
+                  const on = form.stationIds.includes(st.id);
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      className="chip"
+                      aria-pressed={on}
+                      onClick={() =>
+                        set(
+                          'stationIds',
+                          on
+                            ? form.stationIds.filter((x) => x !== st.id)
+                            : [...form.stationIds, st.id],
+                        )
+                      }
+                      data-testid={`ad-station-${st.code}`}
+                    >
+                      {st.code}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+        )}
+        <Field
+          label={t('ads.video')}
+          hint={t('ads.videoHint', { mb: videoMb })}
+          className="span-2"
+          optional
+          error={videoLinkInvalid ? t('common.invalid') : undefined}
+        >
+          {() => (
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  ref={videoInput}
+                  type="file"
+                  accept="video/mp4,video/webm"
+                  hidden
+                  onChange={(e) => {
+                    pickVideo(e.target.files?.[0] ?? null);
+                    e.target.value = '';
+                  }}
+                  data-testid="ad-video-file"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => videoInput.current?.click()}
+                  disabled={save.isPending}
+                >
+                  <Upload size={14} /> {t('ads.videoUpload')}
+                </Button>
+                <Input
+                  value={videoLink}
+                  placeholder={t('ads.videoLinkPlaceholder')}
+                  onChange={(e) => setVideoLink(e.target.value)}
+                  style={{ flex: 1, minWidth: 220 }}
+                  data-testid="ad-video-link"
+                />
+                {currentVideo && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setPendingVideo({ kind: 'remove' });
+                      setVideoLink('');
+                    }}
+                    data-testid="ad-video-remove"
+                  >
+                    <X size={14} /> {t('ads.videoRemove')}
+                  </Button>
+                )}
+              </div>
+              {currentVideo && (
+                <div className="ad-video-current" data-testid="ad-video-current">
+                  <Film size={14} />
+                  <span className="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {pendingVideo?.kind === 'upload'
+                      ? `${pendingVideo.file.name} · ${t('ads.videoPending')}`
+                      : currentVideo}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </Field>
         {kind === 'custom' && (
           <div className="span-2">
             <ProductImageField
@@ -901,6 +1351,65 @@ function AdDialog({
             />
           </div>
         )}
+        <div className="span-2">
+          <AdPreview
+            ad={
+              ad ?? {
+                id: 'new',
+                kind,
+                productId: product?.id ?? null,
+                productName: product?.name ?? null,
+                productSku: null,
+                productPriceCents: product?.priceCents ?? null,
+                productInStock: true,
+                productActive: true,
+                promoPriceCents: null,
+                title: null,
+                body: null,
+                imageUrl: initialProduct?.imageUrl ?? null,
+                badge: null,
+                theme: null,
+                durationSeconds: null,
+                startsAt: null,
+                endsAt: null,
+                enabled: true,
+                sortOrder: 0,
+                state: 'live',
+                style: null,
+                accent: null,
+                cta: null,
+                daysMask: 127,
+                timeFrom: null,
+                timeTo: null,
+                weight: 1,
+                stationIds: [],
+                videoUrl: null,
+                createdAt: '',
+                updatedAt: '',
+              }
+            }
+            defaultStyle={defaultStyle}
+            overrides={{
+              style: form.style || null,
+              accent: form.accent || null,
+              cta: form.cta.trim() || null,
+              badge: form.badge.trim() || null,
+              title: kind === 'custom' ? form.title.trim() || null : undefined,
+              body: form.body.trim() || null,
+              theme: form.theme === 'midnight' ? null : form.theme,
+              promoPriceCents: promoCents,
+              videoUrl: videoLink.trim() || currentVideo,
+              imageUrl:
+                pendingImage?.kind === 'upload'
+                  ? pendingImage.previewUrl
+                  : pendingImage?.kind === 'link'
+                    ? pendingImage.url
+                    : pendingImage?.kind === 'remove'
+                      ? null
+                      : (ad?.imageUrl ?? initialProduct?.imageUrl ?? null),
+            }}
+          />
+        </div>
         {error && (
           <div className="span-2">
             <Alert tone="danger">{error}</Alert>

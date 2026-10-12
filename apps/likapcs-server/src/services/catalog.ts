@@ -18,6 +18,7 @@ import type {
   TaxCategorySummary,
   UpdateProductInput,
 } from '@likapcs/shared';
+import { productListQuerySchema } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
@@ -51,6 +52,8 @@ interface ProductRow {
   storage_location: string | null;
   image_path: string | null;
   is_active: boolean;
+  client_menu: boolean;
+  client_menu_order: number;
   created_at: Date;
   updated_at: Date;
   promo_price_cents: string | null;
@@ -64,7 +67,7 @@ const PRODUCT_SELECT = `
          COALESCE(u.is_decimal, false) AS unit_is_decimal,
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
-         p.storage_location, p.image_path, p.is_active, p.created_at, p.updated_at,
+         p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
@@ -261,6 +264,8 @@ export class CatalogService {
       description: row.description,
       storageLocation: row.storage_location,
       isActive: row.is_active,
+      clientMenu: row.client_menu,
+      clientMenuOrder: row.client_menu_order,
       imageUrl: ProductImageStore.urlFor(row.image_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
@@ -291,6 +296,7 @@ export class CatalogService {
       where.push(`p.category_id = $${values.length}`);
     }
     if (query.lowStock) where.push('p.track_stock AND p.stock_milli <= p.min_stock_milli');
+    if (query.menu) where.push('p.client_menu');
     if (query.q) {
       values.push(`%${query.q.toLowerCase()}%`, query.q);
       where.push(
@@ -346,6 +352,45 @@ export class CatalogService {
     throw notFound('No product with this barcode or SKU');
   }
 
+  /**
+   * PC menu (0.10.0): the products customers can order from their seat, in this order. Replaces
+   * the whole list — everything else leaves the menu.
+   */
+  async setClientMenu(productIds: string[], actor: AuditActor): Promise<ProductSummary[]> {
+    const unique = [...new Set(productIds)];
+    await withTransaction(this.pool, async (client) => {
+      if (unique.length) {
+        const found = await client.query<{ id: string }>(
+          'SELECT id FROM products WHERE id = ANY($1::uuid[]) AND is_active',
+          [unique],
+        );
+        if (found.rowCount !== unique.length)
+          throw badRequest('Only active products can be offered on the PC menu');
+      }
+      await client.query(
+        `UPDATE products SET client_menu = false, client_menu_order = 0
+          WHERE client_menu AND NOT (id = ANY($1::uuid[]))`,
+        [unique],
+      );
+      for (const [i, id] of unique.entries()) {
+        await client.query(
+          'UPDATE products SET client_menu = true, client_menu_order = $2 WHERE id = $1',
+          [id, (i + 1) * 10],
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'catalog.menu.updated',
+        entityType: 'product',
+        entityId: null,
+        details: { products: unique.length },
+      });
+    });
+    const r = await this.listProducts(
+      productListQuerySchema.parse({ menu: true, active: 'active', pageSize: 500 }),
+    );
+    return r.items.sort((a, b) => a.clientMenuOrder - b.clientMenuOrder);
+  }
+
   async createProduct(input: ProductInput, actor: AuditActor): Promise<ProductSummary> {
     return withTransaction(this.pool, async (client) => {
       const sku = input.sku?.trim() || (await nextSku(client));
@@ -353,8 +398,9 @@ export class CatalogService {
         .query<{ id: string }>(
           `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
                                  average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
-                                 allow_negative_stock, track_stock, description, storage_location, is_active, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
+                                 allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
+                                 client_menu)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
           [
             input.name,
             sku,
@@ -373,6 +419,7 @@ export class CatalogService {
             input.storageLocation,
             input.isActive,
             actor.userId ?? null,
+            input.clientMenu,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -433,6 +480,7 @@ export class CatalogService {
       description: 'description',
       storageLocation: 'storage_location',
       isActive: 'is_active',
+      clientMenu: 'client_menu',
     };
     return withTransaction(this.pool, async (client) => {
       const sets: string[] = [];

@@ -6,6 +6,7 @@
  * authoritative on the server; this panel only mirrors them and ticks locally between refreshes.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Check, Clock, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
 import {
@@ -565,7 +566,11 @@ function ActiveSession({
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
         end: t('sessions.ended', {
-          total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+          total: fmt.money(
+            result.payment?.totalCents ??
+              result.session.finalPriceCents ??
+              result.session.currentPriceCents,
+          ),
         }),
         cancel: t('sessions.cancelled'),
       };
@@ -595,8 +600,17 @@ function ActiveSession({
       <div className="row row--between">
         <div className="row" style={{ gap: 8 }}>
           <Badge tone={s.status === 'paused' ? 'warning' : 'accent'} dot>
-            {t(`sessions.status.${s.status}`)}
+            {s.status === 'paused' && s.pausedBy
+              ? t(`sessions.pausedBy.${s.pausedBy}`)
+              : t(`sessions.status.${s.status}`)}
           </Badge>
+          {s.status === 'paused' && s.autoResumeAt && (
+            <span className="muted num" data-testid="session-auto-resume">
+              {t('sessions.autoResumeIn', {
+                time: formatHms(Math.max(0, Math.round((Date.parse(s.autoResumeAt) - now) / 1000))),
+              })}
+            </span>
+          )}
           <Badge tone="default">
             {s.billingMode === 'prepaid' ? t('sessions.prepaidShort') : t('sessions.postpaidShort')}
           </Badge>
@@ -649,6 +663,17 @@ function ActiveSession({
           <div className="row row--between">
             <span className="muted">{t('sessions.receipt')}</span>
             <span className="num">{s.receiptNo}</span>
+          </div>
+        )}
+        {s.openOrdersCount > 0 && (
+          <div className="row row--between" data-testid="session-open-orders">
+            <span className="muted">{t('sessions.openOrders')}</span>
+            <Link to="/orders" className="num">
+              {t('sessions.openOrdersN', {
+                n: s.openOrdersCount,
+                amount: fmt.money(s.openOrdersCents),
+              })}
+            </Link>
           </div>
         )}
       </div>
@@ -742,6 +767,9 @@ export function EndSessionDialog({
   const { can } = useAuth();
   const fmt = useFormat();
   const postpaid = session.billingMode === 'postpaid';
+  // Drinks / snacks accepted "on the bill" are settled on this receipt (prepaid too).
+  const ordersCents = session.openOrdersCents;
+  const bills = postpaid || ordersCents > 0;
   // Frozen at open: the first render's live values and the moment they were taken.
   const [stopped] = useState(() => ({
     at: Date.now(),
@@ -752,10 +780,11 @@ export function EndSessionDialog({
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
   const discountInvalid =
     discountCents === null || discountCents < 0 || discountCents > stopped.priceCents;
-  const total = postpaid ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
+  const timeCents = postpaid ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
+  const total = timeCents + ordersCents;
   const { customer, pickedId, setCustomer } = useSessionCustomer(session);
   const tender = useTender({ totalCents: total, customer });
-  const ready = !postpaid || (!discountInvalid && tender.covered);
+  const ready = !bills || (!discountInvalid && tender.covered);
   const submit = () => {
     if (!ready || busy) return;
     onConfirm(
@@ -766,7 +795,9 @@ export function EndSessionDialog({
             stoppedSecondsAgo: Math.max(0, Math.floor((Date.now() - stopped.at) / 1000)),
             customerId: pickedId,
           }
-        : {},
+        : bills
+          ? { payments: tender.payments, customerId: pickedId }
+          : {},
     );
   };
   useEnterSubmits(submit);
@@ -777,7 +808,7 @@ export function EndSessionDialog({
       onClose={onClose}
       title={t('sessions.endTitle')}
       description={postpaid ? t('sessions.clockStoppedHint') : t('sessions.endBody')}
-      size={postpaid ? 'md' : 'sm'}
+      size={bills ? 'md' : 'sm'}
       footer={
         <>
           <Button onClick={onClose}>
@@ -792,7 +823,7 @@ export function EndSessionDialog({
             data-testid="session-end-confirm"
           >
             <Square size={14} />{' '}
-            {postpaid && tender.mode === 'credit' && tender.creditCents > 0
+            {bills && tender.mode === 'credit' && tender.creditCents > 0
               ? t('pos.completeOnTab')
               : t('sessions.end')}{' '}
             <Kbd>Enter</Kbd>
@@ -806,19 +837,44 @@ export function EndSessionDialog({
             <span className="muted">{t('sessions.billable')}</span>
             <span className="num">{formatHms(stopped.elapsedSeconds)}</span>
           </div>
-          {postpaid && (discountCents ?? 0) > 0 && (
+          {postpaid && ((discountCents ?? 0) > 0 || ordersCents > 0) && (
             <div className="quote__row">
-              <span className="muted">{t('sessions.currentPrice')}</span>
-              <span className="num">{fmt.money(stopped.priceCents)}</span>
+              <span className="muted">
+                {ordersCents > 0 ? t('sessions.timePrice') : t('sessions.currentPrice')}
+              </span>
+              <span className="num">
+                {(discountCents ?? 0) > 0 ? fmt.money(timeCents) : fmt.money(stopped.priceCents)}
+              </span>
             </div>
           )}
           {!postpaid && (
-            <div className="quote__row quote__row--total">
+            <div className={`quote__row ${ordersCents > 0 ? '' : 'quote__row--total'}`}>
               <span>{t('sessions.paid')}</span>
               <strong className="num">{fmt.money(session.currentPriceCents)}</strong>
             </div>
           )}
+          {ordersCents > 0 && (
+            <>
+              <div className="quote__row" data-testid="session-end-orders">
+                <span className="muted">
+                  {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
+                </span>
+                <span className="num">{fmt.money(ordersCents)}</span>
+              </div>
+              <div className="quote__row quote__row--total">
+                <span>{t('sessions.totalDue')}</span>
+                <strong className="num" data-testid="session-end-total">
+                  {fmt.money(total)}
+                </strong>
+              </div>
+            </>
+          )}
         </div>
+        {ordersCents > 0 && (
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            {t('sessions.endOrdersHint')}
+          </p>
+        )}
         {postpaid && can(PERMISSIONS.POS_DISCOUNT) && (
           <Field
             label={t('sessions.discount')}
@@ -838,7 +894,7 @@ export function EndSessionDialog({
             )}
           </Field>
         )}
-        {postpaid && (
+        {bills && (
           <TenderPanel
             tender={tender}
             onSubmit={submit}

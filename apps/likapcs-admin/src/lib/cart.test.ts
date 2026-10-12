@@ -28,6 +28,8 @@ const product = (over: Partial<ProductSummary>): ProductSummary => ({
   averageCostCents: 90,
   sellingPriceCents: 150,
   promoPriceCents: null,
+  clientMenu: false,
+  clientMenuOrder: 0,
   priceIncludesTax: true,
   imageUrl: null,
   stockMilli: 10_000,

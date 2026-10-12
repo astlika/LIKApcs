@@ -15,6 +15,7 @@ import {
   initialState,
   reduce,
   sessionView,
+  baseWindowModeOf,
 } from './protocol';
 
 const T0 = Date.parse('2026-10-09T12:00:00.000Z');
@@ -222,6 +223,11 @@ describe('reduce()', () => {
       paidCents: 150,
       owedCents: null,
     });
+    // A pause without a `pausedBy` (0.9 servers) counts as a staff pause; the covered screen is
+    // the locked window, the widget comes back with the resume.
+    expect(state.session?.pausedBy).toBe('staff');
+    expect(state.session?.autoResumeAt).toBeNull();
+    expect(baseWindowModeOf(state)).toBe('locked');
 
     r = reduce(
       state,
@@ -236,6 +242,8 @@ describe('reduce()', () => {
       seconds: 3540,
       paused: false,
     });
+    expect(state.session?.pausedBy).toBeNull();
+    expect(baseWindowModeOf(state)).toBe('overlay');
 
     r = reduce(
       state,
@@ -257,6 +265,45 @@ describe('reduce()', () => {
     expect(r.state.mode).toBe('locked');
     expect(r.state.session).toBeNull();
     expect(r.effects[0]).toMatchObject({ type: 'event', event: 'locked' });
+  });
+
+  it('keeps who paused and the automatic resume instant (0.10.0)', () => {
+    const autoResumeAt = new Date(T0 + 15 * 60_000).toISOString();
+    const started = reduce(
+      applyWelcome(initialState, welcome),
+      cmd({
+        command: 'session.start',
+        payload: { sessionId: 'g1', startedAt: new Date(T0).toISOString(), endsAt: null },
+      }),
+      T0,
+    ).state;
+    const paused = reduce(
+      started,
+      cmd({
+        command: 'session.pause',
+        payload: { sessionId: 'g1', remainingSeconds: null, pausedBy: 'customer', autoResumeAt },
+      }),
+      T0 + 1000,
+    ).state;
+    expect(paused.session).toMatchObject({ status: 'paused', pausedBy: 'customer', autoResumeAt });
+    expect(baseWindowModeOf(paused)).toBe('locked');
+    // The welcome after a reconnect carries the same facts.
+    const fromWelcome = applyWelcome(initialState, {
+      ...welcome,
+      session: {
+        id: 'g1',
+        status: 'paused',
+        startedAt: new Date(T0).toISOString(),
+        endsAt: null,
+        pausedAt: new Date(T0 + 1000).toISOString(),
+        pausedBy: 'grace',
+        autoResumeAt: null,
+        remainingSeconds: null,
+      },
+    });
+    expect(fromWelcome.session).toMatchObject({ pausedBy: 'grace', autoResumeAt: null });
+    expect(baseWindowModeOf(fromWelcome)).toBe('locked');
+    expect(baseWindowModeOf({ ...fromWelcome, mode: 'free', session: null })).toBe('overlay');
   });
 
   it('rejects inconsistent session commands with an error instead of guessing', () => {
@@ -381,6 +428,11 @@ describe('reduce()', () => {
         currency: 'EUR',
         staffLoginUsername: 'admin',
         customerLogin: true,
+        customerPause: true,
+        customerResume: true,
+        pauseMaxMinutes: 15,
+        orders: true,
+        ordersNote: false,
         ads: {
           enabled: true,
           layout: 'full',
@@ -400,6 +452,9 @@ describe('reduce()', () => {
           motion: true,
           background: 'ocean',
           tickerText: 'Happy hour 18:00 – 20:00',
+          style: 'poster',
+          shuffle: false,
+          promoCountdown: true,
         },
       },
       businessName: 'Arena 2',

@@ -6,7 +6,44 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-_Nothing yet._
+Work in progress towards **0.10.0** (migration 0020). Everything below compiles and is covered by
+unit / integration tests (shared 56, server 183, admin 35, client 25); the end-to-end smoke runs,
+the protocol document and the release itself are still to come.
+
+### Added
+
+- **Pause really pauses the PC.** When the staff pause a session in LIKApcs (or the connection
+  grace period pauses it), LIKApcs-Client now **covers the whole screen** with a _Session paused_
+  cover: who paused, the frozen timer, and a big **Resume** button. The customer can also pause
+  from the widget (**Pause** pill) and a customer pause ends by itself after
+  `sessions.pause_max_minutes` (default 15, `0` = never) so time cannot be parked for free. Both
+  switches live in Settings › Stations › _Pause_; the station dialog shows who paused and the
+  automatic-resume countdown.
+- **Orders from the PC ("Porosit").** During a session the customer presses **Order** in the
+  widget and picks drinks / snacks from the menu the owner curated (Products › _On the PC menu_
+  switch, or **Orders › Menu** to pick and sort everything at once). Prices are frozen on the order
+  (promo-aware, the POS price); an optional note can be added. In LIKApcs the order arrives
+  instantly (bell + badge + the new **Orders** page): **Accept — pay now** records a normal POS
+  sale, **Accept — on the bill** settles it together with the session (the lines join the
+  session's sale when it ends; the end-session dialog shows _Time + Orders_), **Reject** sends a
+  reason the PC shows. Stock is deducted only when sold / billed; money moves only through
+  `sales` / `payments`. Settings › Stations › _Orders_: on/off, allow note, default settlement.
+- **Ads v2.** Per-slide **style** (_poster_ edge-to-edge photo, _hero_ picture + text, _split_
+  half/half, _banner_ strip — owner default in Settings › Client screen), **accent colour**,
+  **call-to-action** line, **weekly schedule** (weekdays + a daily time window that may wrap
+  midnight), **rotation weight** (1–3), **per-station targeting**, **video slides** (upload or
+  link, ≤ 80 MB, served by the server), **"ends in …" countdown** on promos, **shuffle**, two new
+  transitions (_flip_, _blur_), a new **menu / price-board layout**, a live style-aware preview in
+  the ad dialog and **Duplicate** for product ads. The PC re-fetches the list exactly when a
+  schedule or promo flips (`nextChangeAt`).
+
+### Changed
+
+- `GET /client/ads` now returns `{ items, nextChangeAt }`; `AdSummary.stationIds` is always an
+  array; `session.pause` carries `pausedBy` / `autoResumeAt`; welcome carries open `orders`; new
+  `server.order` push. New device routes: `/client/menu`, `/client/orders*`,
+  `/client/session-pause`, `/client/session-resume`. New Admin routes: `/orders*`,
+  `/catalog/menu`, `/ads/:id/video`, `/ads/:id/duplicate`.
 
 ## [0.9.0] - 2026-10-12
 

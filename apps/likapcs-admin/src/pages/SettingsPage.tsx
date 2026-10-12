@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Check, Megaphone, Save, Undo2 } from 'lucide-react';
+import { Check, Megaphone, Save, Undo2, UtensilsCrossed } from 'lucide-react';
 import {
   AD_THEMES,
   CLIENT_ADS_CAPTIONS,
   CLIENT_ADS_GRIDS,
   CLIENT_ADS_IMAGE_FITS,
   CLIENT_ADS_LAYOUTS,
+  CLIENT_ADS_STYLES,
   CLIENT_ADS_TRANSITIONS,
   CLIENT_LOCK_TITLES,
   adsGridSize,
@@ -439,6 +440,73 @@ export function SettingsPage() {
         </Card>
       )}
       {tab === 'stations' && (
+        <Card title={t('settings.pause.title')} subtitle={t('settings.pause.subtitle')}>
+          <div className="grid grid--2">
+            <div data-testid="settings-customer-pause">
+              {bool(
+                'sessions.customer_pause',
+                t('settings.pause.customerPause'),
+                t('settings.pause.customerPauseHint'),
+              )}
+            </div>
+            <div data-testid="settings-customer-resume">
+              {bool(
+                'sessions.customer_resume',
+                t('settings.pause.customerResume'),
+                t('settings.pause.customerResumeHint'),
+              )}
+            </div>
+            {number('sessions.pause_max_minutes', t('settings.pause.maxMinutes'), {
+              min: 0,
+              max: 240,
+              hint: t('settings.pause.maxMinutesHint'),
+            })}
+          </div>
+        </Card>
+      )}
+      {tab === 'stations' && (
+        <Card title={t('settings.orders.title')} subtitle={t('settings.orders.subtitle')}>
+          <div className="grid grid--2">
+            <div data-testid="settings-orders-enabled">
+              {bool(
+                'orders.enabled',
+                t('settings.orders.enabled'),
+                t('settings.orders.enabledHint'),
+              )}
+            </div>
+            <div data-testid="settings-orders-note">
+              {bool(
+                'orders.allow_note',
+                t('settings.orders.allowNote'),
+                t('settings.orders.allowNoteHint'),
+              )}
+            </div>
+            <Field
+              label={t('settings.orders.settlement')}
+              hint={t('settings.orders.settlementHint')}
+              className="span-2"
+            >
+              {() => (
+                <Segmented
+                  value={current['orders.settlement']}
+                  options={(['ask', 'pay_now', 'on_bill'] as const).map((v) => ({
+                    value: v,
+                    label: t(`settings.orders.settlements.${v}`),
+                  }))}
+                  onChange={(v) => !ro && set('orders.settlement', v)}
+                  testId="settings-orders-settlement"
+                />
+              )}
+            </Field>
+            <div className="span-2">
+              <Link to="/orders?tab=menu" className="btn btn--sm">
+                <UtensilsCrossed size={14} /> {t('orders.menuTitle')}
+              </Link>
+            </div>
+          </div>
+        </Card>
+      )}
+      {tab === 'stations' && (
         <Card title={t('settings.requests.title')} subtitle={t('settings.requests.subtitle')}>
           <div className="grid grid--2">
             <div className="span-2" data-testid="settings-requests-enabled">
@@ -636,6 +704,23 @@ export function SettingsPage() {
                       )}
                     </Field>
                   )}
+                  <Field
+                    label={t('settings.client.adsStyle')}
+                    hint={t('settings.client.adsStyleHint')}
+                    className="span-2"
+                  >
+                    {() => (
+                      <Segmented
+                        value={current['client.ads_style']}
+                        options={CLIENT_ADS_STYLES.map((v) => ({
+                          value: v,
+                          label: t(`ads.styles.${v}`),
+                        }))}
+                        onChange={(v) => !ro && set('client.ads_style', v)}
+                        testId="screen-style"
+                      />
+                    )}
+                  </Field>
                   <Field label={t('settings.client.adsTransition')} className="span-2">
                     {() => (
                       <Segmented
@@ -678,6 +763,20 @@ export function SettingsPage() {
                         'client.ads_motion',
                         t('settings.client.motion'),
                         t('settings.client.motionHint'),
+                      )}
+                    </div>
+                    <div data-testid="screen-shuffle">
+                      {bool(
+                        'client.ads_shuffle',
+                        t('settings.client.adsShuffle'),
+                        t('settings.client.adsShuffleHint'),
+                      )}
+                    </div>
+                    <div data-testid="screen-promo-countdown">
+                      {bool(
+                        'client.ads_promo_countdown',
+                        t('settings.client.adsPromoCountdown'),
+                        t('settings.client.adsPromoCountdownHint'),
                       )}
                     </div>
                   </div>

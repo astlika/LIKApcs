@@ -23,6 +23,9 @@ import { PricingService } from './services/pricing.js';
 import { SessionsService } from './services/sessions.js';
 import { SessionRequestsService } from './services/requests.js';
 import { requestRoutes } from './routes/requests.js';
+import { OrdersService } from './services/orders.js';
+import { AdVideoStore } from './services/ad-videos.js';
+import { orderRoutes } from './routes/orders.js';
 import { pricingRoutes } from './routes/pricing.js';
 import { adsRoutes } from './routes/ads.js';
 import { catalogRoutes } from './routes/catalog.js';
@@ -93,6 +96,7 @@ export interface Services {
   commands: CommandsService;
   wake: WakeService;
   requests: SessionRequestsService;
+  orders: OrdersService;
 }
 
 declare module 'fastify' {
@@ -182,8 +186,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   const productImages = new ProductImageStore(path.join(config.uploadDir, 'products'));
   const catalog = new CatalogService(pool, settings, productImages);
-  const ads = new AdsService(pool, productImages);
+  const ads = new AdsService(
+    pool,
+    productImages,
+    new AdVideoStore(path.join(config.uploadDir, 'videos')),
+  );
   const sales = new SalesService(pool, settings, cash, debts);
+  // Orders from the PC (0.10.0): accepted "pay now" through the sales service, "on the bill"
+  // settled inside the session's end transaction.
+  const orders = new OrdersService(pool, hub, settings, stations, sales);
+  sessions.useOrders(orders);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
   const reports = new ReportsService(pool, cash, settings);
@@ -238,6 +250,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     updates,
     invoices,
     requests,
+    orders,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -277,6 +290,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
       await api.register(requestRoutes);
+      await api.register(orderRoutes);
       await api.register(catalogRoutes);
       await api.register(adsRoutes);
       await api.register(salesRoutes);

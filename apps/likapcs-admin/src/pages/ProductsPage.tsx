@@ -226,6 +226,9 @@ export function ProductsPage() {
                           {p.isActive && p.lowStock && (
                             <Badge tone="warning">{t('products.lowBadge')}</Badge>
                           )}
+                          {p.clientMenu && (
+                            <Badge tone="info">{t('products.clientMenuBadge')}</Badge>
+                          )}
                         </div>
                         {p.barcodes.length > 0 && (
                           <div className="faint" style={{ fontSize: 12 }}>
@@ -368,6 +371,7 @@ interface ProductForm {
   description: string;
   storageLocation: string;
   isActive: boolean;
+  clientMenu: boolean;
   initialStock: string;
 }
 function formFrom(p: ProductSummary | null): ProductForm {
@@ -387,6 +391,7 @@ function formFrom(p: ProductSummary | null): ProductForm {
     description: p?.description ?? '',
     storageLocation: p?.storageLocation ?? '',
     isActive: p?.isActive ?? true,
+    clientMenu: p?.clientMenu ?? false,
     initialStock: '',
   };
 }
@@ -483,6 +488,7 @@ function ProductDialog({
         description: form.description.trim() || null,
         storageLocation: form.storageLocation.trim() || null,
         isActive: form.isActive,
+        clientMenu: form.clientMenu,
       };
       let saved: ProductSummary;
       if (product) {
@@ -802,6 +808,20 @@ function ProductDialog({
               label={t('products.active')}
             />
           )}
+          <div data-testid="product-client-menu">
+            <Switch
+              checked={form.clientMenu}
+              onChange={(v) => set('clientMenu', v)}
+              label={
+                <span>
+                  {t('products.clientMenu')}
+                  <div className="faint" style={{ fontSize: 12 }}>
+                    {t('products.clientMenuHint')}
+                  </div>
+                </span>
+              }
+            />
+          </div>
         </div>
         <Field label={t('products.description')} optional>
           {(id) => (

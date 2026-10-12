@@ -6,6 +6,7 @@ import type {
   ClientAdsGrid,
   ClientAdsImageFit,
   ClientAdsLayout,
+  ClientAdsStyle,
   ClientAdsTransition,
   ClientLockTitle,
   ClientWidgetPosition,
@@ -189,6 +190,9 @@ export interface ServerWelcomeToClient {
     startedAt: string;
     endsAt: string | null;
     pausedAt: string | null;
+    /** 0.10.0: who paused and when a customer pause ends by itself. */
+    pausedBy?: 'staff' | 'customer' | 'grace' | null;
+    autoResumeAt?: string | null;
     remainingSeconds: number | null;
     billing?: ClientSessionBilling;
   };
@@ -198,6 +202,27 @@ export interface ServerWelcomeToClient {
   display?: ClientDisplayConfig;
   /** A customer's request for time still waiting on this PC (0.9.0), so a restart keeps showing it. */
   request?: ServerRequestUpdate['request'] | null;
+  /** Orders of the running session still open on this PC (0.10.0), newest first. */
+  orders?: ServerOrderUpdate['order'][];
+}
+
+/**
+ * An order from this PC changed (accepted / paid / rejected / …) — pushed so the customer sees
+ * the answer instantly. Display facts only; nothing the PC must act on.
+ */
+export interface ServerOrderUpdate {
+  type: 'server.order';
+  order: {
+    id: string;
+    number: number;
+    status: 'pending' | 'accepted' | 'paid' | 'billed' | 'rejected' | 'cancelled' | 'void';
+    settlement: 'pay_now' | 'on_bill' | null;
+    totalCents: number;
+    reason: string | null;
+    items: { name: string; quantity: number; lineTotalCents: number }[];
+    requestedAt: string;
+    decidedAt: string | null;
+  };
 }
 
 /**
@@ -228,6 +253,13 @@ export interface ClientDisplayConfig {
   staffLoginUsername: string;
   /** Show the small "Client" button (customer login → session requests, 0.9.0). */
   customerLogin: boolean;
+  /** 0.10.0: the customer may pause / resume from the PC; a customer pause ends after this many minutes (0 = never). */
+  customerPause: boolean;
+  customerResume: boolean;
+  pauseMaxMinutes: number;
+  /** 0.10.0: orders from the seat (the "Order" button in the widget) and whether a note may be added. */
+  orders: boolean;
+  ordersNote: boolean;
   ads: {
     enabled: boolean;
     layout: ClientAdsLayout;
@@ -255,6 +287,10 @@ export interface ClientDisplayConfig {
     background: AdTheme;
     /** Scrolling line at the bottom; empty = none. */
     tickerText: string;
+    /** 0.10.0: default slide style, shuffled rotation, "offer ends in" countdown on promos. */
+    style: ClientAdsStyle;
+    shuffle: boolean;
+    promoCountdown: boolean;
   };
 }
 
@@ -293,6 +329,16 @@ export interface ClientAdItem {
   theme: AdTheme | null;
   /** Seconds this slide stays; null = `display.ads.intervalSeconds`. */
   durationSeconds: number | null;
+  /** 0.10.0 */
+  style: ClientAdsStyle | null;
+  accent: string | null;
+  cta: string | null;
+  /** Promo / slide end instant (for the "ends in …" countdown), when scheduled. */
+  endsAt: string | null;
+  /** 1–3: the slide is repeated that many times in the rotation. */
+  weight: number;
+  /** Video slide (server-relative or https URL); shown instead of the picture. */
+  videoUrl: string | null;
 }
 
 export interface ServerHeartbeatAck {
@@ -339,6 +385,7 @@ export type ServerToClientMessage =
   | ServerCommand
   | ServerDisplay
   | ServerRequestUpdate
+  | ServerOrderUpdate
   | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
@@ -354,6 +401,8 @@ export const ADMIN_EVENTS = [
   'permissions.changed',
   /** A customer's session request was created / answered / cancelled (payload: SessionRequest). */
   'request.changed',
+  /** An order from a PC was created / answered / settled (payload: StationOrder). */
+  'order.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

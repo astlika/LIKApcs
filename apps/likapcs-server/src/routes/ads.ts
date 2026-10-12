@@ -6,6 +6,7 @@ import type { Readable } from 'node:stream';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
+  AD_VIDEO_MAX_BYTES,
   PERMISSIONS,
   PRODUCT_IMAGE_MAX_BYTES,
   PRODUCT_IMAGE_TYPES,
@@ -17,11 +18,13 @@ import {
   productImageFromUrlSchema,
   uuidSchema,
 } from '@likapcs/shared';
+import fs from 'node:fs';
 import { AppError } from '../errors.js';
+import { AD_VIDEO_TYPES } from '../services/ad-videos.js';
 
 export const adsRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
-  app.addContentTypeParser([...PRODUCT_IMAGE_TYPES], (_request, payload, done) =>
+  app.addContentTypeParser([...PRODUCT_IMAGE_TYPES, ...AD_VIDEO_TYPES], (_request, payload, done) =>
     done(null, payload),
   );
   const idParams = z.object({ id: uuidSchema });
@@ -88,4 +91,55 @@ export const adsRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/ads/:id/image', manage, async (request) =>
     services.ads.clearImage(idParams.parse(request.params).id, actorOf(request)),
   );
+
+  // ─── 0.10.0: video slides, duplicate ──────────────────────────────────────────
+  app.put('/ads/:id/video', { ...manage, bodyLimit: AD_VIDEO_MAX_BYTES }, async (request) => {
+    const { id } = idParams.parse(request.params);
+    const body = request.body as NodeJS.ReadableStream | undefined;
+    const type = (request.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (
+      !body ||
+      typeof (body as { pipe?: unknown }).pipe !== 'function' ||
+      !(AD_VIDEO_TYPES as readonly string[]).includes(type)
+    ) {
+      throw new AppError(
+        415,
+        'unsupported_media_type',
+        `Send the video as one of: ${AD_VIDEO_TYPES.join(', ')}`,
+      );
+    }
+    await services.ads.get(id);
+    const fileName = await services.ads.videos.saveStream(body as unknown as Readable);
+    return services.ads.setVideo(id, fileName, actorOf(request));
+  });
+  app.post('/ads/:id/duplicate', manage, async (request, reply) =>
+    reply
+      .code(201)
+      .send(await services.ads.duplicate(idParams.parse(request.params).id, actorOf(request))),
+  );
+  /** Videos for the PCs (no auth, like product pictures: random unguessable names). */
+  app.get('/files/videos/:name', async (request, reply) => {
+    const { name } = z.object({ name: z.string().min(1).max(64) }).parse(request.params);
+    const file = services.ads.videos.resolve(name);
+    if (!file || !services.ads.videos.exists(name))
+      throw new AppError(404, 'not_found', 'File not found');
+    const stat = fs.statSync(file.path);
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? '');
+    reply
+      .header('content-type', file.contentType)
+      .header('accept-ranges', 'bytes')
+      .header('cache-control', 'public, max-age=31536000, immutable');
+    if (range) {
+      const start = range[1] ? Number(range[1]) : 0;
+      const end = range[2] ? Math.min(Number(range[2]), stat.size - 1) : stat.size - 1;
+      if (start >= stat.size || start > end)
+        return reply.code(416).header('content-range', `bytes */${stat.size}`).send();
+      return reply
+        .code(206)
+        .header('content-range', `bytes ${start}-${end}/${stat.size}`)
+        .header('content-length', end - start + 1)
+        .send(fs.createReadStream(file.path, { start, end }));
+    }
+    return reply.header('content-length', stat.size).send(fs.createReadStream(file.path));
+  });
 };

@@ -43,9 +43,10 @@ import {
 } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import type { RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 import type { PricingService } from './pricing.js';
 import type { RequestCancelReason, SessionRequestsService } from './requests.js';
@@ -72,9 +73,12 @@ interface SessionRow {
   started_at: Date;
   ends_at: Date | null;
   paused_at: Date | null;
+  paused_by: SessionSummary['pausedBy'];
   total_paused_seconds: number;
   ended_at: Date | null;
   end_reason: SessionSummary['endReason'];
+  open_orders_cents: string | number;
+  open_orders_count: string | number;
   billable_seconds: number | null;
   quoted_price_cents: string | number | null;
   discount_cents: string | number;
@@ -91,9 +95,13 @@ const SESSION_SELECT = `
   SELECT g.id, g.station_id, s.code AS station_code, s.name AS station_name, g.device_id, g.customer_id,
          COALESCE(g.customer_name, c.name) AS customer_name, g.billing_mode, g.status,
          r.name AS rule_name, p.name AS package_name, g.rate_cents_per_hour, g.billing_terms,
-         g.planned_seconds, g.started_at, g.ends_at, g.paused_at, g.total_paused_seconds, g.ended_at,
+         g.planned_seconds, g.started_at, g.ends_at, g.paused_at, g.paused_by, g.total_paused_seconds, g.ended_at,
          g.end_reason, g.billable_seconds, g.quoted_price_cents, g.discount_cents, g.final_price_cents,
-         g.sale_id, sa.receipt_no, g.billed_at, u.full_name AS created_by_name, g.notes, g.created_at
+         g.sale_id, sa.receipt_no, g.billed_at, u.full_name AS created_by_name, g.notes, g.created_at,
+         (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
+           WHERE o.session_id = g.id AND o.status = 'accepted') AS open_orders_cents,
+         (SELECT COUNT(*)::int FROM station_orders o
+           WHERE o.session_id = g.id AND o.status = 'accepted') AS open_orders_count
     FROM gaming_sessions g
     JOIN stations s ON s.id = g.station_id
     LEFT JOIN customers c ON c.id = g.customer_id
@@ -103,6 +111,32 @@ const SESSION_SELECT = `
     LEFT JOIN users u ON u.id = g.created_by`;
 
 export type SessionMutationResult = SessionMutationResponse;
+
+/** One ordered product line that joins the session's sale (snapshot prices from the order). */
+export interface OrderLineForSale {
+  orderId: string;
+  productId: string;
+  name: string;
+  quantityMilli: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  trackStock: boolean;
+  allowNegative: boolean;
+  unitCostCents: number;
+}
+export interface SessionOrdersHook {
+  /** Locks and returns the lines of the session's accepted "on the bill" orders. */
+  openLinesForSession(client: DbClient, sessionId: string): Promise<OrderLineForSale[]>;
+  /** Marks those orders billed with the sale that settled them (same transaction). */
+  markBilled(
+    client: DbClient,
+    orderIds: string[],
+    saleId: string,
+    actor: AuditActor,
+  ): Promise<void>;
+  /** After commit: tell the Admin and the PC. */
+  announce(orderIds: string[]): Promise<void>;
+}
 
 export interface SessionActorContext extends AuditActor {
   permissions?: Set<string>;
@@ -176,6 +210,12 @@ export class SessionsService {
     this.requests = requests;
   }
 
+  /** Orders from the PC (0.10.0): "on the bill" orders are settled inside the end transaction. */
+  private orders: SessionOrdersHook | null = null;
+  useOrders(orders: SessionOrdersHook): void {
+    this.orders = orders;
+  }
+
   /**
    * Inside a session transaction: answer the request this action approves, or cancel the pending
    * ones it made moot. Returns the ids to announce once the transaction committed.
@@ -217,8 +257,18 @@ export class SessionsService {
 
   // ─── Mapping ─────────────────────────────────────────────────────────────────
 
+  /** Customer pauses end by themselves after `sessions.pause_max_minutes` (cached each tick). */
+  private pauseMaxMinutes = 15;
+
   mapRow(row: SessionRow, now: Date = new Date()): SessionSummary {
     const terms = termsFromRow(row);
+    const autoResumeAt =
+      row.status === 'paused' &&
+      row.paused_by === 'customer' &&
+      row.paused_at &&
+      this.pauseMaxMinutes > 0
+        ? new Date(row.paused_at.getTime() + this.pauseMaxMinutes * 60_000).toISOString()
+        : null;
     const live = row.status === 'active' || row.status === 'paused';
     const seconds = live
       ? billableSeconds({
@@ -249,6 +299,8 @@ export class SessionsService {
       startedAt: row.started_at.toISOString(),
       endsAt: row.ends_at?.toISOString() ?? null,
       pausedAt: row.paused_at?.toISOString() ?? null,
+      pausedBy: row.status === 'paused' ? row.paused_by : null,
+      autoResumeAt,
       totalPausedSeconds: row.total_paused_seconds,
       endedAt: row.ended_at?.toISOString() ?? null,
       endReason: row.end_reason,
@@ -262,6 +314,8 @@ export class SessionsService {
       billedAt: row.billed_at?.toISOString() ?? null,
       createdByName: row.created_by_name,
       notes: row.notes,
+      openOrdersCents: Number(row.open_orders_cents ?? 0),
+      openOrdersCount: Number(row.open_orders_count ?? 0),
       createdAt: row.created_at.toISOString(),
     };
   }
@@ -525,19 +579,20 @@ export class SessionsService {
     id: string,
     actor: SessionActorContext,
     at: Date = new Date(),
-    systemReason?: 'grace',
+    systemReason?: 'grace' | 'customer',
   ): Promise<SessionMutationResult> {
+    const pausedBy = systemReason ?? 'staff';
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.status !== 'active') throw conflict(`Session is ${row.status}, not active`);
       const pausedAt = at < row.started_at ? row.started_at : at;
       await client.query(
-        'UPDATE gaming_sessions SET status = $2, paused_at = $3, version = version + 1 WHERE id = $1',
-        [id, 'paused', pausedAt],
+        'UPDATE gaming_sessions SET status = $2, paused_at = $3, paused_by = $4, version = version + 1 WHERE id = $1',
+        [id, 'paused', pausedAt, pausedBy],
       );
       await this.addEvent(client, id, systemReason === 'grace' ? 'grace_ended' : 'paused', actor, {
         pausedAt: pausedAt.toISOString(),
-        reason: systemReason ?? 'staff',
+        reason: pausedBy,
       });
       return this.getById(id, client);
     });
@@ -552,7 +607,12 @@ export class SessionsService {
     const ack = await this.mirror(
       session,
       'session.pause',
-      { sessionId: id, remainingSeconds: remaining },
+      {
+        sessionId: id,
+        remainingSeconds: remaining,
+        pausedBy: session.pausedBy,
+        autoResumeAt: session.autoResumeAt,
+      },
       actor,
     );
     await this.broadcast(session);
@@ -563,6 +623,8 @@ export class SessionsService {
     id: string,
     actor: SessionActorContext,
     at: Date = new Date(),
+    /** `customer` = pressed Resume on the PC; `auto` = the customer pause ran past its limit. */
+    by: 'staff' | 'customer' | 'auto' = 'staff',
   ): Promise<SessionMutationResult> {
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
@@ -571,13 +633,14 @@ export class SessionsService {
       const pausedFor = Math.max(0, Math.floor((at.getTime() - row.paused_at.getTime()) / 1000));
       const endsAt = row.ends_at ? new Date(row.ends_at.getTime() + pausedFor * 1000) : null;
       await client.query(
-        `UPDATE gaming_sessions SET status = 'active', paused_at = NULL, total_paused_seconds = total_paused_seconds + $2,
-           ends_at = $3, version = version + 1 WHERE id = $1`,
+        `UPDATE gaming_sessions SET status = 'active', paused_at = NULL, paused_by = NULL,
+           total_paused_seconds = total_paused_seconds + $2, ends_at = $3, version = version + 1 WHERE id = $1`,
         [id, pausedFor, endsAt],
       );
       await this.addEvent(client, id, 'resumed', actor, {
         pausedForSeconds: pausedFor,
         endsAt: endsAt?.toISOString() ?? null,
+        by,
       });
       return this.getById(id, client);
     });
@@ -585,7 +648,7 @@ export class SessionsService {
     const ack = await this.mirror(
       session,
       'session.resume',
-      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session) },
+      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session), by },
       actor,
     );
     await this.broadcast(session);
@@ -692,11 +755,16 @@ export class SessionsService {
   ): Promise<SessionMutationResult> {
     let payment: SessionPaymentSummary | null = null;
     let settled = { approved: null as string | null, cancelled: [] as string[] };
+    let billedOrders: string[] = [];
     const requestedAt = at;
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session already ${row.status}`);
+      // Drinks / snacks ordered from the seat and accepted "on the bill" are settled right here,
+      // on the same receipt as the time (postpaid) or on their own receipt (prepaid).
+      const orderLines = this.orders ? await this.orders.openLinesForSession(client, id) : [];
+      const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
       // Staff may stop the clock when they open the checkout, within a bounded window: the price
       // the customer was told is the price billed, but the server decides how far back "now" goes.
       let at = requestedAt;
@@ -739,8 +807,13 @@ export class SessionsService {
           customerId: row.customer_id,
           actor,
           at,
+          orderLines,
         });
         payment = sale.payment;
+        if (orderIds.length && this.orders) {
+          await this.orders.markBilled(client, orderIds, sale.saleId, actor);
+          billedOrders = orderIds;
+        }
         const updated = await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
              discount_cents = $4, final_price_cents = $5, sale_id = $6, billed_at = $2, paused_at = NULL, notes = COALESCE($7, notes),
@@ -764,9 +837,33 @@ export class SessionsService {
           methods: sale.methods,
         });
       } else {
+        if (orderLines.length && this.orders) {
+          // Prepaid time was paid at the start; only the orders are billed now.
+          const sale = await this.recordSale(client, {
+            sessionId: id,
+            description: describe(row, seconds),
+            priceCents: null,
+            discountCents: 0,
+            tenders: req,
+            customerId: row.customer_id,
+            actor,
+            at,
+            orderLines,
+          });
+          payment = sale.payment;
+          await this.orders.markBilled(client, orderIds, sale.saleId, actor);
+          billedOrders = orderIds;
+          await this.addEvent(client, id, 'billed', actor, {
+            saleId: sale.saleId,
+            receiptNo: sale.receiptNo,
+            amountCents: sale.payment.totalCents,
+            methods: sale.methods,
+            orders: orderIds.length,
+          });
+        }
         await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
-             paused_at = NULL, notes = COALESCE($4, notes), version = version + 1 WHERE id = $1`,
+             paused_at = NULL, paused_by = NULL, notes = COALESCE($4, notes), version = version + 1 WHERE id = $1`,
           [id, at, seconds, req.notes ?? null],
         );
         await this.addEvent(client, id, 'stopped', actor, {
@@ -793,6 +890,7 @@ export class SessionsService {
       return this.getById(id, client);
     });
     await this.announceRequests(settled);
+    if (billedOrders.length && this.orders) await this.orders.announce(billedOrders);
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
     return { session, client: ack, payment };
@@ -902,9 +1000,45 @@ export class SessionsService {
       startedAt: live.startedAt,
       endsAt: live.endsAt,
       pausedAt: live.pausedAt,
+      pausedBy: live.pausedBy,
+      autoResumeAt: live.autoResumeAt,
       remainingSeconds: remaining,
       billing: clientBillingOf(live),
     };
+  }
+
+  // ─── Pause / resume from the PC (0.10.0) ─────────────────────────────────────
+
+  /** The customer pauses their own session at the PC (Settings › Stations › Customer pause). */
+  async pauseFromDevice(stationId: string, deviceId: string): Promise<SessionSummary> {
+    if (!(await this.settings.get('sessions.customer_pause')))
+      throw new AppError(403, 'pause_disabled', 'Pausing from the PC is switched off');
+    const live = await this.liveForStation(stationId);
+    if (!live) throw new AppError(409, 'no_session', 'No session is running on this PC');
+    if (live.status === 'paused') return live;
+    const result = await this.pause(
+      live.id,
+      { deviceId, label: 'customer' },
+      new Date(),
+      'customer',
+    );
+    return result.session;
+  }
+
+  /** "Resume" pressed on the paused screen of the PC. */
+  async resumeFromDevice(stationId: string, deviceId: string): Promise<SessionSummary> {
+    if (!(await this.settings.get('sessions.customer_resume')))
+      throw new AppError(403, 'resume_disabled', 'Resuming from the PC is switched off');
+    const live = await this.liveForStation(stationId);
+    if (!live) throw new AppError(409, 'no_session', 'No session is running on this PC');
+    if (live.status === 'active') return live;
+    const result = await this.resume(
+      live.id,
+      { deviceId, label: 'customer' },
+      new Date(),
+      'customer',
+    );
+    return result.session;
   }
 
   /** The PC says its prepaid time ran out: trust the server clock, expire only if really due. */
@@ -966,6 +1100,23 @@ export class SessionsService {
               [s.id, JSON.stringify({ minutes, delivered: ack?.ok ?? false })],
             );
           }
+        }
+      }
+
+      // Customer pauses are bounded: past the limit the clock runs again (back-dated to the
+      // deadline, so the watcher's own delay never costs the customer anything).
+      this.pauseMaxMinutes = await this.settings.get('sessions.pause_max_minutes');
+      if (this.pauseMaxMinutes > 0) {
+        const overdue = await this.pool.query<{ id: string; paused_at: Date }>(
+          `SELECT id, paused_at FROM gaming_sessions
+            WHERE status = 'paused' AND paused_by = 'customer' AND paused_at <= $1`,
+          [new Date(now.getTime() - this.pauseMaxMinutes * 60_000)],
+        );
+        for (const row of overdue.rows) {
+          const deadline = new Date(row.paused_at.getTime() + this.pauseMaxMinutes * 60_000);
+          await this.resume(row.id, { label: 'system' }, deadline, 'auto').catch((err) =>
+            this.log.warn({ err, sessionId: row.id }, 'auto-resume failed'),
+          );
         }
       }
 
@@ -1068,12 +1219,15 @@ export class SessionsService {
     input: {
       sessionId: string;
       description: string;
-      priceCents: number;
+      /** Session line price; null = no session line (prepaid end that only bills the orders). */
+      priceCents: number | null;
       discountCents: number;
       tenders: { paymentMethod: string; payments?: SalePaymentInput[] };
       customerId: string | null;
       actor: AuditActor & { permissions?: ReadonlySet<string> };
       at: Date;
+      /** Ordered products settled on this receipt (0.10.0). */
+      orderLines?: OrderLineForSale[];
     },
   ): Promise<{
     saleId: string;
@@ -1081,7 +1235,11 @@ export class SessionsService {
     methods: string[];
     payment: SessionPaymentSummary;
   }> {
-    const total = input.priceCents - input.discountCents;
+    const orderLines = input.orderLines ?? [];
+    const ordersCents = orderLines.reduce((acc, l) => acc + l.lineTotalCents, 0);
+    const sessionCents = input.priceCents ?? 0;
+    const subtotal = sessionCents + ordersCents;
+    const total = subtotal - input.discountCents;
     const payments: SalePaymentInput[] =
       total > 0
         ? (input.tenders.payments ?? [
@@ -1111,7 +1269,7 @@ export class SessionsService {
         receiptNo,
         input.customerId,
         input.actor.userId,
-        input.priceCents,
+        subtotal,
         input.discountCents,
         tax,
         total,
@@ -1122,19 +1280,68 @@ export class SessionsService {
       ],
     );
     const saleId = sale.rows[0]!.id;
-    await client.query(
-      `INSERT INTO sale_items (sale_id, line_no, gaming_session_id, description, quantity_milli, unit_price_cents, discount_cents,
-         tax_rate_bp, tax_cents, line_total_cents)
-       VALUES ($1, 1, $2, $3, 1000, $4, 0, $5, $6, $4)`,
-      [
-        saleId,
-        input.sessionId,
-        input.description,
-        input.priceCents,
-        rateBp,
-        splitInclusiveTax(input.priceCents, rateBp).tax,
-      ],
-    );
+    let lineNo = 0;
+    if (input.priceCents !== null) {
+      lineNo += 1;
+      await client.query(
+        `INSERT INTO sale_items (sale_id, line_no, gaming_session_id, description, quantity_milli, unit_price_cents, discount_cents,
+           tax_rate_bp, tax_cents, line_total_cents)
+         VALUES ($1, $7, $2, $3, 1000, $4, 0, $5, $6, $4)`,
+        [
+          saleId,
+          input.sessionId,
+          input.description,
+          input.priceCents,
+          rateBp,
+          splitInclusiveTax(input.priceCents, rateBp).tax,
+          lineNo,
+        ],
+      );
+    }
+    // Ordered products: real sale lines (with cost) and real stock movements — the same facts
+    // a POS sale writes, so reports and inventory see nothing special about an order.
+    for (const line of orderLines) {
+      lineNo += 1;
+      await client.query(
+        `INSERT INTO sale_items (sale_id, line_no, product_id, gaming_session_id, description, quantity_milli, unit_price_cents,
+           discount_cents, tax_rate_bp, tax_cents, line_total_cents, cost_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11)`,
+        [
+          saleId,
+          lineNo,
+          line.productId,
+          input.sessionId,
+          line.name,
+          line.quantityMilli,
+          line.unitPriceCents,
+          rateBp,
+          splitInclusiveTax(line.lineTotalCents, rateBp).tax,
+          line.lineTotalCents,
+          Math.round((line.unitCostCents * line.quantityMilli) / 1000),
+        ],
+      );
+    }
+    const perProduct = new Map<string, OrderLineForSale & { qty: number }>();
+    for (const line of orderLines) {
+      const prev = perProduct.get(line.productId);
+      perProduct.set(line.productId, { ...line, qty: (prev?.qty ?? 0) + line.quantityMilli });
+    }
+    for (const [productId, line] of [...perProduct.entries()].sort(([a], [b]) =>
+      a < b ? -1 : 1,
+    )) {
+      if (!line.trackStock) continue;
+      await applyMovement(client, {
+        productId,
+        type: 'sale',
+        delta: -line.qty,
+        unitCostCents: line.unitCostCents,
+        reason: null,
+        referenceType: 'sale',
+        referenceId: saleId,
+        actorUserId: input.actor.userId ?? null,
+        allowNegative: line.allowNegative,
+      });
+    }
     let creditCents = 0;
     let dueDate: string | null = null;
     if (total > 0) {

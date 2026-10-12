@@ -15,8 +15,19 @@ export const CLIENT_WIDGET_POSITIONS = [
 ] as const;
 export const CLIENT_WIDGET_STYLES = ['minimal', 'detailed'] as const;
 export const CLIENT_LOCK_TITLES = ['brand', 'station'] as const;
-export const CLIENT_ADS_LAYOUTS = ['card', 'full', 'grid'] as const;
-export const CLIENT_ADS_TRANSITIONS = ['slide-left', 'slide-right', 'fade', 'zoom'] as const;
+/** `menu` (0.10.0) = menu board: many products per page as name · dotted line · price. */
+export const CLIENT_ADS_LAYOUTS = ['card', 'full', 'grid', 'menu'] as const;
+export const CLIENT_ADS_TRANSITIONS = [
+  'slide-left',
+  'slide-right',
+  'fade',
+  'zoom',
+  'flip',
+  'blur',
+] as const;
+/** Default slide style for single-slide layouts (per-slide override in Admin › Ads). */
+export const CLIENT_ADS_STYLES = ['poster', 'hero', 'split', 'banner'] as const;
+export type ClientAdsStyle = (typeof CLIENT_ADS_STYLES)[number];
 /** Grid pages: columns × rows → 4, 6, 8, 9, 12 or 16 products per page. */
 export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4'] as const;
 export const CLIENT_ADS_IMAGE_FITS = ['contain', 'cover'] as const;
@@ -85,6 +96,18 @@ export const SETTING_SCHEMAS = {
     .min(1)
     .max(8)
     .refine((xs) => new Set(xs).size === xs.length, 'durations must be distinct'),
+  /** The customer may pause their own session from the PC (the screen is covered meanwhile). */
+  'sessions.customer_pause': z.boolean(),
+  /** The customer may resume a paused session from the PC ("Resume" on the paused screen). */
+  'sessions.customer_resume': z.boolean(),
+  /** A customer pause ends by itself after this many minutes (0 = never). Staff pauses never do. */
+  'sessions.pause_max_minutes': z.number().int().min(0).max(240),
+  /** Orders from the PC (drinks / snacks from the seat) — the menu is `products.client_menu`. */
+  'orders.enabled': z.boolean(),
+  /** Let the customer add a short note to the order ("no ice"). */
+  'orders.allow_note': z.boolean(),
+  /** What accepting an order does by default: ask each time, record a sale now, or put it on the bill. */
+  'orders.settlement': z.enum(['ask', 'pay_now', 'on_bill']),
 
   // ── Client screen (LIKApcs-Client on the customer PC) ──────────────────────
   /** Countdown widget during a session: footprint. */
@@ -129,6 +152,12 @@ export const SETTING_SCHEMAS = {
   'client.ads_background': z.enum(AD_THEMES),
   /** Scrolling line at the bottom of the locked screen; empty = none. */
   'client.ads_ticker_text': z.string().trim().max(200),
+  /** Default slide style for the single-slide layouts (0.10.0). */
+  'client.ads_style': z.enum(CLIENT_ADS_STYLES),
+  /** Shuffle the rotation (weights still apply) instead of the manual order. */
+  'client.ads_shuffle': z.boolean(),
+  /** Promo slides with an end date show "ends in …". */
+  'client.ads_promo_countdown': z.boolean(),
 
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   /** Open the print dialog as soon as a sale is completed (off: the cashier presses Print). */
@@ -204,6 +233,12 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.maintenance_minutes': 15,
   'requests.enabled': true,
   'requests.quick_minutes': [30, 60, 120, 180],
+  'sessions.customer_pause': true,
+  'sessions.customer_resume': true,
+  'sessions.pause_max_minutes': 15,
+  'orders.enabled': true,
+  'orders.allow_note': true,
+  'orders.settlement': 'ask',
 
   'client.widget_size': 'normal',
   'client.widget_position': 'top-right',
@@ -229,6 +264,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.ads_motion': true,
   'client.ads_background': 'midnight',
   'client.ads_ticker_text': '',
+  'client.ads_style': 'hero',
+  'client.ads_shuffle': false,
+  'client.ads_promo_countdown': true,
 
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': false,
@@ -266,6 +304,9 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   // Which payment methods the app offers; every cashier needs it before any sale exists.
   'pos.card_payments',
   'pos.credit_default_days',
+  // Orders from the PCs: the bell pre-selects the settlement; every station operator needs it.
+  'orders.enabled',
+  'orders.settlement',
   // Client screen: the Admin previews them; the client receives them through its own channel.
   'client.widget_size',
   'client.widget_position',
@@ -291,6 +332,9 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.ads_motion',
   'client.ads_background',
   'client.ads_ticker_text',
+  'client.ads_style',
+  'client.ads_shuffle',
+  'client.ads_promo_countdown',
 ];
 
 /** Validates a partial settings patch; unknown keys are rejected. */
@@ -322,6 +366,14 @@ export function validateSettingsPatch(input: unknown): Partial<SettingsMap> {
 /** Keys whose change must be pushed to every connected customer PC (`server.display`). */
 export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'requests.enabled',
+  'sessions.customer_pause',
+  'sessions.customer_resume',
+  'sessions.pause_max_minutes',
+  'orders.enabled',
+  'orders.allow_note',
+  'client.ads_style',
+  'client.ads_shuffle',
+  'client.ads_promo_countdown',
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
@@ -363,6 +415,11 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],
     customerLogin: settings['requests.enabled'],
+    customerPause: settings['sessions.customer_pause'],
+    customerResume: settings['sessions.customer_resume'],
+    pauseMaxMinutes: settings['sessions.pause_max_minutes'],
+    orders: settings['orders.enabled'],
+    ordersNote: settings['orders.allow_note'],
     ads: {
       enabled: settings['client.ads_enabled'],
       layout: settings['client.ads_layout'],
@@ -382,6 +439,9 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
       motion: settings['client.ads_motion'],
       background: settings['client.ads_background'],
       tickerText: settings['client.ads_ticker_text'],
+      style: settings['client.ads_style'],
+      shuffle: settings['client.ads_shuffle'],
+      promoCountdown: settings['client.ads_promo_countdown'],
     },
   };
 }

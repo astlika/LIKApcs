@@ -15,6 +15,7 @@ import type { DevicePresence } from './hub.js';
 import { recordAudit } from '../services/audit.js';
 import { shouldPushUpdate } from '../services/commands.js';
 import { SERVER_VERSION } from '../version.js';
+import { toPush as toOrderPush } from '../services/orders.js';
 
 /** Delay before an outdated client is told to update, so the welcome/heartbeat settle first. */
 const UPDATE_PUSH_DELAY_MS = 5_000;
@@ -163,6 +164,10 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                   }
                 : null,
             ),
+            orders: await services.orders
+              .listForDevice(device)
+              .then((list) => list.map(toOrderPush))
+              .catch(() => []),
           };
           send(socket, welcome);
           request.log.info(

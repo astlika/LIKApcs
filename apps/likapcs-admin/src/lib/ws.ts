@@ -80,6 +80,12 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               void queryClient.invalidateQueries({ queryKey: ['session-requests'] });
               void queryClient.invalidateQueries({ queryKey: ['stations'] });
               break;
+            case 'order.changed':
+              // Drinks / snacks ordered from a PC, or decided: bell, orders page, PC tile, session.
+              void queryClient.invalidateQueries({ queryKey: ['orders'] });
+              void queryClient.invalidateQueries({ queryKey: ['stations'] });
+              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+              break;
             case 'permissions.changed':
               // A role was edited: the auth provider re-reads /auth/me so the navigation,
               // buttons and the home page follow the new permissions immediately.

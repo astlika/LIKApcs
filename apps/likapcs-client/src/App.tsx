@@ -4,13 +4,10 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type FormEvent,
 } from 'react';
 import {
-  adsGridSize,
   formatMoney,
-  type ClientAdItem,
   type ClientDisplayConfig,
   type ClientRequestOptions,
   type SessionRequest,
@@ -28,8 +25,18 @@ import {
   setWidgetLayout,
   type TrayLabels,
 } from './lib/native';
-import { candidateServerUrls, formatHMS, sessionView, type SessionView } from './lib/protocol';
+import {
+  baseWindowModeOf,
+  candidateServerUrls,
+  formatHMS,
+  sessionView,
+  type OrderView,
+  type SessionView,
+} from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
+import { PausedScreen } from './PausedScreen';
+import { OrderPanel } from './OrderPanel';
+import { AdsSlideshow } from './AdsSlideshow';
 
 function useAgent(): AgentSnapshot {
   return useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
@@ -67,8 +74,13 @@ export function App() {
   const [unlockOpen, setUnlockOpen] = useState(false);
   // Customer login / "request time" dialog (lock screen) or "+ time" panel (during a session).
   const [customerOpen, setCustomerOpen] = useState(false);
+  // "Order" panel (drinks / snacks from the seat, 0.10.0).
+  const [orderOpen, setOrderOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const locked = snap.state.mode === 'locked';
+  const paused = snap.state.mode === 'session' && snap.state.session?.status === 'paused';
+  // Locked PC or paused session: the window covers the whole screen (see baseWindowModeOf).
+  const covered = baseWindowModeOf(snap.state) === 'locked';
   // Mirrors `settingsOpen` for the native tray listener, which is registered once and therefore
   // never sees re-rendered state.
   const settingsOpenRef = useRef(false);
@@ -81,6 +93,7 @@ export function App() {
   const openSettings = useCallback(async () => {
     setUnlockOpen(false);
     setCustomerOpen(false);
+    setOrderOpen(false);
     // Read the live snapshot (not render-time props): during a session the window is the small
     // countdown widget and must first grow into the panel, otherwise nothing would be visible.
     if (agent.getSnapshot().state.mode !== 'locked') await agent.openPanel();
@@ -93,8 +106,20 @@ export function App() {
   const openCustomer = useCallback(async () => {
     setUnlockOpen(false);
     setSettingsOpen(false);
+    setOrderOpen(false);
     if (agent.getSnapshot().state.mode !== 'locked') await agent.openPanel();
     setCustomerOpen(true);
+  }, []);
+  const closeOrder = useCallback(() => {
+    setOrderOpen(false);
+    void agent.closePanel();
+  }, []);
+  const openOrder = useCallback(async () => {
+    setUnlockOpen(false);
+    setSettingsOpen(false);
+    setCustomerOpen(false);
+    if (!(await agent.openPanel())) return;
+    setOrderOpen(true);
   }, []);
   const toggleSettings = useCallback(() => {
     if (settingsOpenRef.current) closeSettings();
@@ -116,12 +141,22 @@ export function App() {
       if (e.key === 'Escape') {
         if (settingsOpen) closeSettings();
         if (customerOpen) closeCustomer();
+        if (orderOpen) closeOrder();
         setUnlockOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [settingsOpen, customerOpen, locked, closeSettings, closeCustomer, toggleSettings]);
+  }, [
+    settingsOpen,
+    customerOpen,
+    orderOpen,
+    locked,
+    closeSettings,
+    closeCustomer,
+    closeOrder,
+    toggleSettings,
+  ]);
 
   // Tray (native) → actions: a left click on the icon toggles the settings panel, the context
   // menu offers settings / update / quit. The native side already refuses "quit" while locked.
@@ -167,9 +202,12 @@ export function App() {
   // Back to the lock screen (e.g. maintenance expired) while the panel was open: keep it open
   // there, the window is fullscreen again anyway.
   useEffect(() => {
-    if (locked && snap.windowMode === 'panel') void agent.closePanel();
-    if (locked) setSettingsOpen(false);
-  }, [locked, snap.windowMode]);
+    if (covered && snap.windowMode === 'panel') void agent.closePanel();
+    if (covered) {
+      setSettingsOpen(false);
+      setOrderOpen(false);
+    }
+  }, [covered, snap.windowMode]);
   // Lock ⇄ session flips (an approved request, a session end) close the customer dialog: the
   // overlay / lock screen that follows starts clean.
   useEffect(() => {
@@ -178,7 +216,8 @@ export function App() {
 
   const notice = snap.state.notice;
   const customerLogin = Boolean(snap.state.display?.customerLogin) && snap.paired;
-  if (!locked) {
+  const inSession = snap.state.mode === 'session' && snap.state.session !== null;
+  if (!covered) {
     if (snap.windowMode === 'panel' && settingsOpen) {
       return (
         <div className="panel-window">
@@ -193,6 +232,13 @@ export function App() {
         </div>
       );
     }
+    if (snap.windowMode === 'panel' && orderOpen) {
+      return (
+        <div className="panel-window">
+          <OrderPanel snap={snap} onClose={closeOrder} />
+        </div>
+      );
+    }
     return (
       <Overlay
         snap={snap}
@@ -202,6 +248,12 @@ export function App() {
             ? () => void openCustomer()
             : null
         }
+        onPause={
+          inSession && snap.state.display?.customerPause && snap.phase.phase === 'online'
+            ? () => void agent.customerPause()
+            : null
+        }
+        onOrder={inSession && snap.state.display?.orders ? () => void openOrder() : null}
       />
     );
   }
@@ -211,6 +263,18 @@ export function App() {
     display?.lockTitle === 'station' && snap.state.station
       ? snap.state.station.code
       : snap.state.businessName || 'LIKApcs';
+  if (paused) {
+    return (
+      <PausedScreen snap={snap} lockTitle={lockTitle}>
+        {flash && (
+          <div className="toast" role="status">
+            {flash}
+          </div>
+        )}
+        {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
+      </PausedScreen>
+    );
+  }
   const showAds =
     Boolean(display?.ads.enabled) &&
     snap.ads.length > 0 &&
@@ -1039,6 +1103,52 @@ function moneyLine(
   return null;
 }
 
+/** "Order #3 · accepted" for the widget's top row (eight seconds after a decision). */
+function orderFlashText(order: OrderView, t: T): string {
+  const status: Record<OrderView['status'], Key> = {
+    pending: 'orderStatusPending',
+    accepted: 'orderStatusAccepted',
+    paid: 'orderStatusPaid',
+    billed: 'orderStatusBilled',
+    rejected: 'orderStatusRejected',
+    cancelled: 'orderStatusCancelled',
+    void: 'orderStatusVoid',
+  };
+  return `${t('orderNumber', { n: order.number })} · ${t(status[order.status])}`;
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden focusable="false">
+      <rect x="3" y="2.5" width="3.6" height="11" rx="1" fill="currentColor" />
+      <rect x="9.4" y="2.5" width="3.6" height="11" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function OrderIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="12"
+      height="12"
+      aria-hidden
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5.5 4.5h7.2l-1 5.2H6.3z" />
+      <path d="M2.2 2.2h1.6l1.1 2.3" />
+      <path d="M6.6 9.7 5.9 11.6h7" />
+      <circle cx="7" cy="13.3" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="11.6" cy="13.3" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /**
  * Countdown widget. In the desktop app this is the whole always-on-top window (its size and
  * corner follow the owner's settings), draggable by its surface (`data-tauri-drag-region`), so a
@@ -1052,17 +1162,32 @@ function Overlay({
   snap,
   notice,
   onRequestTime = null,
+  onPause = null,
+  onOrder = null,
 }: {
   snap: AgentSnapshot;
   notice: string | null;
   /** Prepaid session with customer login on: the "+ time" button asks the staff for more. */
   onRequestTime?: (() => void) | null;
+  /** Customer pause allowed by the owner (0.10.0): the screen is covered until resumed. */
+  onPause?: (() => void) | null;
+  /** Orders from the seat switched on (0.10.0): opens the menu panel. */
+  onOrder?: (() => void) | null;
 }) {
-  const t = (key: Key) => translate(snap.state.language, key);
+  const t = (key: Key, vars?: Record<string, string | number>) =>
+    translate(snap.state.language, key, vars);
   const session = snap.state.session;
   const display = snap.state.display;
   const view = session ? sessionView(session, snap.serverNowMs) : null;
   const offline = snap.phase.phase === 'offline';
+  const openOrders = snap.orders.filter((o) => o.status === 'pending' || o.status === 'accepted');
+  const flash = snap.orderFlash;
+  const flashText = flash ? orderFlashText(flash.order, t) : null;
+  const flashTone = flash
+    ? flash.order.status === 'rejected' || flash.order.status === 'void'
+      ? 'bad'
+      : 'good'
+    : null;
   const low = view?.kind === 'countdown' && !view.paused && view.seconds <= 300;
   const critical = view?.kind === 'countdown' && !view.paused && view.seconds <= 60;
   const maintenance = snap.state.mode === 'free' ? snap.state.maintenance : null;
@@ -1094,7 +1219,13 @@ function Overlay({
     .join(' ');
 
   if (minimal) {
-    const text = view ? (view.paused ? t('paused') : compactDuration(view.seconds, t)) : t('free');
+    const text = flashText
+      ? flashText
+      : view
+        ? view.paused
+          ? t('paused')
+          : compactDuration(view.seconds, t)
+        : t('free');
     return (
       <div className={cls} data-tauri-drag-region data-testid="overlay">
         <div className="overlay__line" data-tauri-drag-region>
@@ -1105,7 +1236,11 @@ function Overlay({
             {code}
           </span>
           <span className="overlay__dot" aria-hidden />
-          <span className="overlay__mini-time" data-tauri-drag-region data-testid="overlay-time">
+          <span
+            className={`overlay__mini-time ${flashTone ? `overlay__flash--${flashTone}` : ''}`}
+            data-tauri-drag-region
+            data-testid="overlay-time"
+          >
             {text}
           </span>
           {money && (
@@ -1133,6 +1268,32 @@ function Overlay({
               {snap.request?.status === 'pending' ? '…' : '+'}
             </button>
           )}
+          {onPause && view && !view.paused && (
+            <button
+              type="button"
+              className="overlay__mini-more overlay__mini-more--icon"
+              onClick={onPause}
+              title={t('pauseTitle')}
+              aria-label={t('pauseAction')}
+              data-testid="overlay-pause"
+            >
+              <PauseIcon />
+            </button>
+          )}
+          {onOrder && (
+            <button
+              type="button"
+              className="overlay__mini-more overlay__mini-more--icon"
+              onClick={onOrder}
+              title={t('orderTitle')}
+              aria-label={t('orderButton')}
+              data-testid="overlay-order"
+              data-count={openOrders.length || undefined}
+            >
+              <OrderIcon />
+              {openOrders.length > 0 && <i className="overlay__count">{openOrders.length}</i>}
+            </button>
+          )}
         </div>
         {fraction !== null && (
           <div className="overlay__bar" aria-hidden>
@@ -1150,29 +1311,68 @@ function Overlay({
           <span className="overlay__mark">L</span>
           <span className="overlay__code">{code}</span>
         </span>
-        {onRequestTime && !notice && !maintenance && (
-          <button
-            type="button"
-            className={`overlay__more ${snap.request?.status === 'pending' ? 'overlay__more--pending' : ''}`}
-            onClick={onRequestTime}
-            title={t('requestExtendTitle')}
-            data-testid="overlay-more"
-          >
-            {snap.request?.status === 'pending' ? t('requestPendingShort') : t('requestMoreTime')}
-          </button>
+        {!notice && !maintenance && (onRequestTime || onPause || onOrder) && (
+          <span className="overlay__acts">
+            {onRequestTime && (
+              <button
+                type="button"
+                className={`overlay__more ${snap.request?.status === 'pending' ? 'overlay__more--pending' : ''}`}
+                onClick={onRequestTime}
+                title={t('requestExtendTitle')}
+                data-testid="overlay-more"
+              >
+                {snap.request?.status === 'pending'
+                  ? t('requestPendingShort')
+                  : t('requestMoreTime')}
+              </button>
+            )}
+            {onPause && view && !view.paused && (
+              <button
+                type="button"
+                className="overlay__more overlay__more--icon"
+                onClick={onPause}
+                title={t('pauseTitle')}
+                aria-label={t('pauseAction')}
+                data-testid="overlay-pause"
+              >
+                <PauseIcon />
+              </button>
+            )}
+            {onOrder && (
+              <button
+                type="button"
+                className={`overlay__more overlay__more--icon ${openOrders.length > 0 ? 'overlay__more--busy' : ''}`}
+                onClick={onOrder}
+                title={t('orderTitle')}
+                aria-label={t('orderButton')}
+                data-testid="overlay-order"
+                data-count={openOrders.length || undefined}
+              >
+                <OrderIcon />
+                {openOrders.length > 0 && <i className="overlay__count">{openOrders.length}</i>}
+              </button>
+            )}
+          </span>
         )}
-        <span className="overlay__label" data-tauri-drag-region>
-          {notice
-            ? ''
-            : maintenance
-              ? t('maintenance')
-              : view
-                ? view.paused
-                  ? t('paused')
-                  : view.kind === 'countdown'
-                    ? t('remaining')
-                    : t('elapsed')
-                : t('free')}
+        <span
+          className={`overlay__label ${flashTone ? `overlay__flash overlay__flash--${flashTone}` : ''}`}
+          data-tauri-drag-region
+          data-testid={flashTone ? 'overlay-order-flash' : undefined}
+          title={flashText ?? undefined}
+        >
+          {flashText
+            ? flashText
+            : notice
+              ? ''
+              : maintenance
+                ? t('maintenance')
+                : view
+                  ? view.paused
+                    ? t('paused')
+                    : view.kind === 'countdown'
+                      ? t('remaining')
+                      : t('elapsed')
+                  : t('free')}
         </span>
         {offline && <span className="overlay__offline" title={t('offlineSession')} />}
       </div>
@@ -1228,320 +1428,6 @@ function Overlay({
         <div className="overlay__bar" aria-hidden>
           <span style={{ width: `${fraction * 100}%` }} />
         </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Lock-screen product slideshow. Pictures are decoded *before* they are shown (an `Image()`
- * preload gate per slide) and two layers cross over with CSS transforms only, so there is never a
- * flash of an empty frame or a half-loaded photo. `layout`: `card` (one product on a glass card),
- * `full` (edge-to-edge photo with a caption), `grid` (a classic box of up to four products that
- * advances one page at a time). The interval, transition and price flag come from the owner.
- */
-function AdsSlideshow({
-  items,
-  display,
-  language,
-  station,
-}: {
-  items: ClientAdItem[];
-  display: ClientDisplayConfig;
-  language: Language;
-  station: { code: string; name: string } | null;
-}) {
-  const {
-    layout,
-    transition,
-    intervalSeconds,
-    showPrice,
-    fullscreen,
-    showStation,
-    showCategory,
-    showProgress,
-    imageFit,
-    caption,
-    motion,
-  } = display.ads;
-  const grid = adsGridSize(display.ads.grid);
-  const perPage = layout === 'grid' ? grid.cols * grid.rows : 1;
-  const pages = Math.max(1, Math.ceil(items.length / perPage));
-  const [page, setPage] = useState(0);
-  const [ready, setReady] = useState<Record<string, boolean>>({});
-  // Pictures that failed to load (server unreachable, file gone): the slide is shown as a text
-  // slide instead of being skipped — a screen must never stay empty because of one picture.
-  const [broken, setBroken] = useState<Record<string, true>>({});
-  const [layers, setLayers] = useState<{ a: number | null; b: number | null; front: 'a' | 'b' }>({
-    a: 0,
-    b: null,
-    front: 'a',
-  });
-  // The station pill repeats the PC code only when it is not already the lock title (never
-  // twice) and only when the owner wants it; over a grid it gets its own band above the frames.
-  const showPill =
-    showStation &&
-    station !== null &&
-    !(display.lockTitle === 'station' && display.ads.showBrand && !fullscreen);
-  const frameClass = [
-    'ads',
-    `ads--${layout}`,
-    fullscreen ? 'ads--fullscreen' : '',
-    `ads--fit-${imageFit}`,
-    `ads--caption-${caption}`,
-    motion ? 'ads--motion' : '',
-    showPill ? 'ads--pill' : '',
-    showProgress && pages > 1 ? 'ads--paged' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-  // Dense grids get smaller type and tighter gaps so 16 products still read well on 1080p. In
-  // full-screen mode the pictures also keep clear of whatever overlays the owner left on.
-  const headerPx = display.ads.showBrand || display.ads.showClock ? 100 : 28;
-  const insetTop = fullscreen ? headerPx + (showPill ? 58 : 0) : 0;
-  const insetBottom = fullscreen
-    ? 24 +
-      (display.ads.showStatus ? 70 : 0) +
-      (display.ads.tickerText.trim() ? 58 : 0) +
-      (showProgress ? 24 : 0)
-    : 0;
-  const gridStyle = {
-    '--cols': grid.cols,
-    '--rows': grid.rows,
-    '--cell-scale': grid.cols >= 4 ? 0.68 : grid.cols === 3 ? 0.82 : 1,
-    '--inset-top': `${insetTop}px`,
-    '--inset-bottom': `${insetBottom}px`,
-    '--pill-top': `${headerPx}px`,
-  } as CSSProperties;
-
-  // Preload every picture once; a slide only becomes eligible when all of its pictures decoded.
-  // Text-only slides (custom ads without a picture) are ready at once.
-  const requested = useRef(new Set<string>());
-  useEffect(() => {
-    for (const item of items) {
-      const url = item.imageUrl;
-      if (!url) {
-        setReady((r) => (r[item.id] === true ? r : { ...r, [item.id]: true }));
-        continue;
-      }
-      if (requested.current.has(url)) continue;
-      requested.current.add(url);
-      const img = new Image();
-      img.decoding = 'async';
-      img.onload = () => {
-        setBroken((b) => {
-          if (!b[item.id]) return b;
-          const next = { ...b };
-          delete next[item.id];
-          return next;
-        });
-        setReady((r) => ({ ...r, [item.id]: true }));
-      };
-      img.onerror = () => {
-        requested.current.delete(url); // retried on the next list refresh
-        setBroken((b) => ({ ...b, [item.id]: true }));
-        setReady((r) => ({ ...r, [item.id]: true }));
-      };
-      img.src = url;
-    }
-  }, [items]);
-  const pictureOf = (item: ClientAdItem) => (broken[item.id] ? null : item.imageUrl);
-
-  const pageItems = useCallback(
-    (index: number) => items.slice(index * perPage, index * perPage + perPage),
-    [items, perPage],
-  );
-  // A new page size (layout or grid changed by the owner) restarts from the first page.
-  useEffect(() => {
-    setPage(0);
-  }, [perPage]);
-  const pageReady = useCallback(
-    (index: number) => {
-      const slice = pageItems(index);
-      return slice.length > 0 && slice.every((item) => ready[item.id] === true);
-    },
-    [pageItems, ready],
-  );
-
-  // Advance after the current page's own time (the longest `durationSeconds` on it, else the
-  // owner's interval) — only onto a fully decoded page.
-  const pageSeconds = useCallback(
-    (index: number) => {
-      const own = pageItems(index)
-        .map((item) => item.durationSeconds ?? 0)
-        .reduce((a, b) => Math.max(a, b), 0);
-      return Math.max(3, own > 0 ? own : intervalSeconds);
-    },
-    [pageItems, intervalSeconds],
-  );
-  useEffect(() => {
-    if (pages <= 1) return;
-    const timer = window.setTimeout(
-      () => {
-        setPage((current) => {
-          for (let step = 1; step <= pages; step += 1) {
-            const candidate = (current + step) % pages;
-            if (pageReady(candidate)) return candidate;
-          }
-          return current;
-        });
-      },
-      pageSeconds(page) * 1000,
-    );
-    return () => window.clearTimeout(timer);
-  }, [page, pages, pageSeconds, pageReady]);
-
-  // The current page is not decoded yet (start-up, or its picture failed): jump to the first
-  // page that is, so the very first frame shown is a complete one.
-  const currentReady = pageReady(page);
-  useEffect(() => {
-    if (currentReady) return;
-    for (let i = 0; i < pages; i += 1) {
-      if (pageReady(i)) {
-        if (i !== page) setPage(i);
-        return;
-      }
-    }
-  }, [currentReady, pages, pageReady, page]);
-
-  // Two-layer crossfade: a *ready* incoming page is mounted on the back layer, then brought to
-  // the front; the old one slides / fades out underneath and is unmounted on the next change.
-  useEffect(() => {
-    if (!currentReady) return;
-    setLayers((l) => {
-      const frontIndex = l.front === 'a' ? l.a : l.b;
-      if (frontIndex === page) return l;
-      return l.front === 'a' ? { ...l, b: page, front: 'b' } : { ...l, a: page, front: 'a' };
-    });
-  }, [page, currentReady]);
-
-  const frontIndex = layers.front === 'a' ? layers.a : layers.b;
-  if (frontIndex === null || !pageReady(frontIndex)) {
-    return (
-      <div className={frameClass} data-testid="ads" data-state="loading" style={gridStyle}>
-        {showPill && (
-          <div className="ads__station">
-            <span className="ads__code">{station.code}</span>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  const money = (cents: number) =>
-    formatMoney(cents, { currency: display.currency, locale: language });
-  /** Price block: promo = crossed-out regular + new price; plain otherwise; nothing for slides. */
-  const price = (item: ClientAdItem) =>
-    showPrice && item.priceCents !== null ? (
-      <span className={`ads__pricing ${item.oldPriceCents !== null ? 'ads__pricing--promo' : ''}`}>
-        {item.oldPriceCents !== null && <s className="ads__old">{money(item.oldPriceCents)}</s>}
-        <span className="ads__price">{money(item.priceCents)}</span>
-      </span>
-    ) : null;
-  const badge = (item: ClientAdItem) =>
-    item.badge ? <span className="ads__badge">{item.badge}</span> : null;
-  const themeClass = (item: ClientAdItem) => `ads__theme--${item.theme ?? 'midnight'}`;
-  const renderPage = (index: number | null, key: 'a' | 'b') => {
-    if (index === null) return null;
-    const slice = pageItems(index);
-    const front = layers.front === key;
-    return (
-      <div
-        key={key}
-        className={`ads__layer ads__layer--${transition} ${front ? 'is-front' : 'is-back'}`}
-        aria-hidden={!front}
-        onAnimationEnd={(e) => {
-          // The incoming slide has fully covered the old one → drop the old layer entirely, so
-          // nothing can ever bleed through (and the GPU keeps exactly one picture to composite).
-          if (!front || e.target !== e.currentTarget) return;
-          setLayers((l) => (l.front === 'a' ? { ...l, b: null } : { ...l, a: null }));
-        }}
-      >
-        {layout === 'grid' ? (
-          <div className="ads__grid">
-            {slice.map((item) => (
-              <figure
-                key={item.id}
-                className={`ads__cell ${pictureOf(item) ? '' : 'ads__cell--text'} ${themeClass(item)}`}
-                data-kind={item.kind}
-                data-theme={item.theme ?? 'midnight'}
-              >
-                {pictureOf(item) ? (
-                  <img src={pictureOf(item)!} alt="" draggable={false} />
-                ) : (
-                  <div className="ads__blank" aria-hidden />
-                )}
-                {badge(item)}
-                <figcaption>
-                  {showCategory && item.categoryName && perPage <= 9 && (
-                    <span className="ads__cat">{item.categoryName}</span>
-                  )}
-                  <span className="ads__name">{item.name}</span>
-                  {item.body && perPage <= 6 && <span className="ads__body">{item.body}</span>}
-                  {price(item)}
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-        ) : (
-          slice.map((item) => (
-            <figure
-              key={item.id}
-              className={`ads__slide ads__slide--${layout} ${pictureOf(item) ? '' : 'ads__slide--text'} ${themeClass(item)}`}
-              data-kind={item.kind}
-              data-theme={item.theme ?? 'midnight'}
-            >
-              {pictureOf(item) ? (
-                <img src={pictureOf(item)!} alt="" draggable={false} />
-              ) : (
-                <div className="ads__blank" aria-hidden />
-              )}
-              {badge(item)}
-              {!(layout === 'full' && caption === 'hidden' && pictureOf(item)) && (
-                <figcaption>
-                  {showCategory && item.categoryName && (
-                    <span className="ads__cat">{item.categoryName}</span>
-                  )}
-                  <span className="ads__name">{item.name}</span>
-                  {item.body && <span className="ads__body">{item.body}</span>}
-                  {price(item)}
-                </figcaption>
-              )}
-            </figure>
-          ))
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div
-      className={frameClass}
-      data-testid="ads"
-      data-state="ready"
-      data-page={page}
-      data-per-page={perPage}
-      style={gridStyle}
-    >
-      {renderPage(layers.a, 'a')}
-      {renderPage(layers.b, 'b')}
-      {showPill && (
-        <div className="ads__station">
-          <span className="ads__code">{station.code}</span>
-        </div>
-      )}
-      {showProgress && pages > 1 && (
-        <>
-          <div className="ads__dots" aria-hidden>
-            {Array.from({ length: Math.min(pages, 12) }, (_, i) => (
-              <i key={i} className={i === page % 12 ? 'is-on' : ''} />
-            ))}
-          </div>
-          {/* Thin bar filling over the page's own time; re-keyed per page so it restarts. */}
-          <div className="ads__progress" aria-hidden data-testid="ads-progress">
-            <i key={page} style={{ animationDuration: `${pageSeconds(page)}s` }} />
-          </div>
-        </>
       )}
     </div>
   );

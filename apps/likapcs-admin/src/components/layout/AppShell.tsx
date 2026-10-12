@@ -56,6 +56,7 @@ import { Badge, Button, Kbd, Segmented } from '../ui/primitives';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
 import { RequestsBell } from '../requests/requests';
+import { usePendingOrders } from '../orders/orders';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
@@ -107,6 +108,8 @@ export function AppShell() {
     enabled: can(PERMISSIONS.STATIONS_VIEW),
     refetchInterval: 30_000,
   });
+  // Orders waiting from the PCs (same source as the bell).
+  const pendingOrders = usePendingOrders(can(PERMISSIONS.STATIONS_VIEW));
   // Overdue "pay later" debts show as a badge so they are not forgotten.
   const debtsOverview = useQuery({
     queryKey: ['debts', 'overview'],
@@ -187,6 +190,13 @@ export function AppShell() {
           icon: ReceiptText,
           label: t('nav.sales'),
           permission: PERMISSIONS.POS_SELL,
+        },
+        {
+          to: '/orders',
+          icon: ShoppingBag,
+          label: t('nav.orders'),
+          permission: PERMISSIONS.STATIONS_VIEW,
+          badge: pendingOrders.data?.length,
         },
         {
           to: '/products',
@@ -304,6 +314,7 @@ export function AppShell() {
     '/stations': t('nav.stations'),
     '/pos': t('nav.pos'),
     '/sales': t('nav.sales'),
+    '/orders': t('nav.orders'),
     '/products': t('nav.products'),
     '/ads': t('nav.ads'),
     '/purchases': t('nav.purchases'),

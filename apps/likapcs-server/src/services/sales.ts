@@ -382,11 +382,32 @@ export class SalesService {
       );
       if (existing.rows[0]) return this.getById(existing.rows[0].id);
     }
-    return withTransaction(this.pool, async (client) => {
-      const saleId = await this.insertSaleShell(client, input, actor, 'completed');
-      await this.fillAndComplete(client, saleId, input, input.payments, actor);
-      return this.getById(saleId, client);
-    });
+    return withTransaction(this.pool, async (client) =>
+      this.createInTransaction(client, input, actor),
+    );
+  }
+
+  /**
+   * The same completed sale, written inside a transaction the caller owns (orders from the PC
+   * are accepted and sold atomically, 0.10.0). `fixedPrices` pins unit prices agreed earlier
+   * (an order's snapshot) instead of the live shelf / promo price, and skips member discounts.
+   */
+  async createInTransaction(
+    client: DbClient,
+    input: CreateSaleRequest,
+    actor: SaleActor,
+    opts: { fixedPrices?: Map<string, number> } = {},
+  ): Promise<SaleDetail> {
+    if (input.clientRequestId) {
+      const existing = await client.query<{ id: string }>(
+        'SELECT id FROM sales WHERE client_request_id = $1',
+        [input.clientRequestId],
+      );
+      if (existing.rows[0]) return this.getById(existing.rows[0].id, client);
+    }
+    const saleId = await this.insertSaleShell(client, input, actor, 'completed');
+    await this.fillAndComplete(client, saleId, input, input.payments, actor, opts.fixedPrices);
+    return this.getById(saleId, client);
   }
 
   /** Parks a sale (no stock change, no payment, no receipt number) to be completed later. */
@@ -667,15 +688,18 @@ export class SalesService {
     actor: SaleActor,
     defaultRate: number,
     customer: CustomerTerms | null,
+    fixedPrices?: Map<string, number>,
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
     if (hasDiscount && !actor.permissions.has('pos.discount')) {
       throw forbidden('Discounts require the pos.discount permission');
     }
+    if (fixedPrices) customer = null;
     const lines = input.items.map((i) => {
       const p = products.get(i.productId)!;
       return {
-        unitPriceCents: Number(p.promo_price_cents ?? p.selling_price_cents),
+        unitPriceCents:
+          fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents),
         quantityMilli: i.quantityMilli,
         discountCents: i.discountCents,
         taxRateBp: p.tax_rate_bp ?? defaultRate,
@@ -753,6 +777,7 @@ export class SalesService {
     input: SuspendSaleRequest,
     payments: CreateSaleRequest['payments'],
     actor: SaleActor,
+    fixedPrices?: Map<string, number>,
   ): Promise<void> {
     const products = await this.loadProducts(
       client,
@@ -765,6 +790,7 @@ export class SalesService {
       actor,
       await this.defaultTaxRate(client),
       await this.customerTerms(client, input.customerId),
+      fixedPrices,
     );
     let settled: { paidCents: number; changeCents: number };
     try {

@@ -31,6 +31,16 @@ export function createPool(connectionString: string, options: { max?: number } =
     // Idle client errors (e.g. database restarted). The pool recovers by creating new clients.
     console.error('[db] idle client error:', err.message);
   });
+  // Schedules (ads' weekly hours, daily reports) are evaluated "in local time": pin every
+  // connection to the server process's zone so SQL and JavaScript never disagree.
+  const zone = localTimeZone();
+  if (zone) {
+    pool.on('connect', (client) => {
+      client.query(`SET TIME ZONE '${zone.replace(/'/g, '')}'`).catch((err: Error) => {
+        console.error('[db] could not set the session time zone:', err.message);
+      });
+    });
+  }
   return pool;
 }
 
@@ -57,5 +67,15 @@ export async function withTransaction<T>(
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/** IANA zone of this process (e.g. `Europe/Belgrade`), or null when unknown. */
+function localTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone && /^[A-Za-z0-9_+\-/]+$/.test(zone) && zone !== 'Etc/Unknown' ? zone : null;
+  } catch {
+    return null;
   }
 }

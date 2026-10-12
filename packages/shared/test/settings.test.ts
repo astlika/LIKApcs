@@ -74,7 +74,7 @@ describe('client screen options (0018)', () => {
 
   it('every screen option travels to the PCs (display keys) and is readable by any staff', () => {
     const screenKeys = SETTING_KEYS.filter((k) => k.startsWith('client.ads_'));
-    expect(screenKeys.length).toBe(18);
+    expect(screenKeys.length).toBe(21);
     for (const key of screenKeys) {
       expect(CLIENT_DISPLAY_SETTING_KEYS, key).toContain(key);
       expect(PUBLIC_SETTING_KEYS, key).toContain(key);
@@ -100,6 +100,53 @@ describe('client screen options (0018)', () => {
       motion: true,
       background: 'midnight',
       tickerText: 'Tournament Saturday',
+    });
+  });
+});
+
+describe('0.10.0 — pause, orders and ads v2 settings', () => {
+  it('defaults: customers may pause / resume, a customer pause ends after 15 min, orders on', () => {
+    expect(SETTING_DEFAULTS['sessions.customer_pause']).toBe(true);
+    expect(SETTING_DEFAULTS['sessions.customer_resume']).toBe(true);
+    expect(SETTING_DEFAULTS['sessions.pause_max_minutes']).toBe(15);
+    expect(SETTING_DEFAULTS['orders.enabled']).toBe(true);
+    expect(SETTING_DEFAULTS['orders.settlement']).toBe('ask');
+    expect(SETTING_DEFAULTS['client.ads_style']).toBe('hero');
+  });
+  it('travels to the PCs: pause rules, orders switch, ads style / shuffle / countdown', () => {
+    for (const key of [
+      'sessions.customer_pause',
+      'sessions.customer_resume',
+      'sessions.pause_max_minutes',
+      'orders.enabled',
+      'orders.allow_note',
+      'client.ads_style',
+      'client.ads_shuffle',
+      'client.ads_promo_countdown',
+    ] as const)
+      expect(CLIENT_DISPLAY_SETTING_KEYS, key).toContain(key);
+    const display = clientDisplayFromSettings({
+      ...SETTING_DEFAULTS,
+      'sessions.customer_pause': false,
+      'sessions.pause_max_minutes': 0,
+      'orders.enabled': false,
+      'client.ads_style': 'split',
+      'client.ads_shuffle': true,
+    });
+    expect(display).toMatchObject({
+      customerPause: false,
+      customerResume: true,
+      pauseMaxMinutes: 0,
+      orders: false,
+      ordersNote: true,
+    });
+    expect(display.ads).toMatchObject({ style: 'split', shuffle: true, promoCountdown: true });
+  });
+  it('rejects a pause limit beyond 4 hours and an unknown settlement mode', () => {
+    expect(() => validateSettingsPatch({ 'sessions.pause_max_minutes': 241 })).toThrow();
+    expect(() => validateSettingsPatch({ 'orders.settlement': 'later' })).toThrow();
+    expect(validateSettingsPatch({ 'orders.settlement': 'on_bill' })).toEqual({
+      'orders.settlement': 'on_bill',
     });
   });
 });

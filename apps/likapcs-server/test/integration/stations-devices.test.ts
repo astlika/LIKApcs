@@ -378,7 +378,7 @@ describe('stations, device registration and realtime presence', () => {
       headers: { authorization: `Bearer ${deviceToken}` },
     });
     expect(ads.statusCode).toBe(200);
-    expect(ads.json()).toEqual({ items: [] });
+    expect(ads.json()).toEqual({ items: [], nextChangeAt: null });
 
     // Server → device command round-trip with acknowledgement (used by session control in Phase 3/4)
     const commandPromise = ctx.app.hub.sendCommand(registrationId, 'message.show', {

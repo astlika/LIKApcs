@@ -262,6 +262,15 @@ export class SessionRequestsService {
     return entry;
   }
 
+  /** The signed-in customer behind a token (null when none / expired / another PC) — orders attach it. */
+  customerIdOf(device: AuthenticatedDevice, token: string | undefined): string | null {
+    try {
+      return this.customerOf(device, token).customerId;
+    } catch {
+      return null;
+    }
+  }
+
   private prune(): void {
     const now = Date.now();
     for (const [key, entry] of this.tokens) if (entry.expiresAt < now) this.tokens.delete(key);

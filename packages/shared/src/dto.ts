@@ -2,7 +2,13 @@ import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
 import type { ClientMetrics, HardwareInfo } from './protocol.js';
-import { AD_THEMES, LANGUAGES, type AdTheme } from './settings.js';
+import {
+  AD_THEMES,
+  CLIENT_ADS_STYLES,
+  LANGUAGES,
+  type AdTheme,
+  type ClientAdsStyle,
+} from './settings.js';
 
 /**
  * HTTP API request/response contracts (v1). The server validates every request body with these
@@ -241,8 +247,18 @@ export interface StationSummary {
   maintenance: StationMaintenance | null;
   /** A customer's request for time waiting for staff (0.9.0); at most one per station. */
   pendingRequest: StationPendingRequest | null;
+  /** Orders from the PC (0.10.0): how many wait for an answer and what is still on the bill. */
+  orders: StationOrdersSummary;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StationOrdersSummary {
+  /** Orders staff have not answered yet. */
+  pending: number;
+  /** Accepted "on the bill" orders not yet settled (count / amount). */
+  openCount: number;
+  openCents: number;
 }
 
 export interface StationMaintenance {
@@ -289,6 +305,7 @@ export interface ActiveSessionSummary {
   startedAt: string;
   endsAt: string | null;
   pausedAt: string | null;
+  pausedBy: SessionPausedBy | null;
   elapsedSeconds: number;
   remainingSeconds: number | null;
   currentPriceCents: number;
@@ -654,6 +671,9 @@ export interface SessionQuoteResponse {
   };
 }
 
+export const SESSION_PAUSED_BY = ['staff', 'customer', 'grace'] as const;
+export type SessionPausedBy = (typeof SESSION_PAUSED_BY)[number];
+
 export interface SessionSummary {
   id: string;
   stationId: string;
@@ -672,6 +692,11 @@ export interface SessionSummary {
   startedAt: string;
   endsAt: string | null;
   pausedAt: string | null;
+  /** Who paused it (`paused` only): staff in LIKApcs, the customer at the PC, or the server
+   * after the PC went offline (`grace`). */
+  pausedBy: SessionPausedBy | null;
+  /** Customer pauses end by themselves at this instant (`sessions.pause_max_minutes`); null = no limit / not a customer pause. */
+  autoResumeAt: string | null;
   totalPausedSeconds: number;
   endedAt: string | null;
   endReason: SessionEndReason | null;
@@ -687,6 +712,9 @@ export interface SessionSummary {
   billedAt: string | null;
   createdByName: string | null;
   notes: string | null;
+  /** Accepted "on the bill" orders still open on this session: settled together with it (0.10.0). */
+  openOrdersCents: number;
+  openOrdersCount: number;
   createdAt: string;
 }
 
@@ -806,6 +834,8 @@ export const productSchema = z.object({
   description: nullableText(1000),
   storageLocation: nullableText(80),
   isActive: z.boolean().default(true),
+  /** Offered on the PC menu (orders from the seat, 0.10.0). */
+  clientMenu: z.boolean().default(false),
   barcodes: z.array(productBarcodeSchema).max(20).default([]),
   /** Opening stock recorded as an `initial` movement when the product is created. */
   initialStockMilli: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -854,6 +884,9 @@ export interface ProductSummary {
   description: string | null;
   storageLocation: string | null;
   isActive: boolean;
+  /** Offered on the PC menu (customers can order it from their seat, 0.10.0). */
+  clientMenu: boolean;
+  clientMenuOrder: number;
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
   barcodes: ProductBarcodeSummary[];
@@ -871,6 +904,8 @@ export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 
 export const productListQuerySchema = z.object({
+  /** Only products offered on the PC menu (0.10.0). */
+  menu: z.coerce.boolean().optional(),
   q: z.string().trim().max(80).optional(),
   categoryId: z.string().uuid().optional(),
   lowStock: z.coerce.boolean().optional(),
@@ -1486,6 +1521,134 @@ export const sessionRequestListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type SessionRequestListQuery = z.infer<typeof sessionRequestListQuerySchema>;
+
+// Orders from the PC (drinks / snacks ordered from the seat, 0.10.0)
+
+export const ORDER_STATUSES = [
+  'pending',
+  'accepted',
+  'paid',
+  'billed',
+  'rejected',
+  'cancelled',
+  'void',
+] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+/** `pay_now` = a sale is recorded when staff accept; `on_bill` = settled with the session. */
+export const ORDER_SETTLEMENTS = ['pay_now', 'on_bill'] as const;
+export type OrderSettlement = (typeof ORDER_SETTLEMENTS)[number];
+/** Staff default when accepting (`orders.settlement`); `ask` shows both choices. */
+export const ORDER_SETTLEMENT_MODES = ['ask', 'pay_now', 'on_bill'] as const;
+export type OrderSettlementMode = (typeof ORDER_SETTLEMENT_MODES)[number];
+export const ORDER_MAX_LINES = 20;
+export const ORDER_MAX_QUANTITY = 20;
+
+export interface OrderItemSummary {
+  id: number;
+  productId: string;
+  name: string;
+  quantityMilli: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  imageUrl: string | null;
+}
+
+export interface StationOrder {
+  id: string;
+  number: number;
+  stationId: string;
+  stationCode: string;
+  stationName: string;
+  sessionId: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  status: OrderStatus;
+  settlement: OrderSettlement | null;
+  note: string | null;
+  totalCents: number;
+  /** Rejection / void reason (shown on the PC when rejected). */
+  reason: string | null;
+  saleId: string | null;
+  receiptNo: string | null;
+  items: OrderItemSummary[];
+  requestedAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  settledAt: string | null;
+}
+
+/** `GET /client/menu` (device token): what the customer at this PC can order right now. */
+export interface ClientMenu {
+  enabled: boolean;
+  /** `none` = no running session on this PC (or orders switched off) — nothing can be ordered. */
+  reason: 'ok' | 'disabled' | 'no_session' | 'empty';
+  allowNote: boolean;
+  currency: string;
+  categories: { id: string | null; name: string; color: string | null }[];
+  items: ClientMenuItem[];
+  /** Someone is signed in to LIKApcs right now (the order will be seen promptly). */
+  staffOnline: boolean;
+}
+export interface ClientMenuItem {
+  productId: string;
+  name: string;
+  categoryId: string | null;
+  priceCents: number;
+  /** Regular price when `priceCents` is a live promo, otherwise null. */
+  oldPriceCents: number | null;
+  imageUrl: string | null;
+  /** Out of stock items stay visible but cannot be ordered. */
+  available: boolean;
+}
+
+export const orderCreateSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        quantity: z.number().int().min(1).max(ORDER_MAX_QUANTITY),
+      }),
+    )
+    .min(1)
+    .max(ORDER_MAX_LINES),
+  note: z.string().trim().max(200).optional(),
+});
+export type OrderCreate = z.infer<typeof orderCreateSchema>;
+
+/** Staff accept: `pay_now` needs tenders (a sale is recorded); `on_bill` needs a running session. */
+export const orderAcceptSchema = z.object({
+  settlement: z.enum(ORDER_SETTLEMENTS),
+  payments: z.array(salePaymentInputSchema).max(10).optional(),
+  /** Attach / confirm the customer the sale is for (`credit` tenders need one). */
+  customerId: z.string().uuid().nullable().optional(),
+});
+export type OrderAccept = z.infer<typeof orderAcceptSchema>;
+
+/** Settle an accepted "on the bill" order at the desk (customer pays before the session ends). */
+export const orderPaySchema = z.object({
+  payments: z.array(salePaymentInputSchema).min(1).max(10),
+  customerId: z.string().uuid().nullable().optional(),
+});
+export type OrderPay = z.infer<typeof orderPaySchema>;
+
+export const orderRejectSchema = z.object({ reason: z.string().trim().max(120).optional() });
+export const orderVoidSchema = z.object({ reason: z.string().trim().min(2).max(200) });
+
+export const orderListQuerySchema = z.object({
+  status: z.enum(ORDER_STATUSES).optional(),
+  /** `open` = pending + accepted (the desk's working list). */
+  open: z.coerce.boolean().optional(),
+  stationId: z.string().uuid().optional(),
+  sessionId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
+
+/** Products offered on the PC menu — `PUT /catalog/menu` replaces the whole list in order. */
+export const clientMenuSetSchema = z.object({
+  productIds: z.array(z.string().uuid()).max(500),
+});
+export type ClientMenuSetRequest = z.infer<typeof clientMenuSetSchema>;
 
 // Reports
 
@@ -2138,6 +2301,22 @@ export const AD_DURATION_MAX_SECONDS = 120;
 
 const adBadge = z.string().trim().min(1).max(16).nullable().optional();
 const adInstant = z.string().datetime({ offset: true }).nullable().optional();
+const adClock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM');
+
+/**
+ * Slide styles (0.10.0) for the single-slide layouts (`card` / `full`): `poster` = picture with
+ * the caption along the bottom (the 0.7 look), `hero` = the picture floats sharp over a blurred,
+ * zoomed copy of itself with big staggered type, `split` = picture left / text right,
+ * `banner` = text first with a huge price (promos).
+ */
+export const AD_STYLES = CLIENT_ADS_STYLES;
+export type AdStyle = ClientAdsStyle;
+export const AD_VIDEO_MAX_BYTES = 80 * 1024 * 1024;
+export const AD_DAYS_ALL = 127;
+/** Bit of a weekday in `daysMask` (Monday = 0 … Sunday = 6). */
+export function adDayBit(mondayBasedIndex: number): number {
+  return 1 << mondayBasedIndex;
+}
 
 /**
  * Create / update body. `product` ads: `productId` (one ad per product) and an optional
@@ -2153,6 +2332,34 @@ export const adInputSchema = z
     promoPriceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
     badge: adBadge,
     theme: z.enum(AD_THEMES).nullable().optional(),
+    /** Slide style (0.10.0); null = the owner's default (`client.ads_style`). */
+    style: z.enum(AD_STYLES).nullable().optional(),
+    /** Accent colour for the price tag / badge (#RRGGBB); null = theme colour. */
+    accent: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, '#RRGGBB')
+      .nullable()
+      .optional(),
+    /** Call-to-action line ("Order from your seat", "Ask at the desk"). */
+    cta: z.string().trim().min(1).max(60).nullable().optional(),
+    /** Weekday bitmask, bit 0 = Monday … bit 6 = Sunday; 127 = every day. */
+    daysMask: z.number().int().min(1).max(127).optional(),
+    /** Daily window `HH:MM` (local time), both or neither; may wrap midnight (22:00 → 02:00). */
+    timeFrom: adClock.nullable().optional(),
+    timeTo: adClock.nullable().optional(),
+    /** How often the slide comes round: 1 = normal, 2 = twice, 3 = three times per rotation. */
+    weight: z.number().int().min(1).max(3).optional(),
+    /** Only these PCs show the slide; null = every PC. */
+    stationIds: z.array(uuidSchema).max(500).nullable().optional(),
+    /** Video slide: an https:// URL (uploads go through `PUT /ads/:id/video`). */
+    videoUrl: z
+      .string()
+      .trim()
+      .url()
+      .regex(/^https?:\/\//i, 'http(s) link')
+      .max(2000)
+      .nullable()
+      .optional(),
     durationSeconds: z
       .number()
       .int()
@@ -2177,12 +2384,25 @@ export const adInputSchema = z
       });
     if (v.startsAt && v.endsAt && new Date(v.endsAt) <= new Date(v.startsAt))
       ctx.addIssue({ code: 'custom', path: ['endsAt'], message: 'Must end after it starts' });
+    if ((v.timeFrom == null) !== (v.timeTo == null))
+      ctx.addIssue({ code: 'custom', path: ['timeTo'], message: 'Set both times or neither' });
+    if (v.timeFrom && v.timeTo && v.timeFrom === v.timeTo)
+      ctx.addIssue({ code: 'custom', path: ['timeTo'], message: 'The window is empty' });
   });
 export type AdInput = z.infer<typeof adInputSchema>;
 export const adPatchSchema = adInputSchema
   .innerType()
   .omit({ kind: true, productId: true })
-  .partial();
+  .partial()
+  .superRefine((v, ctx) => {
+    // A patch may carry one of the two times only when it clears both or sets both.
+    if ('timeFrom' in v !== 'timeTo' in v)
+      ctx.addIssue({ code: 'custom', path: ['timeTo'], message: 'Set both times or neither' });
+    if ((v.timeFrom == null) !== (v.timeTo == null))
+      ctx.addIssue({ code: 'custom', path: ['timeTo'], message: 'Set both times or neither' });
+    if (v.timeFrom && v.timeTo && v.timeFrom === v.timeTo)
+      ctx.addIssue({ code: 'custom', path: ['timeTo'], message: 'The window is empty' });
+  });
 export type AdPatch = z.infer<typeof adPatchSchema>;
 
 export const adReorderSchema = z.object({ ids: z.array(uuidSchema).min(1).max(500) });
@@ -2202,7 +2422,14 @@ export type AdAddAllRequest = z.infer<typeof adAddAllSchema>;
  * = the product was archived; being out of stock does not hide an ad (0.7.1), the Admin only
  * flags it.
  */
-export const AD_STATES = ['live', 'disabled', 'scheduled', 'expired', 'unavailable'] as const;
+export const AD_STATES = [
+  'live',
+  'disabled',
+  'scheduled',
+  'expired',
+  'unavailable',
+  'off_hours',
+] as const;
 export type AdState = (typeof AD_STATES)[number];
 
 export interface AdSummary {
@@ -2228,9 +2455,20 @@ export interface AdSummary {
   durationSeconds: number | null;
   startsAt: string | null;
   endsAt: string | null;
+  /** 0.10.0 */
+  style: AdStyle | null;
+  accent: string | null;
+  cta: string | null;
+  daysMask: number;
+  timeFrom: string | null;
+  timeTo: string | null;
+  weight: number;
+  stationIds: string[];
+  /** Server-relative URL of the uploaded video, or the external URL; null = picture / text slide. */
+  videoUrl: string | null;
   enabled: boolean;
   sortOrder: number;
-  /** `live` = currently part of the client feed. */
+  /** `live` = currently part of the client feed (`off_hours` = outside its weekly schedule). */
   state: AdState;
   createdAt: string;
   updatedAt: string;

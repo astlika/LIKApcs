@@ -13,17 +13,21 @@ import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
   type ClientAdItem,
+  type ClientMenu,
   type ClientMetrics,
   type ClientRequestOptions,
   type CustomerLoginResponse,
   type HardwareInfo,
+  type OrderCreate,
   type RegisterDeviceResponse,
   type RegistrationPollResponse,
   type ServerCommand,
+  type ServerOrderUpdate,
   type ServerRequestUpdate,
   type ServerToClientMessage,
   type SessionRequest,
   type SessionRequestCreate,
+  type StationOrder,
 } from '@likapcs/shared';
 import {
   APP_VERSION,
@@ -56,6 +60,7 @@ import {
   applyDisplay,
   applyWelcome,
   backoffMs,
+  baseWindowModeOf,
   candidateServerUrls,
   initialState,
   mergeRequestPush,
@@ -65,6 +70,7 @@ import {
   sessionView,
   type ClientState,
   type Effect,
+  type OrderView,
 } from './protocol';
 
 export type Phase =
@@ -112,6 +118,10 @@ export interface AgentSnapshot {
   customer: CustomerLoginState | null;
   /** The customer's request on this PC: pending while the staff decide, then the answer until dismissed. */
   request: SessionRequest | null;
+  /** Orders sent from this PC during the running session (newest first); cleared when the PC locks. */
+  orders: OrderView[];
+  /** A just-decided order the widget shows for a few seconds ("Order #3 accepted"). */
+  orderFlash: { order: OrderView; untilMs: number } | null;
 }
 
 /** Who is signed in at the PC. The token only lets this device create requests (20 min). */
@@ -137,6 +147,10 @@ export type CustomerActionError =
   | 'conflict'
   | 'validation_error'
   | 'not_found'
+  | 'orders_disabled'
+  | 'out_of_stock'
+  | 'pause_disabled'
+  | 'resume_disabled'
   | 'generic';
 
 export type ManualConnectResult =
@@ -169,6 +183,27 @@ const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const UPDATE_RETRY_MS = 30 * 60_000;
 /** Safety net behind the `server.display` push (a missed push must not keep stale ads for long). */
 const ADS_REFRESH_MS = 10 * 60_000;
+/** How long "Order #3 accepted" stays in the widget. */
+const ORDER_FLASH_MS = 8000;
+
+/** The PC keeps only what it shows of an order (no ids of staff, sales or customers). */
+function orderViewOf(order: StationOrder | ServerOrderUpdate['order']): OrderView {
+  return {
+    id: order.id,
+    number: order.number,
+    status: order.status,
+    settlement: order.settlement,
+    totalCents: order.totalCents,
+    reason: order.reason,
+    items: order.items.map((i) => ({
+      name: i.name,
+      quantity: 'quantity' in i ? i.quantity : Math.round(i.quantityMilli / 1000),
+      lineTotalCents: i.lineTotalCents,
+    })),
+    requestedAt: order.requestedAt,
+    decidedAt: order.decidedAt,
+  };
+}
 
 type Listener = () => void;
 
@@ -192,6 +227,8 @@ export class Agent {
     ads: [],
     customer: null,
     request: null,
+    orders: [],
+    orderFlash: null,
   };
   private readonly listeners = new Set<Listener>();
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -213,6 +250,8 @@ export class Agent {
   private ads: ClientAdItem[] = [];
   private adsLoadedAt = 0;
   private adsLoading = false;
+  /** Server-announced instant the slideshow changes by itself (a promo or schedule starts/ends). */
+  private adsNextChangeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ─── store ────────────────────────────────────────────────────────────────
   subscribe = (listener: Listener): (() => void) => {
@@ -236,13 +275,19 @@ export class Agent {
     // an already-decided request would only linger as stale text, so it goes with the flip.
     const request =
       modeChanged && this.snapshot.request?.status !== 'pending' ? null : this.snapshot.request;
-    this.set({ state, customer, request });
-    if (modeChanged || !this.modeApplied) {
-      this.modeApplied = true;
-      void this.applyWindowMode(state.mode === 'locked' ? 'locked' : 'overlay');
+    // Orders belong to the session: once the PC locks they are the desk's business, not the screen's.
+    const orders = modeChanged && state.mode === 'locked' ? [] : this.snapshot.orders;
+    const orderFlash = modeChanged && state.mode === 'locked' ? null : this.snapshot.orderFlash;
+    this.set({ state, customer, request, orders, orderFlash });
+    // Locked PC or paused session → full-screen cover; otherwise the widget. A pause that arrives
+    // while the order / settings panel is open closes it: nothing is usable while paused.
+    const base = baseWindowModeOf(state);
+    if (base !== this.baseMode) {
+      this.baseMode = base;
+      void this.applyWindowMode(base);
     }
   }
-  private modeApplied = false;
+  private baseMode: WindowMode | null = null;
 
   private async applyWindowMode(mode: WindowMode): Promise<void> {
     this.set({ windowMode: mode });
@@ -254,13 +299,13 @@ export class Agent {
    * staff maintenance) — the lock screen itself hosts the panel otherwise (Ctrl+Alt+S).
    */
   async openPanel(): Promise<boolean> {
-    if (this.snapshot.state.mode === 'locked') return false;
+    if (baseWindowModeOf(this.snapshot.state) === 'locked') return false;
     await this.applyWindowMode('panel');
     return true;
   }
   async closePanel(): Promise<void> {
     if (this.snapshot.windowMode !== 'panel') return;
-    await this.applyWindowMode(this.snapshot.state.mode === 'locked' ? 'locked' : 'overlay');
+    await this.applyWindowMode(baseWindowModeOf(this.snapshot.state));
   }
 
   /**
@@ -768,10 +813,14 @@ export class Agent {
             this.startHeartbeat();
             this.refreshAds(true);
             void this.reconcileRequest(message.request?.id ?? null);
+            if (message.orders) this.set({ orders: message.orders });
             break;
           }
           case 'server.request':
             this.onRequestPush(message.request);
+            break;
+          case 'server.order':
+            this.onOrderPush(message.order);
             break;
           case 'server.heartbeat_ack':
             this.clock.sync(message.serverTime);
@@ -859,17 +908,23 @@ export class Agent {
       try {
         const token = await secretGet(KEYS.token);
         if (!token) return;
-        const res = await this.api<{ items: ClientAdItem[] }>(pairing, '/client/ads', {
-          headers: { authorization: `Bearer ${token}` },
-        });
+        const res = await this.api<{ items: ClientAdItem[]; nextChangeAt?: string | null }>(
+          pairing,
+          '/client/ads',
+          { headers: { authorization: `Bearer ${token}` } },
+        );
         if (res.status === 200 && res.body) {
           this.adsLoadedAt = Date.now();
+          const absolute = (url: string | null) =>
+            url && url.startsWith('/') ? `${pairing.serverUrl}${url}` : url;
           this.setAds(
             res.body.items.map((item) => ({
               ...item,
-              imageUrl: item.imageUrl ? `${pairing.serverUrl}${item.imageUrl}` : null,
+              imageUrl: absolute(item.imageUrl),
+              videoUrl: absolute(item.videoUrl ?? null) ?? null,
             })),
           );
+          this.scheduleAdsChange(res.body.nextChangeAt ?? null);
         }
       } catch {
         /* keep the previous list; the next refresh will retry */
@@ -877,6 +932,25 @@ export class Agent {
         this.adsLoading = false;
       }
     })();
+  }
+
+  /**
+   * The server knows when the list changes next by itself (a promo ends at 18:00, a weekday
+   * slide starts at 20:00): re-fetch right after that instant instead of waiting for the 10-min net.
+   */
+  private scheduleAdsChange(at: string | null): void {
+    if (this.adsNextChangeTimer) clearTimeout(this.adsNextChangeTimer);
+    this.adsNextChangeTimer = null;
+    if (!at) return;
+    const delay = Date.parse(at) - this.clock.now() + 1500;
+    if (!Number.isFinite(delay) || delay > ADS_REFRESH_MS) return;
+    this.adsNextChangeTimer = setTimeout(
+      () => {
+        this.adsNextChangeTimer = null;
+        this.refreshAds(true);
+      },
+      Math.max(1000, delay),
+    );
   }
 
   private setAds(ads: ClientAdItem[]): void {
@@ -1086,6 +1160,10 @@ export class Agent {
         'conflict',
         'validation_error',
         'not_found',
+        'orders_disabled',
+        'out_of_stock',
+        'pause_disabled',
+        'resume_disabled',
       ];
       return {
         ok: false,
@@ -1180,6 +1258,90 @@ export class Agent {
     if (this.snapshot.request?.status !== 'pending') this.set({ request: null });
   }
 
+  // ─── Orders from the seat + customer pause / resume (0.10.0) ─────────────────
+  // The PC only *asks*: the menu, prices and every status come from the server; staff accept,
+  // reject and settle in LIKApcs. Money never moves here.
+
+  /** What can be ordered right now (needs a running session on this PC). */
+  async loadMenu(): Promise<
+    { ok: true; menu: ClientMenu } | { ok: false; error: CustomerActionError }
+  > {
+    const res = await this.customerCall<ClientMenu>('/client/menu', { method: 'GET' });
+    if (!res.ok) return res;
+    const { pairing } = this.snapshot;
+    const base = pairing?.serverUrl ?? '';
+    return {
+      ok: true,
+      menu: {
+        ...res.body,
+        items: res.body.items.map((item) => ({
+          ...item,
+          imageUrl: item.imageUrl?.startsWith('/') ? `${base}${item.imageUrl}` : item.imageUrl,
+        })),
+      },
+    };
+  }
+
+  async placeOrder(
+    input: OrderCreate,
+  ): Promise<{ ok: true; order: OrderView } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<StationOrder>('/client/orders', {
+      method: 'POST',
+      body: input,
+      customer: Boolean(this.customerSignedIn()),
+    });
+    if (!res.ok) return res;
+    const order = orderViewOf(res.body);
+    this.upsertOrder(order);
+    return { ok: true, order };
+  }
+
+  /** The customer takes a still-pending order back. */
+  async cancelOrder(id: string): Promise<boolean> {
+    const res = await this.customerCall<StationOrder>(`/client/orders/${id}`, { method: 'DELETE' });
+    if (res.ok) this.upsertOrder(orderViewOf(res.body));
+    else if (res.error === 'not_found')
+      this.set({ orders: this.snapshot.orders.filter((o) => o.id !== id) });
+    return res.ok;
+  }
+
+  /** Re-reads the session's orders (panel opened, reconnect) — pushes may have been missed. */
+  async refreshOrders(): Promise<void> {
+    const res = await this.customerCall<{ items: StationOrder[] }>('/client/orders', {
+      method: 'GET',
+    });
+    if (res.ok) this.set({ orders: res.body.items.map(orderViewOf) });
+  }
+
+  private upsertOrder(order: OrderView): void {
+    const rest = this.snapshot.orders.filter((o) => o.id !== order.id);
+    this.set({ orders: [order, ...rest].sort((a, b) => b.number - a.number).slice(0, 30) });
+  }
+
+  /** `server.order`: the desk answered — list + a short flash in the widget. */
+  private onOrderPush(order: OrderView): void {
+    const before = this.snapshot.orders.find((o) => o.id === order.id);
+    this.upsertOrder(order);
+    if (before?.status !== order.status && order.status !== 'pending')
+      this.set({ orderFlash: { order, untilMs: this.clock.now() + ORDER_FLASH_MS } });
+  }
+
+  dismissOrderFlash(): void {
+    if (this.snapshot.orderFlash) this.set({ orderFlash: null });
+  }
+
+  /** "Pause" in the widget: the server pauses the session and mirrors `session.pause` back. */
+  async customerPause(): Promise<{ ok: true } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<unknown>('/client/session-pause', { method: 'POST' });
+    return res.ok ? { ok: true } : res;
+  }
+
+  /** "Resume" on the covered screen. */
+  async customerResume(): Promise<{ ok: true } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<unknown>('/client/session-resume', { method: 'POST' });
+    return res.ok ? { ok: true } : res;
+  }
+
   /** On every welcome: the server's view of the pending request wins (restart / reconnect). */
   private async reconcileRequest(pendingId: string | null): Promise<void> {
     const local = this.snapshot.request;
@@ -1225,6 +1387,8 @@ export class Agent {
     if (state.notice && state.notice.untilServerMs <= now) next = { ...next, notice: null };
     if (next !== state) this.setState(next);
     if (requestResultExpired(this.snapshot.request, now)) this.set({ request: null });
+    if (this.snapshot.orderFlash && this.snapshot.orderFlash.untilMs <= now)
+      this.set({ orderFlash: null });
     this.set({ serverNowMs: now });
     // Periodic slideshow refresh while locked (new products / photos appear without a reconnect).
     if (next.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();

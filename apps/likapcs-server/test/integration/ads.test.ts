@@ -5,7 +5,7 @@
  * the `server.display` push on every change.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -567,5 +567,251 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect((await call(owner.token, 'DELETE', `/ads/${water.id}`)).status).toBe(204);
     expect((await call(owner.token, 'GET', `/ads/${water.id}`)).status).toBe(404);
     expect((await feed()).map((i) => i.id)).not.toContain(water.id);
+  });
+
+  // ─── 0.10.0: ads v2 ───────────────────────────────────────────────────────────
+
+  const hhmm = (d: Date) =>
+    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const shifted = (minutes: number) => hhmm(new Date(Date.now() + minutes * 60_000));
+
+  it('v2 fields: style, accent, call-to-action, weight reach the PC; validation holds', async () => {
+    const created = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'custom',
+      title: 'Tournament Friday',
+      style: 'poster',
+      accent: '#ff5500',
+      cta: 'Ask at the desk',
+      weight: 3,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      style: 'poster',
+      accent: '#ff5500',
+      cta: 'Ask at the desk',
+      weight: 3,
+      daysMask: 127,
+      timeFrom: null,
+      timeTo: null,
+      stationIds: [],
+      videoUrl: null,
+      state: 'live',
+    });
+    const fed = (await feed()).find((i) => i.id === created.body.id)!;
+    expect(fed).toMatchObject({
+      style: 'poster',
+      accent: '#ff5500',
+      cta: 'Ask at the desk',
+      weight: 3,
+    });
+    expect(fed.endsAt).toBeNull();
+    for (const bad of [
+      { accent: 'red' },
+      { style: 'neon' },
+      { weight: 0 },
+      { weight: 11 },
+      { timeFrom: '18:00' }, // both or none
+      { timeFrom: '25:00', timeTo: '20:00' },
+      { daysMask: 128 },
+      { videoUrl: 'ftp://x/y.mp4' },
+    ])
+      expect((await call(owner.token, 'PATCH', `/ads/${created.body.id}`, bad)).status).toBe(400);
+    const feedWithMeta = await call<{ items: ClientAdItem[]; nextChangeAt: string | null }>(
+      deviceToken,
+      'GET',
+      '/client/ads',
+    );
+    expect(feedWithMeta.body.nextChangeAt).toBeNull();
+    expect((await call(owner.token, 'DELETE', `/ads/${created.body.id}`)).status).toBe(204);
+  });
+
+  it('weekly schedule: outside the hours or on other days the slide is off_hours; the PC learns when to refetch', async () => {
+    const list = (await call<{ items: AdSummary[] }>(owner.token, 'GET', '/ads')).body.items;
+    const colaAd = list.find((a) => a.productId === cola.id)!;
+    // Window that contains now (wraps midnight when late in the day).
+    const inside = await call<AdSummary>(owner.token, 'PATCH', `/ads/${colaAd.id}`, {
+      timeFrom: shifted(-60),
+      timeTo: shifted(+60),
+    });
+    expect(inside.status).toBe(200);
+    expect(inside.body.state).toBe('live');
+    expect(inside.body.timeFrom).toBe(shifted(-60));
+    let fed = await call<{ items: ClientAdItem[]; nextChangeAt: string | null }>(
+      deviceToken,
+      'GET',
+      '/client/ads',
+    );
+    expect(fed.body.items.map((i) => i.id)).toContain(colaAd.id);
+    expect(fed.body.nextChangeAt).toBeTruthy();
+    const next = Date.parse(fed.body.nextChangeAt!);
+    expect(next).toBeGreaterThan(Date.now());
+    expect(next - Date.now()).toBeLessThanOrEqual(61 * 60_000);
+
+    // Window that starts in 2 hours.
+    const later = await call<AdSummary>(owner.token, 'PATCH', `/ads/${colaAd.id}`, {
+      timeFrom: shifted(+120),
+      timeTo: shifted(+180),
+    });
+    expect(later.body.state).toBe('off_hours');
+    fed = await call(deviceToken, 'GET', '/client/ads');
+    expect(fed.body.items.map((i) => i.id)).not.toContain(colaAd.id);
+    // An off-hours promo is not charged either.
+    const lookup = await call<{ product: ProductSummary }>(
+      owner.token,
+      'GET',
+      `/products/lookup?code=${encodeURIComponent(cola.sku ?? cola.barcodes[0]!)}`,
+    );
+    expect(lookup.body.product.promoPriceCents).toBeNull();
+
+    // Every day except today.
+    const today = (new Date().getDay() + 6) % 7;
+    const otherDays = await call<AdSummary>(owner.token, 'PATCH', `/ads/${colaAd.id}`, {
+      timeFrom: null,
+      timeTo: null,
+      daysMask: 127 & ~(1 << today),
+    });
+    expect(otherDays.body.state).toBe('off_hours');
+    const everyDay = await call<AdSummary>(owner.token, 'PATCH', `/ads/${colaAd.id}`, {
+      daysMask: 127,
+    });
+    expect(everyDay.body.state).toBe('live');
+  });
+
+  it('a slide can be limited to some PCs; others never receive it', async () => {
+    const stations = (await call<{ id: string }[]>(owner.token, 'GET', '/stations')).body;
+    const other = (
+      await call<{ id: string }>(owner.token, 'POST', '/stations', { number: 9, name: 'PC 9' })
+    ).body;
+    const created = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'custom',
+      title: 'VIP corner only',
+      stationIds: [other.id],
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.stationIds).toEqual([other.id]);
+    expect((await feed()).map((i) => i.id)).not.toContain(created.body.id);
+    const mine = await call<AdSummary>(owner.token, 'PATCH', `/ads/${created.body.id}`, {
+      stationIds: [stations[0]!.id, other.id],
+    });
+    expect(mine.body.stationIds).toHaveLength(2);
+    expect((await feed()).map((i) => i.id)).toContain(created.body.id);
+    expect(
+      (await call(owner.token, 'PATCH', `/ads/${created.body.id}`, { stationIds: [randomUUID()] }))
+        .status,
+    ).toBe(400);
+    await call(owner.token, 'DELETE', `/ads/${created.body.id}`);
+  });
+
+  it('video slides: MP4/WebM upload (magic bytes, size cap), streamed with ranges, removed with the ad; links too', async () => {
+    const created = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'custom',
+      title: 'Trailer',
+      videoUrl: 'https://example.com/trailer.mp4',
+    });
+    expect(created.body.videoUrl).toBe('https://example.com/trailer.mp4');
+    expect((await feed()).find((i) => i.id === created.body.id)!.videoUrl).toBe(
+      'https://example.com/trailer.mp4',
+    );
+    const uploadVideo = (token: string, payload: Buffer, type = 'video/mp4') =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/ads/${created.body.id}/video`,
+        headers: { ...authHeader(token), 'content-type': type },
+        payload,
+      });
+    const mp4 = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from('ftypisom'),
+      Buffer.alloc(64, 1),
+    ]);
+    expect((await uploadVideo(cashier.token, mp4)).statusCode).toBe(403);
+    expect((await uploadVideo(owner.token, PNG_1X1)).statusCode).toBe(400); // not a video
+    expect((await uploadVideo(owner.token, PNG_1X1, 'image/png')).statusCode).toBe(415);
+    const up = await uploadVideo(owner.token, mp4);
+    expect(up.statusCode).toBe(200);
+    const withVideo = up.json<AdSummary>();
+    expect(withVideo.videoUrl).toMatch(/^\/api\/v1\/files\/videos\/[a-f0-9]{24}\.mp4$/);
+    const file = withVideo.videoUrl!.split('/').pop()!;
+    expect(fs.existsSync(path.join(uploadDir, 'videos', file))).toBe(true);
+    const whole = await ctx.app.inject({ method: 'GET', url: withVideo.videoUrl! });
+    expect(whole.statusCode).toBe(200);
+    expect(whole.headers['content-type']).toBe('video/mp4');
+    expect(whole.headers['accept-ranges']).toBe('bytes');
+    expect(whole.rawPayload.length).toBe(mp4.length);
+    const part = await ctx.app.inject({
+      method: 'GET',
+      url: withVideo.videoUrl!,
+      headers: { range: 'bytes=4-7' },
+    });
+    expect(part.statusCode).toBe(206);
+    expect(part.headers['content-range']).toBe(`bytes 4-7/${mp4.length}`);
+    expect(part.rawPayload.toString('ascii')).toBe('ftyp');
+    expect(
+      (
+        await ctx.app.inject({
+          method: 'GET',
+          url: withVideo.videoUrl!,
+          headers: { range: 'bytes=999-' },
+        })
+      ).statusCode,
+    ).toBe(416);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/v1/files/videos/nope.mp4' })).statusCode,
+    ).toBe(404);
+    // WebM replaces the MP4 (old file gone); a link replaces the upload.
+    const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(32, 2)]);
+    const up2 = await uploadVideo(owner.token, webm, 'video/webm');
+    expect(up2.statusCode).toBe(200);
+    expect(up2.json<AdSummary>().videoUrl).toMatch(/\.webm$/);
+    expect(fs.existsSync(path.join(uploadDir, 'videos', file))).toBe(false);
+    const file2 = up2.json<AdSummary>().videoUrl!.split('/').pop()!;
+    const linked = await call<AdSummary>(owner.token, 'PATCH', `/ads/${created.body.id}`, {
+      videoUrl: 'https://example.com/other.webm',
+    });
+    expect(linked.body.videoUrl).toBe('https://example.com/other.webm');
+    expect(fs.existsSync(path.join(uploadDir, 'videos', file2))).toBe(false);
+    const up3 = await uploadVideo(owner.token, mp4);
+    const file3 = up3.json<AdSummary>().videoUrl!.split('/').pop()!;
+    expect(
+      (await call(owner.token, 'PATCH', `/ads/${created.body.id}`, { videoUrl: null })).status,
+    ).toBe(200);
+    expect(fs.existsSync(path.join(uploadDir, 'videos', file3))).toBe(false);
+    const up4 = await uploadVideo(owner.token, mp4);
+    const file4 = up4.json<AdSummary>().videoUrl!.split('/').pop()!;
+    expect((await call(owner.token, 'DELETE', `/ads/${created.body.id}`)).status).toBe(204);
+    expect(fs.existsSync(path.join(uploadDir, 'videos', file4))).toBe(false);
+  });
+
+  it('duplicate makes a disabled custom copy (picture cloned, promo dropped) ready to edit', async () => {
+    const list = (await call<{ items: AdSummary[] }>(owner.token, 'GET', '/ads')).body.items;
+    const colaAd = list.find((a) => a.productId === cola.id)!;
+    await call(owner.token, 'PATCH', `/ads/${colaAd.id}`, {
+      promoPriceCents: 100,
+      badge: 'HOT',
+      style: 'poster',
+      cta: 'Order from your seat',
+    });
+    expect((await call(cashier.token, 'POST', `/ads/${colaAd.id}/duplicate`)).status).toBe(403);
+    const copy = await call<AdSummary>(owner.token, 'POST', `/ads/${colaAd.id}/duplicate`);
+    expect(copy.status).toBe(201);
+    expect(copy.body).toMatchObject({
+      kind: 'custom',
+      productId: null,
+      title: cola.name,
+      promoPriceCents: null,
+      badge: 'HOT',
+      style: 'poster',
+      cta: 'Order from your seat',
+      enabled: false,
+      state: 'disabled',
+    });
+    expect(copy.body.imageUrl).toBeTruthy();
+    expect(copy.body.imageUrl).not.toBe(colaAd.imageUrl);
+    expect((await feed()).map((i) => i.id)).not.toContain(copy.body.id);
+    // The original is untouched and still the only ad of the product.
+    expect(
+      (await call(owner.token, 'POST', '/ads', { kind: 'product', productId: cola.id })).status,
+    ).toBe(409);
+    await call(owner.token, 'DELETE', `/ads/${copy.body.id}`);
   });
 });

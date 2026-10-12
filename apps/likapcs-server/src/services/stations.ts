@@ -62,6 +62,10 @@ interface StationRow {
   request_package_id: string | null;
   request_package_name: string | null;
   request_requested_at: Date | null;
+  session_paused_by: 'staff' | 'customer' | 'grace' | null;
+  orders_pending: string | number;
+  orders_open_count: string | number;
+  orders_open_cents: string | number;
 }
 
 const STATION_SELECT = `
@@ -72,14 +76,18 @@ const STATION_SELECT = `
          d.last_seen_at AS device_last_seen_at, d.last_ip AS device_last_ip, d.hardware AS device_hardware,
          g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name,
          g.billing_mode AS session_billing_mode, g.status AS session_status, g.started_at AS session_started_at,
-         g.ends_at AS session_ends_at, g.paused_at AS session_paused_at,
+         g.ends_at AS session_ends_at, g.paused_at AS session_paused_at, g.paused_by AS session_paused_by,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
          g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour,
          s.maintenance_until, s.maintenance_by, s.maintenance_by_name,
          r.id AS request_id, r.kind AS request_kind, r.customer_id AS request_customer_id,
          rc.name AS request_customer_name, COALESCE(r.minutes, rp.duration_minutes) AS request_minutes,
          r.minutes AS request_quick_minutes, r.package_id AS request_package_id, rp.name AS request_package_name,
-         r.requested_at AS request_requested_at
+         r.requested_at AS request_requested_at,
+         (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'pending') AS orders_pending,
+         (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
+         (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
+           WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
@@ -123,6 +131,7 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
     startedAt: row.session_started_at.toISOString(),
     endsAt: row.session_ends_at?.toISOString() ?? null,
     pausedAt: row.session_paused_at?.toISOString() ?? null,
+    pausedBy: row.session_status === 'paused' ? row.session_paused_by : null,
     elapsedSeconds: elapsed,
     remainingSeconds: row.session_ends_at
       ? Math.max(0, Math.round((row.session_ends_at.getTime() - reference) / 1000))
@@ -208,6 +217,11 @@ export class StationsService {
       activeSession,
       maintenance,
       pendingRequest,
+      orders: {
+        pending: Number(row.orders_pending ?? 0),
+        openCount: Number(row.orders_open_count ?? 0),
+        openCents: Number(row.orders_open_cents ?? 0),
+      },
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };

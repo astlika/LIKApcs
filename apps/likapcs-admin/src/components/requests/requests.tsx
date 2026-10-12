@@ -10,9 +10,31 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, BellOff, Check, Clock, Monitor, Volume2, VolumeX, X } from 'lucide-react';
-import { PERMISSIONS, formatMinutesShort, type SessionRequest } from '@likapcs/shared';
+import {
+  Bell,
+  BellOff,
+  Check,
+  Clock,
+  Monitor,
+  ShoppingBag,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
+import {
+  PERMISSIONS,
+  formatMinutesShort,
+  type SessionRequest,
+  type SettingsMap,
+  type StationOrder,
+} from '@likapcs/shared';
 import { ApiError, api } from '../../lib/api';
+import {
+  AcceptOrderDialog,
+  RejectOrderDialog,
+  orderItemsText,
+  usePendingOrders,
+} from '../orders/orders';
 import { storage } from '../../lib/storage';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
@@ -196,12 +218,24 @@ export function RequestsBell() {
   const canView = can(PERMISSIONS.STATIONS_VIEW);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const pending = usePendingRequests(canView);
+  const pendingOrders = usePendingOrders(canView);
+  const publicSettings = useQuery({
+    queryKey: ['settings', 'public'],
+    queryFn: () => api<Partial<SettingsMap>>('/settings/public', { auth: false }),
+    staleTime: 60_000,
+  });
   const [open, setOpen] = useState(false);
   const [rejecting, setRejecting] = useState<SessionRequest | null>(null);
+  const [orderAction, setOrderAction] = useState<{
+    order: StationOrder;
+    kind: 'accept' | 'reject';
+  } | null>(null);
   const [sound, setSound] = useState(soundEnabled);
   const panelRef = useRef<HTMLDivElement>(null);
   const known = useRef<Set<string> | null>(null);
+  const knownOrders = useRef<Set<string> | null>(null);
   const items = useMemo(() => pending.data ?? [], [pending.data]);
+  const orders = useMemo(() => pendingOrders.data ?? [], [pendingOrders.data]);
 
   // New request → beep + toast (not for the ones already waiting when the app opened).
   useEffect(() => {
@@ -222,6 +256,29 @@ export function RequestsBell() {
     }
     known.current = ids;
   }, [pending.data, t, toast]);
+  // New order → beep + toast, same rule.
+  useEffect(() => {
+    if (!pendingOrders.data) return;
+    const ids = new Set(pendingOrders.data.map((o) => o.id));
+    if (knownOrders.current) {
+      const fresh = pendingOrders.data.filter((o) => !knownOrders.current!.has(o.id));
+      if (fresh.length) {
+        if (soundEnabled()) beep();
+        for (const o of fresh) {
+          toast.toast(
+            'info',
+            t('orders.newTitle', { station: o.stationCode }),
+            t('orders.newBody', {
+              number: o.number,
+              items: orderItemsText(o),
+              total: fmt.money(o.totalCents),
+            }),
+          );
+        }
+      }
+    }
+    knownOrders.current = ids;
+  }, [pendingOrders.data, t, toast, fmt]);
 
   // Click outside / Esc closes the panel.
   useEffect(() => {
@@ -241,7 +298,7 @@ export function RequestsBell() {
   }, [open]);
 
   if (!canView) return null;
-  const count = items.length;
+  const count = items.length + orders.length;
   const toggleSound = () => {
     const next = !sound;
     setSound(next);
@@ -294,6 +351,63 @@ export function RequestsBell() {
             </div>
           ) : (
             <ul className="requests-panel__list">
+              {orders.map((o) => (
+                <li key={o.id} className="request-row" data-testid="order-row" data-kind="order">
+                  <div className="request-row__main">
+                    <div className="request-row__title">
+                      <strong>{t('orders.number', { number: o.number })}</strong>
+                      <span className="muted"> · {orderItemsText(o)}</span>
+                    </div>
+                    <div className="request-row__meta">
+                      <Badge tone="accent">
+                        <Monitor size={11} /> {o.stationCode}
+                      </Badge>
+                      <strong className="num">{fmt.money(o.totalCents)}</strong>
+                      <span className="muted">
+                        <Clock size={11} />{' '}
+                        {t('requests.since', { time: fmt.relative(o.requestedAt) })}
+                      </span>
+                      {o.customerName && <span className="muted">{o.customerName}</span>}
+                      {o.note && (
+                        <span className="muted" title={o.note}>
+                          „{o.note}”
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {canControl ? (
+                    <div className="request-row__actions">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => setOrderAction({ order: o, kind: 'accept' })}
+                        data-testid="order-accept"
+                      >
+                        <ShoppingBag size={14} /> {t('orders.accept')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setOrderAction({ order: o, kind: 'reject' })}
+                        data-testid="order-reject"
+                      >
+                        <X size={14} /> {t('orders.reject')}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setOpen(false);
+                        navigate(`/orders`);
+                      }}
+                    >
+                      {t('nav.orders')}
+                    </Button>
+                  )}
+                </li>
+              ))}
               {items.map((r) => (
                 <li key={r.id} className="request-row" data-testid="request-row" data-kind={r.kind}>
                   <div className="request-row__main">
@@ -362,6 +476,16 @@ export function RequestsBell() {
         </div>
       )}
       {rejecting && <RejectRequestDialog request={rejecting} onClose={() => setRejecting(null)} />}
+      {orderAction?.kind === 'accept' && (
+        <AcceptOrderDialog
+          order={orderAction.order}
+          defaultSettlement={publicSettings.data?.['orders.settlement'] ?? 'ask'}
+          onClose={() => setOrderAction(null)}
+        />
+      )}
+      {orderAction?.kind === 'reject' && (
+        <RejectOrderDialog order={orderAction.order} onClose={() => setOrderAction(null)} />
+      )}
     </div>
   );
 }

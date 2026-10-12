@@ -189,6 +189,15 @@ export class ProductImageStore {
     await fsp.rm(path.join(this.dir, fileName), { force: true });
   }
 
+  /** Copies one of our files under a fresh random name (duplicating a slide). */
+  async copy(fileName: string): Promise<string> {
+    const m = FILE_NAME.exec(fileName);
+    if (!m) throw badRequest('Unknown file');
+    const name = `${randomBytes(12).toString('hex')}.${m[1]}`;
+    await fsp.copyFile(path.join(this.dir, fileName), path.join(this.dir, name));
+    return name;
+  }
+
   exists(fileName: string): boolean {
     return FILE_NAME.test(fileName) && fs.existsSync(path.join(this.dir, fileName));
   }

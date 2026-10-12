@@ -216,8 +216,8 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     '/client/ads',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
     async (request) => {
-      await deviceOf(request);
-      return { items: await services.ads.clientFeed() };
+      const device = await deviceOf(request);
+      return services.ads.clientFeed(device.station.id);
     },
   );
 

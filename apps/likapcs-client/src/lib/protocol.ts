@@ -12,6 +12,7 @@ import {
   type ClientSessionBilling,
   type ServerCommand,
   type ServerDisplay,
+  type ServerOrderUpdate,
   type ServerRequestUpdate,
   type ServerWelcomeToClient,
   type SessionRequest,
@@ -88,8 +89,29 @@ export interface SessionState {
   pausedAt: string | null;
   /** Remaining seconds frozen at pause time (paused sessions do not count down). */
   remainingAtPauseSeconds: number | null;
+  /** 0.10.0: who paused (shown on the covered screen) and when a customer pause ends by itself. */
+  pausedBy: PausedBy | null;
+  autoResumeAt: string | null;
   /** Display-only money facts from the server (paid amount / postpaid terms); null = unknown. */
   billing: ClientSessionBilling | null;
+}
+
+export type PausedBy = 'staff' | 'customer' | 'grace';
+/** An order from this PC as the server reports it (`server.order` / welcome `orders`). */
+export type OrderView = ServerOrderUpdate['order'];
+
+function pausedByOf(value: unknown): PausedBy | null {
+  return value === 'staff' || value === 'customer' || value === 'grace' ? value : null;
+}
+
+/**
+ * Which native window the state needs: a locked PC *and* a paused session cover the whole screen
+ * (nothing else may be used while paused); a running session / staff unlock shows the widget.
+ */
+export function baseWindowModeOf(state: ClientState): 'locked' | 'overlay' {
+  if (state.mode === 'locked') return 'locked';
+  if (state.mode === 'session' && state.session?.status === 'paused') return 'locked';
+  return 'overlay';
 }
 
 export interface Notice {
@@ -159,6 +181,8 @@ function sessionFromWelcome(w: ServerWelcomeToClient['session']): SessionState |
     endsAt: w.endsAt,
     pausedAt: w.pausedAt,
     remainingAtPauseSeconds: w.status === 'paused' ? w.remainingSeconds : null,
+    pausedBy: w.status === 'paused' ? (pausedByOf(w.pausedBy) ?? 'staff') : null,
+    autoResumeAt: w.status === 'paused' ? (w.autoResumeAt ?? null) : null,
     billing: billingOf(w.billing),
   };
 }
@@ -267,6 +291,8 @@ export function reduce(
             endsAt,
             pausedAt: null,
             remainingAtPauseSeconds: null,
+            pausedBy: null,
+            autoResumeAt: null,
             billing: billingOf(p.billing),
           },
         },
@@ -288,6 +314,8 @@ export function reduce(
             status: 'paused',
             pausedAt: new Date(serverNowMs).toISOString(),
             remainingAtPauseSeconds: num(p.remainingSeconds) ?? remaining,
+            pausedBy: pausedByOf(p.pausedBy) ?? 'staff',
+            autoResumeAt: str(p.autoResumeAt),
           },
         },
         effects: [],
@@ -308,6 +336,8 @@ export function reduce(
             pausedAt: null,
             endsAt: str(p.endsAt) ?? state.session.endsAt,
             remainingAtPauseSeconds: null,
+            pausedBy: null,
+            autoResumeAt: null,
           },
         },
         effects: [],

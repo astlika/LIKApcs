@@ -19,6 +19,7 @@ import type {
   AdInput,
   AdPatch,
   AdState,
+  AdStyle,
   AdSummary,
   AdTheme,
   ClientAdItem,
@@ -28,6 +29,7 @@ import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ProductImageStore } from './product-images.js';
+import type { AdVideoStore } from './ad-videos.js';
 
 /**
  * Promo price of product `p` (alias of the `products` row) if an enabled product ad with a promo
@@ -40,7 +42,20 @@ export const ACTIVE_PROMO_SQL = (p = 'p') => `(
      AND a.promo_price_cents IS NOT NULL AND a.promo_price_cents < ${p}.selling_price_cents
      AND (a.starts_at IS NULL OR a.starts_at <= now())
      AND (a.ends_at IS NULL OR a.ends_at > now())
+     AND ${SCHEDULE_SQL('a')}
    LIMIT 1)`;
+
+/**
+ * Weekly schedule (0.10.0) in SQL — the same rule as `withinSchedule()` below, evaluated at the
+ * database session's local time, which `createPool` pins to the server process's time zone so
+ * the two never disagree. Bit 0 of `days_mask` = Monday (ISO weekday 1).
+ */
+export const SCHEDULE_SQL = (a = 'a') => `(
+  (${a}.days_mask::int & (1 << (EXTRACT(ISODOW FROM now())::int - 1))) <> 0
+  AND (${a}.time_from IS NULL OR ${a}.time_to IS NULL OR
+       CASE WHEN ${a}.time_from < ${a}.time_to
+            THEN localtime >= ${a}.time_from AND localtime < ${a}.time_to
+            ELSE localtime >= ${a}.time_from OR localtime < ${a}.time_to END))`;
 
 interface AdRow {
   id: string;
@@ -61,10 +76,38 @@ interface AdRow {
   duration_seconds: number | null;
   starts_at: Date | null;
   ends_at: Date | null;
+  style: AdStyle | null;
+  accent: string | null;
+  cta: string | null;
+  days_mask: number;
+  time_from: string | null;
+  time_to: string | null;
+  weight: number;
+  station_ids: string[] | null;
+  video_path: string | null;
   enabled: boolean;
   sort_order: number;
   created_at: Date;
   updated_at: Date;
+}
+
+/** `HH:MM[:SS]` → minutes since midnight. */
+function clockMinutes(value: string): number {
+  const [h, m] = value.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+/** Local-time weekly schedule check: weekday bit (Mon = 0) and the optional daily window (may wrap midnight). */
+export function withinSchedule(
+  row: { days_mask: number; time_from: string | null; time_to: string | null },
+  now: Date,
+): boolean {
+  const mondayIndex = (now.getDay() + 6) % 7;
+  if (!(row.days_mask & (1 << mondayIndex))) return false;
+  if (!row.time_from || !row.time_to) return true;
+  const from = clockMinutes(row.time_from);
+  const to = clockMinutes(row.time_to);
+  const minute = now.getHours() * 60 + now.getMinutes();
+  return from < to ? minute >= from && minute < to : minute >= from || minute < to;
 }
 
 const AD_SELECT = `
@@ -73,7 +116,9 @@ const AD_SELECT = `
          CASE WHEN p.id IS NULL THEN NULL ELSE (NOT p.track_stock OR p.stock_milli > 0) END AS product_in_stock,
          p.is_active AS product_active, p.image_path AS product_image_path,
          a.promo_price_cents::text, a.title, a.body, a.image_path, a.badge, a.theme,
-         a.duration_seconds, a.starts_at, a.ends_at, a.enabled, a.sort_order, a.created_at,
+         a.duration_seconds, a.starts_at, a.ends_at, a.style, a.accent, a.cta, a.days_mask,
+         to_char(a.time_from, 'HH24:MI') AS time_from, to_char(a.time_to, 'HH24:MI') AS time_to,
+         a.weight, a.station_ids, a.video_path, a.enabled, a.sort_order, a.created_at,
          a.updated_at
     FROM ads a
     LEFT JOIN products p ON p.id = a.product_id`;
@@ -85,6 +130,7 @@ export class AdsService {
   constructor(
     private readonly pool: DbPool,
     readonly images: ProductImageStore,
+    readonly videos: AdVideoStore,
   ) {}
 
   /** Called after every change (create/update/delete/reorder/picture); used to push `server.display`. */
@@ -103,7 +149,15 @@ export class AdsService {
     if (row.ends_at && row.ends_at <= now) return 'expired';
     // Archived products leave the screens by themselves; out of stock is only flagged in Admin.
     if (row.kind === 'product' && !row.product_active) return 'unavailable';
+    if (!withinSchedule(row, now)) return 'off_hours';
     return 'live';
+  }
+
+  private videoUrlOf(row: AdRow): string | null {
+    if (!row.video_path) return null;
+    return /^https?:\/\//i.test(row.video_path)
+      ? row.video_path
+      : `/api/v1/files/videos/${row.video_path}`;
   }
 
   private map(row: AdRow, now = new Date()): AdSummary {
@@ -127,6 +181,15 @@ export class AdsService {
       durationSeconds: row.duration_seconds,
       startsAt: row.starts_at?.toISOString() ?? null,
       endsAt: row.ends_at?.toISOString() ?? null,
+      style: row.style,
+      accent: row.accent,
+      cta: row.cta,
+      daysMask: row.days_mask,
+      timeFrom: row.time_from,
+      timeTo: row.time_to,
+      weight: row.weight,
+      stationIds: row.station_ids ?? [],
+      videoUrl: this.videoUrlOf(row),
       enabled: row.enabled,
       sortOrder: row.sort_order,
       state: this.stateOf(row, now),
@@ -149,8 +212,17 @@ export class AdsService {
     return this.map(r.rows[0]);
   }
 
-  /** What the PCs show, in order. Only `live` ads; a promo only counts while below the price. */
-  async clientFeed(limit = 60): Promise<ClientAdItem[]> {
+  /**
+   * What one PC shows, in order. Only `live` ads (enabled, inside their date range *and* weekly
+   * schedule, targeted at this station or at all); a promo only counts while below the price.
+   * `nextChangeAt` tells the PC when the weekly schedule next flips a slide on/off, so it can
+   * refetch at exactly that minute instead of polling.
+   */
+  async clientFeed(
+    stationId: string | null = null,
+    limit = 60,
+  ): Promise<{ items: ClientAdItem[]; nextChangeAt: string | null }> {
+    const now = new Date();
     const r = await this.pool.query<AdRow & { category_name: string | null }>(
       `${AD_SELECT.replace('FROM ads a', ', c.name AS category_name FROM ads a')}
        LEFT JOIN categories c ON c.id = p.category_id
@@ -158,10 +230,36 @@ export class AdsService {
          AND (a.starts_at IS NULL OR a.starts_at <= now())
          AND (a.ends_at IS NULL OR a.ends_at > now())
          AND (a.kind = 'custom' OR p.is_active)
+         AND (a.station_ids IS NULL OR $2::uuid IS NULL OR $2::uuid = ANY(a.station_ids))
        ${AD_ORDER} LIMIT $1`,
-      [limit],
+      [limit * 3, stationId],
     );
-    return r.rows.map((row) => {
+    const nextChangeAt = this.nextScheduleChange(r.rows, now);
+    const items = r.rows.filter((row) => withinSchedule(row, now)).slice(0, limit);
+    return { nextChangeAt, items: items.map((row) => this.toClientItem(row)) };
+  }
+
+  /** Earliest minute at which some slide's weekly window opens or closes (null = none scheduled). */
+  private nextScheduleChange(rows: AdRow[], now: Date): string | null {
+    let best: number | null = null;
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    for (const row of rows) {
+      const edges: number[] = [];
+      if (row.time_from && row.time_to)
+        edges.push(clockMinutes(row.time_from), clockMinutes(row.time_to));
+      if (row.days_mask !== 127 || edges.length) edges.push(0); // midnight: a new weekday
+      for (const minute of edges) {
+        for (const dayOffset of [0, 1]) {
+          const at = dayStart + dayOffset * 86_400_000 + minute * 60_000;
+          if (at > now.getTime() && (best === null || at < best)) best = at;
+        }
+      }
+    }
+    return best === null ? null : new Date(best).toISOString();
+  }
+
+  private toClientItem(row: AdRow & { category_name: string | null }): ClientAdItem {
+    {
       const regular = row.product_price_cents === null ? null : Number(row.product_price_cents);
       const promo = row.promo_price_cents === null ? null : Number(row.promo_price_cents);
       const promoLive =
@@ -178,11 +276,29 @@ export class AdsService {
         categoryName: row.kind === 'product' ? row.category_name : null,
         theme: row.theme,
         durationSeconds: row.duration_seconds,
+        style: row.style,
+        accent: row.accent,
+        cta: row.cta,
+        endsAt: row.ends_at?.toISOString() ?? null,
+        weight: row.weight,
+        videoUrl: this.videoUrlOf(row),
       };
-    });
+    }
   }
 
   // ─── Writes ─────────────────────────────────────────────────────────────────
+
+  /** Station targeting: every id must be a real station (empty / null = every PC). */
+  private async assertStations(client: Queryable, ids: string[] | null | undefined): Promise<void> {
+    if (!ids?.length) return;
+    const unique = [...new Set(ids)];
+    const r = await client.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM stations WHERE id = ANY($1::uuid[])',
+      [unique],
+    );
+    if (Number(r.rows[0]?.n ?? 0) !== unique.length)
+      throw badRequest('Unknown station', { field: 'stationIds' });
+  }
 
   private async assertPromoBelowPrice(
     db: Queryable,
@@ -208,14 +324,17 @@ export class AdsService {
       if (input.kind === 'product') {
         await this.assertPromoBelowPrice(client, input.productId!, input.promoPriceCents);
       }
+      await this.assertStations(client, input.stationIds);
       const next = await client.query<{ n: number }>(
         'SELECT COALESCE(max(sort_order), 0) + 10 AS n FROM ads',
       );
       const r = await client
         .query<{ id: string }>(
           `INSERT INTO ads (kind, product_id, title, body, promo_price_cents, badge, theme,
-                            duration_seconds, starts_at, ends_at, enabled, sort_order, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+                            duration_seconds, starts_at, ends_at, enabled, sort_order, created_by,
+                            style, accent, cta, days_mask, time_from, time_to, weight, station_ids, video_path)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                   $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
           [
             input.kind,
             input.kind === 'product' ? input.productId : null,
@@ -230,6 +349,15 @@ export class AdsService {
             input.enabled,
             next.rows[0]!.n,
             actor.userId,
+            input.style ?? null,
+            input.accent ?? null,
+            input.cta ?? null,
+            input.daysMask ?? 127,
+            input.timeFrom ?? null,
+            input.timeTo ?? null,
+            input.weight ?? 1,
+            input.stationIds?.length ? input.stationIds : null,
+            input.videoUrl ?? null,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -256,6 +384,7 @@ export class AdsService {
   }
 
   async update(id: string, patch: AdPatch, actor: AuditActor): Promise<AdSummary> {
+    let droppedVideo: string | null = null;
     return withTransaction(this.pool, async (client) => {
       const cur = await client.query<{ kind: string; product_id: string | null }>(
         'SELECT kind, product_id FROM ads WHERE id = $1 FOR UPDATE',
@@ -279,12 +408,33 @@ export class AdsService {
         startsAt: 'starts_at',
         endsAt: 'ends_at',
         enabled: 'enabled',
+        style: 'style',
+        accent: 'accent',
+        cta: 'cta',
+        daysMask: 'days_mask',
+        timeFrom: 'time_from',
+        timeTo: 'time_to',
+        weight: 'weight',
+        stationIds: 'station_ids',
+        videoUrl: 'video_path',
       };
       const sets: string[] = [];
       const values: unknown[] = [];
+      if (patch.stationIds !== undefined) await this.assertStations(client, patch.stationIds);
       for (const [key, column] of Object.entries(map)) {
         if (key in patch) {
-          values.push((patch as Record<string, unknown>)[key] ?? null);
+          const value = (patch as Record<string, unknown>)[key] ?? null;
+          // Replacing the video by a link drops an uploaded file; `videoUrl: null` clears both.
+          if (key === 'videoUrl') {
+            const old = await client.query<{ video_path: string | null }>(
+              'SELECT video_path FROM ads WHERE id = $1',
+              [id],
+            );
+            const previous = old.rows[0]?.video_path ?? null;
+            if (previous && !/^https?:\/\//i.test(previous) && previous !== value)
+              droppedVideo = previous;
+          }
+          values.push(key === 'stationIds' && Array.isArray(value) && !value.length ? null : value);
           sets.push(`${column} = $${values.length}`);
         }
       }
@@ -295,6 +445,10 @@ export class AdsService {
         .catch((err: { code?: string; constraint?: string }) => {
           if (err.code === '23514' && err.constraint === 'ads_window')
             throw badRequest('Must end after it starts', { field: 'endsAt' });
+          if (err.code === '23514' && err.constraint === 'ads_time_window')
+            throw badRequest('Set both times or neither', { field: 'timeTo' });
+          if (err.code === '23514')
+            throw badRequest(`Invalid value (${err.constraint ?? 'check'})`);
           throw err;
         });
       await recordAudit(client, actor, {
@@ -304,24 +458,97 @@ export class AdsService {
         details: { ...patch },
       });
       return this.get(id, client);
-    }).then((ad) => {
+    }).then(async (ad) => {
+      if (droppedVideo) await this.videos.remove(droppedVideo);
       this.changed();
       return ad;
     });
   }
 
+  /** Duplicate a slide (same product is not allowed twice — product ads copy as custom slides). */
+  async duplicate(id: string, actor: AuditActor): Promise<AdSummary> {
+    const source = await this.get(id);
+    // A product can only have one ad: the copy is always a custom slide with the product's name.
+    const input: AdInput = {
+      kind: 'custom',
+      productId: null,
+      title: source.kind === 'product' ? (source.productName ?? source.title) : source.title,
+      body: source.body,
+      promoPriceCents: null,
+      badge: source.badge,
+      theme: source.theme,
+      style: source.style,
+      accent: source.accent,
+      cta: source.cta,
+      daysMask: source.daysMask,
+      timeFrom: source.timeFrom,
+      timeTo: source.timeTo,
+      weight: source.weight,
+      stationIds: source.stationIds,
+      videoUrl: source.videoUrl && /^https?:\/\//i.test(source.videoUrl) ? source.videoUrl : null,
+      durationSeconds: source.durationSeconds,
+      startsAt: source.startsAt,
+      endsAt: source.endsAt,
+      enabled: false,
+    };
+    const copy = await this.create(input, actor);
+    if (source.imageUrl) {
+      const file = await this.pool.query<{
+        image_path: string | null;
+        product_image: string | null;
+      }>(
+        `SELECT a.image_path, p.image_path AS product_image FROM ads a LEFT JOIN products p ON p.id = a.product_id WHERE a.id = $1`,
+        [id],
+      );
+      const name = file.rows[0]?.image_path ?? file.rows[0]?.product_image ?? null;
+      if (name) {
+        const cloned = await this.images.copy(name).catch(() => null);
+        if (cloned) return this.setImage(copy.id, cloned, actor);
+      }
+    }
+    return copy;
+  }
+
   async remove(id: string, actor: AuditActor): Promise<void> {
-    const image = await withTransaction(this.pool, async (client) => {
-      const r = await client.query<{ image_path: string | null }>(
-        'DELETE FROM ads WHERE id = $1 RETURNING image_path',
+    const files = await withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ image_path: string | null; video_path: string | null }>(
+        'DELETE FROM ads WHERE id = $1 RETURNING image_path, video_path',
         [id],
       );
       if (!r.rowCount) throw notFound('Ad');
       await recordAudit(client, actor, { action: 'ads.deleted', entityType: 'ad', entityId: id });
-      return r.rows[0]!.image_path;
+      return r.rows[0]!;
     });
-    await this.images.remove(image);
+    await this.images.remove(files.image_path);
+    if (files.video_path && !/^https?:\/\//i.test(files.video_path))
+      await this.videos.remove(files.video_path);
     this.changed();
+  }
+
+  /** Uploaded video (mp4 / webm) replaces whatever the slide had (picture stays as the poster). */
+  async setVideo(id: string, fileName: string, actor: AuditActor): Promise<AdSummary> {
+    const previous = await withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ video_path: string | null }>(
+        `UPDATE ads SET video_path = $2 WHERE id = $1
+         RETURNING (SELECT video_path FROM ads WHERE id = $1) AS video_path`,
+        [id, fileName],
+      );
+      if (!r.rowCount) throw notFound('Ad');
+      await recordAudit(client, actor, {
+        action: 'ads.video_set',
+        entityType: 'ad',
+        entityId: id,
+        details: { file: fileName },
+      });
+      return r.rows[0]!.video_path;
+    }).catch(async (err: unknown) => {
+      await this.videos.remove(fileName);
+      throw err;
+    });
+    if (previous && previous !== fileName && !/^https?:\/\//i.test(previous))
+      await this.videos.remove(previous);
+    this.changed();
+    return this.get(id);
   }
 
   /** New order = the given ids first (in that order); anything not listed keeps following. */
