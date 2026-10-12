@@ -8,7 +8,8 @@
  * Page layouts (owner setting `client.ads_layout`):
  *  - `card` / `full`  one slide per page; the slide's own *style* decides the composition
  *                     (`poster` edge-to-edge photo, `hero` picture + text, `split` half/half,
- *                     `banner` compact strip) — per ad, else the owner's default style;
+ *                     `banner` compact strip) — per ad, else the owner's default style
+ *                     (`full` defaults to the poster, as before 0.10.0);
  *  - `grid`           a box of cols × rows products that advances one page at a time;
  *  - `menu`           a price board (name … price) in columns, custom slides in between.
  *
@@ -76,7 +77,9 @@ export function AdsSlideshow({
     shuffle,
     promoCountdown,
   } = display.ads;
-  const defaultStyle: ClientAdsStyle = display.ads.style ?? 'hero';
+  // `full` ("big photo", pre-0.10.0) keeps meaning edge-to-edge pictures: its default style is the
+  // poster; ads that carry their own style still win.
+  const defaultStyle: ClientAdsStyle = layout === 'full' ? 'poster' : (display.ads.style ?? 'hero');
   const grid = adsGridSize(display.ads.grid);
   const perPage = layout === 'grid' ? grid.cols * grid.rows : 1;
   // A board row is one line of text: more fit than picture cells (2×2 → 10, 3×3 → 18, 4×4 → 32).

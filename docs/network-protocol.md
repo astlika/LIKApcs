@@ -174,6 +174,18 @@ before the start, ignored while the session is paused, and at most
 `SESSION_STOP_CLOCK_GRACE_SECONDS` (10 minutes). It is a duration, not a timestamp, so Admin/Server
 clock skew cannot move it.
 
+**Pause (0.10.0).** `POST /sessions/:id/pause` by staff is mirrored to the PC as `session.pause
+{sessionId, remainingSeconds, pausedBy, autoResumeAt}` and the PC **covers its screen** (the
+customer cannot keep playing while the clock is stopped). `SessionSummary` carries `pausedBy`
+(`staff` | `customer` | `grace`) and `autoResumeAt`. The customer may pause / resume from the PC
+(`/client/session-pause`, `/client/session-resume` — settings `sessions.customer_pause`,
+`sessions.customer_resume`); a customer pause ends by itself after `sessions.pause_max_minutes`
+(0–240, default 15; `0` = no limit): the server's ticker resumes it **back-dated to the deadline**,
+so its own delay never costs the customer time. The resume is mirrored as `session.resume
+{sessionId, endsAt, billing, by: "staff" | "customer" | "auto"}`. The PC never resumes on its own —
+a pause only ends with a server message. `GET /sessions/:id` / `StationSummary.activeSession` also
+expose `openOrdersCount` / `openOrdersCents` (accepted "on the bill" orders, see _Orders_).
+
 `client` in a mutation response is `{commandId, command, ok, error?}` for the command mirrored to
 the PC, or `null` when no client is connected (the session still runs on the server and the PC
 receives it in `server.welcome.session` when it reconnects). The server's 1-second ticker expires
@@ -228,15 +240,31 @@ hide an ad** since 0.7.1, `productInStock: false` only flags it in the Admin). E
 `server.display` to all connected PCs, which refetch `/client/ads`. Migration 0016 turned the 0.6.x
 behaviour (every active product with a photo) into product ads, so screens did not change on upgrade.
 
-| Route                                                           | Body / query                                                                                                         | Result                                                                                       |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `GET /ads`                                                      | —                                                                                                                    | `{items: AdSummary[]}` in display order                                                      |
-| `POST /ads`                                                     | `{kind, productId?, title?, body?, promoPriceCents?, badge?, theme?, durationSeconds?, startsAt?, endsAt?, enabled}` | `201 AdSummary`; `409 AD_EXISTS` (product already advertised), `400 PROMO_NOT_BELOW_PRICE`   |
-| `GET/PATCH/DELETE /ads/:id`                                     | patch: everything but `kind`/`productId` (nullable fields clear)                                                     | `AdSummary` / `204`                                                                          |
-| `PUT /ads/order`                                                | `{ids[]}` — listed ids first, the rest keep following                                                                | `{items}`                                                                                    |
-| `POST /ads/products/all`                                        | `{onlyWithPhoto?: boolean}` (default false)                                                                          | `{created, items}` — one plain product ad per active product that had none                   |
-| `POST /ads/products/bulk`                                       | `{productIds[]}` (≤ 500) — the Admin's catalogue browser                                                             | `{created, items}` — in the given order; already advertised / unknown / archived ids skipped |
-| `PUT /ads/:id/image`, `POST …/image/from-url`, `DELETE …/image` | custom slides; same store/limits as product pictures                                                                 | `AdSummary`                                                                                  |
+| Route                                                           | Body / query                                                                                                         | Result                                                                                          |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `GET /ads`                                                      | —                                                                                                                    | `{items: AdSummary[]}` in display order                                                         |
+| `POST /ads`                                                     | `{kind, productId?, title?, body?, promoPriceCents?, badge?, theme?, durationSeconds?, startsAt?, endsAt?, enabled}` | `201 AdSummary`; `409 AD_EXISTS` (product already advertised), `400 PROMO_NOT_BELOW_PRICE`      |
+| `GET/PATCH/DELETE /ads/:id`                                     | patch: everything but `kind`/`productId` (nullable fields clear)                                                     | `AdSummary` / `204`                                                                             |
+| `PUT /ads/order`                                                | `{ids[]}` — listed ids first, the rest keep following                                                                | `{items}`                                                                                       |
+| `POST /ads/products/all`                                        | `{onlyWithPhoto?: boolean}` (default false)                                                                          | `{created, items}` — one plain product ad per active product that had none                      |
+| `POST /ads/products/bulk`                                       | `{productIds[]}` (≤ 500) — the Admin's catalogue browser                                                             | `{created, items}` — in the given order; already advertised / unknown / archived ids skipped    |
+| `PUT /ads/:id/image`, `POST …/image/from-url`, `DELETE …/image` | custom slides; same store/limits as product pictures                                                                 | `AdSummary`                                                                                     |
+| `PUT /ads/:id/video` (0.10.0)                                   | raw body `video/mp4` or `video/webm`, ≤ 80 MB (`AD_VIDEO_MAX_BYTES`); `415` for anything else                        | `AdSummary` with a server-relative `videoUrl` (`/api/v1/files/videos/…`, public)                |
+| `POST /ads/:id/duplicate` (0.10.0)                              | —                                                                                                                    | `201 AdSummary` — a **disabled** copy; always a _custom_ slide (a product can have one ad only) |
+
+**Ads v2 (0.10.0, migration 0020).** Every ad additionally has: `style` (`poster` | `hero` | `split`
+| `banner`, null = the owner's default `client.ads_style`), `accent` (`#rrggbb` used for the CTA
+line / price glow), `cta` (≤ 60 chars call-to-action line), `weight` (1–3: how many times the slide
+comes round per rotation — never twice in a row), a **weekly schedule** `daysMask` (bit 0 = Monday …
+bit 6 = Sunday, `127` = every day) with an optional daily window `timeFrom`/`timeTo` (`HH:MM`,
+server-local, may pass midnight — `22:00 → 02:00`; both or neither), `stationIds` (empty = every
+PC) and `videoUrl` (uploaded file or an `https://` link; shown instead of the picture). `state`
+gains `off_hours` (outside the weekly window). `GET /client/ads` returns `{items, nextChangeAt}`
+where `nextChangeAt` is the next instant the weekly schedule flips a slide on or off, so the PC
+refetches exactly then without polling. `client.ads_shuffle` (random order, reshuffled only when
+the list changes), `client.ads_promo_countdown` (the "ends in …" chip on promo / scheduled slides)
+and the `menu` layout (price board: name … price, custom slides as separate pages) are owner
+settings; see `ClientDisplayConfig.ads`.
 
 ### Sales / POS (`pos.sell`; `pos.discount`, `pos.suspend`, `pos.refund`, `pos.reprint` for the matching actions)
 
@@ -343,6 +371,46 @@ waiting request `{id, kind, customerId, customerName, minutes, packageId, packag
 durationMinutes, requestedAt}` for the PC tile / banner. Every change is announced as the admin event
 `request.changed` (payload: `SessionRequest`) and to the PC as `server.request`; on a staff action
 the server announces the request result **first**, then mirrors the session command.
+
+### Orders from the PC — drinks & snacks to the seat (0.10.0, migration 0020)
+
+Staff pick **what can be ordered** (Admin › Orders › Menu, `products.client_menu` + order; also a
+badge on the Products page); the customer at a PC with a **running session** orders from the widget
+(no customer login needed — the order is bound to the session on that device). Prices are frozen on
+the order lines at ordering time (live promos included); **money only ever moves through sales /
+payments** — accepting an order "pay now" records a normal POS sale (cash tenders, `pos.sell`),
+accepting it "on the bill" settles it **inside the session's end transaction** (its lines join the
+session sale, `order.bill`), and stock is deducted only when sold / billed, never when ordered.
+Settings: `orders.enabled` (master; also hides the widget pill), `orders.allow_note` (≤ 200 chars
+to the staff), `orders.settlement` (`ask` | `pay_now` | `on_bill` — the staff default when
+accepting; `ask` shows both). Statuses: `pending → accepted (on_bill) → billed | paid | void`,
+`pending → paid` (pay now), `pending → rejected` (staff, optional reason shown on the PC),
+`pending → cancelled` (customer). A session that ends by itself (prepaid expiry) or is cancelled
+leaves its accepted orders **open** for the desk (`/orders?open=true`): collect them with `pay` or
+`void` them. Audit: `order.create/accept/pay/reject/void/cancel/bill`.
+
+PC side (device token):
+
+| Method | Path                     | Notes                                                                                                                                                                                                                                                                                    |
+| ------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/client/menu`           | `ClientMenu {enabled, reason: ok \| disabled \| no_session \| empty, allowNote, currency, categories[], items[{productId, name, categoryId, priceCents, oldPriceCents, imageUrl, available}], staffOnline}` — `available: false` (out of stock) stays visible but cannot be ordered      |
+| POST   | `/client/orders`         | `{items: [{productId, quantity 1–20}] (1–20 lines), note?}` → `201 StationOrder`. `403 orders_disabled`, `409 no_session`, `409 not_on_menu {productId}`, `409 out_of_stock {productId}`; lines of the same product merge; the staff see it within a second (`order.changed` + the bell) |
+| GET    | `/client/orders`         | open / recent orders of the running session (also sent in `server.welcome.orders`, newest first)                                                                                                                                                                                         |
+| GET    | `/client/orders/:id`     | one order (reconnects / missed pushes) — only orders of this PC                                                                                                                                                                                                                          |
+| DELETE | `/client/orders/:id`     | the customer takes a **pending** order back → `cancelled`                                                                                                                                                                                                                                |
+| POST   | `/client/session-pause`  | the customer pauses their own session → `SessionSummary`; `403 pause_disabled`, `409 no_session`; idempotent while paused                                                                                                                                                                |
+| POST   | `/client/session-resume` | _Resume_ on the paused screen → `SessionSummary`; `403 resume_disabled`, `409 no_session`; idempotent while running                                                                                                                                                                      |
+
+Admin side: `GET /orders?open=true&status=&stationId=&sessionId=&limit=` and `GET /orders/:id`
+(`stations.view`); `POST /orders/:id/accept {settlement, payments?, customerId?}`
+(`stations.control`; `pay_now` additionally needs `pos.sell` and at least one tender → sale +
+receipt; `on_bill` needs the session still running, else `409 conflict` "take the payment now");
+`POST /orders/:id/pay {payments, customerId?}` (`pos.sell`; settles an accepted order at the desk
+before the session ends); `POST /orders/:id/reject {reason?}` and `POST /orders/:id/void {reason}`
+(`stations.control`); `GET /orders/:id/receipt`; `GET /catalog/menu` → `{items}` (`products.view`)
+and `PUT /catalog/menu {productIds[]}` (`products.manage`, replaces the whole menu in order). Every
+change is announced as the admin event `order.changed` (payload `StationOrder`) and to the PC as
+`server.order` (display facts only — nothing the PC must act on).
 
 ### Debts — "pay later" (`debts.give` to sell on credit; `customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
 
@@ -458,11 +526,11 @@ isolated iframe, so the A4 layout never depends on the application stylesheet.
 
 ### Client PC → server, with the device token (`Authorization: Bearer <device token>`)
 
-| Method | Path                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (a left click anywhere on the locked screen or Ctrl+Alt+A opens the dialog; `display.staffLoginUsername` pre-fills the username). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC                                                                                                                                                                                                                                                                            |
-| POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| GET    | `/client/ads`          | lock-screen slideshow feed: `{items: [{id, kind, name, body, priceCents, oldPriceCents, badge, imageUrl, categoryName, theme, durationSeconds}]}` — the owner's **live** ads in display order (0.7.0; was "every active product with a photo" in 0.6.x). Product items: `priceCents` is the promo price while a promo is live and `oldPriceCents` the crossed-out regular one (else null); `body` is the optional text line; custom slides have `priceCents: null`. `imageUrl: null` = text slide (a picture that fails to load is rendered as a text slide too, never skipped). `theme` / `durationSeconds` (0.7.1) are per-slide look and time (null = defaults). `imageUrl` is server-relative (`/api/v1/files/products/…`, public). Loaded on connect, on every `server.display` and every 10 min while locked |
+| Method | Path                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/staff-unlock` | `{username, password, minutes?}` typed by a staff member on the locked PC (a left click anywhere on the locked screen or Ctrl+Alt+A opens the dialog; `display.staffLoginUsername` pre-fills the username). The **server** verifies the account (same lockout rules as `/auth/login`, 10 attempts/min per IP) and requires `stations.unlock`; `409 session_active` while a customer session runs, `409 conflict` when the PC's socket is not connected. Success → `{until, byName, minutes}` and the `unlock` command is sent to the PC                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| POST   | `/client/staff-lock`   | ends the grant early (the _Lock_ button on the PC widget) → `StationSummary`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| GET    | `/client/ads`          | lock-screen slideshow feed: `{items: [{id, kind, name, body, priceCents, oldPriceCents, badge, imageUrl, categoryName, theme, durationSeconds, style, accent, cta, endsAt, weight, videoUrl}], nextChangeAt}` (0.10.0 fields after `durationSeconds`; `nextChangeAt` = next weekly-schedule flip, see _Ads v2_) — the owner's **live** ads in display order (0.7.0; was "every active product with a photo" in 0.6.x). Product items: `priceCents` is the promo price while a promo is live and `oldPriceCents` the crossed-out regular one (else null); `body` is the optional text line; custom slides have `priceCents: null`. `imageUrl: null` = text slide (a picture that fails to load is rendered as a text slide too, never skipped). `theme` / `durationSeconds` (0.7.1) are per-slide look and time (null = defaults). `imageUrl` is server-relative (`/api/v1/files/products/…`, public). Loaded on connect, on every `server.display` and every 10 min while locked |
 
 The PC never evaluates credentials or permissions itself; it only relays them over the pinned,
 device-authenticated connection and shows the server's answer.
@@ -525,7 +593,10 @@ MAC the server addresses. Older clients send neither (`network` defaults to `[]`
 `session.billing` (0.6.0) carries **display-only** money facts: for a prepaid session the amount
 paid for the booked time, for an open (postpaid) session the pricing terms plus a billable-seconds
 snapshot (`asOf`) that the widget counts on from, frozen while paused. The same object travels in the
-`session.start` / `session.resume` / `session.extend` command payloads. The real invoice is always
+`session.start` / `session.resume` / `session.extend` command payloads. `session.pause` carries
+`{sessionId, remainingSeconds, pausedBy: "staff" | "customer" | "grace", autoResumeAt}` and
+`session.resume` adds `by: "staff" | "customer" | "auto"` (0.10.0) — the PC shows a full-screen
+_paused_ cover until the resume arrives. The real invoice is always
 computed by the server when the session ends — the PC never bills.
 
 `display` (0.6.0) mirrors the `client.*` settings (countdown widget size / corner / style /
@@ -573,6 +644,13 @@ Server → Client  { "type": "server.request", "request": { "id": "<uuid>", "kin
                    // 0.9.0: the answer to the customer's request; an approval is followed by the
                    // real session.start / session.extend command. server.welcome carries the
                    // still-pending request as "request" so a restarted PC keeps showing it.
+
+Server → Client  { "type": "server.order", "order": { "id": "<uuid>", "number": 12,
+                   "status": "pending" | "accepted" | "paid" | "billed" | "rejected" | "cancelled" | "void",
+                   "settlement": null | "pay_now" | "on_bill", "totalCents": 420, "reason": null | "…",
+                   "items": [{ "name": "…", "quantity": 2, "lineTotalCents": 300 }] } }
+                   // 0.10.0: the staff's answer to an order from this PC. server.welcome carries the
+                   // session's still-open orders as "orders" so a restarted PC keeps showing them.
 
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"

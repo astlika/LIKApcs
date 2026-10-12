@@ -6,9 +6,14 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-Work in progress towards **0.10.0** (migration 0020). Everything below compiles and is covered by
-unit / integration tests (shared 56, server 183, admin 35, client 25); the end-to-end smoke runs,
-the protocol document and the release itself are still to come.
+## [0.10.0] - 2026-10-12
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0020 — new tables
+`station_orders`, `station_order_items`, new columns on `gaming_sessions`, `products` and `ads`),
+then the gaming PCs (self-update or **Update clients**). Older 0.9.x clients keep working — they do
+not show the paused cover, the **Order** pill or the new slide styles until they are updated.
+Covered by unit / integration tests (shared 56, server 183, admin 35, client 25) and the browser
+smokes (`pauseorders` 65, `ads` 55, `screen` 35, `clientscreen` 31, `requests` 58, `sessionpay` 24).
 
 ### Added
 
@@ -43,7 +48,19 @@ the protocol document and the release itself are still to come.
   array; `session.pause` carries `pausedBy` / `autoResumeAt`; welcome carries open `orders`; new
   `server.order` push. New device routes: `/client/menu`, `/client/orders*`,
   `/client/session-pause`, `/client/session-resume`. New Admin routes: `/orders*`,
-  `/catalog/menu`, `/ads/:id/video`, `/ads/:id/duplicate`.
+  `/catalog/menu`, `/ads/:id/video`, `/ads/:id/duplicate`. Details in
+  `docs/network-protocol.md`.
+- The _Big photo_ slideshow layout keeps its meaning: its slides default to the new _poster_ style
+  (an ad's own style still wins). _One slide (card)_ follows the owner's default style.
+- A session that ends by itself (prepaid time over) or is cancelled leaves its accepted "on the
+  bill" orders open on the **Orders** page, so the desk can collect or void them — nothing is
+  billed silently.
+
+### Fixed
+
+- Ads: the _banner_ style rendered its text off-screen on text-only slides and squeezed the title
+  next to the picture; the category chip of every style floated out of place. Rewritten layout:
+  picture tile on the strip's left edge, text in the middle, price / countdown on the right.
 
 ## [0.9.0] - 2026-10-12
 
