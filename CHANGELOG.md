@@ -6,6 +6,16 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings › Client screen jumped to the top.** Clicking any switch on the _Client screen_ tab
+  (and, less visibly, on every other settings tab) scrolled the whole Admin window so that the page
+  header with **Save** disappeared and the changes could not be saved. The hidden checkbox behind a
+  switch was absolutely positioned without a positioned parent, so it escaped the scrolling content
+  area and stretched the document; focusing it on click made the browser scroll the window. The
+  switch now anchors its own checkbox and the content area is positioned, so nothing can escape it
+  again (`apps/likapcs-admin/src/styles/app.css`).
+
 ## [0.11.0] - 2026-10-12
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0021 — running balance on

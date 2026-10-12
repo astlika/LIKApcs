@@ -400,6 +400,7 @@ textarea {
   }
 }
 .content {
+  position: relative; /* absolutely positioned descendants scroll with the page, never the window */
   flex: 1;
   overflow-y: auto;
   padding: 22px 24px 40px;
@@ -618,6 +619,7 @@ textarea {
   padding-top: 6px;
 }
 .switch {
+  position: relative; /* keeps the hidden input inside the switch (see `.switch input`) */
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -651,8 +653,15 @@ textarea {
 .switch[data-checked='true'] .switch__track::after {
   transform: translateX(16px);
 }
+/* The real checkbox is invisible but must stay exactly under the switch: positioned against the
+   body it escaped the page's scroll container, and focusing it on a click scrolled the whole
+   window — the header with Save disappeared ("the view jumps up"). */
 .switch input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }
