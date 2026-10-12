@@ -12,7 +12,9 @@
 import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
+  type ClientAdAlbum,
   type ClientAdItem,
+  type ClientAdsFeed,
   type ClientCustomerInfo,
   type ClientMenu,
   type ClientMetrics,
@@ -115,6 +117,8 @@ export interface AgentSnapshot {
   windowMode: WindowMode;
   /** Lock-screen slideshow items (absolute image URLs, null for text slides); empty when ads are off. */
   ads: ClientAdItem[];
+  /** 0.12.0: the same slides grouped into albums (each with its own look), in playback order. */
+  adAlbums: ClientAdAlbum[];
   /** Customer signed in through the "Client" button (memory only; cleared when the PC locks). */
   customer: CustomerLoginState | null;
   /**
@@ -232,6 +236,7 @@ export class Agent {
     autoUpdate: true,
     windowMode: 'locked',
     ads: [],
+    adAlbums: [],
     customer: null,
     account: null,
     request: null,
@@ -256,6 +261,7 @@ export class Agent {
   private hardware: HardwareInfo | null = null;
   private metricsInFlight = false;
   private ads: ClientAdItem[] = [];
+  private adAlbums: ClientAdAlbum[] = [];
   private adsLoadedAt = 0;
   private adsLoading = false;
   /** Server-announced instant the slideshow changes by itself (a promo or schedule starts/ends). */
@@ -919,7 +925,7 @@ export class Agent {
   private refreshAds(force = false): void {
     const { pairing, state } = this.snapshot;
     if (!pairing || !state.display?.ads.enabled) {
-      if (!state.display?.ads.enabled && this.ads.length > 0) this.setAds([]);
+      if (!state.display?.ads.enabled && this.ads.length > 0) this.setAds([], []);
       return;
     }
     if (this.adsLoading || (!force && Date.now() - this.adsLoadedAt < ADS_REFRESH_MS)) return;
@@ -928,7 +934,7 @@ export class Agent {
       try {
         const token = await secretGet(KEYS.token);
         if (!token) return;
-        const res = await this.api<{ items: ClientAdItem[]; nextChangeAt?: string | null }>(
+        const res = await this.api<Partial<ClientAdsFeed> & { items: ClientAdItem[] }>(
           pairing,
           '/client/ads',
           { headers: { authorization: `Bearer ${token}` } },
@@ -937,11 +943,17 @@ export class Agent {
           this.adsLoadedAt = Date.now();
           const absolute = (url: string | null) =>
             url && url.startsWith('/') ? `${pairing.serverUrl}${url}` : url;
+          const withUrls = (item: ClientAdItem): ClientAdItem => ({
+            ...item,
+            imageUrl: absolute(item.imageUrl),
+            videoUrl: absolute(item.videoUrl ?? null) ?? null,
+          });
+          // A server older than 0.12 sends no albums: the flat list is the whole show.
           this.setAds(
-            res.body.items.map((item) => ({
-              ...item,
-              imageUrl: absolute(item.imageUrl),
-              videoUrl: absolute(item.videoUrl ?? null) ?? null,
+            res.body.items.map(withUrls),
+            (res.body.albums ?? []).map((album) => ({
+              ...album,
+              items: album.items.map(withUrls),
             })),
           );
           this.scheduleAdsChange(res.body.nextChangeAt ?? null);
@@ -973,11 +985,16 @@ export class Agent {
     );
   }
 
-  private setAds(ads: ClientAdItem[]): void {
+  private setAds(ads: ClientAdItem[], adAlbums: ClientAdAlbum[]): void {
     // Same list again (hourly refresh) → no re-render, the slideshow keeps its rhythm.
-    if (JSON.stringify(ads) === JSON.stringify(this.ads)) return;
+    if (
+      JSON.stringify(ads) === JSON.stringify(this.ads) &&
+      JSON.stringify(adAlbums) === JSON.stringify(this.adAlbums)
+    )
+      return;
     this.ads = ads;
-    this.set({ ads });
+    this.adAlbums = adAlbums;
+    this.set({ ads, adAlbums });
   }
 
   private handleCommand(command: ServerCommand): void {

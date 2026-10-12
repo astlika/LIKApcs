@@ -11,8 +11,12 @@ import {
   PRODUCT_IMAGE_MAX_BYTES,
   PRODUCT_IMAGE_TYPES,
   adAddAllSchema,
+  adAlbumInputSchema,
+  adAlbumPatchSchema,
+  adAlbumReorderSchema,
   adBulkProductsSchema,
   adInputSchema,
+  adMoveToAlbumSchema,
   adPatchSchema,
   adReorderSchema,
   productImageFromUrlSchema,
@@ -56,15 +60,46 @@ export const adsRoutes: FastifyPluginAsync = async (app) => {
   app.put('/ads/order', manage, async (request) => ({
     items: await services.ads.reorder(adReorderSchema.parse(request.body).ids, actorOf(request)),
   }));
-  app.post('/ads/products/all', manage, async (request) =>
-    services.ads.addAllProducts(
+  app.post('/ads/products/all', manage, async (request) => {
+    const body = adAddAllSchema.parse(request.body ?? {});
+    return services.ads.addAllProducts(actorOf(request), body.onlyWithPhoto, body.albumId ?? null);
+  });
+  app.post('/ads/products/bulk', manage, async (request) => {
+    const body = adBulkProductsSchema.parse(request.body);
+    return services.ads.addProducts(body.productIds, actorOf(request), body.albumId ?? null);
+  });
+
+  // Albums (0.12.0): named groups of slides with their own look, played one after another.
+  app.get('/ads/albums', view, async () => ({ items: await services.ads.listAlbums() }));
+  app.post('/ads/albums', manage, async (request, reply) => {
+    const album = await services.ads.createAlbum(
+      adAlbumInputSchema.parse(request.body),
       actorOf(request),
-      adAddAllSchema.parse(request.body ?? {}).onlyWithPhoto,
+    );
+    return reply.code(201).send(album);
+  });
+  app.put('/ads/albums/order', manage, async (request) => ({
+    items: await services.ads.reorderAlbums(
+      adAlbumReorderSchema.parse(request.body).ids,
+      actorOf(request),
+    ),
+  }));
+  app.patch('/ads/albums/:id', manage, async (request) =>
+    services.ads.updateAlbum(
+      idParams.parse(request.params).id,
+      adAlbumPatchSchema.parse(request.body),
+      actorOf(request),
     ),
   );
-  app.post('/ads/products/bulk', manage, async (request) =>
-    services.ads.addProducts(adBulkProductsSchema.parse(request.body).productIds, actorOf(request)),
-  );
+  app.delete('/ads/albums/:id', manage, async (request, reply) => {
+    await services.ads.deleteAlbum(idParams.parse(request.params).id, actorOf(request));
+    return reply.code(204).send();
+  });
+  /** Move slides into / out of an album. */
+  app.put('/ads/album', manage, async (request) => {
+    const body = adMoveToAlbumSchema.parse(request.body);
+    return { items: await services.ads.moveToAlbum(body.ids, body.albumId, actorOf(request)) };
+  });
 
   // Pictures for custom slides (same store and limits as product photos).
   app.put('/ads/:id/image', { ...manage, bodyLimit: PRODUCT_IMAGE_MAX_BYTES }, async (request) => {

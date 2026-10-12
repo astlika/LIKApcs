@@ -1,8 +1,8 @@
 /**
  * Ads (Admin › Ads → customer screens + promo prices): CRUD and permissions, the device feed
  * (live ads only, in order, promo = price + crossed-out regular), promo pricing enforced by the
- * server at the POS, schedule windows, "add all products with photos", custom-slide pictures and
- * the `server.display` push on every change.
+ * server at the POS, schedule windows, "add all products with photos", custom-slide pictures,
+ * albums (0.12.0) and the `server.display` push on every change.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -11,8 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   PROTOCOL_VERSION,
+  type AdAlbumSummary,
   type AdBulkResult,
   type AdSummary,
+  type ClientAdAlbum,
   type ClientAdItem,
   type LoginResponse,
   type ProductSummary,
@@ -813,5 +815,217 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
       (await call(owner.token, 'POST', '/ads', { kind: 'product', productId: cola.id })).status,
     ).toBe(409);
     await call(owner.token, 'DELETE', `/ads/${copy.body.id}`);
+  });
+
+  it('albums (0.12.0): own look per album, played in order; off = whole album off; delete only ungroups', async () => {
+    type Feed = { items: ClientAdItem[]; albums: ClientAdAlbum[] };
+    const fullFeed = async () => (await call<Feed>(deviceToken, 'GET', '/client/ads')).body;
+    const before = await fullFeed();
+    const looseBefore = before.items.map((i) => i.id);
+    expect(looseBefore.length).toBeGreaterThan(0);
+    // Nothing grouped yet: one implicit group (no album) with every live slide.
+    expect(before.albums).toHaveLength(1);
+    expect(before.albums[0]!.id).toBeNull();
+    expect(before.albums[0]!.items.map((i) => i.id)).toEqual(looseBefore);
+
+    // Permissions + validation.
+    expect((await call(cashier.token, 'GET', '/ads/albums')).status).toBe(200);
+    expect((await call(cashier.token, 'POST', '/ads/albums', { name: 'X' })).status).toBe(403);
+    expect((await call(owner.token, 'POST', '/ads/albums', { name: '' })).status).toBe(400);
+    expect(
+      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', grid: '5x5' })).status,
+    ).toBe(400);
+    expect(
+      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', intervalSeconds: 1 })).status,
+    ).toBe(400);
+
+    const grid = await call<AdAlbumSummary>(owner.token, 'POST', '/ads/albums', {
+      name: 'Produktet',
+      layout: 'grid',
+      grid: '3x3',
+      intervalSeconds: 12,
+    });
+    expect(grid.status).toBe(201);
+    expect(grid.body).toMatchObject({
+      name: 'Produktet',
+      layout: 'grid',
+      grid: '3x3',
+      imageFit: null,
+      caption: null,
+      style: null,
+      intervalSeconds: 12,
+      shuffle: null,
+      enabled: true,
+      adCount: 0,
+      liveCount: 0,
+    });
+    await expectDisplayPush();
+    const photos = (
+      await call<AdAlbumSummary>(owner.token, 'POST', '/ads/albums', {
+        name: 'Foto',
+        layout: 'full',
+        imageFit: 'cover',
+        caption: 'hidden',
+        shuffle: false,
+      })
+    ).body;
+    expect(photos.sortOrder).toBeGreaterThan(grid.body.sortOrder);
+
+    // Slides straight into an album (create, bulk) and a slide with an unknown album.
+    const slideIn = async (title: string, albumId: string | null) =>
+      (
+        await call<AdSummary>(owner.token, 'POST', '/ads', {
+          kind: 'custom',
+          title,
+          albumId,
+        })
+      ).body;
+    const g1 = await slideIn('Grid one', grid.body.id);
+    const g2 = await slideIn('Grid two', grid.body.id);
+    const f1 = await slideIn('Photo one', photos.id);
+    expect(g1.albumId).toBe(grid.body.id);
+    expect(f1.albumId).toBe(photos.id);
+    expect(
+      (
+        await call(owner.token, 'POST', '/ads', {
+          kind: 'custom',
+          title: 'Nowhere',
+          albumId: randomUUID(),
+        })
+      ).status,
+    ).toBe(404);
+    const snack = (
+      await call<ProductSummary>(owner.token, 'POST', '/products', {
+        name: 'Album Snack',
+        sellingPriceCents: 90,
+        purchaseCostCents: 40,
+        initialStockMilli: 10_000,
+      })
+    ).body;
+    const bulk = await call<AdBulkResult>(owner.token, 'POST', '/ads/products/bulk', {
+      productIds: [snack.id],
+      albumId: photos.id,
+    });
+    expect(bulk.body.created).toBe(1);
+    const snackAd = bulk.body.items.find((a) => a.productId === snack.id)!;
+    expect(snackAd.albumId).toBe(photos.id);
+
+    // Admin list = playback order: no album first, then album by album.
+    const list = (await call<{ items: AdSummary[] }>(owner.token, 'GET', '/ads')).body.items;
+    const albumOf = list.map((a) => a.albumId);
+    const firstGrid = albumOf.indexOf(grid.body.id);
+    const firstPhotos = albumOf.indexOf(photos.id);
+    expect(albumOf.slice(0, firstGrid).every((id) => id === null)).toBe(true);
+    expect(firstGrid).toBeLessThan(firstPhotos);
+    expect(albumOf.slice(firstGrid, firstPhotos).every((id) => id === grid.body.id)).toBe(true);
+    const albums = (await call<{ items: AdAlbumSummary[] }>(owner.token, 'GET', '/ads/albums')).body
+      .items;
+    expect(albums.map((a) => [a.id, a.adCount, a.liveCount])).toEqual([
+      [grid.body.id, 2, 2],
+      [photos.id, 2, 2],
+    ]);
+
+    // The PC receives the groups in order, each with its own look (null = owner's default).
+    const grouped = await fullFeed();
+    expect(grouped.albums.map((a) => a.id)).toEqual([null, grid.body.id, photos.id]);
+    expect(grouped.albums[0]!.items.map((i) => i.id)).toEqual(looseBefore);
+    expect(grouped.albums[1]).toMatchObject({
+      name: 'Produktet',
+      layout: 'grid',
+      grid: '3x3',
+      imageFit: null,
+      intervalSeconds: 12,
+    });
+    expect(grouped.albums[1]!.items.map((i) => i.id)).toEqual([g1.id, g2.id]);
+    expect(grouped.albums[2]).toMatchObject({
+      name: 'Foto',
+      layout: 'full',
+      imageFit: 'cover',
+      caption: 'hidden',
+      shuffle: false,
+    });
+    expect(grouped.albums[2]!.items.map((i) => i.id)).toEqual([f1.id, snackAd.id]);
+    // Flat list for pre-0.12 clients = the same slides, album by album.
+    expect(grouped.items.map((i) => i.id)).toEqual([
+      ...looseBefore,
+      g1.id,
+      g2.id,
+      f1.id,
+      snackAd.id,
+    ]);
+
+    // Albums can be reordered (the given ones first).
+    const reordered = await call<{ items: AdAlbumSummary[] }>(
+      owner.token,
+      'PUT',
+      '/ads/albums/order',
+      {
+        ids: [photos.id],
+      },
+    );
+    expect(reordered.body.items.map((a) => a.id)).toEqual([photos.id, grid.body.id]);
+    expect((await fullFeed()).albums.map((a) => a.id)).toEqual([null, photos.id, grid.body.id]);
+    expect(
+      (await call(owner.token, 'PUT', '/ads/albums/order', { ids: [randomUUID()] })).status,
+    ).toBe(404);
+
+    // Switching an album off takes all of its slides off the screens.
+    const off = await call<AdAlbumSummary>(owner.token, 'PATCH', `/ads/albums/${photos.id}`, {
+      enabled: false,
+    });
+    expect(off.body).toMatchObject({ enabled: false, adCount: 2, liveCount: 0 });
+    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${f1.id}`)).body.state).toBe(
+      'album_off',
+    );
+    const dimmed = await fullFeed();
+    expect(dimmed.albums.map((a) => a.id)).toEqual([null, grid.body.id]);
+    expect(dimmed.items.map((i) => i.id)).not.toContain(f1.id);
+    expect(dimmed.items.map((i) => i.id)).not.toContain(snackAd.id);
+    // The album's look can be changed; patches are validated like the create body.
+    expect(
+      (await call(owner.token, 'PATCH', `/ads/albums/${photos.id}`, { layout: 'cube' })).status,
+    ).toBe(400);
+    expect((await call(owner.token, 'PATCH', `/ads/albums/${photos.id}`, {})).status).toBe(400);
+    expect(
+      (await call(owner.token, 'PATCH', `/ads/albums/${randomUUID()}`, { name: 'Z' })).status,
+    ).toBe(404);
+
+    // Moving slides between albums: bulk move, single patch, out of any album.
+    const moved = await call<{ items: AdSummary[] }>(owner.token, 'PUT', '/ads/album', {
+      ids: [f1.id, snackAd.id],
+      albumId: grid.body.id,
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.body.items.find((a) => a.id === f1.id)!.albumId).toBe(grid.body.id);
+    expect(moved.body.items.find((a) => a.id === snackAd.id)!.state).toBe('live');
+    expect(
+      (await call(owner.token, 'PUT', '/ads/album', { ids: [randomUUID()], albumId: null })).status,
+    ).toBe(404);
+    expect(
+      (await call(owner.token, 'PATCH', `/ads/${g2.id}`, { albumId: randomUUID() })).status,
+    ).toBe(404);
+    const loose = await call<AdSummary>(owner.token, 'PATCH', `/ads/${g2.id}`, { albumId: null });
+    expect(loose.body.albumId).toBeNull();
+    const afterMove = await fullFeed();
+    expect(afterMove.albums.map((a) => a.id)).toEqual([null, grid.body.id]);
+    expect(afterMove.albums[0]!.items.map((i) => i.id)).toEqual([...looseBefore, g2.id]);
+    expect(afterMove.albums[1]!.items.map((i) => i.id)).toEqual([g1.id, f1.id, snackAd.id]);
+
+    // Deleting an album only ungroups its slides — they keep playing.
+    expect((await call(cashier.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(403);
+    expect((await call(owner.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(204);
+    expect((await call(owner.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(404);
+    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${g1.id}`)).body.albumId).toBeNull();
+    const ungrouped = await fullFeed();
+    expect(ungrouped.albums).toHaveLength(1);
+    expect(ungrouped.items.map((i) => i.id)).toEqual(
+      expect.arrayContaining([g1.id, f1.id, snackAd.id]),
+    );
+
+    // Clean up what this test added.
+    await call(owner.token, 'DELETE', `/ads/albums/${photos.id}`);
+    for (const id of [g1.id, g2.id, f1.id, snackAd.id])
+      await call(owner.token, 'DELETE', `/ads/${id}`);
+    expect((await fullFeed()).items.map((i) => i.id)).toEqual(looseBefore);
   });
 });

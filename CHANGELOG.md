@@ -4,7 +4,35 @@ All notable changes to LIKApcs are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
 
-## [Unreleased]
+## [0.12.0] - 2026-10-12
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0022 — table `ad_albums`,
+`ads.album_id`), then the gaming PCs. Older 0.11.x clients keep working — they play the flat list
+(album by album, with the single layout) until updated. Covered by tests (shared 56, server 198,
+admin 35, client 29) and the browser smoke `albums` (35 checks: Admin chips / dialog / per-row box,
+client playing album 1 as a 2×2 grid completely, then album 2 as big photos, then the loop; album
+off; delete = ungroup).
+
+### Added
+
+- **Ad albums — "Albumet".** The lock-screen slideshow can now be split into albums (Album 1,
+  Album 2, …), each with **its own look**: layout (one slide / big photo / grid / menu board), grid
+  size, picture fit, caption position, slide style, seconds per page and shuffle — every option can
+  stay "as in Settings", so an album overrides only what it needs. The PCs play the albums **one
+  after another**: album 1 completely (every grid page / slide), then album 2, … and start over;
+  slides in no album play first with the Settings look, so nothing changes until you create an
+  album. In LIKApcs › Ads: an **Albums** bar above the list (chips numbered in playback order with
+  the look summary and slide count — click to filter, the gear to edit), **New album** dialog
+  (name, look, seconds, order, play earlier / later, on/off, delete), an **Album** box on every row
+  (and in the slide dialog) to move a slide, drag a slide onto an album chip, and new products /
+  slides added while an album is selected go straight into it. Switching an album **off** takes all
+  of its slides off the PCs at once (state _Album off_); deleting an album only ungroups its slides.
+  Server: `GET/POST /ads/albums`, `PATCH/DELETE /ads/albums/:id`, `PUT /ads/albums/order`,
+  `PUT /ads/album` (move slides), `albumId` on ads and bulk adds; `GET /client/ads` adds `albums`
+  (grouped, in playback order) next to the flat `items`; every album change pushes `server.display`.
+  Client: the slideshow builds one programme from all albums — page-level look classes live on each
+  layer, so a grid page and a big photo cross over cleanly; `data-album` / `data-albums` /
+  `data-layout` on the frame for tests.
 
 ### Fixed
 

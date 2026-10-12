@@ -344,6 +344,37 @@ export interface ClientAdItem {
   videoUrl: string | null;
 }
 
+/**
+ * An album of the slideshow (0.12.0, `ad_albums`): a named group of slides with its own look.
+ * The PCs play the albums one after another, in this order — album 1 completely, then album 2,
+ * … — and start over. Every look field is `null` when the album keeps the owner's default
+ * (`ClientDisplayConfig.ads.*`), so the PC resolves them against the display settings it already
+ * has. `id` is null for the slides that are in no album (they play first, with the defaults).
+ */
+export interface ClientAdAlbum {
+  id: string | null;
+  name: string;
+  layout: ClientAdsLayout | null;
+  grid: ClientAdsGrid | null;
+  imageFit: ClientAdsImageFit | null;
+  caption: ClientAdsCaption | null;
+  style: ClientAdsStyle | null;
+  intervalSeconds: number | null;
+  shuffle: boolean | null;
+  items: ClientAdItem[];
+}
+
+/**
+ * `GET /client/ads`. `items` is the flat list (every live slide, album by album) that pre-0.12
+ * clients play with the single layout; `albums` is what a 0.12+ client plays. `nextChangeAt`
+ * tells the PC when the weekly schedule next flips a slide on/off.
+ */
+export interface ClientAdsFeed {
+  items: ClientAdItem[];
+  albums: ClientAdAlbum[];
+  nextChangeAt: string | null;
+}
+
 export interface ServerHeartbeatAck {
   type: 'server.heartbeat_ack';
   serverTime: string;

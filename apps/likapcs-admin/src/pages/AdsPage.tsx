@@ -19,11 +19,15 @@ import {
   ArrowUp,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Copy,
   Film,
+  FolderPlus,
   GripVertical,
   ImageIcon,
+  Images,
   Megaphone,
   MonitorSmartphone,
   Package,
@@ -39,6 +43,9 @@ import {
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  AdAlbumInput,
+  AdAlbumPatch,
+  AdAlbumSummary,
   AdBulkResult,
   AdInput,
   AdKind,
@@ -47,16 +54,25 @@ import type {
   AdSummary,
   AdTheme,
   CategorySummary,
+  ClientAdsCaption,
+  ClientAdsGrid,
+  ClientAdsImageFit,
+  ClientAdsLayout,
   ProductSummary,
   SettingsMap,
   StationSummary,
 } from '@likapcs/shared';
 import {
+  AD_ALBUM_NAME_MAX,
   AD_DURATION_MAX_SECONDS,
   AD_DURATION_MIN_SECONDS,
   AD_STYLES,
   AD_THEMES,
   AD_VIDEO_MAX_BYTES,
+  CLIENT_ADS_CAPTIONS,
+  CLIENT_ADS_GRIDS,
+  CLIENT_ADS_IMAGE_FITS,
+  CLIENT_ADS_LAYOUTS,
   PERMISSIONS,
   parseMoneyInput,
 } from '@likapcs/shared';
@@ -74,6 +90,7 @@ import {
   Loading,
   PageHeader,
   Segmented,
+  Select,
   Switch,
   Textarea,
 } from '../components/ui/primitives';
@@ -94,7 +111,11 @@ const STATE_TONE: Record<
   expired: 'warning',
   unavailable: 'danger',
   off_hours: 'info',
+  album_off: 'default',
 };
+
+/** Album filter of the list: every slide, the slides in no album, or one album. */
+type AlbumFilter = 'all' | 'none' | string;
 
 /** Theme swatches — the same two base tones the client uses (see client styles `.ads__theme--*`). */
 
@@ -136,9 +157,15 @@ export function AdsPage() {
     queryFn: () => api<StationSummary[]>('/stations'),
     staleTime: 30_000,
   });
+  const albumsQuery = useQuery({
+    queryKey: ['ads', 'albums'],
+    queryFn: () => api<{ items: AdAlbumSummary[] }>('/ads/albums'),
+    refetchInterval: 60_000,
+  });
+  const albums = useMemo(() => albumsQuery.data?.items ?? [], [albumsQuery.data]);
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ['ads'] });
+    void queryClient.invalidateQueries({ queryKey: ['ads'] }); // also ['ads', 'albums'] (counts)
     void queryClient.invalidateQueries({ queryKey: ['products'] }); // promo prices on the POS tiles
   };
   const onError = (err: unknown) =>
@@ -187,9 +214,57 @@ export function AdsPage() {
     if (slideshowOn || !canSettings || toggleSlideshow.isPending) return;
     toggleSlideshow.mutate(true, { onSuccess: () => toast.success(t('ads.autoEnabled')) });
   };
+  // Albums (0.12.0)
+  const [albumFilter, setAlbumFilter] = useState<AlbumFilter>('all');
+  const [albumDialog, setAlbumDialog] = useState<{ album: AdAlbumSummary | null } | null>(null);
+  const [deletingAlbum, setDeletingAlbum] = useState<AdAlbumSummary | null>(null);
+  /** The album new slides land in: the one selected in the bar (none for "all" / "no album"). */
+  const targetAlbum = albums.find((al) => al.id === albumFilter) ?? null;
+  const reorderAlbums = useMutation({
+    mutationFn: (ids: string[]) =>
+      api<{ items: AdAlbumSummary[] }>('/ads/albums/order', { method: 'PUT', body: { ids } }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ads', 'albums'], data);
+      void queryClient.invalidateQueries({ queryKey: ['ads'], exact: true });
+    },
+    onError,
+  });
+  const removeAlbum = useMutation({
+    mutationFn: (id: string) => api<void>(`/ads/albums/${id}`, { method: 'DELETE' }),
+    onSuccess: (_, id) => {
+      invalidate();
+      setDeletingAlbum(null);
+      setAlbumDialog(null);
+      if (albumFilter === id) setAlbumFilter('all');
+      toast.success(t('ads.albums.deleted'));
+    },
+    onError,
+  });
+  const moveToAlbum = useMutation({
+    mutationFn: ({ ids, albumId }: { ids: string[]; albumId: string | null }) =>
+      api<{ items: AdSummary[] }>('/ads/album', { method: 'PUT', body: { ids, albumId } }),
+    onSuccess: (data) => {
+      // The row moves under the user's eyes (and the chip counts follow) — no toast needed.
+      queryClient.setQueryData(['ads'], data);
+      void queryClient.invalidateQueries({ queryKey: ['ads', 'albums'] });
+    },
+    onError,
+  });
+  const moveAlbum = (id: string, delta: number) => {
+    const ids = albums.map((al) => al.id);
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    reorderAlbums.mutate(ids);
+  };
+
   const addAll = useMutation({
     mutationFn: () =>
-      api<AdBulkResult>('/ads/products/all', { method: 'POST', body: { onlyWithPhoto: false } }),
+      api<AdBulkResult>('/ads/products/all', {
+        method: 'POST',
+        body: { onlyWithPhoto: false, albumId: targetAlbum?.id ?? null },
+      }),
     onSuccess: (r) => {
       invalidate();
       toast.success(r.created > 0 ? t('ads.addedAll', { n: r.created }) : t('ads.addedAllNone'));
@@ -199,7 +274,10 @@ export function AdsPage() {
   });
   const addChosen = useMutation({
     mutationFn: (productIds: string[]) =>
-      api<AdBulkResult>('/ads/products/bulk', { method: 'POST', body: { productIds } }),
+      api<AdBulkResult>('/ads/products/bulk', {
+        method: 'POST',
+        body: { productIds, albumId: targetAlbum?.id ?? null },
+      }),
     onSuccess: (r) => {
       invalidate();
       setBrowser(false);
@@ -220,30 +298,69 @@ export function AdsPage() {
   const [dragId, setDragId] = useState<string | null>(null);
 
   const items = useMemo(() => ads.data?.items ?? [], [ads.data]);
+  // The list shows one album at a time (or everything, album by album = playback order).
+  const visible = useMemo(
+    () =>
+      albumFilter === 'all'
+        ? items
+        : items.filter((a) =>
+            albumFilter === 'none' ? a.albumId === null : a.albumId === albumFilter,
+          ),
+    [items, albumFilter],
+  );
   const selected =
-    items.find((a) => a.id === selectedId) ??
-    items.find((a) => a.state === 'live') ??
-    items[0] ??
+    visible.find((a) => a.id === selectedId) ??
+    visible.find((a) => a.state === 'live') ??
+    visible[0] ??
     null;
   const liveCount = items.filter((a) => a.state === 'live').length;
+  const looseCount = items.filter((a) => a.albumId === null).length;
 
+  /** Neighbours in the manual order are the slides of the same album (the albums keep their own order). */
+  const siblings = (a: AdSummary) => items.filter((x) => x.albumId === a.albumId);
   const move = (id: string, delta: number) => {
+    const me = items.find((a) => a.id === id);
+    if (!me) return;
+    const group = siblings(me).map((a) => a.id);
+    const at = group.indexOf(id);
+    const to = at + delta;
+    if (at < 0 || to < 0 || to >= group.length) return;
+    group.splice(to, 0, group.splice(at, 1)[0]!);
+    // Full order = every other slide as it is, this album's slides in their new order.
     const ids = items.map((a) => a.id);
-    const from = ids.indexOf(id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= ids.length) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    const slots = ids.map((x, i) => (group.includes(x) ? i : -1)).filter((i) => i >= 0);
+    slots.forEach((slot, i) => (ids[slot] = group[i]!));
     reorder.mutate(ids);
   };
   const dropOn = (targetId: string) => {
     if (!dragId || dragId === targetId) return;
+    const from = items.find((a) => a.id === dragId);
+    const to = items.find((a) => a.id === targetId);
+    if (!from || !to) return;
     const ids = items.map((a) => a.id);
-    const from = ids.indexOf(dragId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    if (from.albumId !== to.albumId) {
+      // Dropped onto another album's slide: the slide joins that album (at its end).
+      moveToAlbum.mutate({ ids: [from.id], albumId: to.albumId });
+      setDragId(null);
+      return;
+    }
+    ids.splice(ids.indexOf(targetId), 0, ids.splice(ids.indexOf(dragId), 1)[0]!);
     reorder.mutate(ids);
     setDragId(null);
+  };
+  const albumName = (id: string | null) =>
+    id === null ? t('ads.albumNone') : (albums.find((al) => al.id === id)?.name ?? '…');
+  const lookText = (al: AdAlbumSummary) => {
+    const parts: string[] = [];
+    parts.push(
+      al.layout
+        ? t(`settings.client.layout.${al.layout}` as 'settings.client.layout.card')
+        : t('ads.albums.inherit'),
+    );
+    if ((al.layout ?? publicSettings.data?.['client.ads_layout']) === 'grid' && al.grid)
+      parts.push(al.grid.replace('x', '×'));
+    if (al.intervalSeconds) parts.push(`${al.intervalSeconds} s`);
+    return parts.join(' · ');
   };
   const allowDrop = (e: DragEvent) => {
     if (dragId) e.preventDefault();
@@ -332,6 +449,100 @@ export function AdsPage() {
         </div>
       </div>
 
+      {!ads.isLoading && !ads.isError && (albums.length > 0 || items.length > 0) && (
+        <div className="ads-albums" data-testid="ads-albums" role="tablist">
+          <span className="ads-albums__label" title={t('ads.albums.hint')}>
+            <Images size={15} /> {t('ads.albums.title')}
+          </span>
+          <button
+            type="button"
+            role="tab"
+            className={`ads-album ${albumFilter === 'all' ? 'is-active' : ''}`}
+            aria-selected={albumFilter === 'all'}
+            onClick={() => setAlbumFilter('all')}
+            data-testid="ads-album-all"
+          >
+            <span className="ads-album__name">{t('ads.albums.all')}</span>
+            <span className="ads-album__meta">{items.length}</span>
+          </button>
+          {albums.length > 0 && (
+            <button
+              type="button"
+              role="tab"
+              className={`ads-album ${albumFilter === 'none' ? 'is-active' : ''}`}
+              aria-selected={albumFilter === 'none'}
+              onClick={() => setAlbumFilter('none')}
+              data-testid="ads-album-none"
+            >
+              <span className="ads-album__name">{t('ads.albums.none')}</span>
+              <span className="ads-album__meta">{looseCount}</span>
+            </button>
+          )}
+          {albums.map((al, i) => (
+            <span
+              key={al.id}
+              className={`ads-album ads-album--real ${albumFilter === al.id ? 'is-active' : ''} ${
+                al.enabled ? '' : 'is-off'
+              }`}
+              data-testid="ads-album"
+              data-album-id={al.id}
+              data-enabled={al.enabled ? 'true' : 'false'}
+              onDragOver={allowDrop}
+              onDrop={() => {
+                // Dropping a slide on an album chip moves it into that album.
+                if (dragId) moveToAlbum.mutate({ ids: [dragId], albumId: al.id });
+                setDragId(null);
+              }}
+            >
+              <button
+                type="button"
+                role="tab"
+                className="ads-album__pick"
+                aria-selected={albumFilter === al.id}
+                onClick={() => setAlbumFilter(al.id)}
+                title={t('ads.albums.hint')}
+              >
+                <span className="ads-album__index">{i + 1}</span>
+                <span className="ads-album__text">
+                  <span className="ads-album__name">{al.name}</span>
+                  <span className="ads-album__meta">
+                    {lookText(al)} · {t('ads.albums.count', { n: al.adCount })}
+                    {!al.enabled && ` · ${t('ads.state.disabled')}`}
+                  </span>
+                </span>
+              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  className="ads-album__edit"
+                  aria-label={t('ads.albums.editTitle')}
+                  title={t('ads.albums.editTitle')}
+                  onClick={() => setAlbumDialog({ album: al })}
+                  data-testid="ads-album-edit"
+                >
+                  <Settings2 size={14} />
+                </button>
+              )}
+            </span>
+          ))}
+          {canManage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setAlbumDialog({ album: null })}
+              data-testid="ads-album-add"
+            >
+              <FolderPlus size={15} /> {t('ads.albums.add')}
+            </Button>
+          )}
+        </div>
+      )}
+      {targetAlbum && canManage && (
+        <p className="muted ads-albums__note" data-testid="ads-album-target">
+          {t('ads.albums.addInto', { name: targetAlbum.name })}
+        </p>
+      )}
+
       {ads.isLoading ? (
         <Loading />
       ) : ads.isError ? (
@@ -356,11 +567,31 @@ export function AdsPage() {
             }
           />
         </Card>
+      ) : visible.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Images size={28} />}
+            title={t('ads.albums.emptyTitle')}
+            hint={t('ads.albums.emptyHint')}
+            action={
+              canManage ? (
+                <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+                  <Button variant="primary" onClick={() => setBrowser(true)}>
+                    <Plus size={16} /> {t('ads.addProduct')}
+                  </Button>
+                  <Button onClick={() => setDialog({ kind: 'custom', ad: null })}>
+                    <ImageIcon size={16} /> {t('ads.addCustom')}
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          />
+        </Card>
       ) : (
         <div className="ads-layout">
           <Card flush className="ads-list-card">
             <ul className="ads-list" data-testid="ads-list">
-              {items.map((a, index) => (
+              {visible.map((a) => (
                 <li
                   key={a.id}
                   className={`ads-row ${selected?.id === a.id ? 'is-selected' : ''} ${
@@ -368,6 +599,7 @@ export function AdsPage() {
                   } ${a.state !== 'live' ? 'is-off' : ''}`}
                   data-testid="ad-row"
                   data-state={a.state}
+                  data-album-id={a.albumId ?? ''}
                   draggable={canManage}
                   onDragStart={() => setDragId(a.id)}
                   onDragEnd={() => setDragId(null)}
@@ -449,6 +681,29 @@ export function AdsPage() {
                     </Badge>
                   </span>
                   <span className="ads-row__actions" onClick={(e) => e.stopPropagation()}>
+                    {canManage && albums.length > 0 && (
+                      <Select
+                        className="ads-row__album"
+                        aria-label={t('ads.album')}
+                        title={t('ads.albumHint')}
+                        value={a.albumId ?? ''}
+                        disabled={moveToAlbum.isPending}
+                        onChange={(e) =>
+                          moveToAlbum.mutate({ ids: [a.id], albumId: e.target.value || null })
+                        }
+                        data-testid="ad-album"
+                      >
+                        <option value="">{t('ads.albumNone')}</option>
+                        {albums.map((al) => (
+                          <option key={al.id} value={al.id}>
+                            {al.name}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                    {!canManage && a.albumId && (
+                      <Badge tone="default">{albumName(a.albumId)}</Badge>
+                    )}
                     {canManage && (
                       <>
                         <Switch
@@ -462,7 +717,7 @@ export function AdsPage() {
                           variant="ghost"
                           aria-label={t('ads.moveUp')}
                           title={t('ads.moveUp')}
-                          disabled={index === 0 || reorder.isPending}
+                          disabled={siblings(a)[0]?.id === a.id || reorder.isPending}
                           onClick={() => move(a.id, -1)}
                         >
                           <ArrowUp size={14} />
@@ -473,7 +728,7 @@ export function AdsPage() {
                           variant="ghost"
                           aria-label={t('ads.moveDown')}
                           title={t('ads.moveDown')}
-                          disabled={index === items.length - 1 || reorder.isPending}
+                          disabled={siblings(a).at(-1)?.id === a.id || reorder.isPending}
                           onClick={() => move(a.id, 1)}
                         >
                           <ArrowDown size={14} />
@@ -533,6 +788,7 @@ export function AdsPage() {
                 <li>{t('ads.how1')}</li>
                 <li>{t('ads.how2')}</li>
                 <li>{t('ads.how3')}</li>
+                <li>{t('ads.how4')}</li>
               </ul>
             </Card>
           </div>
@@ -559,6 +815,8 @@ export function AdsPage() {
           defaultIntervalSeconds={publicSettings.data?.['client.ads_interval_seconds'] ?? 8}
           defaultStyle={defaultStyle}
           stations={stations.data ?? []}
+          albums={albums}
+          defaultAlbumId={targetAlbum?.id ?? null}
           onClose={() => setDialog(null)}
           onSaved={(saved, created) => {
             invalidate();
@@ -568,6 +826,37 @@ export function AdsPage() {
           }}
         />
       )}
+      {albumDialog && (
+        <AlbumDialog
+          album={albumDialog.album}
+          defaults={publicSettings.data ?? {}}
+          position={
+            albumDialog.album ? albums.findIndex((al) => al.id === albumDialog.album!.id) : -1
+          }
+          total={albums.length}
+          onMove={(delta) => albumDialog.album && moveAlbum(albumDialog.album.id, delta)}
+          onDelete={() => setDeletingAlbum(albumDialog.album)}
+          onClose={() => setAlbumDialog(null)}
+          onSaved={(saved, created) => {
+            invalidate();
+            setAlbumDialog(null);
+            if (created) setAlbumFilter(saved.id);
+          }}
+        />
+      )}
+      <ConfirmDialog
+        open={deletingAlbum !== null}
+        onClose={() => setDeletingAlbum(null)}
+        onConfirm={() => deletingAlbum && removeAlbum.mutate(deletingAlbum.id)}
+        title={t('ads.albums.deleteTitle')}
+        body={t('ads.albums.deleteBody', {
+          name: deletingAlbum?.name ?? '',
+          n: deletingAlbum?.adCount ?? 0,
+        })}
+        confirmLabel={t('common.delete')}
+        danger
+        loading={removeAlbum.isPending}
+      />
       <ConfirmDialog
         open={deleting !== null}
         onClose={() => setDeleting(null)}
@@ -674,6 +963,8 @@ function AdDialog({
   defaultIntervalSeconds,
   defaultStyle,
   stations,
+  albums,
+  defaultAlbumId,
   onClose,
   onSaved,
 }: {
@@ -684,6 +975,9 @@ function AdDialog({
   defaultIntervalSeconds: number;
   defaultStyle: AdStyle;
   stations: StationSummary[];
+  /** 0.12.0: albums to file the slide under; a new slide starts in `defaultAlbumId`. */
+  albums: AdAlbumSummary[];
+  defaultAlbumId: string | null;
   onClose: () => void;
   onSaved: (ad: AdSummary, created: boolean) => void;
 }) {
@@ -718,6 +1012,8 @@ function AdDialog({
     timeFrom: ad?.timeFrom ?? '',
     timeTo: ad?.timeTo ?? '',
     stationIds: ad?.stationIds ?? ([] as string[]),
+    // 0.12.0
+    albumId: ad ? ad.albumId : defaultAlbumId,
   });
   const [pendingImage, setPendingImage] = useState<PendingImage>(null);
   const [pendingVideo, setPendingVideo] = useState<PendingVideo>(null);
@@ -812,6 +1108,7 @@ function AdDialog({
         timeFrom: form.timeFrom || null,
         timeTo: form.timeTo || null,
         stationIds: form.stationIds,
+        albumId: form.albumId,
         // A link replaces an upload; "remove" clears both; otherwise the upload (if any) follows.
         ...(link ? { videoUrl: link } : pendingVideo?.kind === 'remove' ? { videoUrl: null } : {}),
       };
@@ -1133,6 +1430,25 @@ function AdDialog({
             />
           )}
         </Field>
+        {albums.length > 0 && (
+          <Field label={t('ads.album')} hint={t('ads.albumHint')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={form.albumId ?? ''}
+                onChange={(e) => set('albumId', e.target.value || null)}
+                data-testid="ad-album-select"
+              >
+                <option value="">{t('ads.albumNone')}</option>
+                {albums.map((al) => (
+                  <option key={al.id} value={al.id}>
+                    {al.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        )}
         <Field label={t('ads.enabled')}>
           {() => (
             <div style={{ paddingTop: 6 }}>
@@ -1384,6 +1700,7 @@ function AdDialog({
                 weight: 1,
                 stationIds: [],
                 videoUrl: null,
+                albumId: null,
                 createdAt: '',
                 updatedAt: '',
               }
@@ -1426,6 +1743,327 @@ function AdDialog({
  * several are added at once at their regular price. Products that already have an ad are shown
  * but cannot be ticked twice.
  */
+/**
+ * Create / edit an album (0.12.0): name, its look — every option can stay "as in Settings" —
+ * the seconds per page, shuffle, the on/off switch, its place in the playback order and delete.
+ */
+function AlbumDialog({
+  album,
+  defaults,
+  position,
+  total,
+  onMove,
+  onDelete,
+  onClose,
+  onSaved,
+}: {
+  album: AdAlbumSummary | null;
+  /** Public settings — the owner's defaults the album inherits. */
+  defaults: Partial<SettingsMap>;
+  /** Index in the playback order (-1 when creating) and how many albums there are. */
+  position: number;
+  total: number;
+  onMove: (delta: number) => void;
+  onDelete: () => void;
+  onClose: () => void;
+  onSaved: (album: AdAlbumSummary, created: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const [form, setForm] = useState({
+    name: album?.name ?? '',
+    layout: (album?.layout ?? '') as ClientAdsLayout | '',
+    grid: (album?.grid ?? '') as ClientAdsGrid | '',
+    imageFit: (album?.imageFit ?? '') as ClientAdsImageFit | '',
+    caption: (album?.caption ?? '') as ClientAdsCaption | '',
+    style: (album?.style ?? '') as AdStyle | '',
+    interval: album?.intervalSeconds != null ? String(album.intervalSeconds) : '',
+    shuffle: (album?.shuffle == null ? '' : album.shuffle ? 'on' : 'off') as '' | 'on' | 'off',
+    enabled: album?.enabled ?? true,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+  useEffect(() => setError(null), [form]);
+
+  const defaultLayout = defaults['client.ads_layout'] ?? 'card';
+  const defaultGrid = defaults['client.ads_grid'] ?? '3x3';
+  const defaultFit = defaults['client.ads_image_fit'] ?? 'contain';
+  const defaultCaption = defaults['client.ads_caption'] ?? 'bottom';
+  const defaultStyle = defaults['client.ads_style'] ?? 'hero';
+  const defaultInterval = defaults['client.ads_interval_seconds'] ?? 8;
+  const defaultShuffle = defaults['client.ads_shuffle'] ?? false;
+  const layout = form.layout || defaultLayout;
+  const inherit = (label: string) => `${t('ads.albums.inherit')} (${label})`;
+  const layoutLabel = (l: ClientAdsLayout) =>
+    t(`settings.client.layout.${l}` as 'settings.client.layout.card');
+  const fitLabel = (f: ClientAdsImageFit) =>
+    t(`settings.client.fits.${f}` as 'settings.client.fits.contain');
+  const captionLabel = (c: ClientAdsCaption) =>
+    t(`settings.client.captions.${c}` as 'settings.client.captions.bottom');
+  const styleLabel = (st: AdStyle) => t(`ads.styles.${st}` as 'ads.styles.poster');
+
+  const intervalSeconds = form.interval.trim() === '' ? null : Number(form.interval);
+  const intervalInvalid =
+    intervalSeconds !== null &&
+    (!Number.isInteger(intervalSeconds) ||
+      intervalSeconds < AD_DURATION_MIN_SECONDS ||
+      intervalSeconds > AD_DURATION_MAX_SECONDS);
+  const nameMissing = form.name.trim().length === 0;
+  const valid = !nameMissing && !intervalInvalid;
+
+  const save = useMutation({
+    mutationFn: async (): Promise<AdAlbumSummary> => {
+      const body: AdAlbumInput | AdAlbumPatch = {
+        name: form.name.trim(),
+        layout: form.layout || null,
+        grid: form.grid || null,
+        imageFit: form.imageFit || null,
+        caption: form.caption || null,
+        style: form.style || null,
+        intervalSeconds,
+        shuffle: form.shuffle === '' ? null : form.shuffle === 'on',
+        enabled: form.enabled,
+      };
+      return album
+        ? api<AdAlbumSummary>(`/ads/albums/${album.id}`, { method: 'PATCH', body })
+        : api<AdAlbumSummary>('/ads/albums', { method: 'POST', body });
+    },
+    onSuccess: (saved) => {
+      toast.success(t('ads.albums.saved'));
+      onSaved(saved, album === null);
+    },
+    onError: (err) => setError(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="md"
+      title={album ? t('ads.albums.editTitle') : t('ads.albums.addTitle')}
+      description={t('ads.albums.hint')}
+      footer={
+        <>
+          {album && (
+            <Button variant="danger" onClick={onDelete} data-testid="album-delete">
+              <Trash2 size={14} /> {t('ads.albums.delete')}
+            </Button>
+          )}
+          <span style={{ flex: 1 }} />
+          <Button variant="ghost" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!valid}
+            loading={save.isPending}
+            onClick={() => save.mutate()}
+            data-testid="album-save"
+          >
+            {t('common.save')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="form-grid"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !save.isPending) save.mutate();
+        }}
+      >
+        <Field
+          label={t('ads.albums.name')}
+          className="span-2"
+          error={nameMissing && form.name !== '' ? t('common.required') : undefined}
+        >
+          {(id, invalid) => (
+            <Input
+              id={id}
+              autoFocus
+              maxLength={AD_ALBUM_NAME_MAX}
+              placeholder={t('ads.albums.namePlaceholder')}
+              aria-invalid={invalid || undefined}
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+              data-testid="album-name"
+            />
+          )}
+        </Field>
+        <Field label={t('ads.albums.look')} hint={t('ads.albums.lookHint')} className="span-2">
+          {(id) => (
+            <Select
+              id={id}
+              value={form.layout}
+              onChange={(e) => set('layout', e.target.value as ClientAdsLayout | '')}
+              data-testid="album-layout"
+            >
+              <option value="">{inherit(layoutLabel(defaultLayout))}</option>
+              {CLIENT_ADS_LAYOUTS.map((l) => (
+                <option key={l} value={l}>
+                  {layoutLabel(l)}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        {layout === 'grid' || layout === 'menu' ? (
+          <Field label={t('settings.client.gridSize')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={form.grid}
+                onChange={(e) => set('grid', e.target.value as ClientAdsGrid | '')}
+                data-testid="album-grid"
+              >
+                <option value="">{inherit(defaultGrid.replace('x', '×'))}</option>
+                {CLIENT_ADS_GRIDS.map((g) => (
+                  <option key={g} value={g}>
+                    {g.replace('x', '×')}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : (
+          <Field label={t('ads.style')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={form.style}
+                onChange={(e) => set('style', e.target.value as AdStyle | '')}
+                data-testid="album-style"
+              >
+                <option value="">
+                  {inherit(styleLabel(layout === 'full' ? 'poster' : defaultStyle))}
+                </option>
+                {AD_STYLES.map((st) => (
+                  <option key={st} value={st}>
+                    {styleLabel(st)}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        )}
+        <Field label={t('settings.client.imageFit')}>
+          {(id) => (
+            <Select
+              id={id}
+              value={form.imageFit}
+              onChange={(e) => set('imageFit', e.target.value as ClientAdsImageFit | '')}
+              data-testid="album-fit"
+            >
+              <option value="">{inherit(fitLabel(defaultFit))}</option>
+              {CLIENT_ADS_IMAGE_FITS.map((f) => (
+                <option key={f} value={f}>
+                  {fitLabel(f)}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <Field label={t('settings.client.caption')}>
+          {(id) => (
+            <Select
+              id={id}
+              value={form.caption}
+              onChange={(e) => set('caption', e.target.value as ClientAdsCaption | '')}
+              data-testid="album-caption"
+            >
+              <option value="">{inherit(captionLabel(defaultCaption))}</option>
+              {CLIENT_ADS_CAPTIONS.map((c) => (
+                <option key={c} value={c}>
+                  {captionLabel(c)}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <Field
+          label={t('ads.albums.interval')}
+          hint={t('ads.durationHint', { n: defaultInterval })}
+          optional
+          error={intervalInvalid ? t('common.invalid') : undefined}
+        >
+          {(id, invalid) => (
+            <Input
+              id={id}
+              className="num"
+              inputMode="numeric"
+              placeholder={String(defaultInterval)}
+              aria-invalid={invalid || undefined}
+              value={form.interval}
+              onChange={(e) => set('interval', e.target.value)}
+              data-testid="album-interval"
+            />
+          )}
+        </Field>
+        <Field label={t('ads.albums.shuffle')}>
+          {(id) => (
+            <Select
+              id={id}
+              value={form.shuffle}
+              onChange={(e) => set('shuffle', e.target.value as '' | 'on' | 'off')}
+              data-testid="album-shuffle"
+            >
+              <option value="">
+                {inherit(defaultShuffle ? t('ads.albums.shuffleOn') : t('ads.albums.shuffleOff'))}
+              </option>
+              <option value="off">{t('ads.albums.shuffleOff')}</option>
+              <option value="on">{t('ads.albums.shuffleOn')}</option>
+            </Select>
+          )}
+        </Field>
+        <Field label={t('ads.albums.enabled')} hint={t('ads.albums.enabledHint')}>
+          {() => (
+            <div style={{ paddingTop: 6 }} data-testid="album-enabled">
+              <Switch
+                checked={form.enabled}
+                onChange={(v) => set('enabled', v)}
+                label={form.enabled ? t('ads.state.live') : t('ads.state.disabled')}
+              />
+            </div>
+          )}
+        </Field>
+        {album && total > 1 && (
+          <Field label={t('ads.albums.playOrder')}>
+            {() => (
+              <div className="row" style={{ gap: 6, paddingTop: 4 }}>
+                <Button
+                  size="sm"
+                  disabled={position <= 0}
+                  onClick={() => onMove(-1)}
+                  data-testid="album-earlier"
+                >
+                  <ChevronLeft size={14} /> {t('ads.albums.moveUp')}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={position < 0 || position >= total - 1}
+                  onClick={() => onMove(1)}
+                  data-testid="album-later"
+                >
+                  {t('ads.albums.moveDown')} <ChevronRight size={14} />
+                </Button>
+                <span className="muted" style={{ fontSize: 13 }}>
+                  {position + 1} / {total}
+                </span>
+              </div>
+            )}
+          </Field>
+        )}
+        {error && (
+          <div className="span-2">
+            <Alert tone="danger">{error}</Alert>
+          </div>
+        )}
+      </form>
+    </Dialog>
+  );
+}
+
 function ProductBrowserDialog({
   advertised,
   busy,

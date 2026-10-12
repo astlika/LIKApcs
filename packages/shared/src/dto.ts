@@ -4,9 +4,17 @@ import { ALL_ROLE_CODES } from './permissions.js';
 import type { ClientMetrics, HardwareInfo } from './protocol.js';
 import {
   AD_THEMES,
+  CLIENT_ADS_CAPTIONS,
+  CLIENT_ADS_GRIDS,
+  CLIENT_ADS_IMAGE_FITS,
+  CLIENT_ADS_LAYOUTS,
   CLIENT_ADS_STYLES,
   LANGUAGES,
   type AdTheme,
+  type ClientAdsCaption,
+  type ClientAdsGrid,
+  type ClientAdsImageFit,
+  type ClientAdsLayout,
   type ClientAdsStyle,
 } from './settings.js';
 
@@ -2534,6 +2542,8 @@ export const adInputSchema = z
       .optional(),
     startsAt: adInstant,
     endsAt: adInstant,
+    /** 0.12.0: the album the slide plays in; null = no album (plays first, with the defaults). */
+    albumId: uuidSchema.nullable().optional(),
     enabled: z.boolean().default(true),
   })
   .superRefine((v, ctx) => {
@@ -2576,10 +2586,15 @@ export type AdReorderRequest = z.infer<typeof adReorderSchema>;
 /** `POST /ads/products/bulk` — one plain product ad (no promo) per chosen product, in that order. */
 export const adBulkProductsSchema = z.object({
   productIds: z.array(uuidSchema).min(1).max(500),
+  /** 0.12.0: put the new slides straight into this album. */
+  albumId: uuidSchema.nullable().optional(),
 });
 export type AdBulkProductsRequest = z.infer<typeof adBulkProductsSchema>;
 /** `POST /ads/products/all` — every active product (optionally only those with a photo). */
-export const adAddAllSchema = z.object({ onlyWithPhoto: z.boolean().default(false) });
+export const adAddAllSchema = z.object({
+  onlyWithPhoto: z.boolean().default(false),
+  albumId: uuidSchema.nullable().optional(),
+});
 export type AdAddAllRequest = z.infer<typeof adAddAllSchema>;
 
 /**
@@ -2594,6 +2609,8 @@ export const AD_STATES = [
   'expired',
   'unavailable',
   'off_hours',
+  /** 0.12.0: the slide's album is switched off. */
+  'album_off',
 ] as const;
 export type AdState = (typeof AD_STATES)[number];
 
@@ -2631,6 +2648,8 @@ export interface AdSummary {
   stationIds: string[];
   /** Server-relative URL of the uploaded video, or the external URL; null = picture / text slide. */
   videoUrl: string | null;
+  /** 0.12.0: album the slide plays in (`AdAlbumSummary.id`), null = no album. */
+  albumId: string | null;
   enabled: boolean;
   sortOrder: number;
   /** `live` = currently part of the client feed (`off_hours` = outside its weekly schedule). */
@@ -2643,4 +2662,67 @@ export interface AdSummary {
 export interface AdBulkResult {
   created: number;
   items: AdSummary[];
+}
+
+// ─── Albums (0.12.0, `ad_albums`) ───────────────────────────────────────────
+// A named group of slides with its own look. The PCs play the albums one after another in
+// `sortOrder` (slides without an album first), each completely, then start over. Every look
+// field is nullable: null = "as in Settings › Client screen" (the owner's default).
+
+export const AD_ALBUM_NAME_MAX = 60;
+const adAlbumLook = {
+  layout: z.enum(CLIENT_ADS_LAYOUTS).nullable().optional(),
+  /** Grid layout: columns × rows per page. */
+  grid: z.enum(CLIENT_ADS_GRIDS).nullable().optional(),
+  imageFit: z.enum(CLIENT_ADS_IMAGE_FITS).nullable().optional(),
+  caption: z.enum(CLIENT_ADS_CAPTIONS).nullable().optional(),
+  /** Default slide style of the album (single-slide layouts). */
+  style: z.enum(CLIENT_ADS_STYLES).nullable().optional(),
+  /** Seconds per page in this album; null = the owner's interval. */
+  intervalSeconds: z
+    .number()
+    .int()
+    .min(AD_DURATION_MIN_SECONDS)
+    .max(AD_DURATION_MAX_SECONDS)
+    .nullable()
+    .optional(),
+  /** Shuffle the slides inside the album; null = the owner's setting. */
+  shuffle: z.boolean().nullable().optional(),
+};
+export const adAlbumInputSchema = z.object({
+  name: z.string().trim().min(1).max(AD_ALBUM_NAME_MAX),
+  ...adAlbumLook,
+  /** Off = the whole album leaves the screens (its slides show `album_off`). */
+  enabled: z.boolean().default(true),
+});
+export type AdAlbumInput = z.infer<typeof adAlbumInputSchema>;
+export const adAlbumPatchSchema = adAlbumInputSchema.partial();
+export type AdAlbumPatch = z.infer<typeof adAlbumPatchSchema>;
+/** `PUT /ads/albums/order` — the given albums first, in that order; others keep following. */
+export const adAlbumReorderSchema = z.object({ ids: z.array(uuidSchema).min(1).max(100) });
+export type AdAlbumReorderRequest = z.infer<typeof adAlbumReorderSchema>;
+/** `PUT /ads/album` — move slides into an album (`albumId: null` = out of any album). */
+export const adMoveToAlbumSchema = z.object({
+  ids: z.array(uuidSchema).min(1).max(500),
+  albumId: uuidSchema.nullable(),
+});
+export type AdMoveToAlbumRequest = z.infer<typeof adMoveToAlbumSchema>;
+
+export interface AdAlbumSummary {
+  id: string;
+  name: string;
+  layout: ClientAdsLayout | null;
+  grid: ClientAdsGrid | null;
+  imageFit: ClientAdsImageFit | null;
+  caption: ClientAdsCaption | null;
+  style: ClientAdsStyle | null;
+  intervalSeconds: number | null;
+  shuffle: boolean | null;
+  enabled: boolean;
+  sortOrder: number;
+  /** Slides in the album / of those, the ones on the screens right now. */
+  adCount: number;
+  liveCount: number;
+  createdAt: string;
+  updatedAt: string;
 }

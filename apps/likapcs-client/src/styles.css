@@ -1048,11 +1048,12 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   padding: calc(18px * var(--cell-scale, 1));
 }
 /* The PC pill needs its own band above a grid, otherwise it would cover the first product; the
-   page dots need a little room under the last row. */
-.ads--grid.ads--pill .ads__grid {
+   page dots need a little room under the last row. (Grid pages only ever contain `.ads__grid`,
+   so these need no layout class on the frame — albums mix layouts page by page, 0.12.0.) */
+.ads--pill .ads__grid {
   padding-top: 64px;
 }
-.ads--grid.ads--paged .ads__grid {
+.ads--paged .ads__grid {
   padding-bottom: calc(18px * var(--cell-scale, 1) + 14px);
 }
 .ads__cell {
@@ -1187,6 +1188,10 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
 }
 
 /* ─── Owner options (Settings › Client screen, 0018) ────────────────────────── */
+/* Since 0.12.0 the fit / caption classes and the grid variables sit on each page layer
+   (`.ads__layer.ads--fit-cover …`), not on the frame: every album has its own look and two
+   pages of different albums cross over at the same time. The selectors below only rely on an
+   ancestor carrying the class, so they work from the layer as well. */
 /* Picture fit: `cover` fills the frame (hero photo side + cells), `contain` is the default. */
 .ads--fit-cover .ads__slide--hero .ads__media img,
 .ads--fit-cover .ads__cell img {
@@ -1212,7 +1217,7 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
 /* Motion: slow zoom / pan on edge-to-edge pictures and covered photos (Ken Burns). */
 .ads--motion .ads__slide--poster .ads__media img,
 .ads--motion .ads__slide--split .ads__media img,
-.ads--motion.ads--fit-cover .ads__slide--hero .ads__media img {
+.ads--motion .ads--fit-cover .ads__slide--hero .ads__media img {
   animation: ads-kenburns 24s ease-in-out infinite alternate;
 }
 @keyframes ads-kenburns {
@@ -1292,7 +1297,7 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   top: var(--pill-top, 28px);
   left: 36px;
 }
-.ads--fullscreen.ads--grid .ads__grid {
+.ads--fullscreen .ads__grid {
   padding: calc(var(--inset-top, 0px) + 8px) 36px calc(var(--inset-bottom, 0px) + 8px);
   /* the owner's backdrop preset shows between the frames */
   background: transparent;
@@ -1312,7 +1317,7 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
 .ads--fullscreen .ads__slide--poster figcaption {
   padding-bottom: calc(3% + var(--inset-bottom, 0px));
 }
-.ads--fullscreen.ads--caption-top .ads__slide--poster figcaption {
+.ads--fullscreen .ads--caption-top .ads__slide--poster figcaption {
   padding-top: calc(3% + var(--inset-top, 0px) + 44px);
   padding-bottom: 120px;
 }

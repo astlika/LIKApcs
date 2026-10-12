@@ -11,10 +11,19 @@
  *     promo is live", used by the catalogue (`ProductSummary.promoPriceCents`) and by
  *     `SalesService.loadProducts`, so the shelf, the screen and the receipt always agree.
  *
+ * Albums (0.12.0, `ad_albums`): a named group of slides with its own look (layout, grid, picture
+ * fit, caption, style, interval, shuffle — each nullable = the owner's default). The feed groups
+ * the live slides album by album (slides without an album first, then the albums in their order);
+ * the PC plays one album completely, then the next, and starts over. A switched-off album takes
+ * all of its slides off the screens (`album_off`).
+ *
  * Every change calls `onChange` so the server can push `server.display` to the PCs — they refetch
  * the feed within a second, no reconnect needed.
  */
 import type {
+  AdAlbumInput,
+  AdAlbumPatch,
+  AdAlbumSummary,
   AdBulkResult,
   AdInput,
   AdPatch,
@@ -22,7 +31,9 @@ import type {
   AdStyle,
   AdSummary,
   AdTheme,
+  ClientAdAlbum,
   ClientAdItem,
+  ClientAdsFeed,
 } from '@likapcs/shared';
 import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -85,8 +96,29 @@ interface AdRow {
   weight: number;
   station_ids: string[] | null;
   video_path: string | null;
+  album_id: string | null;
+  /** null when the slide is in no album */
+  album_enabled: boolean | null;
   enabled: boolean;
   sort_order: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface AlbumRow {
+  id: string;
+  name: string;
+  layout: AdAlbumSummary['layout'];
+  grid: AdAlbumSummary['grid'];
+  image_fit: AdAlbumSummary['imageFit'];
+  caption: AdAlbumSummary['caption'];
+  style: AdAlbumSummary['style'];
+  interval_seconds: number | null;
+  shuffle: boolean | null;
+  enabled: boolean;
+  sort_order: number;
+  ad_count: string;
+  live_count: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -118,11 +150,28 @@ const AD_SELECT = `
          a.promo_price_cents::text, a.title, a.body, a.image_path, a.badge, a.theme,
          a.duration_seconds, a.starts_at, a.ends_at, a.style, a.accent, a.cta, a.days_mask,
          to_char(a.time_from, 'HH24:MI') AS time_from, to_char(a.time_to, 'HH24:MI') AS time_to,
-         a.weight, a.station_ids, a.video_path, a.enabled, a.sort_order, a.created_at,
-         a.updated_at
+         a.weight, a.station_ids, a.video_path, a.album_id, al.enabled AS album_enabled,
+         a.enabled, a.sort_order, a.created_at, a.updated_at
     FROM ads a
-    LEFT JOIN products p ON p.id = a.product_id`;
-const AD_ORDER = 'ORDER BY a.sort_order, a.created_at, a.id';
+    LEFT JOIN products p ON p.id = a.product_id
+    LEFT JOIN ad_albums al ON al.id = a.album_id`;
+/**
+ * Playback order = Admin order: slides without an album first, then album by album (the albums'
+ * own order), inside a group by hand (`sort_order`).
+ */
+const AD_ORDER =
+  'ORDER BY al.sort_order NULLS FIRST, al.created_at NULLS FIRST, al.id NULLS FIRST, a.sort_order, a.created_at, a.id';
+const ALBUM_SELECT = `
+  SELECT al.id, al.name, al.layout, al.grid, al.image_fit, al.caption, al.style,
+         al.interval_seconds, al.shuffle, al.enabled, al.sort_order, al.created_at, al.updated_at,
+         (SELECT count(*)::text FROM ads a WHERE a.album_id = al.id) AS ad_count,
+         (SELECT count(*)::text FROM ads a LEFT JOIN products p ON p.id = a.product_id
+           WHERE a.album_id = al.id AND a.enabled AND al.enabled
+             AND (a.starts_at IS NULL OR a.starts_at <= now())
+             AND (a.ends_at IS NULL OR a.ends_at > now())
+             AND (a.kind = 'custom' OR p.is_active)) AS live_count
+    FROM ad_albums al`;
+const ALBUM_ORDER = 'ORDER BY al.sort_order, al.created_at, al.id';
 
 export class AdsService {
   private listeners: (() => void)[] = [];
@@ -145,6 +194,7 @@ export class AdsService {
 
   private stateOf(row: AdRow, now: Date): AdState {
     if (!row.enabled) return 'disabled';
+    if (row.album_id && row.album_enabled === false) return 'album_off';
     if (row.starts_at && row.starts_at > now) return 'scheduled';
     if (row.ends_at && row.ends_at <= now) return 'expired';
     // Archived products leave the screens by themselves; out of stock is only flagged in Admin.
@@ -190,6 +240,7 @@ export class AdsService {
       weight: row.weight,
       stationIds: row.station_ids ?? [],
       videoUrl: this.videoUrlOf(row),
+      albumId: row.album_id,
       enabled: row.enabled,
       sortOrder: row.sort_order,
       state: this.stateOf(row, now),
@@ -213,20 +264,20 @@ export class AdsService {
   }
 
   /**
-   * What one PC shows, in order. Only `live` ads (enabled, inside their date range *and* weekly
-   * schedule, targeted at this station or at all); a promo only counts while below the price.
-   * `nextChangeAt` tells the PC when the weekly schedule next flips a slide on/off, so it can
-   * refetch at exactly that minute instead of polling.
+   * What one PC shows, in order. Only `live` ads (enabled, in a switched-on album or none, inside
+   * their date range *and* weekly schedule, targeted at this station or at all); a promo only
+   * counts while below the price. `items` is the flat list (album by album) for pre-0.12 clients;
+   * `albums` the same slides grouped — slides without an album first (`id: null`), then every
+   * album that has something to show, in the albums' order. `nextChangeAt` tells the PC when the
+   * weekly schedule next flips a slide on/off, so it can refetch at exactly that minute.
    */
-  async clientFeed(
-    stationId: string | null = null,
-    limit = 60,
-  ): Promise<{ items: ClientAdItem[]; nextChangeAt: string | null }> {
+  async clientFeed(stationId: string | null = null, limit = 150): Promise<ClientAdsFeed> {
     const now = new Date();
     const r = await this.pool.query<AdRow & { category_name: string | null }>(
       `${AD_SELECT.replace('FROM ads a', ', c.name AS category_name FROM ads a')}
        LEFT JOIN categories c ON c.id = p.category_id
        WHERE a.enabled
+         AND (a.album_id IS NULL OR al.enabled)
          AND (a.starts_at IS NULL OR a.starts_at <= now())
          AND (a.ends_at IS NULL OR a.ends_at > now())
          AND (a.kind = 'custom' OR p.is_active)
@@ -235,8 +286,48 @@ export class AdsService {
       [limit * 3, stationId],
     );
     const nextChangeAt = this.nextScheduleChange(r.rows, now);
-    const items = r.rows.filter((row) => withinSchedule(row, now)).slice(0, limit);
-    return { nextChangeAt, items: items.map((row) => this.toClientItem(row)) };
+    const rows = r.rows.filter((row) => withinSchedule(row, now)).slice(0, limit);
+    const byAlbum = new Map<string | null, ClientAdItem[]>();
+    for (const row of rows) {
+      const list = byAlbum.get(row.album_id) ?? [];
+      list.push(this.toClientItem(row));
+      byAlbum.set(row.album_id, list);
+    }
+    const albums: ClientAdAlbum[] = [];
+    const loose = byAlbum.get(null);
+    if (loose?.length)
+      albums.push({
+        id: null,
+        name: '',
+        layout: null,
+        grid: null,
+        imageFit: null,
+        caption: null,
+        style: null,
+        intervalSeconds: null,
+        shuffle: null,
+        items: loose,
+      });
+    if (byAlbum.size > (loose ? 1 : 0)) {
+      const albumRows = await this.pool.query<AlbumRow>(`${ALBUM_SELECT} ${ALBUM_ORDER}`);
+      for (const album of albumRows.rows) {
+        const items = byAlbum.get(album.id);
+        if (!items?.length) continue;
+        albums.push({
+          id: album.id,
+          name: album.name,
+          layout: album.layout,
+          grid: album.grid,
+          imageFit: album.image_fit,
+          caption: album.caption,
+          style: album.style,
+          intervalSeconds: album.interval_seconds,
+          shuffle: album.shuffle,
+          items,
+        });
+      }
+    }
+    return { nextChangeAt, items: albums.flatMap((a) => a.items), albums };
   }
 
   /** Earliest minute at which some slide's weekly window opens or closes (null = none scheduled). */
@@ -300,6 +391,13 @@ export class AdsService {
       throw badRequest('Unknown station', { field: 'stationIds' });
   }
 
+  /** `albumId` must be a real album (null = no album). */
+  private async assertAlbum(client: Queryable, albumId: string | null | undefined): Promise<void> {
+    if (!albumId) return;
+    const r = await client.query('SELECT 1 FROM ad_albums WHERE id = $1', [albumId]);
+    if (!r.rowCount) throw notFound('Album');
+  }
+
   private async assertPromoBelowPrice(
     db: Queryable,
     productId: string,
@@ -325,6 +423,7 @@ export class AdsService {
         await this.assertPromoBelowPrice(client, input.productId!, input.promoPriceCents);
       }
       await this.assertStations(client, input.stationIds);
+      await this.assertAlbum(client, input.albumId);
       const next = await client.query<{ n: number }>(
         'SELECT COALESCE(max(sort_order), 0) + 10 AS n FROM ads',
       );
@@ -332,9 +431,10 @@ export class AdsService {
         .query<{ id: string }>(
           `INSERT INTO ads (kind, product_id, title, body, promo_price_cents, badge, theme,
                             duration_seconds, starts_at, ends_at, enabled, sort_order, created_by,
-                            style, accent, cta, days_mask, time_from, time_to, weight, station_ids, video_path)
+                            style, accent, cta, days_mask, time_from, time_to, weight, station_ids, video_path,
+                            album_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                   $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
+                   $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING id`,
           [
             input.kind,
             input.kind === 'product' ? input.productId : null,
@@ -358,6 +458,7 @@ export class AdsService {
             input.weight ?? 1,
             input.stationIds?.length ? input.stationIds : null,
             input.videoUrl ?? null,
+            input.albumId ?? null,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -417,10 +518,12 @@ export class AdsService {
         weight: 'weight',
         stationIds: 'station_ids',
         videoUrl: 'video_path',
+        albumId: 'album_id',
       };
       const sets: string[] = [];
       const values: unknown[] = [];
       if (patch.stationIds !== undefined) await this.assertStations(client, patch.stationIds);
+      if (patch.albumId !== undefined) await this.assertAlbum(client, patch.albumId);
       for (const [key, column] of Object.entries(map)) {
         if (key in patch) {
           const value = (patch as Record<string, unknown>)[key] ?? null;
@@ -489,6 +592,7 @@ export class AdsService {
       durationSeconds: source.durationSeconds,
       startsAt: source.startsAt,
       endsAt: source.endsAt,
+      albumId: source.albumId,
       enabled: false,
     };
     const copy = await this.create(input, actor);
@@ -555,7 +659,7 @@ export class AdsService {
   async reorder(ids: string[], actor: AuditActor): Promise<AdSummary[]> {
     return withTransaction(this.pool, async (client) => {
       const existing = await client.query<{ id: string }>(
-        `SELECT id FROM ads ${AD_ORDER.replace(/a\./g, '')} FOR UPDATE`,
+        'SELECT id FROM ads ORDER BY sort_order, created_at, id FOR UPDATE',
       );
       const known = new Set(existing.rows.map((r) => r.id));
       const unknown = ids.find((id) => !known.has(id));
@@ -585,25 +689,30 @@ export class AdsService {
    * "Add all products": one plain product ad (no promo) per active product that has none yet,
    * alphabetically after the existing slides. `onlyWithPhoto` restricts it to pictured products.
    */
-  async addAllProducts(actor: AuditActor, onlyWithPhoto = false): Promise<AdBulkResult> {
+  async addAllProducts(
+    actor: AuditActor,
+    onlyWithPhoto = false,
+    albumId: string | null = null,
+  ): Promise<AdBulkResult> {
     return withTransaction(this.pool, async (client) => {
+      await this.assertAlbum(client, albumId);
       const r = await client.query<{ id: string }>(
-        `INSERT INTO ads (kind, product_id, sort_order, created_by)
+        `INSERT INTO ads (kind, product_id, sort_order, created_by, album_id)
            SELECT 'product', p.id,
                   (SELECT COALESCE(max(sort_order), 0) FROM ads) + row_number() OVER (ORDER BY lower(p.name)) * 10,
-                  $1
+                  $1, $3
              FROM products p
             WHERE p.is_active AND ($2::boolean = false OR p.image_path IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM ads a WHERE a.kind = 'product' AND a.product_id = p.id)
          RETURNING id`,
-        [actor.userId, onlyWithPhoto],
+        [actor.userId, onlyWithPhoto, albumId],
       );
       if (r.rowCount) {
         await recordAudit(client, actor, {
           action: 'ads.bulk_products',
           entityType: 'ad',
           entityId: null,
-          details: { created: r.rowCount, onlyWithPhoto },
+          details: { created: r.rowCount, onlyWithPhoto, albumId },
         });
       }
       return { created: r.rowCount ?? 0, items: await this.list(client) };
@@ -617,26 +726,31 @@ export class AdsService {
    * Product browser → "Add n products": plain ads for the chosen products in the given order;
    * products that already have an ad (or do not exist / are archived) are skipped, not an error.
    */
-  async addProducts(productIds: string[], actor: AuditActor): Promise<AdBulkResult> {
+  async addProducts(
+    productIds: string[],
+    actor: AuditActor,
+    albumId: string | null = null,
+  ): Promise<AdBulkResult> {
     const ids = [...new Set(productIds)];
     return withTransaction(this.pool, async (client) => {
+      await this.assertAlbum(client, albumId);
       const r = await client.query<{ id: string }>(
-        `INSERT INTO ads (kind, product_id, sort_order, created_by)
+        `INSERT INTO ads (kind, product_id, sort_order, created_by, album_id)
            SELECT 'product', p.id,
                   (SELECT COALESCE(max(sort_order), 0) FROM ads) + o.pos * 10,
-                  $2
+                  $2, $3
              FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, pos)
              JOIN products p ON p.id = o.id AND p.is_active
             WHERE NOT EXISTS (SELECT 1 FROM ads a WHERE a.kind = 'product' AND a.product_id = p.id)
          RETURNING id`,
-        [ids, actor.userId],
+        [ids, actor.userId, albumId],
       );
       if (r.rowCount) {
         await recordAudit(client, actor, {
           action: 'ads.bulk_products',
           entityType: 'ad',
           entityId: null,
-          details: { created: r.rowCount, requested: ids.length },
+          details: { created: r.rowCount, requested: ids.length, albumId },
         });
       }
       return { created: r.rowCount ?? 0, items: await this.list(client) };
@@ -690,5 +804,192 @@ export class AdsService {
     await this.images.remove(previous);
     this.changed();
     return this.get(id);
+  }
+
+  // ─── Albums (0.12.0) ────────────────────────────────────────────────────────
+
+  private mapAlbum(row: AlbumRow): AdAlbumSummary {
+    return {
+      id: row.id,
+      name: row.name,
+      layout: row.layout,
+      grid: row.grid,
+      imageFit: row.image_fit,
+      caption: row.caption,
+      style: row.style,
+      intervalSeconds: row.interval_seconds,
+      shuffle: row.shuffle,
+      enabled: row.enabled,
+      sortOrder: row.sort_order,
+      adCount: Number(row.ad_count),
+      liveCount: Number(row.live_count),
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+    };
+  }
+
+  /** Every album in playback order, with how many slides it holds / shows right now. */
+  async listAlbums(db: Queryable = this.pool): Promise<AdAlbumSummary[]> {
+    const r = await db.query<AlbumRow>(`${ALBUM_SELECT} ${ALBUM_ORDER}`);
+    return r.rows.map((row) => this.mapAlbum(row));
+  }
+
+  async getAlbum(id: string, db: Queryable = this.pool): Promise<AdAlbumSummary> {
+    const r = await db.query<AlbumRow>(`${ALBUM_SELECT} WHERE al.id = $1`, [id]);
+    if (!r.rows[0]) throw notFound('Album');
+    return this.mapAlbum(r.rows[0]);
+  }
+
+  /** New albums go last (they play after the existing ones). */
+  async createAlbum(input: AdAlbumInput, actor: AuditActor): Promise<AdAlbumSummary> {
+    return withTransaction(this.pool, async (client) => {
+      const next = await client.query<{ n: number }>(
+        'SELECT COALESCE(max(sort_order), 0) + 10 AS n FROM ad_albums',
+      );
+      const r = await client.query<{ id: string }>(
+        `INSERT INTO ad_albums (name, layout, grid, image_fit, caption, style, interval_seconds,
+                                shuffle, enabled, sort_order, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        [
+          input.name,
+          input.layout ?? null,
+          input.grid ?? null,
+          input.imageFit ?? null,
+          input.caption ?? null,
+          input.style ?? null,
+          input.intervalSeconds ?? null,
+          input.shuffle ?? null,
+          input.enabled,
+          next.rows[0]!.n,
+          actor.userId,
+        ],
+      );
+      const id = r.rows[0]!.id;
+      await recordAudit(client, actor, {
+        action: 'ads.album_created',
+        entityType: 'ad_album',
+        entityId: id,
+        details: { ...input },
+      });
+      return this.getAlbum(id, client);
+    }).then((album) => {
+      this.changed();
+      return album;
+    });
+  }
+
+  async updateAlbum(id: string, patch: AdAlbumPatch, actor: AuditActor): Promise<AdAlbumSummary> {
+    return withTransaction(this.pool, async (client) => {
+      const map: Record<keyof AdAlbumPatch, string> = {
+        name: 'name',
+        layout: 'layout',
+        grid: 'grid',
+        imageFit: 'image_fit',
+        caption: 'caption',
+        style: 'style',
+        intervalSeconds: 'interval_seconds',
+        shuffle: 'shuffle',
+        enabled: 'enabled',
+      };
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      for (const [key, column] of Object.entries(map)) {
+        if (!(key in patch)) continue;
+        values.push((patch as Record<string, unknown>)[key] ?? null);
+        sets.push(`${column} = $${values.length}`);
+      }
+      if (sets.length === 0) throw badRequest('Nothing to update');
+      values.push(id);
+      const r = await client.query(
+        `UPDATE ad_albums SET ${sets.join(', ')} WHERE id = $${values.length}`,
+        values,
+      );
+      if (!r.rowCount) throw notFound('Album');
+      await recordAudit(client, actor, {
+        action: 'ads.album_updated',
+        entityType: 'ad_album',
+        entityId: id,
+        details: { ...patch },
+      });
+      return this.getAlbum(id, client);
+    }).then((album) => {
+      this.changed();
+      return album;
+    });
+  }
+
+  /** Deleting an album only ungroups its slides (they keep playing, without an album). */
+  async deleteAlbum(id: string, actor: AuditActor): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ name: string }>(
+        'DELETE FROM ad_albums WHERE id = $1 RETURNING name',
+        [id],
+      );
+      if (!r.rowCount) throw notFound('Album');
+      await recordAudit(client, actor, {
+        action: 'ads.album_deleted',
+        entityType: 'ad_album',
+        entityId: id,
+        details: { name: r.rows[0]!.name },
+      });
+    });
+    this.changed();
+  }
+
+  /** New playback order = the given albums first (in that order); the rest keep following. */
+  async reorderAlbums(ids: string[], actor: AuditActor): Promise<AdAlbumSummary[]> {
+    return withTransaction(this.pool, async (client) => {
+      const existing = await client.query<{ id: string }>(
+        'SELECT id FROM ad_albums ORDER BY sort_order, created_at, id FOR UPDATE',
+      );
+      const known = new Set(existing.rows.map((r) => r.id));
+      const unknown = ids.find((id) => !known.has(id));
+      if (unknown) throw notFound(`Album ${unknown}`);
+      const order = [...new Set(ids)];
+      for (const row of existing.rows) if (!ids.includes(row.id)) order.push(row.id);
+      await client.query(
+        `UPDATE ad_albums SET sort_order = o.pos * 10
+           FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, pos)
+          WHERE ad_albums.id = o.id`,
+        [order],
+      );
+      await recordAudit(client, actor, {
+        action: 'ads.albums_reordered',
+        entityType: 'ad_album',
+        entityId: null,
+        details: { count: order.length },
+      });
+      return this.listAlbums(client);
+    }).then((list) => {
+      this.changed();
+      return list;
+    });
+  }
+
+  /** Move slides into an album (`albumId: null` = out of any album); unknown slides are a 404. */
+  async moveToAlbum(
+    ids: string[],
+    albumId: string | null,
+    actor: AuditActor,
+  ): Promise<AdSummary[]> {
+    const unique = [...new Set(ids)];
+    return withTransaction(this.pool, async (client) => {
+      await this.assertAlbum(client, albumId);
+      const r = await client.query('UPDATE ads SET album_id = $2 WHERE id = ANY($1::uuid[])', [
+        unique,
+        albumId,
+      ]);
+      if ((r.rowCount ?? 0) !== unique.length) throw notFound('Ad');
+      await recordAudit(client, actor, {
+        action: 'ads.moved',
+        entityType: 'ad',
+        entityId: null,
+        details: { count: unique.length, albumId },
+      });
+      return this.list(client);
+    }).then((list) => {
+      this.changed();
+      return list;
+    });
   }
 }

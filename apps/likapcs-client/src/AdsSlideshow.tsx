@@ -16,18 +16,24 @@
  * Each slide can carry its own accent colour, a call-to-action line, a video instead of the
  * picture, an "ends in …" countdown (promo / scheduled slide) and a weight (1–3: how often it
  * comes round). The rotation can be shuffled; it reshuffles only when the list itself changes.
+ *
+ * Albums (0.12.0): the feed groups the slides into albums, each with its own layout / grid /
+ * picture fit / caption / style / interval. The program is every album's pages in album order
+ * (album 1 completely, then album 2, …) and loops; the page-level look (`ads--fit-*`,
+ * `ads--caption-*`, grid variables) lives on each layer, so a grid page and a full-photo page
+ * cross over cleanly. The frame itself follows the page in front.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
-  adsGridSize,
   formatMoney,
+  type ClientAdAlbum,
   type ClientAdItem,
   type ClientAdsStyle,
   type ClientDisplayConfig,
 } from '@likapcs/shared';
 import { formatHMS } from './lib/protocol';
 import { t as translate, type Language } from './lib/i18n';
-import { buildPages, chunk } from './lib/ads-pages';
+import { buildProgram, chunk, planAlbums, type AdsPage, type AlbumPlan } from './lib/ads-pages';
 
 /** "Ends in 02:13:45" (or "3d 02:13:45") for a promo / scheduled slide; hidden once over. */
 function EndsIn({ endsAt, language }: { endsAt: string; language: Language }) {
@@ -53,44 +59,33 @@ function EndsIn({ endsAt, language }: { endsAt: string; language: Language }) {
 
 export function AdsSlideshow({
   items,
+  albums,
   display,
   language,
   station,
 }: {
+  /** Flat list (every live slide) — used when the feed carries no albums (server < 0.12). */
   items: ClientAdItem[];
+  albums?: ClientAdAlbum[];
   display: ClientDisplayConfig;
   language: Language;
   station: { code: string; name: string } | null;
 }) {
-  const {
-    layout,
-    transition,
-    intervalSeconds,
-    showPrice,
-    fullscreen,
-    showStation,
-    showCategory,
-    showProgress,
-    imageFit,
-    caption,
-    motion,
-    shuffle,
-    promoCountdown,
-  } = display.ads;
-  // `full` ("big photo", pre-0.10.0) keeps meaning edge-to-edge pictures: its default style is the
-  // poster; ads that carry their own style still win.
-  const defaultStyle: ClientAdsStyle = layout === 'full' ? 'poster' : (display.ads.style ?? 'hero');
-  const grid = adsGridSize(display.ads.grid);
-  const perPage = layout === 'grid' ? grid.cols * grid.rows : 1;
-  // A board row is one line of text: more fit than picture cells (2×2 → 10, 3×3 → 18, 4×4 → 32).
-  const boardPerPage = grid.cols * Math.max(5, grid.rows * 2);
-  // One shuffle per list (ids + order); the rotation stays put across refreshes with no change.
-  const listKey = items.map((i) => `${i.id}:${i.weight}`).join('|');
+  const { transition, showPrice, fullscreen, showStation, showCategory, showProgress, motion } =
+    display.ads;
+  const promoCountdown = display.ads.promoCountdown;
+  const plans = useMemo(() => planAlbums(albums, items, display.ads), [albums, items, display.ads]);
+  // One shuffle per list (ids + order, album by album); the rotation stays put across refreshes
+  // with no change.
+  const listKey = plans
+    .map((plan) => `${plan.key}[${plan.items.map((i) => `${i.id}:${i.weight}`).join('|')}]`)
+    .join(';');
   const seed = useMemo(() => Math.floor(Math.random() * 2 ** 31), [listKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reseed only when the list changes
-  const pagesList = useMemo(
-    () => buildPages(items, layout, perPage, boardPerPage, shuffle, seed),
-    [items, layout, perPage, boardPerPage, shuffle, seed],
-  );
+  const pagesList = useMemo(() => buildProgram(plans, seed), [plans, seed]);
+  // The look of a page sequence: a change restarts from the first page (see below).
+  const programKey = pagesList
+    .map((p) => `${p.key}@${p.album.layout}/${p.album.perPage}`)
+    .join(';');
   const pages = Math.max(1, pagesList.length);
   const [page, setPage] = useState(0);
   const [ready, setReady] = useState<Record<string, boolean>>({});
@@ -111,20 +106,7 @@ export function AdsSlideshow({
     showStation &&
     station !== null &&
     !(display.lockTitle === 'station' && display.ads.showBrand && !fullscreen);
-  const frameClass = [
-    'ads',
-    `ads--${layout}`,
-    fullscreen ? 'ads--fullscreen' : '',
-    `ads--fit-${imageFit}`,
-    `ads--caption-${caption}`,
-    motion ? 'ads--motion' : '',
-    showPill ? 'ads--pill' : '',
-    showProgress && pages > 1 ? 'ads--paged' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-  // Dense grids get smaller type and tighter gaps so 16 products still read well on 1080p. In
-  // full-screen mode the pictures also keep clear of whatever overlays the owner left on.
+  // In full-screen mode the pictures keep clear of whatever overlays the owner left on.
   const headerPx = display.ads.showBrand || display.ads.showClock ? 100 : 28;
   const insetTop = fullscreen ? headerPx + (showPill ? 58 : 0) : 0;
   const insetBottom = fullscreen
@@ -133,21 +115,40 @@ export function AdsSlideshow({
       (display.ads.tickerText.trim() ? 58 : 0) +
       (showProgress ? 24 : 0)
     : 0;
-  const gridStyle = {
-    '--cols': grid.cols,
-    '--rows': grid.rows,
-    '--cell-scale': grid.cols >= 4 ? 0.68 : grid.cols === 3 ? 0.82 : 1,
+  const frameStyle = {
     '--inset-top': `${insetTop}px`,
     '--inset-bottom': `${insetBottom}px`,
     '--pill-top': `${headerPx}px`,
   } as CSSProperties;
+  // Per-page look (on each layer): picture fit, caption position and the grid variables. Dense
+  // grids get smaller type and tighter gaps so 16 products still read well on 1080p.
+  const layerClass = (album: AlbumPlan) =>
+    `ads__layer ads--fit-${album.imageFit} ads--caption-${album.caption}`;
+  const layerStyle = (album: AlbumPlan) =>
+    ({
+      '--cols': album.grid.cols,
+      '--rows': album.grid.rows,
+      '--cell-scale': album.grid.cols >= 4 ? 0.68 : album.grid.cols === 3 ? 0.82 : 1,
+    }) as CSSProperties;
+  const frameClass = (album: AlbumPlan | null) =>
+    [
+      'ads',
+      `ads--${album?.layout ?? plans[0]?.layout ?? display.ads.layout}`,
+      fullscreen ? 'ads--fullscreen' : '',
+      motion ? 'ads--motion' : '',
+      showPill ? 'ads--pill' : '',
+      showProgress && pages > 1 ? 'ads--paged' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
   // Preload every picture once; a slide only becomes eligible when all of its pictures decoded.
   // Text-only slides and video slides (the video streams in; the picture is its poster) are
   // ready at once.
   const requested = useRef(new Set<string>());
+  const allItems = useMemo(() => plans.flatMap((plan) => plan.items), [plans]);
   useEffect(() => {
-    for (const item of items) {
+    for (const item of allItems) {
       const url = item.imageUrl;
       if (!url || item.videoUrl) {
         setReady((r) => (r[item.id] === true ? r : { ...r, [item.id]: true }));
@@ -173,14 +174,18 @@ export function AdsSlideshow({
       };
       img.src = url;
     }
-  }, [items]);
+  }, [allItems]);
   const pictureOf = (item: ClientAdItem) => (broken[item.id] ? null : item.imageUrl);
 
-  const pageAt = useCallback((index: number) => pagesList[index] ?? null, [pagesList]);
-  // A new page sequence (layout, grid, shuffle or list changed) restarts from the first page.
+  const pageAt = useCallback(
+    (index: number): AdsPage | null => pagesList[index] ?? null,
+    [pagesList],
+  );
+  // A new page sequence (layout, grid, shuffle or list changed) restarts from the first page —
+  // album 1 first.
   useEffect(() => {
     setPage(0);
-  }, [perPage, layout, listKey, shuffle]);
+  }, [programKey]);
   const pageReady = useCallback(
     (index: number) => {
       const p = pageAt(index);
@@ -194,17 +199,18 @@ export function AdsSlideshow({
   const pageSeconds = useCallback(
     (index: number) => {
       const p = pageAt(index);
-      if (!p) return Math.max(3, intervalSeconds);
+      if (!p) return Math.max(3, display.ads.intervalSeconds);
+      const interval = p.album.intervalSeconds;
       const own = p.items
         .map((item) => item.durationSeconds ?? 0)
         .reduce((a, b) => Math.max(a, b), 0);
       if (own > 0) return Math.max(3, own);
       if (p.kind === 'slide' && p.item.videoUrl && videoSeconds[p.item.id])
         return Math.min(120, Math.max(3, Math.ceil(videoSeconds[p.item.id]!)));
-      if (p.kind === 'board') return Math.max(8, intervalSeconds);
-      return Math.max(3, intervalSeconds);
+      if (p.kind === 'board') return Math.max(8, interval);
+      return Math.max(3, interval);
     },
-    [pageAt, intervalSeconds, videoSeconds],
+    [pageAt, display.ads.intervalSeconds, videoSeconds],
   );
   useEffect(() => {
     if (pages <= 1) return;
@@ -250,7 +256,7 @@ export function AdsSlideshow({
   const frontIndex = layers.front === 'a' ? layers.a : layers.b;
   if (frontIndex === null || !pageReady(frontIndex)) {
     return (
-      <div className={frameClass} data-testid="ads" data-state="loading" style={gridStyle}>
+      <div className={frameClass(null)} data-testid="ads" data-state="loading" style={frameStyle}>
         {showPill && (
           <div className="ads__station">
             <span className="ads__code">{station.code}</span>
@@ -306,10 +312,10 @@ export function AdsSlideshow({
   };
   const hasMedia = (item: ClientAdItem) => Boolean(item.videoUrl || pictureOf(item));
 
-  const renderSlide = (item: ClientAdItem) => {
-    const style: ClientAdsStyle = item.style ?? defaultStyle;
+  const renderSlide = (item: ClientAdItem, album: AlbumPlan) => {
+    const style: ClientAdsStyle = item.style ?? album.style;
     const text = !hasMedia(item);
-    const hideCaption = style === 'poster' && caption === 'hidden' && !text;
+    const hideCaption = style === 'poster' && album.caption === 'hidden' && !text;
     return (
       <figure
         key={item.id}
@@ -324,7 +330,7 @@ export function AdsSlideshow({
         data-kind={item.kind}
         data-theme={item.theme ?? 'midnight'}
         data-style={style}
-        data-layout={layout}
+        data-layout={album.layout}
         style={accentStyle(item)}
       >
         {style === 'banner' && hasMedia(item) && (
@@ -352,7 +358,7 @@ export function AdsSlideshow({
     );
   };
 
-  const renderGrid = (slice: ClientAdItem[]) => (
+  const renderGrid = (slice: ClientAdItem[], { perPage }: AlbumPlan) => (
     <div className="ads__grid">
       {slice.map((item) => (
         <figure
@@ -378,7 +384,7 @@ export function AdsSlideshow({
     </div>
   );
 
-  const renderBoard = (slice: ClientAdItem[]) => {
+  const renderBoard = (slice: ClientAdItem[], { grid }: AlbumPlan) => {
     const rows = Math.ceil(slice.length / grid.cols);
     const columns = chunk(slice, Math.max(1, rows));
     return (
@@ -441,9 +447,12 @@ export function AdsSlideshow({
     return (
       <div
         key={key}
-        className={`ads__layer ads__layer--${transition} ${front ? 'is-front' : 'is-back'}`}
+        className={`${layerClass(p.album)} ads__layer--${transition} ${front ? 'is-front' : 'is-back'}`}
+        style={layerStyle(p.album)}
         aria-hidden={!front}
         data-page-kind={p.kind}
+        data-album={p.album.index}
+        data-layout={p.album.layout}
         onAnimationEnd={(e) => {
           // The incoming slide has fully covered the old one → drop the old layer entirely, so
           // nothing can ever bleed through (and the GPU keeps exactly one picture to composite).
@@ -452,25 +461,32 @@ export function AdsSlideshow({
         }}
       >
         {p.kind === 'grid'
-          ? renderGrid(p.items)
+          ? renderGrid(p.items, p.album)
           : p.kind === 'board'
-            ? renderBoard(p.items)
-            : renderSlide(p.item)}
+            ? renderBoard(p.items, p.album)
+            : renderSlide(p.item, p.album)}
       </div>
     );
   };
 
   const current = pageAt(page);
+  const frontPage = pageAt(frontIndex);
   return (
     <div
-      className={frameClass}
+      className={frameClass(frontPage?.album ?? current?.album ?? null)}
       data-testid="ads"
       data-state="ready"
       data-page={page}
       data-pages={pages}
-      data-per-page={current?.kind === 'board' ? boardPerPage : perPage}
+      data-per-page={
+        current?.kind === 'board' ? current.album.boardPerPage : (current?.album.perPage ?? 1)
+      }
       data-page-kind={current?.kind ?? 'slide'}
-      style={gridStyle}
+      data-layout={current?.album.layout ?? display.ads.layout}
+      data-album={current?.album.index ?? 0}
+      data-albums={plans.length}
+      data-album-name={current?.album.name || undefined}
+      style={frameStyle}
     >
       {renderPage(layers.a, 'a')}
       {renderPage(layers.b, 'b')}

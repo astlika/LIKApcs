@@ -314,6 +314,7 @@ export function App() {
     showAds && display ? (
       <AdsSlideshow
         items={snap.ads}
+        albums={snap.adAlbums}
         display={display}
         language={snap.state.language}
         station={snap.state.station}

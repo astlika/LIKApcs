@@ -4234,6 +4234,139 @@ body:has(.pos) .toasts {
 .ads-row__actions .switch {
   margin-right: 6px;
 }
+.ads-row__actions .ads-row__album {
+  width: auto;
+  max-width: 150px;
+  height: 30px;
+  padding: 0 26px 0 10px;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+/* ─── Ads › albums (0.12.0): chips above the list — filter, order (= playback), look summary. */
+.ads-albums {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ads-albums__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ads-albums__note {
+  margin: -2px 0 10px;
+  font-size: 13px;
+}
+.ads-album {
+  display: inline-flex;
+  align-items: stretch;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease;
+}
+button.ads-album {
+  padding: 0 14px;
+  align-items: center;
+  gap: 8px;
+}
+.ads-album:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.ads-album.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.ads-album.is-off {
+  opacity: 0.6;
+}
+.ads-album__pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 0 6px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ads-album__index {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ads-album.is-off .ads-album__index {
+  background: var(--text-muted);
+}
+.ads-album__text {
+  display: flex;
+  flex-direction: column;
+  padding: 5px 4px 5px 0;
+  line-height: 1.2;
+}
+.ads-album__name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ads-album__meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+button.ads-album .ads-album__meta {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.16);
+  font-variant-numeric: tabular-nums;
+}
+.ads-album__edit {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  margin: 3px 3px 3px 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0 8px 8px 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ads-album__edit:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 .ads-picked {
   display: flex;
   align-items: center;
