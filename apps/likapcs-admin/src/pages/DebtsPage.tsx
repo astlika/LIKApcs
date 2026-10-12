@@ -28,13 +28,15 @@ import {
   type DebtSummary,
   type DebtsOverview,
   type Paginated,
-  type PaymentMethod,
+  type CustomerSummary,
+  type DebtPaymentRequest,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { suggestTenders } from '../lib/tender';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useShiftGuard } from '../state/shift-guard';
 import { useToast } from '../state/toast';
@@ -550,7 +552,8 @@ function PayDebtDialog({
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
-  const { methods } = usePaymentMethods();
+  const { methods: cashMethods } = usePaymentMethods();
+  const walletOn = useAppSettings()['wallet.enabled'];
   const outstanding = useQuery({
     queryKey: ['debts', 'customer-open', debt.customerId],
     queryFn: () =>
@@ -559,11 +562,20 @@ function PayDebtDialog({
       }),
     enabled: all,
   });
+  // The customer's prepaid balance (0.11.0) can settle the debt — offered when there is one.
+  const customerQuery = useQuery({
+    queryKey: ['customers', 'detail', debt.customerId],
+    queryFn: () => api<CustomerSummary>(`/customers/${debt.customerId}`),
+    enabled: walletOn,
+  });
+  const walletCents = walletOn ? (customerQuery.data?.walletBalanceCents ?? 0) : 0;
+  const methods: DebtPaymentRequest['method'][] =
+    walletCents > 0 ? [...cashMethods, 'wallet'] : cashMethods;
   const maxCents = all
     ? (outstanding.data?.items.reduce((a, d) => a + d.remainingCents, 0) ?? debt.remainingCents)
     : debt.remainingCents;
   const [amountText, setAmountText] = useState((debt.remainingCents / 100).toFixed(2));
-  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [method, setMethod] = useState<DebtPaymentRequest['method']>('cash');
   const [tenderedText, setTenderedText] = useState('');
   const [reference, setReference] = useState('');
   const [result, setResult] = useState<DebtPaymentResult | null>(null);
@@ -577,7 +589,9 @@ function PayDebtDialog({
 
   const amountCents = amountText.trim() ? parseMoneyInput(amountText) : 0;
   const tenderedCents = tenderedText.trim() ? parseMoneyInput(tenderedText) : null;
-  const amountOk = amountCents !== null && amountCents > 0 && amountCents <= maxCents;
+  const walletShort = method === 'wallet' && amountCents !== null && amountCents > walletCents;
+  const amountOk =
+    amountCents !== null && amountCents > 0 && amountCents <= maxCents && !walletShort;
   const tenderedOk =
     method !== 'cash' ||
     tenderedCents === null ||
@@ -740,11 +754,14 @@ function PayDebtDialog({
                 <Select
                   id={id}
                   value={method}
-                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                  onChange={(e) => setMethod(e.target.value as DebtPaymentRequest['method'])}
+                  data-testid="debt-method"
                 >
                   {methods.map((m) => (
                     <option key={m} value={m}>
-                      {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
+                      {m === 'wallet'
+                        ? `${t('pos.wallet')} · ${fmt.money(walletCents)}`
+                        : t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                     </option>
                   ))}
                 </Select>
@@ -812,7 +829,19 @@ function PayDebtDialog({
             </Field>
           </>
         )}
-        {method !== 'cash' && (
+        {method === 'wallet' && (
+          <div className="pos__change pos__change--wallet" data-testid="debt-wallet">
+            <span>{t('pos.walletTaken')}</span>
+            <strong className="num">
+              {fmt.money(Math.min(amountCents ?? 0, walletCents))} ·{' '}
+              {t('pos.walletLeft', {
+                amount: fmt.money(Math.max(0, walletCents - (amountCents ?? 0))),
+              })}
+            </strong>
+          </div>
+        )}
+        {walletShort && <Alert tone="danger">{t('pos.walletOver')}</Alert>}
+        {method !== 'cash' && method !== 'wallet' && (
           <Field label={t('pos.reference')} optional>
             {(id) => (
               <Input

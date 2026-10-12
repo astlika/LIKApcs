@@ -48,6 +48,8 @@ export const PERMISSIONS = {
   CUSTOMERS_MANAGE: 'customers.manage',
   DEBTS_GIVE: 'debts.give',
   DEBTS_WRITE_OFF: 'debts.write_off',
+  WALLET_TOPUP: 'wallet.topup',
+  WALLET_REFUND: 'wallet.refund',
 
   // Staff
   USERS_VIEW: 'users.view',

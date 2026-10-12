@@ -1997,6 +1997,10 @@ body:has(.pos) .toasts {
   color: var(--warning);
   font-weight: 600;
 }
+.pos-done__row--wallet {
+  color: var(--success);
+  font-weight: 600;
+}
 /* "Pay later" tender: the customer line and the on-the-tab summary. */
 .pos__change--credit {
   background: var(--warning-soft);
@@ -2028,6 +2032,76 @@ body:has(.pos) .toasts {
 }
 .tender-credit__name .muted {
   font-size: 12px;
+}
+/* "Balance" tender (0.11.0): the customer's prepaid money — green like cash in hand. */
+.chip--wallet[aria-pressed='true'] {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.tender-wallet {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+}
+.tender-wallet .tender-credit__who {
+  color: var(--success);
+}
+.pos__change--wallet {
+  background: var(--success-soft);
+  color: var(--success);
+}
+/* Balance pill next to a customer name (POS, customers list, session dialogs). */
+.wallet-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--success);
+  background: var(--success-soft);
+  white-space: nowrap;
+}
+/* Account statement (customer detail): the timeline table. */
+.statement__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.statement__paid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.statement__paid strong {
+  color: var(--text);
+}
+.statement__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.statement__totals > div {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.statement__totals .faint {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.statement__totals strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
 }
 .pos-done__change {
   display: flex;

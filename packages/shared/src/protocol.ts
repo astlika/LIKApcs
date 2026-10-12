@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PricingTerms } from './billing.js';
+import type { ClientCustomerInfo } from './dto.js';
 import type {
   AdTheme,
   ClientAdsCaption,
@@ -260,6 +261,8 @@ export interface ClientDisplayConfig {
   /** 0.10.0: orders from the seat (the "Order" button in the widget) and whether a note may be added. */
   orders: boolean;
   ordersNote: boolean;
+  /** 0.11.0: the prepaid balance is in use — the PC shows the customer's balance (even 0.00). */
+  wallet: boolean;
   ads: {
     enabled: boolean;
     layout: ClientAdsLayout;
@@ -379,6 +382,16 @@ export interface ServerRequestUpdate {
   };
 }
 
+/**
+ * The account of the customer this PC is playing on changed (0.11.0): a top-up at the desk, a
+ * balance payment, a debt settled. Carries the facts the widget shows; `null` when the running
+ * session has no customer. The PC may also ask with `GET /client/customer`.
+ */
+export interface ServerCustomerUpdate {
+  type: 'server.customer';
+  customer: ClientCustomerInfo | null;
+}
+
 export type ServerToClientMessage =
   | ServerWelcomeToClient
   | ServerHeartbeatAck
@@ -386,6 +399,7 @@ export type ServerToClientMessage =
   | ServerDisplay
   | ServerRequestUpdate
   | ServerOrderUpdate
+  | ServerCustomerUpdate
   | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────

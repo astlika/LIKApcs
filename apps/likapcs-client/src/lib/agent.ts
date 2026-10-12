@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
   type ClientAdItem,
+  type ClientCustomerInfo,
   type ClientMenu,
   type ClientMetrics,
   type ClientRequestOptions,
@@ -116,6 +117,12 @@ export interface AgentSnapshot {
   ads: ClientAdItem[];
   /** Customer signed in through the "Client" button (memory only; cleared when the PC locks). */
   customer: CustomerLoginState | null;
+  /**
+   * 0.11.0: the account this PC may show — the signed-in customer or the customer of the running
+   * session: prepaid balance and what they owe. Fed by the login, `server.customer` pushes and
+   * `GET /client/customer`; cleared when the PC locks.
+   */
+  account: ClientCustomerInfo | null;
   /** The customer's request on this PC: pending while the staff decide, then the answer until dismissed. */
   request: SessionRequest | null;
   /** Orders sent from this PC during the running session (newest first); cleared when the PC locks. */
@@ -226,6 +233,7 @@ export class Agent {
     windowMode: 'locked',
     ads: [],
     customer: null,
+    account: null,
     request: null,
     orders: [],
     orderFlash: null,
@@ -278,7 +286,11 @@ export class Agent {
     // Orders belong to the session: once the PC locks they are the desk's business, not the screen's.
     const orders = modeChanged && state.mode === 'locked' ? [] : this.snapshot.orders;
     const orderFlash = modeChanged && state.mode === 'locked' ? null : this.snapshot.orderFlash;
-    this.set({ state, customer, request, orders, orderFlash });
+    const account = modeChanged && state.mode === 'locked' ? null : this.snapshot.account;
+    this.set({ state, customer, request, orders, orderFlash, account });
+    // A session just started (approved request, staff start): find out whose it is so the widget
+    // can show their balance. Nothing is shown until the server answers.
+    if (modeChanged && state.mode === 'session') void this.refreshAccount();
     // Locked PC or paused session → full-screen cover; otherwise the widget. A pause that arrives
     // while the order / settings panel is open closes it: nothing is usable while paused.
     const base = baseWindowModeOf(state);
@@ -814,10 +826,18 @@ export class Agent {
             this.refreshAds(true);
             void this.reconcileRequest(message.request?.id ?? null);
             if (message.orders) this.set({ orders: message.orders });
+            if (this.snapshot.state.mode === 'session' || this.snapshot.customer)
+              void this.refreshAccount();
             break;
           }
           case 'server.request':
             this.onRequestPush(message.request);
+            break;
+          case 'server.customer':
+            // Only the customer of the running session is pushed; a signed-in customer keeps
+            // their own account when the push says "nobody".
+            if (message.customer || !this.snapshot.customer)
+              this.set({ account: message.customer });
             break;
           case 'server.order':
             this.onOrderPush(message.order);
@@ -1196,6 +1216,7 @@ export class Agent {
         expiresAt: res.body.expiresAt,
         customer: res.body.customer,
       },
+      account: res.body.customer,
       request: res.body.pending ?? this.snapshot.request,
     });
     return { ok: true, customer: res.body.customer, pending: res.body.pending };
@@ -1203,11 +1224,27 @@ export class Agent {
 
   async customerLogout(): Promise<void> {
     const { customer } = this.snapshot;
-    this.set({ customer: null });
+    this.set({ customer: null, account: null });
     if (!customer) return;
     await this.customerCall('/client/customer-logout', { method: 'POST', body: {} }).catch(
       () => undefined,
     );
+    // The running session may still belong to somebody — their balance stays on the widget.
+    if (this.snapshot.state.mode === 'session') await this.refreshAccount();
+  }
+
+  /**
+   * Re-reads the account the PC may show (`GET /client/customer`): the signed-in customer, else
+   * the customer of the running session, else nobody. Called on session start, reconnect and when
+   * the customer dialog opens — pushes may have been missed while offline.
+   */
+  async refreshAccount(): Promise<void> {
+    const signedIn = this.customerSignedIn();
+    const res = await this.customerCall<{ customer: ClientCustomerInfo | null }>(
+      '/client/customer',
+      { method: 'GET', ...(signedIn ? { customer: true } : {}) },
+    );
+    if (res.ok) this.set({ account: res.body.customer });
   }
 
   /** A signed-in customer whose token is still valid (null otherwise). */

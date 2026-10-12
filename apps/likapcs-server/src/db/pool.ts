@@ -44,6 +44,25 @@ export function createPool(connectionString: string, options: { max?: number } =
   return pool;
 }
 
+const commitHooks = new WeakMap<DbClient, (() => void | Promise<void>)[]>();
+
+/**
+ * Runs `fn` once the surrounding `withTransaction` has committed (never on rollback). For side
+ * effects that must only follow durable data — pushing a changed balance to a PC, say — and that
+ * read through another connection, which would not see the uncommitted rows. Failures are
+ * logged, not propagated: the transaction is already committed. Outside a transaction (a bare
+ * pool client) the hook runs right away.
+ */
+export function afterCommit(client: DbClient, fn: () => void | Promise<void>): void {
+  const hooks = commitHooks.get(client);
+  if (hooks) hooks.push(fn);
+  else void Promise.resolve().then(fn).catch(reportHookError);
+}
+
+function reportHookError(err: unknown): void {
+  console.error('[db] after-commit hook failed:', err instanceof Error ? err.message : err);
+}
+
 /**
  * Runs `fn` inside a transaction. Commits on success, rolls back on any throw.
  * Nested usage must pass the same client down instead of calling withTransaction again.
@@ -53,10 +72,20 @@ export async function withTransaction<T>(
   fn: (client: DbClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
+  const hooks: (() => void | Promise<void>)[] = [];
+  commitHooks.set(client, hooks);
   try {
     await client.query('BEGIN');
     const result = await fn(client);
     await client.query('COMMIT');
+    commitHooks.delete(client);
+    for (const hook of hooks) {
+      try {
+        await hook();
+      } catch (err) {
+        reportHookError(err);
+      }
+    }
     return result;
   } catch (err) {
     try {
@@ -66,6 +95,7 @@ export async function withTransaction<T>(
     }
     throw err;
   } finally {
+    commitHooks.delete(client);
     client.release();
   }
 }

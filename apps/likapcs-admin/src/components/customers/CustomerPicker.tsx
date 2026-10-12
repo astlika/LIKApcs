@@ -19,6 +19,7 @@ import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../state/auth';
 import { useI18n } from '../../i18n';
 import { Badge } from '../ui/primitives';
+import { WalletPill } from './CustomerAccount';
 
 export interface CustomerPickerProps {
   id?: string;
@@ -143,6 +144,7 @@ export function CustomerPicker({
         {value.discountBp > 0 && (
           <span className="faint num">−{(value.discountBp / 100).toFixed(0)}%</span>
         )}
+        <WalletPill cents={value.walletBalanceCents} testId="customer-chip-wallet" />
         {!disabled && (
           <button
             type="button"
@@ -230,6 +232,7 @@ export function CustomerPicker({
                 {c.discountBp > 0 && (
                   <span className="num text-success">−{(c.discountBp / 100).toFixed(0)}%</span>
                 )}
+                <WalletPill cents={c.walletBalanceCents} />
               </div>
             </li>
           ))}

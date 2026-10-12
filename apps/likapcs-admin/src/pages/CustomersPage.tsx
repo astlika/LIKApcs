@@ -1,11 +1,20 @@
 /**
  * Customers: searchable directory (name / phone / code), create & edit, status (active,
- * blocked, archived) and a detail view with visit statistics, recent sales and sessions.
+ * blocked, archived) and a detail view with visit statistics, recent sales and sessions — and,
+ * since 0.11.0, the account: prepaid balance (top up / pay out) and the full statement.
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Archive, KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
+import {
+  Archive,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  KeyRound,
+  Pencil,
+  Plus,
+  UserRound,
+} from 'lucide-react';
 import {
   CUSTOMER_LOGIN_MIN_PASSWORD,
   CUSTOMER_STATUSES,
@@ -21,8 +30,16 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+import {
+  StatementPanel,
+  TopUpDialog,
+  WalletLedgerPanel,
+  WalletPill,
+  WithdrawDialog,
+} from '../components/customers/CustomerAccount';
 import {
   Badge,
   Button,
@@ -38,6 +55,7 @@ import {
   Select,
   StatTile,
   Switch,
+  Tabs,
   Textarea,
 } from '../components/ui/primitives';
 
@@ -128,6 +146,7 @@ export function CustomersPage() {
                 <th>{t('customers.phone')}</th>
                 <th>{t('customers.membership')}</th>
                 <th className="right">{t('customers.discount')}</th>
+                <th className="right">{t('customers.balance')}</th>
                 <th className="right">{t('customers.owes')}</th>
                 <th>{t('common.status')}</th>
                 <th>{t('common.created')}</th>
@@ -171,6 +190,13 @@ export function CustomersPage() {
                     )}
                   </td>
                   <td className="right num">{c.discountBp ? `${c.discountBp / 100}%` : '—'}</td>
+                  <td className="right num" data-testid="customer-wallet-cell">
+                    {c.walletBalanceCents > 0 ? (
+                      <strong className="text-success">{fmt.money(c.walletBalanceCents)}</strong>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="right num">
                     {c.balanceDueCents > 0 ? (
                       <Link
@@ -615,7 +641,12 @@ function CustomerDetailDialog({
   const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const { can } = useAuth();
+  const settings = useAppSettings();
+  const walletOn = settings['wallet.enabled'];
   const [archiving, setArchiving] = useState(false);
+  const [tab, setTab] = useState<'overview' | 'statement' | 'wallet'>('overview');
+  const [money, setMoney] = useState<'topup' | 'withdraw' | null>(null);
   const detail = useQuery({
     queryKey: ['customers', 'detail', customerId],
     queryFn: () => api<CustomerDetail>(`/customers/${customerId}`),
@@ -635,30 +666,61 @@ function CustomerDetailDialog({
       open
       onClose={onClose}
       title={c ? `${c.name} · ${c.code}` : '…'}
-      size="lg"
+      size="xl"
       footer={
-        c &&
-        canManage && (
+        c && (
           <>
-            {c.status !== 'archived' && (
+            {walletOn && can(PERMISSIONS.WALLET_REFUND) && c.walletBalanceCents > 0 && (
+              <Button onClick={() => setMoney('withdraw')} data-testid="customer-withdraw">
+                <ArrowUpFromLine size={14} /> {t('customers.withdraw')}
+              </Button>
+            )}
+            {walletOn && can(PERMISSIONS.WALLET_TOPUP) && c.status === 'active' && (
+              <Button
+                variant={canManage ? 'default' : 'primary'}
+                onClick={() => setMoney('topup')}
+                data-testid="customer-topup"
+              >
+                <ArrowDownToLine size={14} /> {t('customers.topUp')}
+              </Button>
+            )}
+            {canManage && c.status !== 'archived' && (
               <Button variant="danger" onClick={() => setArchiving(true)}>
                 <Archive size={14} /> {t('customers.archive')}
               </Button>
             )}
-            <Button variant="primary" onClick={() => onEdit(c)}>
-              <Pencil size={14} /> {t('common.edit')}
-            </Button>
+            {canManage && (
+              <Button variant="primary" onClick={() => onEdit(c)}>
+                <Pencil size={14} /> {t('common.edit')}
+              </Button>
+            )}
           </>
         )
       }
     >
       {detail.isLoading && <Loading />}
       {c && (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'overview', label: t('customers.tabOverview') },
+            { id: 'statement', label: t('customers.tabStatement') },
+            ...(walletOn || c.walletBalanceCents > 0
+              ? [{ id: 'wallet' as const, label: t('customers.tabWallet') }]
+              : []),
+          ]}
+        />
+      )}
+      {c && tab === 'statement' && <StatementPanel customer={c} />}
+      {c && tab === 'wallet' && <WalletLedgerPanel customer={c} />}
+      {c && tab === 'overview' && (
         <div className="stack">
           <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
             <Badge tone={STATUS_TONE[c.status]}>
               {t(`customers.status.${c.status}` as 'customers.status.active')}
             </Badge>
+            <WalletPill cents={c.walletBalanceCents} testId="customer-wallet-pill" />
             {c.phone && <span className="muted">{c.phone}</span>}
             {c.email && <span className="muted">{c.email}</span>}
             {c.membership && (
@@ -681,6 +743,15 @@ function CustomerDetailDialog({
           <div className="grid grid--stats">
             <StatTile label={t('customers.visits')} value={String(c.stats.salesCount)} />
             <StatTile label={t('customers.spent')} value={fmt.money(c.stats.salesTotalCents)} />
+            {(walletOn || c.walletBalanceCents > 0) && (
+              <StatTile
+                label={t('customers.balance')}
+                value={fmt.money(c.walletBalanceCents)}
+                sub={t('customers.balanceHint')}
+                tone={c.walletBalanceCents > 0 ? 'success' : undefined}
+                onClick={() => setTab('wallet')}
+              />
+            )}
             {(c.balanceDueCents > 0 || c.creditLimitCents > 0) && (
               <StatTile
                 label={t('customers.owes')}
@@ -755,6 +826,8 @@ function CustomerDetailDialog({
         danger
         loading={archive.isPending}
       />
+      {c && money === 'topup' && <TopUpDialog customer={c} onClose={() => setMoney(null)} />}
+      {c && money === 'withdraw' && <WithdrawDialog customer={c} onClose={() => setMoney(null)} />}
     </Dialog>
   );
 }

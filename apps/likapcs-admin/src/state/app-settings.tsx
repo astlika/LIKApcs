@@ -16,6 +16,7 @@ type Presentation = Pick<
   | 'locale.default_language'
   | 'pos.card_payments'
   | 'pos.credit_default_days'
+  | 'wallet.enabled'
 >;
 
 const AppSettingsContext = createContext<Presentation>({
@@ -25,6 +26,7 @@ const AppSettingsContext = createContext<Presentation>({
   'locale.default_language': SETTING_DEFAULTS['locale.default_language'],
   'pos.card_payments': SETTING_DEFAULTS['pos.card_payments'],
   'pos.credit_default_days': SETTING_DEFAULTS['pos.credit_default_days'],
+  'wallet.enabled': SETTING_DEFAULTS['wallet.enabled'],
 });
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
@@ -46,6 +48,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       'pos.card_payments': s['pos.card_payments'] ?? SETTING_DEFAULTS['pos.card_payments'],
       'pos.credit_default_days':
         s['pos.credit_default_days'] ?? SETTING_DEFAULTS['pos.credit_default_days'],
+      'wallet.enabled': s['wallet.enabled'] ?? SETTING_DEFAULTS['wallet.enabled'],
     };
   }, [publicQuery.data]);
   void status;

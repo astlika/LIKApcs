@@ -86,6 +86,10 @@ export function SaleDoneDialog({
   const tendered = sale.payments
     .filter((p) => p.kind === 'sale' && p.method !== 'credit')
     .reduce((a, p) => a + p.amountCents, 0);
+  // Part settled from the prepaid balance (0.11.0) — shown on its own line.
+  const fromWallet = sale.payments
+    .filter((p) => p.kind === 'sale' && p.method === 'wallet')
+    .reduce((a, p) => a + p.amountCents, 0);
   return (
     <Dialog
       open
@@ -115,6 +119,15 @@ export function SaleDoneDialog({
             <span>{t('pos.paid')}</span>
             <span className="num">{fmt.money(tendered)}</span>
           </div>
+          {fromWallet > 0 && (
+            <div
+              className="pos-done__row pos-done__row--wallet"
+              data-testid={`${testId}-done-wallet`}
+            >
+              <span>{t('pos.wallet')}</span>
+              <span className="num">{t('pos.walletPaid', { amount: fmt.money(fromWallet) })}</span>
+            </div>
+          )}
           {sale.debt && (
             <div className="pos-done__row pos-done__row--debt" data-testid={`${testId}-done-debt`}>
               <span>{t('pos.payLater')}</span>

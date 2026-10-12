@@ -170,9 +170,10 @@ export class SessionRequestsService {
       login_failed_count: number;
       login_locked_until: Date | null;
       balance_due_cents: string;
+      wallet_balance_cents: string;
     }>(
       `SELECT id, name, code, status, login_enabled, login_password_hash, login_failed_count, login_locked_until,
-              balance_due_cents
+              balance_due_cents, wallet_balance_cents
          FROM customers WHERE lower(login_username) = lower($1)`,
       [input.username.trim()],
     );
@@ -247,6 +248,7 @@ export class SessionRequestsService {
         id: customer.id,
         name: customer.name,
         code: customer.code,
+        walletBalanceCents: Number(customer.wallet_balance_cents),
         balanceDueCents: Number(customer.balance_due_cents),
       },
       pending: await this.pendingForStation(device.station.id),

@@ -33,6 +33,7 @@ import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
+import type { WalletService } from './wallet.js';
 
 interface DebtRow {
   id: string;
@@ -103,6 +104,7 @@ export class DebtsService {
     private readonly pool: DbPool,
     private readonly settings: SettingsService,
     private readonly cash: CashService,
+    private readonly wallet: WalletService,
   ) {}
 
   // ─── Opening a debt (called inside the sale / session transaction) ──────────
@@ -192,6 +194,7 @@ export class DebtsService {
         dueDate,
       },
     });
+    this.wallet.announce(client, input.customerId);
     return r.rows[0]!.id;
   }
 
@@ -458,6 +461,7 @@ export class DebtsService {
         entityId: id,
         details: { customerId: debt.customer_id, remainingCents: remaining, reason: input.reason },
       });
+      this.wallet.announce(client, debt.customer_id);
       return (await this.get(id, client))!;
     });
   }
@@ -484,7 +488,7 @@ export class DebtsService {
     client: DbClient,
     input: {
       customerId: string;
-      method: PaymentMethod;
+      method: DebtPaymentRequest['method'];
       amountCents: number;
       reference: string | null;
       reason: string;
@@ -512,6 +516,16 @@ export class DebtsService {
         input.actor.userId ?? null,
       ],
     );
+    // Paid from the customer's own prepaid balance (0.11.0): no cash moves, the wallet does.
+    if (input.method === 'wallet')
+      await this.wallet.spend(client, {
+        customerId: input.customerId,
+        amountCents: input.amountCents,
+        referenceType: 'debt_payment',
+        referenceId: r.rows[0]!.id,
+        note: input.reason,
+        actor: input.actor,
+      });
     return r.rows[0]!.id;
   }
 
@@ -546,6 +560,7 @@ export class DebtsService {
       entityId: debt.id,
       details: { amountCents, paymentId, settled },
     });
+    this.wallet.announce(client, debt.customer_id);
   }
 
   private async customerBalance(

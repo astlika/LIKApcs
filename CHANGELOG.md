@@ -6,6 +6,48 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-12
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0021 — running balance on
+`customer_ledger`, new payment / cash-movement kinds, permissions `wallet.topup` / `wallet.refund`,
+setting `wallet.enabled`), then the gaming PCs. Older 0.10.x clients keep working — they just do not
+show the balance until updated. Covered by unit / integration tests (shared 56, server 197, admin 35,
+client 25) and the browser smokes (`wallet` 41, `debts` 28, `sessionpay` 24).
+
+### Added
+
+- **Customer balance — "Balanca".** A regular customer can pay money in advance; it sits on their
+  name and is spent on anything: PC time (session start, extension, end bill), drinks and snacks at
+  the POS, "pay now" orders and open debts. In LIKApcs: **Customers › customer › Top up** (amount +
+  cash handed over → change; cash goes into the open shift) and **Pay out** (owner / manager
+  correction path, needs `wallet.refund`); the list has a _Balance_ column and every customer chip
+  (POS, station dialog, pickers) shows the balance. Every payment dialog gains a **Balance** chip
+  that pre-fills what the balance can cover and asks for cash only for the rest; refunds of a sale on
+  a customer's name can go back onto the balance; debt repayments can come from it. The cash shift
+  shows top-ups and pay-outs on their own lines. Master switch: Settings › POS › _Customer balance_
+  (`wallet.enabled`). The server locks the balance row per transaction, never lets it go negative
+  (`409 wallet_insufficient` with the real figure), refuses the tender when the feature is off
+  (`403 wallet_disabled`) and audits top-ups / pay-outs.
+- **The customer sees their balance on the PC.** LIKApcs-Client shows **Your balance** first thing
+  after the customer signs in (with the open debt, if any), a green balance pill in the countdown
+  widget while the session's customer has money on the account, and the balance in the order panel.
+  A top-up at the desk reaches the PC within a second (`server.customer` push); the PC also re-reads
+  it on session start and reconnect (`GET /client/customer`).
+- **Full account statement per customer.** Customers › customer › **Account**: every receipt (POS,
+  session bills, orders) with date and time, what was bought, how it was paid (cash / balance / pay
+  later), and — for receipts sold on credit — whether the debt is still open, partly paid, **paid
+  later on which day**, or written off; plus refunds, debt repayments (with the receipts they
+  settled), balance top-ups and pay-outs. Filters _All / Receipts / Unpaid / Repayments / Balance_,
+  a totals strip (spent, paid in cash, from the balance, taken on credit, debts repaid, still owes,
+  play time, customer since), paging, and a click on a receipt opens it. The **Balance** tab is the
+  ledger with the running balance after every entry.
+
+### Changed
+
+- Escape in a dialog opened from inside another (a receipt from the statement, a payment from the
+  station dialog) now closes only the top one.
+- `sessions.methods.wallet` is labelled _Balance_ / _Balanca_ on receipts and in payment lists.
+
 ## [0.10.0] - 2026-10-12
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0020 — new tables

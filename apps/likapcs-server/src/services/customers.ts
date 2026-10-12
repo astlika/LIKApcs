@@ -20,7 +20,7 @@ import { recordAudit, type AuditActor } from './audit.js';
 import type { SalesService } from './sales.js';
 import type { SessionsService } from './sessions.js';
 
-interface CustomerRow {
+export interface CustomerRow {
   id: string;
   code: string;
   name: string;
@@ -42,11 +42,17 @@ interface CustomerRow {
   updated_at: Date;
 }
 
-const SELECT = `
+/** The `CustomerSummary` projection — shared with the wallet / statement services. */
+export const CUSTOMER_SELECT = `
   SELECT c.id, c.code, c.name, c.phone, c.email, c.membership, to_char(c.membership_until, 'YYYY-MM-DD') AS membership_until,
          c.discount_bp, c.loyalty_points, c.wallet_balance_cents, c.balance_due_cents, c.credit_limit_cents, c.notes,
          c.status, c.login_username, c.login_enabled, c.last_login_at, c.created_at, c.updated_at
     FROM customers c`;
+const SELECT = CUSTOMER_SELECT;
+
+export function toCustomerSummary(r: CustomerRow): CustomerSummary {
+  return toSummary(r);
+}
 
 function toSummary(r: CustomerRow): CustomerSummary {
   return {

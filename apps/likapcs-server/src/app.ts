@@ -39,6 +39,8 @@ import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { CustomersService } from './services/customers.js';
 import { DebtsService } from './services/debts.js';
+import { StatementService } from './services/statement.js';
+import { WalletService } from './services/wallet.js';
 import { debtRoutes } from './routes/debts.js';
 import { ReportsService } from './services/reports.js';
 import { PurchasingService } from './services/purchasing.js';
@@ -82,6 +84,8 @@ export interface Services {
   expenses: ExpensesService;
   customers: CustomersService;
   debts: DebtsService;
+  wallet: WalletService;
+  statements: StatementService;
   reports: ReportsService;
   purchasing: PurchasingService;
   backups: BackupService;
@@ -164,7 +168,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const wake = new WakeService(pool, stations, options.wakeSender);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
-  const debts = new DebtsService(pool, settings, cash);
+  // Customer balance (0.11.0): spent inside sale / bill / debt transactions, told to the PCs.
+  const wallet = new WalletService(pool, settings, cash, hub);
+  const debts = new DebtsService(pool, settings, cash, wallet);
   const sessions = new SessionsService(
     pool,
     hub,
@@ -173,6 +179,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     stations,
     cash,
     debts,
+    wallet,
     app.log,
   );
   const requests = new SessionRequestsService(pool, hub, settings, stations, {
@@ -191,13 +198,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     productImages,
     new AdVideoStore(path.join(config.uploadDir, 'videos')),
   );
-  const sales = new SalesService(pool, settings, cash, debts);
+  const sales = new SalesService(pool, settings, cash, debts, wallet);
   // Orders from the PC (0.10.0): accepted "pay now" through the sales service, "on the bill"
   // settled inside the session's end transaction.
   const orders = new OrdersService(pool, hub, settings, stations, sales);
   sessions.useOrders(orders);
   const expenses = new ExpensesService(pool, cash);
   const customers = new CustomersService(pool, sales, sessions);
+  const statements = new StatementService(pool);
   const reports = new ReportsService(pool, cash, settings);
   const purchasing = new PurchasingService(pool, cash);
   const backups = new BackupService(pool, config.backupDir, settings, {
@@ -244,6 +252,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     expenses,
     customers,
     debts,
+    wallet,
+    statements,
     reports,
     purchasing,
     backups,

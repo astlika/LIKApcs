@@ -36,6 +36,7 @@ import { nextDocumentNumber } from './documents.js';
 import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
+import type { WalletService } from './wallet.js';
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -133,6 +134,7 @@ export class SalesService {
     private readonly settings: SettingsService,
     private readonly cash: CashService,
     private readonly debts: DebtsService,
+    private readonly wallet: WalletService,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -486,8 +488,9 @@ export class SalesService {
         total_cents: string;
         refunded_cents: string;
         receipt_no: string | null;
+        customer_id: string | null;
       }>(
-        'SELECT status, discount_cents::text, total_cents::text, refunded_cents::text, receipt_no FROM sales WHERE id = $1 FOR UPDATE',
+        'SELECT status, discount_cents::text, total_cents::text, refunded_cents::text, receipt_no, customer_id FROM sales WHERE id = $1 FOR UPDATE',
         [saleId],
       );
       if (!sale.rows[0]) throw notFound('Sale');
@@ -580,10 +583,29 @@ export class SalesService {
         actorUserId: actor.userId,
       });
       await client.query(
-        `INSERT INTO payments (kind, method, amount_cents, sale_id, refund_id, shift_id, received_at, created_by)
-         VALUES ('refund', $1, $2, $3, $4, $5, $6, $7)`,
-        [input.method, total, saleId, refundId, refundShiftId, now, actor.userId],
+        `INSERT INTO payments (kind, method, amount_cents, sale_id, refund_id, customer_id, shift_id, received_at, created_by)
+         VALUES ('refund', $1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          input.method,
+          total,
+          saleId,
+          refundId,
+          sale.rows[0].customer_id,
+          refundShiftId,
+          now,
+          actor.userId,
+        ],
       );
+      // Refunded onto the customer's balance (0.11.0) instead of out of the drawer.
+      if (input.method === 'wallet') {
+        await this.wallet.creditBack(client, {
+          customerId: sale.rows[0].customer_id,
+          amountCents: total,
+          refundId,
+          note: `${refundNo} · ${sale.rows[0].receipt_no ?? ''}`.trim(),
+          actor,
+        });
+      }
       const refundedCents = Number(sale.rows[0].refunded_cents) + total;
       const fully = await client.query<{ open: string }>(
         `SELECT count(*)::text AS open FROM sale_items WHERE sale_id = $1 AND refunded_milli < quantity_milli`,
@@ -861,6 +883,20 @@ export class SalesService {
         amountCents: credit.reduce((acc, p) => acc + p.amountCents, 0),
         dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
         notes: receiptNo,
+        actor,
+      });
+    }
+    // Prepaid balance (0.11.0): taken from the customer's wallet, locked for the transaction.
+    const fromWallet = payments
+      .filter((p) => p.method === 'wallet')
+      .reduce((acc, p) => acc + p.amountCents, 0);
+    if (fromWallet > 0) {
+      await this.wallet.spend(client, {
+        customerId: input.customerId,
+        amountCents: fromWallet,
+        referenceType: 'sale',
+        referenceId: saleId,
+        note: receiptNo,
         actor,
       });
     }

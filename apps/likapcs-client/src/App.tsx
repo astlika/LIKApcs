@@ -480,6 +480,12 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
   const [choice, setChoice] = useState<{ minutes?: number; packageId?: string } | null>(null);
   const step: 'login' | 'choose' | 'waiting' | 'result' =
     request?.status === 'pending' ? 'waiting' : request ? 'result' : signedIn ? 'choose' : 'login';
+  // The account shown is the live one (pushed by the server on every top-up / payment); the
+  // login answer is only the first value of it.
+  const account = snap.account ?? (signedIn ? (snap.customer?.customer ?? null) : null);
+  useEffect(() => {
+    if (step === 'choose') void agent.refreshAccount();
+  }, [step]);
 
   // What may be requested right now (quick durations with prices, packages, staff presence).
   // While nothing can be requested (PC disabled, someone else's session) it re-asks every few
@@ -665,9 +671,24 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
 
       {step === 'choose' && (
         <div>
-          {snap.customer && snap.customer.customer.balanceDueCents > 0 && (
+          {account && (snap.state.display?.wallet || account.walletBalanceCents > 0) && (
+            <div
+              className={`customer-account ${account.walletBalanceCents > 0 ? 'customer-account--funded' : ''}`}
+              data-testid="customer-account"
+              title={t('customerBalanceHint')}
+            >
+              <span className="customer-account__label">{t('customerBalance')}</span>
+              <strong className="customer-account__amount" data-testid="customer-balance">
+                {money(account.walletBalanceCents)}
+              </strong>
+              {account.walletBalanceCents <= 0 && (
+                <span className="customer-account__hint small">{t('customerBalanceEmpty')}</span>
+              )}
+            </div>
+          )}
+          {account && account.balanceDueCents > 0 && (
             <p className="customer-debt small" data-testid="customer-debt">
-              {t('customerDebt', { amount: money(snap.customer.customer.balanceDueCents) })}
+              {t('customerDebt', { amount: money(account.balanceDueCents) })}
             </p>
           )}
           {!options && !error && <p className="muted small">{t('connecting')}</p>}
@@ -1149,6 +1170,26 @@ function OrderIcon() {
   );
 }
 
+function WalletIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="2" y="4" width="12" height="9" rx="2" />
+      <path d="M2 7h12" />
+      <circle cx="11" cy="10" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /**
  * Countdown widget. In the desktop app this is the whole always-on-top window (its size and
  * corner follow the owner's settings), draggable by its surface (`data-tauri-drag-region`), so a
@@ -1204,6 +1245,12 @@ function Overlay({
     if (total > 0) fraction = Math.min(1, Math.max(0, view.seconds / total));
   }
   const code = snap.state.station?.code ?? 'LIKApcs';
+  // 0.11.0: the prepaid balance of the customer this PC plays on (only while there is one). The
+  // window is a fixed 300×96 box: the pill takes the status label's place ("remaining" is what the
+  // countdown already says) and steps aside for an order flash, a notice or maintenance.
+  const balance =
+    snap.account && snap.account.walletBalanceCents > 0 ? snap.account.walletBalanceCents : null;
+  const showBalance = balance !== null && !flashText && !notice && !maintenance;
   const cls = [
     'overlay',
     `overlay--${display?.widgetSize ?? 'normal'}`,
@@ -1311,6 +1358,20 @@ function Overlay({
           <span className="overlay__mark">L</span>
           <span className="overlay__code">{code}</span>
         </span>
+        {showBalance && (
+          <span
+            className="overlay__balance"
+            title={t('balanceTitle')}
+            data-testid="overlay-balance"
+            data-tauri-drag-region
+          >
+            <WalletIcon />
+            {formatMoney(balance ?? 0, {
+              currency: display?.currency ?? 'EUR',
+              locale: snap.state.language,
+            })}
+          </span>
+        )}
         {!notice && !maintenance && (onRequestTime || onPause || onOrder) && (
           <span className="overlay__acts">
             {onRequestTime && (
@@ -1354,26 +1415,28 @@ function Overlay({
             )}
           </span>
         )}
-        <span
-          className={`overlay__label ${flashTone ? `overlay__flash overlay__flash--${flashTone}` : ''}`}
-          data-tauri-drag-region
-          data-testid={flashTone ? 'overlay-order-flash' : undefined}
-          title={flashText ?? undefined}
-        >
-          {flashText
-            ? flashText
-            : notice
-              ? ''
-              : maintenance
-                ? t('maintenance')
-                : view
-                  ? view.paused
-                    ? t('paused')
-                    : view.kind === 'countdown'
-                      ? t('remaining')
-                      : t('elapsed')
-                  : t('free')}
-        </span>
+        {!showBalance && (
+          <span
+            className={`overlay__label ${flashTone ? `overlay__flash overlay__flash--${flashTone}` : ''}`}
+            data-tauri-drag-region
+            data-testid={flashTone ? 'overlay-order-flash' : undefined}
+            title={flashText ?? undefined}
+          >
+            {flashText
+              ? flashText
+              : notice
+                ? ''
+                : maintenance
+                  ? t('maintenance')
+                  : view
+                    ? view.paused
+                      ? t('paused')
+                      : view.kind === 'countdown'
+                        ? t('remaining')
+                        : t('elapsed')
+                    : t('free')}
+          </span>
+        )}
         {offline && <span className="overlay__offline" title={t('offlineSession')} />}
       </div>
       {notice ? (

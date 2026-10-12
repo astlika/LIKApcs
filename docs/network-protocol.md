@@ -274,7 +274,7 @@ settings; see `ClientDisplayConfig.ads`.
 | `POST /sales/suspend`            | same without payments                                                                                                                                     | `201` parked sale (no receipt number, no stock movement, no payment)                                                                     |
 | `POST /sales/:id/complete`       | `POST /sales` body                                                                                                                                        | completes a parked sale                                                                                                                  |
 | `POST /sales/:id/void`           | —                                                                                                                                                         | `204`; parked sales only                                                                                                                 |
-| `POST /sales/:id/refund`         | `{items[{saleItemId, quantityMilli}], reason, restock=true, method=cash}`                                                                                 | `SaleDetail` with the new `K-<year>-NNNNNN` refund; `409` when more than the sold quantity is returned                                   |
+| `POST /sales/:id/refund`         | `{items[{saleItemId, quantityMilli}], reason, restock=true, method=cash}` (`method: wallet` returns the money onto the customer's balance, 0.11.0)        | `SaleDetail` with the new `K-<year>-NNNNNN` refund; `409` when more than the sold quantity is returned                                   |
 | `GET /sales`                     | `?status&source&cashierId&q&from&to&page&pageSize`                                                                                                        | `{items, total, page, pageSize, summary{count, totalCents, refundedCents}}` (summary over the whole filter)                              |
 | `GET /sales/:id`                 | —                                                                                                                                                         | items, payments, refunds                                                                                                                 |
 | `GET /sales/:id/receipt?reprint` | —                                                                                                                                                         | `ReceiptData` (business header from settings, width 58/80 mm); `reprint=true` needs `pos.reprint`, is logged in `print_jobs` and audited |
@@ -285,6 +285,13 @@ from tax-inclusive prices (`price_includes_tax=false` adds it instead), only **c
 (change is returned), card/bank payments may not exceed the total, and stock is reserved inside the
 same transaction with `SELECT … FOR UPDATE` in product-id order (`409 INSUFFICIENT_STOCK` carries
 `productId`, `availableMilli`, `requestedMilli`). Error responses are `{error: {code, message, details?}}`.
+
+**Balance tender (0.11.0).** `payments: [{method: 'wallet', amountCents}]` takes the amount from the
+customer's prepaid balance (needs `customerId`, `400 wallet_needs_customer` otherwise). The wallet row
+is locked `FOR UPDATE` inside the sale's transaction; `409 wallet_insufficient {balanceCents}` when the
+balance is short, `403 wallet_disabled` when `wallet.enabled` is off. `wallet` may not exceed the total
+(no change from a balance) and mixes freely with cash. The same tender works for session bills
+(`POST /sessions`, `/extend`, `/end`), "pay now" orders and debt repayments.
 
 ### Cash register (`cash.view` to read, `cash.open_close` for shifts, `cash.move` for pay-in/pay-out)
 
@@ -340,6 +347,34 @@ without removing it). A new username without a PIN → `400 bad_request {field: 
 taken username → `409 conflict {field: "loginUsername"}`. Summaries carry `loginUsername`,
 `loginEnabled`, `lastLoginAt`. Archiving a customer frees the username.
 
+### Customer balance ("balanca") & account statement (0.11.0, migration 0021)
+
+Money a customer pays in advance sits on _their_ name (`customers.wallet_balance_cents`, never
+negative) and is spent with the `wallet` tender anywhere a sale is paid. Every change is one
+`customer_ledger` row with the running `balance_after_cents`: `wallet_topup` (+, cash into the open
+shift), `wallet_payment` (−, a sale / session bill / order / debt repayment), `wallet_refund` (+, a
+refunded receipt returned to the balance), `wallet_withdrawal` (−, cash paid back out of the shift).
+Top-ups and pay-outs are `payments` of kind `wallet_topup` / `wallet_refund`, show up in the shift
+totals as `walletTopUpsCents` / `walletRefundsCents` and are audited (`wallet.topup`,
+`wallet.withdrawn`). The master switch is the public setting `wallet.enabled` (default on).
+
+| Route                                 | Permission       | Body / query                                                            | Result                                                                                                                                                                                |
+| ------------------------------------- | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /customers/:id/wallet/topup`    | `wallet.topup`   | `{amountCents ≥ 1, tenderedCents?, note?}`                              | `201 {customer, entry, changeCents}` — cash in the open shift (`cash.require_open_shift` applies); `changeCents` = tendered − amount; `409 conflict` for blocked / archived customers |
+| `POST /customers/:id/wallet/withdraw` | `wallet.refund`  | `{amountCents ≥ 1, reason}`                                             | `201 {customer, entry, changeCents: 0}` — cash out of the shift; `409 wallet_insufficient` above the balance                                                                          |
+| `GET /customers/:id/wallet`           | `customers.view` | `?page&pageSize`                                                        | `{customer, items: WalletEntry[], total}` — the ledger, newest first, each with `balanceAfterCents`, `receiptNo`, who and when                                                        |
+| `GET /customers/:id/statement`        | `customers.view` | `?filter=all\|receipts\|unpaid\|payments\|wallet&from&to&page&pageSize` | `CustomerStatement` — see below                                                                                                                                                       |
+
+The **statement** is a read model over existing tables (no new table): every receipt of the customer
+(POS sales, session bills, orders — `kind: sale`) with its date/time, lines, and how it was paid
+(`paid{cashCents, walletCents, creditCents, otherCents}`), the state of a receipt sold on credit
+(`debt{status, remainingCents, dueDate, settledAt}` — open, partly paid, paid later on a given day,
+written off), refunds, debt repayments (`debt_payment`, with `settles[]` = the receipts the money went
+to) and wallet top-ups / pay-outs. `totals` cover the whole history: `receiptsCount`, `spentCents`
+(net of refunds), `paidCashCents`, `paidWalletCents`, `onCreditCents`, `debtPaidCents`,
+`debtOpenCents`, `walletTopUpsCents`, `playSeconds`, `firstVisitAt`. Summaries and details of a
+customer carry `walletBalanceCents`.
+
 ### Session requests — customers ask for time from the PC (0.9.0)
 
 Setting `requests.enabled` (default on) shows a small **Client** button on the locked screen;
@@ -355,14 +390,15 @@ end only by a decision, the customer's cancel, or a server auto-cancel with a ma
 PC side (device token; the **customer token** from the login — header `x-customer-token`, 20 min,
 bound to the device — is needed only to _create_ a request; show/cancel are device-scoped):
 
-| Method | Path                          | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST   | `/client/customer-login`      | `{username, password}` → `{customerToken, expiresAt, customer{id, name, code, balanceDueCents}, pending}`. `401 invalid_credentials` (same message for unknown user / wrong PIN, constant-time), `423 locked {until}` after `security.max_failed_logins` wrong PINs, `403 login_disabled` / `403 blocked`, `403 requests_disabled`. 30 attempts/min per PC; audited (`customer.login`) |
-| POST   | `/client/customer-logout`     | forgets the customer token → `{ok: true}`                                                                                                                                                                                                                                                                                                                                              |
-| GET    | `/client/request-options`     | `{kind: "start" \| "extend" \| "none", sessionId, quickMinutes, quickPrices{"60": cents \| null}, packages[{id, name, durationMinutes, priceCents}], currency, staffOnline}` — `start` while locked, `extend` while a **prepaid** session runs, `none` otherwise (postpaid, disabled PC)                                                                                               |
-| POST   | `/client/session-request`     | `{kind, minutes}` (one of the quick durations) **or** `{kind, packageId}` → `201 SessionRequest`. `409 request_pending`, `409 session_active` (start while a session runs), `409 no_session` (extend without a prepaid session), `401 unauthorized` (customer token missing/expired)                                                                                                   |
-| GET    | `/client/session-request/:id` | current state (reconnects / restarts) — only requests of this PC                                                                                                                                                                                                                                                                                                                       |
-| DELETE | `/client/session-request/:id` | the customer takes it back → `cancelled`, `reason: "customer"`                                                                                                                                                                                                                                                                                                                         |
+| Method | Path                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/customer-login`      | `{username, password}` → `{customerToken, expiresAt, customer{id, name, code, walletBalanceCents, balanceDueCents}, pending}`. `401 invalid_credentials` (same message for unknown user / wrong PIN, constant-time), `423 locked {until}` after `security.max_failed_logins` wrong PINs, `403 login_disabled` / `403 blocked`, `403 requests_disabled`. 30 attempts/min per PC; audited (`customer.login`) |
+| POST   | `/client/customer-logout`     | forgets the customer token → `{ok: true}`                                                                                                                                                                                                                                                                                                                                                                  |
+| GET    | `/client/customer`            | 0.11.0 — `{customer: {id, name, code, walletBalanceCents, balanceDueCents} \| null}`: the signed-in customer (with `x-customer-token`) or, without one, the customer of the running session on this PC. What the PC may show about an account — nothing more (60/min per PC)                                                                                                                               |
+| GET    | `/client/request-options`     | `{kind: "start" \| "extend" \| "none", sessionId, quickMinutes, quickPrices{"60": cents \| null}, packages[{id, name, durationMinutes, priceCents}], currency, staffOnline}` — `start` while locked, `extend` while a **prepaid** session runs, `none` otherwise (postpaid, disabled PC)                                                                                                                   |
+| POST   | `/client/session-request`     | `{kind, minutes}` (one of the quick durations) **or** `{kind, packageId}` → `201 SessionRequest`. `409 request_pending`, `409 session_active` (start while a session runs), `409 no_session` (extend without a prepaid session), `401 unauthorized` (customer token missing/expired)                                                                                                                       |
+| GET    | `/client/session-request/:id` | current state (reconnects / restarts) — only requests of this PC                                                                                                                                                                                                                                                                                                                                           |
+| DELETE | `/client/session-request/:id` | the customer takes it back → `cancelled`, `reason: "customer"`                                                                                                                                                                                                                                                                                                                                             |
 
 Admin side: `GET /session-requests?status=&stationId=&limit=` and `GET /session-requests/:id`
 (`stations.view`); `POST /session-requests/:id/reject {reason?}` (`stations.control`) — the reason
@@ -423,15 +459,15 @@ today + `pos.credit_default_days`), refuses blocked customers and anything over 
 credit limit, and never touches the cash drawer for it. `credit` cannot exceed the total (no
 change on a debt). Sale details then carry `debt{id, amountCents, remainingCents, dueDate, status}`.
 
-| Route                           | Body / query                                                                 | Result                                                                                                            |
-| ------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `GET /debts`                    | `?filter=open\|overdue\|due_today\|paid\|written_off\|all&customerId&q&page` | paginated debts with customer, receipt, amounts, `remainingCents`, `overdueDays`; open ones oldest due date first |
-| `GET /debts/overview`           | —                                                                            | `{openCents, overdueCents, dueTodayCents, openCount, overdueCount, debtors}`                                      |
-| `GET /debts/:id`                | —                                                                            | detail + `payments[]` (method, who, when) + `items[]` of the originating sale                                     |
-| `POST /debts/:id/pay`           | `{amountCents, method?, tenderedCents?, reference?, notes?}`                 | partial or full repayment; cash goes into the open shift as `customer_payment`; `changeCents` reported            |
-| `POST /customers/:id/debts/pay` | same body                                                                    | one amount settles the customer's open debts oldest-first (the last may stay `partial`)                           |
-| `POST /debts/:id/reschedule`    | `{dueDate, notes?}`                                                          | new due date (audited `debt.rescheduled`)                                                                         |
-| `POST /debts/:id/write-off`     | `{reason}`                                                                   | remaining amount forgiven, never counted as income (audited `debt.written_off`)                                   |
+| Route                           | Body / query                                                                 | Result                                                                                                                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /debts`                    | `?filter=open\|overdue\|due_today\|paid\|written_off\|all&customerId&q&page` | paginated debts with customer, receipt, amounts, `remainingCents`, `overdueDays`; open ones oldest due date first                                                              |
+| `GET /debts/overview`           | —                                                                            | `{openCents, overdueCents, dueTodayCents, openCount, overdueCount, debtors}`                                                                                                   |
+| `GET /debts/:id`                | —                                                                            | detail + `payments[]` (method, who, when) + `items[]` of the originating sale                                                                                                  |
+| `POST /debts/:id/pay`           | `{amountCents, method?, tenderedCents?, reference?, notes?}`                 | partial or full repayment; cash goes into the open shift as `customer_payment`; `changeCents` reported; `method: wallet` (0.11.0) takes it from the customer's balance instead |
+| `POST /customers/:id/debts/pay` | same body                                                                    | one amount settles the customer's open debts oldest-first (the last may stay `partial`)                                                                                        |
+| `POST /debts/:id/reschedule`    | `{dueDate, notes?}`                                                          | new due date (audited `debt.rescheduled`)                                                                                                                                      |
+| `POST /debts/:id/write-off`     | `{reason}`                                                                   | remaining amount forgiven, never counted as income (audited `debt.written_off`)                                                                                                |
 
 Repayments are `payments` rows of kind `customer_payment` linked through `debt_payments`; shift
 totals show them as `debtPaymentsCents`. Every state change is audited (`debt.opened`, `debt.paid`,
@@ -609,6 +645,9 @@ switches `showClock`, `showBrand`, `showStation`, `showStatus`, the slide switch
 (`bottom | top | hidden`, big-photo layout), `motion` (slow zoom on big pictures), `background`
 (backdrop preset, same names as the ad themes) and `tickerText` (scrolling line, `''` = none).
 Older clients ignore the fields they do not know; defaults reproduce the 0.7.x look.
+`display.wallet` (0.11.0) mirrors `wallet.enabled`: with it on, the customer dialog on the PC shows
+"Your balance" even when it is 0.00; the countdown widget shows a balance pill only while there is
+money on the account.
 
 Failure codes (`server.error` is sent first, then the socket closes):
 
@@ -651,6 +690,13 @@ Server → Client  { "type": "server.order", "order": { "id": "<uuid>", "number"
                    "items": [{ "name": "…", "quantity": 2, "lineTotalCents": 300 }] } }
                    // 0.10.0: the staff's answer to an order from this PC. server.welcome carries the
                    // session's still-open orders as "orders" so a restarted PC keeps showing them.
+
+Server → Client  { "type": "server.customer", "customer": { "id": "<uuid>", "name": "…", "code": "C-000012",
+                   "walletBalanceCents": 1460, "balanceDueCents": 0 } | null }
+                   // 0.11.0: the account of the customer this PC plays on changed (top-up at the desk,
+                   // a balance payment, a debt settled) — sent after the commit to every PC whose running
+                   // session belongs to that customer. Display facts only; the PC may also ask with
+                   // GET /client/customer (it does on session start and reconnect).
 
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"

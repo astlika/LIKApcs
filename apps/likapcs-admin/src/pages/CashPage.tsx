@@ -58,6 +58,7 @@ const MOVEMENT_TONE: Record<
   expense: 'warning',
   supplier_payment: 'warning',
   wallet_topup: 'success',
+  wallet_refund: 'warning',
   customer_payment: 'success',
   correction: 'default',
 };
@@ -410,6 +411,8 @@ function ShiftBreakdown({ shift }: { shift: CashShiftDetail }) {
     { label: t('cash.withdrawal'), cents: -tt.withdrawalsCents, sign: true },
     { label: t('cash.expenses'), cents: -tt.expensesCents, sign: true },
     { label: t('cash.debtPayments'), cents: tt.debtPaymentsCents, sign: true },
+    { label: t('cash.walletTopUps'), cents: tt.walletTopUpsCents, sign: true },
+    { label: t('cash.walletRefunds'), cents: -tt.walletRefundsCents, sign: true },
     { label: t('cash.other'), cents: tt.otherCents, sign: true },
   ];
   return (

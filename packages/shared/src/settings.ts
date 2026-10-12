@@ -108,6 +108,8 @@ export const SETTING_SCHEMAS = {
   'orders.allow_note': z.boolean(),
   /** What accepting an order does by default: ask each time, record a sale now, or put it on the bill. */
   'orders.settlement': z.enum(['ask', 'pay_now', 'on_bill']),
+  /** Customer wallet (0.11.0): money paid in advance, spent on time, drinks and debts. */
+  'wallet.enabled': z.boolean(),
 
   // ── Client screen (LIKApcs-Client on the customer PC) ──────────────────────
   /** Countdown widget during a session: footprint. */
@@ -239,6 +241,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'orders.enabled': true,
   'orders.allow_note': true,
   'orders.settlement': 'ask',
+  'wallet.enabled': true,
 
   'client.widget_size': 'normal',
   'client.widget_position': 'top-right',
@@ -307,6 +310,8 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   // Orders from the PCs: the bell pre-selects the settlement; every station operator needs it.
   'orders.enabled',
   'orders.settlement',
+  // The balance tender shows up in every payment dialog.
+  'wallet.enabled',
   // Client screen: the Admin previews them; the client receives them through its own channel.
   'client.widget_size',
   'client.widget_position',
@@ -371,6 +376,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'sessions.pause_max_minutes',
   'orders.enabled',
   'orders.allow_note',
+  'wallet.enabled',
   'client.ads_style',
   'client.ads_shuffle',
   'client.ads_promo_countdown',
@@ -420,6 +426,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     pauseMaxMinutes: settings['sessions.pause_max_minutes'],
     orders: settings['orders.enabled'],
     ordersNote: settings['orders.allow_note'],
+    wallet: settings['wallet.enabled'],
     ads: {
       enabled: settings['client.ads_enabled'],
       layout: settings['client.ads_layout'],

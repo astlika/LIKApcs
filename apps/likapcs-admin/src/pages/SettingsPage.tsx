@@ -931,6 +931,13 @@ export function SettingsPage() {
                 max: 365,
                 hint: t('settings.printing.creditDaysHint'),
               })}
+              <div className="span-2" data-testid="settings-wallet-enabled">
+                {bool(
+                  'wallet.enabled',
+                  t('settings.printing.wallet'),
+                  t('settings.printing.walletHint'),
+                )}
+              </div>
               {text('business.receipt_footer', t('settings.business.receiptFooter'), {
                 hint: t('settings.business.receiptFooterHint'),
                 multiline: true,

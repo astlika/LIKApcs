@@ -70,6 +70,21 @@ export const requestRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  /**
+   * 0.11.0: what the PC may show about the customer — the signed-in one (token) or, without a
+   * token, the customer of the running session on this PC. `{ customer: null }` when neither.
+   */
+  app.get(
+    '/client/customer',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request) => {
+      const device = await deviceOf(request);
+      const signedIn = services.requests.customerIdOf(device, customerTokenOf(request));
+      const customerId = signedIn ?? (await services.sessions.customerOfStation(device.station.id));
+      return { customer: customerId ? await services.wallet.clientInfo(customerId) : null };
+    },
+  );
+
   app.get(
     '/client/request-options',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },

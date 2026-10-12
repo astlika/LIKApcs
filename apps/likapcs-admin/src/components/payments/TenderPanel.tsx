@@ -12,12 +12,16 @@
  *               created on the spot); the part not paid in cash now goes on the customer's tab
  *               with a due date (pre-filled from `pos.credit_default_days`). The limit is checked
  *               here for a clear message and again on the server (the authority).
+ *   wallet      "balance" (0.11.0, `wallet.enabled`) — paid from the money the customer left in
+ *               advance. Pre-filled with as much of the total as the balance covers; the rest is
+ *               cash. The server locks the customer row and is the authority on the balance
+ *               (409 `wallet_insufficient` carries the real figure).
  *
  * `useTender` owns the state and the arithmetic (pure, integer cents); `TenderPanel` renders it.
  * Keep the two together: a dialog calls the hook, reads `tender.covered` / `tender.payments` for
  * its submit button, and renders `<TenderPanel tender={tender} … />`.
  */
-import { Banknote, CalendarClock, CreditCard, UserRound } from 'lucide-react';
+import { Banknote, CalendarClock, CreditCard, UserRound, Wallet } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CustomerSummary, SalePaymentInput } from '@likapcs/shared';
 import { PERMISSIONS, parseMoneyInput } from '@likapcs/shared';
@@ -29,7 +33,7 @@ import { useAuth } from '../../state/auth';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { Alert, Field, Input } from '../ui/primitives';
 
-export type TenderMode = 'cash' | 'card' | 'split' | 'credit';
+export type TenderMode = 'cash' | 'card' | 'split' | 'credit' | 'wallet';
 
 /** A number far above the total is a barcode that landed in the field, not money. */
 const MAX_OVERPAY_CENTS = 100_000_00;
@@ -46,6 +50,8 @@ export interface TenderInput {
   customer: CustomerSummary | null;
   /** Hide "pay later" even for cashiers who may give it (contexts without a customer concept). */
   allowCredit?: boolean;
+  /** Hide the balance tender (contexts without a customer concept). */
+  allowWallet?: boolean;
 }
 
 export interface Tender {
@@ -62,9 +68,13 @@ export interface Tender {
   setReference: (v: string) => void;
   dueDate: string;
   setDueDate: (v: string) => void;
+  /** Balance mode: the part taken from the customer's wallet (text as typed). */
+  walletText: string;
+  setWalletText: (v: string) => void;
   cashCents: number | null;
   cardCents: number | null;
-  /** What the cash field should cover in the current mode (total minus card / credit part). */
+  walletCents: number | null;
+  /** What the cash field should cover in the current mode (total minus card / credit / balance part). */
   cashTargetCents: number;
   payments: SalePaymentInput[];
   paidCents: number;
@@ -72,21 +82,41 @@ export interface Tender {
   changeCents: number;
   /** Total is covered by valid tenders and nothing is implausible → the sale may complete. */
   covered: boolean;
-  problem: 'cardOver' | 'implausible' | 'creditNeedsCustomer' | 'creditOverLimit' | null;
+  problem:
+    | 'cardOver'
+    | 'implausible'
+    | 'creditNeedsCustomer'
+    | 'creditOverLimit'
+    | 'walletNeedsCustomer'
+    | 'walletEmpty'
+    | 'walletOver'
+    | null;
   customer: CustomerSummary | null;
 }
 
-export function useTender({ totalCents, customer, allowCredit = true }: TenderInput): Tender {
+/** As much of the total as the balance covers — the pre-fill of the balance field. */
+export function walletCoverCents(customer: CustomerSummary | null, totalCents: number): number {
+  return Math.max(0, Math.min(customer?.walletBalanceCents ?? 0, totalCents));
+}
+
+export function useTender({
+  totalCents,
+  customer,
+  allowCredit = true,
+  allowWallet = true,
+}: TenderInput): Tender {
   const settings = useAppSettings();
   const { can } = useAuth();
   const cardEnabled = settings['pos.card_payments'];
   const creditEnabled = allowCredit && can(PERMISSIONS.DEBTS_GIVE);
+  const walletEnabled = allowWallet && settings['wallet.enabled'];
   const defaultDays = settings['pos.credit_default_days'];
   const [mode, setMode] = useState<TenderMode>('cash');
   // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
   // sale is Enter → Enter.
   const [cashText, setCashText] = useState((totalCents / 100).toFixed(2));
   const [cardText, setCardText] = useState('');
+  const [walletText, setWalletText] = useState('');
   const [reference, setReference] = useState('');
   const [dueDate, setDueDate] = useState(() => dueDateFromToday(defaultDays));
   // The total can move while the panel is open (a session quote re-priced, a discount typed).
@@ -95,21 +125,47 @@ export function useTender({ totalCents, customer, allowCredit = true }: TenderIn
   if (seenTotal !== totalCents) {
     setSeenTotal(totalCents);
     const untouched = cashText.trim() === '' || cashText === (seenTotal / 100).toFixed(2);
-    if (untouched && mode !== 'credit') setCashText((totalCents / 100).toFixed(2));
+    if (untouched && mode !== 'credit' && mode !== 'wallet')
+      setCashText((totalCents / 100).toFixed(2));
+    if (mode === 'wallet') {
+      const cover = walletCoverCents(customer, totalCents);
+      setWalletText((cover / 100).toFixed(2));
+      setCashText(((totalCents - cover) / 100).toFixed(2));
+    }
+  }
+  // A customer picked (or swapped) while in balance mode re-fills the split from their balance.
+  const [seenCustomer, setSeenCustomer] = useState(customer?.id ?? null);
+  if ((customer?.id ?? null) !== seenCustomer) {
+    setSeenCustomer(customer?.id ?? null);
+    if (mode === 'wallet') {
+      const cover = walletCoverCents(customer, totalCents);
+      setWalletText((cover / 100).toFixed(2));
+      setCashText(((totalCents - cover) / 100).toFixed(2));
+    }
   }
 
   const modes: TenderMode[] = ['cash'];
   if (cardEnabled) modes.push('card', 'split');
+  if (walletEnabled) modes.push('wallet');
   if (creditEnabled) modes.push('credit');
   const effective: TenderMode = modes.includes(mode) ? mode : 'cash';
 
   const cashCents = cashText.trim() ? parseMoneyInput(cashText) : 0;
   const cardCents = cardText.trim() ? parseMoneyInput(cardText) : 0;
+  const walletCents = walletText.trim() ? parseMoneyInput(walletText) : 0;
   const payments: SalePaymentInput[] = [];
   let creditCents = 0;
   let problem: Tender['problem'] = null;
   if (effective === 'card') {
     payments.push({ method: 'card', amountCents: totalCents, reference: reference || undefined });
+  } else if (effective === 'wallet') {
+    const fromWallet = walletCents ?? 0;
+    if (fromWallet > 0) payments.push({ method: 'wallet', amountCents: fromWallet });
+    if (cashCents && cashCents > 0) payments.push({ method: 'cash', amountCents: cashCents });
+    if (!customer) problem = 'walletNeedsCustomer';
+    else if (customer.walletBalanceCents <= 0) problem = 'walletEmpty';
+    else if (fromWallet > customer.walletBalanceCents || fromWallet > totalCents)
+      problem = 'walletOver';
   } else if (effective === 'credit') {
     const cashNow = Math.max(0, Math.min(cashCents ?? 0, totalCents));
     creditCents = totalCents - cashNow;
@@ -134,11 +190,20 @@ export function useTender({ totalCents, customer, allowCredit = true }: TenderIn
     .reduce((a, p) => a + p.amountCents, 0);
   if (!problem && nonCash > totalCents) problem = 'cardOver';
   if (!problem && paidCents > totalCents + MAX_OVERPAY_CENTS) problem = 'implausible';
-  const valid = cashCents !== null && cardCents !== null && problem === null;
-  const covered = valid && paidCents >= totalCents && (effective !== 'credit' || !!dueDate);
+  const valid =
+    cashCents !== null && cardCents !== null && walletCents !== null && problem === null;
+  const covered =
+    valid &&
+    paidCents >= totalCents &&
+    (effective !== 'credit' || !!dueDate) &&
+    (effective !== 'wallet' || (walletCents ?? 0) > 0);
   const changeCents = covered ? paidCents - totalCents : 0;
   const cashTargetCents =
-    effective === 'split' ? Math.max(0, totalCents - (cardCents ?? 0)) : totalCents;
+    effective === 'split'
+      ? Math.max(0, totalCents - (cardCents ?? 0))
+      : effective === 'wallet'
+        ? Math.max(0, totalCents - (walletCents ?? 0))
+        : totalCents;
 
   return {
     totalCents,
@@ -153,8 +218,11 @@ export function useTender({ totalCents, customer, allowCredit = true }: TenderIn
     setReference,
     dueDate,
     setDueDate,
+    walletText,
+    setWalletText,
     cashCents,
     cardCents,
+    walletCents,
     cashTargetCents,
     payments,
     paidCents,
@@ -187,11 +255,19 @@ export function TenderPanel({
   const { mode, customer } = tender;
 
   // Credit mode starts with nothing paid now: the whole amount goes on the tab unless typed.
+  // Balance mode starts with as much as the balance covers; the rest is pre-filled as cash.
   const switchMode = (m: TenderMode) => {
     if (m === tender.mode) return;
     tender.setMode(m);
     if (m === 'credit') tender.setCashText('');
-    else if (tender.mode === 'credit' && !tender.cashText.trim())
+    else if (m === 'wallet') {
+      const cover = walletCoverCents(customer, tender.totalCents);
+      tender.setWalletText((cover / 100).toFixed(2));
+      tender.setCashText(((tender.totalCents - cover) / 100).toFixed(2));
+    } else if (
+      (tender.mode === 'credit' || tender.mode === 'wallet') &&
+      (!tender.cashText.trim() || tender.cashText !== (tender.totalCents / 100).toFixed(2))
+    )
       tender.setCashText((tender.totalCents / 100).toFixed(2));
   };
 
@@ -211,7 +287,15 @@ export function TenderPanel({
     card: { label: t('pos.card'), icon: <CreditCard size={14} /> },
     split: { label: `${t('pos.cash')} + ${t('pos.card')}`, icon: null },
     credit: { label: t('pos.payLater'), icon: <CalendarClock size={14} /> },
+    wallet: {
+      label:
+        customer && customer.walletBalanceCents > 0
+          ? `${t('pos.wallet')} · ${fmt.money(customer.walletBalanceCents)}`
+          : t('pos.wallet'),
+      icon: <Wallet size={14} />,
+    },
   };
+  const walletRest = Math.max(0, tender.totalCents - (tender.walletCents ?? 0));
 
   return (
     <div className="stack">
@@ -226,7 +310,7 @@ export function TenderPanel({
             <button
               key={m}
               type="button"
-              className={`chip ${m === 'credit' ? 'chip--credit' : ''}`}
+              className={`chip ${m === 'credit' ? 'chip--credit' : ''} ${m === 'wallet' ? 'chip--wallet' : ''}`}
               aria-pressed={mode === m}
               onClick={() => switchMode(m)}
               data-testid={`${testId}-method-${m}`}
@@ -234,6 +318,89 @@ export function TenderPanel({
               {modeLabel[m].icon} {modeLabel[m].label}
             </button>
           ))}
+        </div>
+      )}
+
+      {mode === 'wallet' && (
+        <div className="tender-credit tender-wallet" data-testid={`${testId}-wallet`}>
+          {customer ? (
+            <div className="tender-credit__who">
+              <Wallet size={16} />
+              <div className="tender-credit__name">
+                <strong>{customer.name}</strong>
+                <span className="muted" data-testid={`${testId}-wallet-balance`}>
+                  {t('pos.walletBalance', { amount: fmt.money(customer.walletBalanceCents) })}
+                </span>
+              </div>
+            </div>
+          ) : onCustomerChange ? (
+            <Field label={t('pos.customer')} hint={t('pos.walletNeedsCustomer')}>
+              {(id) => (
+                <CustomerPicker
+                  id={id}
+                  value={null}
+                  onChange={onCustomerChange}
+                  placeholder={t('pos.customerPlaceholder')}
+                  autoFocus
+                />
+              )}
+            </Field>
+          ) : (
+            <Alert tone="warning">{t('pos.walletNeedsCustomer')}</Alert>
+          )}
+          {customer && customer.walletBalanceCents <= 0 && (
+            <Alert tone="warning">{t('pos.walletEmpty')}</Alert>
+          )}
+          {customer && customer.walletBalanceCents > 0 && (
+            <div className="grid grid--2">
+              <Field label={t('pos.walletFrom')}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    inputMode="decimal"
+                    className="num"
+                    value={tender.walletText}
+                    onChange={(e) => {
+                      tender.setWalletText(e.target.value);
+                      const cents = e.target.value.trim() ? parseMoneyInput(e.target.value) : 0;
+                      if (cents !== null)
+                        tender.setCashText(
+                          (Math.max(0, tender.totalCents - cents) / 100).toFixed(2),
+                        );
+                    }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    aria-invalid={tender.walletCents === null || tender.problem === 'walletOver'}
+                    data-testid={`${testId}-wallet-amount`}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('pos.walletCashRest')}
+                hint={walletRest > 0 ? t('pos.walletCashRestHint') : undefined}
+              >
+                {(id) => (
+                  <Input
+                    id={id}
+                    ref={cashRef}
+                    inputMode="decimal"
+                    className="num"
+                    placeholder="0.00"
+                    value={tender.cashText}
+                    onChange={(e) => tender.setCashText(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        onSubmit();
+                      }
+                    }}
+                    aria-invalid={tender.cashCents === null}
+                    data-testid={`${testId}-tendered`}
+                  />
+                )}
+              </Field>
+            </div>
+          )}
         </div>
       )}
 
@@ -387,6 +554,7 @@ export function TenderPanel({
       {tender.problem === 'creditOverLimit' && (
         <Alert tone="danger">{t('pos.payLaterOverLimit')}</Alert>
       )}
+      {tender.problem === 'walletOver' && <Alert tone="danger">{t('pos.walletOver')}</Alert>}
       {!tender.covered &&
         tender.problem === null &&
         tender.paidCents > 0 &&
@@ -402,6 +570,17 @@ export function TenderPanel({
             {t('pos.payLaterOnTab')} · {fmt.date(tender.dueDate)}
           </span>
           <strong className="num">{fmt.money(tender.creditCents)}</strong>
+        </div>
+      )}
+      {tender.covered && mode === 'wallet' && (
+        <div className="pos__change pos__change--wallet" data-testid={`${testId}-wallet-part`}>
+          <span>
+            {t('pos.walletTaken')} ·{' '}
+            {t('pos.walletLeft', {
+              amount: fmt.money((customer?.walletBalanceCents ?? 0) - (tender.walletCents ?? 0)),
+            })}
+          </span>
+          <strong className="num">{fmt.money(tender.walletCents ?? 0)}</strong>
         </div>
       )}
       {tender.covered && (mode !== 'credit' || tender.creditCents === 0) && (

@@ -399,6 +399,12 @@ interface DialogProps {
   /** Prevent closing with Escape / overlay click (e.g. forced password change). */
   locked?: boolean;
 }
+/**
+ * Open dialogs, oldest first. Escape closes only the topmost one, so a dialog opened from inside
+ * another (receipt from a statement, payment from a station) does not take its parent down with it.
+ */
+const openDialogs: symbol[] = [];
+
 export function Dialog({
   open,
   onClose,
@@ -420,14 +426,20 @@ export function Dialog({
   lockedRef.current = locked;
   useEffect(() => {
     if (!open) return;
+    const id = Symbol('dialog');
+    openDialogs.push(id);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !lockedRef.current) {
-        e.stopPropagation();
-        onCloseRef.current();
-      }
+      if (e.key !== 'Escape' || lockedRef.current) return;
+      if (openDialogs[openDialogs.length - 1] !== id) return;
+      e.stopPropagation();
+      onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      const at = openDialogs.indexOf(id);
+      if (at >= 0) openDialogs.splice(at, 1);
+    };
   }, [open]);
   // Focus the first control once, when the dialog opens.
   useEffect(() => {

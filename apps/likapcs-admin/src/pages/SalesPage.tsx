@@ -15,12 +15,12 @@ import {
   type SaleStatus,
   type SalesListResponse,
   type InvoiceData,
-  type PaymentMethod,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
@@ -261,7 +261,7 @@ export function SalesPage() {
 }
 
 // ─── Detail ────────────────────────────────────────────────────────────────────
-function SaleDetailDialog({
+export function SaleDetailDialog({
   saleId,
   onClose,
   canRefund,
@@ -522,8 +522,12 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
   const [quantities, setQuantities] = useState<Record<number, string>>({});
   const [reason, setReason] = useState('');
   const [restock, setRestock] = useState(true);
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const { methods: refundMethods } = usePaymentMethods();
+  const [method, setMethod] = useState<RefundRequest['method']>('cash');
+  const { methods: cashMethods } = usePaymentMethods();
+  // A sale on a customer's name may be refunded onto their prepaid balance (0.11.0).
+  const walletOn = useAppSettings()['wallet.enabled'];
+  const refundMethods: RefundRequest['method'][] =
+    walletOn && sale.customerId ? [...cashMethods, 'wallet'] : cashMethods;
 
   const lines = sale.items.filter((i) => i.refundedMilli < i.quantityMilli);
   const items = lines
@@ -649,11 +653,14 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
               <Select
                 id={id}
                 value={method}
-                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                onChange={(e) => setMethod(e.target.value as RefundRequest['method'])}
+                data-testid="refund-method"
               >
                 {refundMethods.map((m) => (
                   <option key={m} value={m}>
-                    {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
+                    {m === 'wallet'
+                      ? t('pos.wallet')
+                      : t(`sessions.methods.${m}` as 'sessions.methods.cash')}
                   </option>
                 ))}
               </Select>

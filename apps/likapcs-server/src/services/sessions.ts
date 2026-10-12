@@ -53,6 +53,7 @@ import type { RequestCancelReason, SessionRequestsService } from './requests.js'
 import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
+import type { WalletService } from './wallet.js';
 import type { StationsService } from './stations.js';
 
 interface SessionRow {
@@ -190,6 +191,7 @@ export class SessionsService {
     private readonly stations: StationsService,
     private readonly cash: CashService,
     private readonly debts: DebtsService,
+    private readonly wallet: WalletService,
     private readonly log: {
       info: (o: unknown, m?: string) => void;
       warn: (o: unknown, m?: string) => void;
@@ -337,6 +339,15 @@ export class SessionsService {
       [stationId],
     );
     return result.rows[0] ? this.mapRow(result.rows[0]) : null;
+  }
+
+  /** The customer the PC is playing on right now (null: no live session or a walk-in). */
+  async customerOfStation(stationId: string): Promise<string | null> {
+    const r = await this.pool.query<{ customer_id: string | null }>(
+      `SELECT customer_id FROM gaming_sessions WHERE station_id = $1 AND status IN ('active', 'paused') LIMIT 1`,
+      [stationId],
+    );
+    return r.rows[0]?.customer_id ?? null;
   }
 
   async list(query: SessionListQuery): Promise<{ items: SessionSummary[]; total: number }> {
@@ -1389,6 +1400,20 @@ export class SessionsService {
           [debtId],
         );
         dueDate = d.rows[0]?.due_date ?? null;
+      }
+      // Prepaid balance (0.11.0): the customer's wallet pays (part of) the bill.
+      const fromWallet = payments
+        .filter((p) => p.method === 'wallet')
+        .reduce((acc, p) => acc + p.amountCents, 0);
+      if (fromWallet > 0) {
+        await this.wallet.spend(client, {
+          customerId: input.customerId,
+          amountCents: fromWallet,
+          referenceType: 'sale',
+          referenceId: saleId,
+          note: `${receiptNo} · ${input.description}`,
+          actor: input.actor,
+        });
       }
       await client.query('UPDATE sales SET shift_id = $2 WHERE id = $1', [saleId, shiftId]);
     }

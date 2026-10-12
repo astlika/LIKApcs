@@ -148,6 +148,15 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
     >
       <div className="panel__head">
         <strong id="order-title">{t('orderTitle')}</strong>
+        {snap.account && snap.account.walletBalanceCents > 0 && (
+          <span
+            className="order__balance"
+            title={t('customerBalanceHint')}
+            data-testid="order-balance"
+          >
+            {t('balanceShort')} · {money(snap.account.walletBalanceCents)}
+          </span>
+        )}
         <button
           type="button"
           className="btn btn--ghost"

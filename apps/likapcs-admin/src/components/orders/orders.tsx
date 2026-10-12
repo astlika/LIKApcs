@@ -9,7 +9,7 @@
  *   reject             → the PC is told at once, with the reason.
  * Money never moves here except through those sale endpoints — the server is the authority.
  */
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banknote, Check, ReceiptText, X } from 'lucide-react';
 import type { CustomerSummary, ReceiptData, StationOrder } from '@likapcs/shared';
@@ -108,6 +108,18 @@ export function AcceptOrderDialog({
         : 'pay_now',
   );
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
+  // The session's customer is the paying customer: pre-attach them so their prepaid balance
+  // (0.11.0) is offered as a tender. The cashier may still clear or change the pick.
+  const touched = useRef(false);
+  const linked = useQuery({
+    queryKey: ['customers', 'detail', order.customerId],
+    queryFn: () => api<CustomerSummary>(`/customers/${order.customerId}`),
+    enabled: Boolean(order.customerId),
+  });
+  useEffect(() => {
+    if (linked.data && !touched.current && linked.data.status === 'active')
+      setCustomer(linked.data);
+  }, [linked.data]);
   const [done, setDone] = useState<StationOrder | null>(null);
   const tender = useTender({ totalCents: order.totalCents, customer });
   const payNow = settlement === 'pay_now';
@@ -235,7 +247,10 @@ export function AcceptOrderDialog({
           <TenderPanel
             tender={tender}
             onSubmit={submit}
-            onCustomerChange={setCustomer}
+            onCustomerChange={(c) => {
+              touched.current = true;
+              setCustomer(c);
+            }}
             autoFocus
             testId="order"
           />

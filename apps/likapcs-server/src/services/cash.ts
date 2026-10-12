@@ -297,7 +297,14 @@ export class CashService {
       amountCents: number;
       type: Extract<
         CashMovementType,
-        'sale' | 'refund' | 'expense' | 'supplier_payment' | 'customer_payment' | 'correction'
+        | 'sale'
+        | 'refund'
+        | 'expense'
+        | 'supplier_payment'
+        | 'customer_payment'
+        | 'wallet_topup'
+        | 'wallet_refund'
+        | 'correction'
       >;
       referenceType: string;
       referenceId: string;
@@ -466,6 +473,8 @@ export class CashService {
             'withdrawal',
             'expense',
             'customer_payment',
+            'wallet_topup',
+            'wallet_refund',
           ].includes(r.movement_type),
       )
       .reduce((acc, r) => acc + Number(r.amount), 0);
@@ -480,6 +489,8 @@ export class CashService {
       withdrawalsCents: -sum('withdrawal'),
       expensesCents: -sum('expense'),
       debtPaymentsCents: sum('customer_payment'),
+      walletTopUpsCents: sum('wallet_topup'),
+      walletRefundsCents: -sum('wallet_refund'),
       otherCents: other,
       expectedCashCents: openingCents + movementsSum,
       salesCount: bySource.rows.reduce((acc, r) => acc + Number(r.n), 0),

@@ -439,6 +439,8 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .overlay__mark {
   width: 18px;
@@ -1784,6 +1786,42 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* 0.11.0: the customer's prepaid balance, first thing in the dialog after signing in. */
+.customer-account {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 12px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+.customer-account--funded {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+.customer-account__label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.customer-account__amount {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #e5e7eb;
+}
+.customer-account--funded .customer-account__amount {
+  color: #86efac;
+}
+.customer-account__hint {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
 .customer-debt {
   margin: 0 0 8px;
   padding: 8px 10px;
@@ -2071,6 +2109,58 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   gap: 5px;
   flex: 0 1 auto;
   min-width: 0;
+}
+/* 0.11.0: prepaid balance pill — sized like the status label so the fixed window never clips it. */
+.overlay__balance {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.overlay__balance + .overlay__acts {
+  margin-left: 0;
+}
+/* With the pill the status label is gone, so "+ time" may use the room that is actually left. */
+.overlay__balance + .overlay__acts .overlay__more:not(.overlay__more--icon) {
+  max-width: none;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.overlay__balance + .overlay__label {
+  margin-left: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overlay--small .overlay__balance {
+  font-size: 9.5px;
+  padding: 0 6px;
+}
+.order__balance {
+  margin-left: auto;
+  margin-right: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.1);
+  color: #86efac;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .overlay__acts .overlay__more {
   margin-left: 0;

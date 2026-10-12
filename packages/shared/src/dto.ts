@@ -988,10 +988,20 @@ export type SaleStatus = (typeof SALE_STATUSES)[number];
  * Tenders a sale can be settled with. `credit` = "pay later": the amount becomes a customer debt
  * (`customer_debts`) with a due date; it needs a customer on the sale and the `debts.give` permission.
  */
-export const SALE_PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'credit'] as const;
+export const SALE_PAYMENT_METHODS = [
+  'cash',
+  'card',
+  'bank_transfer',
+  'other',
+  'credit',
+  'wallet',
+] as const;
 export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
-/** Methods money can actually be handed back with. */
-export const REFUND_METHODS = ['cash', 'card', 'bank_transfer', 'other'] as const;
+/**
+ * Methods money can actually be handed back with — and `wallet` (0.11.0): the refund / debt
+ * repayment is settled against the customer's prepaid balance instead of the drawer.
+ */
+export const REFUND_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'wallet'] as const;
 
 export const saleItemInputSchema = z.object({
   productId: z.string().uuid(),
@@ -1168,6 +1178,7 @@ export const CASH_MOVEMENT_TYPES = [
   'expense',
   'supplier_payment',
   'wallet_topup',
+  'wallet_refund',
   'customer_payment',
   'correction',
 ] as const;
@@ -1203,6 +1214,9 @@ export interface CashShiftTotals {
   expensesCents: number;
   /** Cash received for customer debts ("pay later" repayments). */
   debtPaymentsCents: number;
+  /** Cash taken in advance onto customer balances (0.11.0) / paid back out of them. */
+  walletTopUpsCents: number;
+  walletRefundsCents: number;
   otherCents: number;
   /** opening + Σ movements (what should be in the drawer right now / at close). */
   expectedCashCents: number;
@@ -1474,9 +1488,23 @@ export interface CustomerLoginResponse {
   /** Short-lived bearer token for the request endpoints (bound to this device). */
   customerToken: string;
   expiresAt: string;
-  customer: { id: string; name: string; code: string; balanceDueCents: number };
+  customer: ClientCustomerInfo;
   /** The customer's pending request on this PC, if one is already waiting. */
   pending: SessionRequest | null;
+}
+
+/**
+ * What a customer may see about their own account on the PC (0.11.0): the prepaid balance and
+ * what they owe. Returned by the login and `GET /client/customer`, pushed as `server.customer`
+ * for the customer of the running session.
+ */
+export interface ClientCustomerInfo {
+  id: string;
+  name: string;
+  code: string;
+  /** Prepaid money on the customer's name ("balanca"). */
+  walletBalanceCents: number;
+  balanceDueCents: number;
 }
 
 /** `GET /client/request-options`: what the customer may ask for on this PC right now. */
@@ -2288,6 +2316,143 @@ export interface DebtPaymentResult {
   paidCents: number;
   changeCents: number;
   customer: { id: string; name: string; balanceDueCents: number };
+}
+
+// ─── Customer wallet & account statement (0.11.0) ──────────────────────────────
+
+/** Error codes the balance tender can fail with (HTTP 409 / 400). */
+export const WALLET_ERROR_CODES = {
+  /** The balance is lower than the amount — `details.balanceCents` says how much there is. */
+  INSUFFICIENT: 'wallet_insufficient',
+  /** A balance payment needs a customer on the sale. */
+  NEEDS_CUSTOMER: 'wallet_needs_customer',
+  /** `wallet.enabled` is off. */
+  DISABLED: 'wallet_disabled',
+} as const;
+
+export const walletTopUpSchema = z.object({
+  amountCents: z.number().int().min(1).max(100_000_000),
+  /** Cash handed over (≥ amount); the response reports the change to give back. */
+  tenderedCents: z.number().int().min(0).max(100_000_000).optional(),
+  note: z.string().trim().max(200).optional(),
+});
+export type WalletTopUpRequest = z.infer<typeof walletTopUpSchema>;
+
+export const walletWithdrawSchema = z.object({
+  amountCents: z.number().int().min(1).max(100_000_000),
+  reason: z.string().trim().min(2).max(200),
+});
+export type WalletWithdrawRequest = z.infer<typeof walletWithdrawSchema>;
+
+export const WALLET_ENTRY_TYPES = [
+  'wallet_topup',
+  'wallet_payment',
+  'wallet_refund',
+  'wallet_withdrawal',
+] as const;
+export type WalletEntryType = (typeof WALLET_ENTRY_TYPES)[number];
+
+/** One line of the customer's balance ledger (newest first). */
+export interface WalletEntry {
+  id: string;
+  type: WalletEntryType;
+  /** Signed: top-ups / refunds positive, payments / withdrawals negative. */
+  amountCents: number;
+  balanceAfterCents: number;
+  /** What the money went to / came from: a receipt, a debt payment, a refund. */
+  referenceType: 'sale' | 'debt_payment' | 'refund' | 'payment' | null;
+  referenceId: string | null;
+  receiptNo: string | null;
+  note: string | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+export interface WalletMutationResult {
+  customer: CustomerSummary;
+  entry: WalletEntry;
+  /** Top-ups: cash to hand back when more was tendered than the amount. */
+  changeCents: number;
+}
+
+/**
+ * `GET /customers/:id/statement` — everything that ever happened on a customer's account,
+ * newest first: receipts (POS, session bills, orders) with how each was paid, debt
+ * repayments, wallet top-ups / pay-outs and refunds.
+ */
+export const STATEMENT_FILTERS = ['all', 'receipts', 'unpaid', 'payments', 'wallet'] as const;
+export type StatementFilter = (typeof STATEMENT_FILTERS)[number];
+
+export const statementQuerySchema = paginationQuerySchema.extend({
+  filter: z.enum(STATEMENT_FILTERS).default('all'),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+});
+export type StatementQuery = z.infer<typeof statementQuerySchema>;
+
+export const STATEMENT_ENTRY_KINDS = [
+  'sale',
+  'refund',
+  'debt_payment',
+  'wallet_topup',
+  'wallet_withdrawal',
+] as const;
+export type StatementEntryKind = (typeof STATEMENT_ENTRY_KINDS)[number];
+
+export interface StatementEntry {
+  /** `${kind}:${id}` — stable across pages. */
+  key: string;
+  kind: StatementEntryKind;
+  at: string;
+  /** Receipt / refund number, when the entry has one. */
+  receiptNo: string | null;
+  /** Receipts: what was bought (first lines, "PC 01 · 1h 30m" for a session bill). */
+  description: string;
+  stationCode: string | null;
+  /** Session bills: billed play time. */
+  durationSeconds: number | null;
+  /** The amount of the entry (receipt total, repayment, top-up…), always ≥ 0. */
+  amountCents: number;
+  /** Receipts: split of the tenders. Repayments: the method used. */
+  paid: { cashCents: number; walletCents: number; creditCents: number; otherCents: number };
+  /** Receipts settled on credit: the debt's state today. */
+  debt: {
+    id: string;
+    status: 'open' | 'partial' | 'paid' | 'written_off';
+    remainingCents: number;
+    dueDate: string;
+    /** When the debt was fully settled (or written off). */
+    settledAt: string | null;
+  } | null;
+  /** Repayments: the receipts (debts) the money went to. */
+  settles: { debtId: string; receiptNo: string | null; amountCents: number }[];
+  saleId: string | null;
+  sessionId: string | null;
+  createdByName: string | null;
+  note: string | null;
+}
+
+export interface CustomerStatement {
+  customer: CustomerSummary;
+  /** Over the whole history (not only the filtered page). */
+  totals: {
+    receiptsCount: number;
+    /** Sum of receipt totals net of refunds. */
+    spentCents: number;
+    paidCashCents: number;
+    paidWalletCents: number;
+    onCreditCents: number;
+    debtPaidCents: number;
+    debtOpenCents: number;
+    walletTopUpsCents: number;
+    playSeconds: number;
+    firstVisitAt: string | null;
+    lastVisitAt: string | null;
+  };
+  items: StatementEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 // Ads — the customer-screen slideshow (`ads` table, migration 0016)
