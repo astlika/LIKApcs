@@ -3,22 +3,28 @@
  *
  * The owner curates the slideshow: product ads (optionally with a promo price that the POS then
  * charges automatically — the server derives it, see `ACTIVE_PROMO_SQL`) and custom slides
- * (title, text, picture). Each ad has a badge, a schedule, an on/off switch and a manual order
- * (drag, or the arrow buttons). The master switch (`client.ads_enabled`) and the look (layout,
- * interval, transition) stay under Settings › Client screen; this page links there.
+ * (title, text, picture). Each ad has a badge, a text line, a colour theme, its own time on screen,
+ * a schedule, an on/off switch and a manual order (drag, or the arrow buttons). Products come in
+ * through a catalogue browser (search, categories, multi-select) — one product continues into the
+ * details dialog (promo price…), several are added at once. The master switch
+ * (`client.ads_enabled`) and the look (layout, interval, transition) stay under Settings › Client
+ * screen; this page links there and switches the slideshow on by itself when the first ad lands.
  *
  * Every change is pushed to the PCs by the server (`server.display`) — no restart anywhere.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Check,
   GripVertical,
   ImageIcon,
   Megaphone,
   Package,
   Pencil,
   Plus,
+  Search,
   Settings2,
   Sparkles,
   Trash2,
@@ -31,12 +37,19 @@ import type {
   AdKind,
   AdPatch,
   AdSummary,
+  AdTheme,
+  CategorySummary,
   ProductSummary,
   SettingsMap,
 } from '@likapcs/shared';
-import { PERMISSIONS, parseMoneyInput } from '@likapcs/shared';
+import {
+  AD_DURATION_MAX_SECONDS,
+  AD_DURATION_MIN_SECONDS,
+  AD_THEMES,
+  PERMISSIONS,
+  parseMoneyInput,
+} from '@likapcs/shared';
 import { ProductImageField, type PendingImage } from '../components/catalog/ProductImageField';
-import { ProductPicker } from '../components/catalog/ProductPicker';
 import {
   Alert,
   Badge,
@@ -67,6 +80,21 @@ const STATE_TONE: Record<
   scheduled: 'info',
   expired: 'warning',
   unavailable: 'danger',
+};
+
+/** Theme swatches — the same two base tones the client uses (see client styles `.ads__theme--*`). */
+const THEME_COLORS: Record<AdTheme, [string, string]> = {
+  midnight: ['#1e293b', '#0f172a'],
+  ocean: ['#0c4a6e', '#082f49'],
+  sunset: ['#7c2d12', '#3b0764'],
+  forest: ['#14532d', '#052e16'],
+  ruby: ['#7f1d1d', '#27060a'],
+  gold: ['#78350f', '#1c1917'],
+  mono: ['#262626', '#0a0a0a'],
+};
+const themeStyle = (theme: AdTheme | null) => {
+  const [a, b] = THEME_COLORS[theme ?? 'midnight'];
+  return { background: `linear-gradient(135deg, ${a}, ${b})` };
 };
 
 /** `datetime-local` value (local time, minutes) ⇄ ISO instant. */
@@ -136,16 +164,40 @@ export function AdsPage() {
     onSuccess: (data) => queryClient.setQueryData(['ads'], data),
     onError,
   });
+  // The first ads landing while the slideshow is off: switch it on, so "I added ads but the PCs
+  // show nothing" cannot happen. Only for users allowed to change settings; told by a toast.
+  const autoEnable = () => {
+    if (slideshowOn || !canSettings || toggleSlideshow.isPending) return;
+    toggleSlideshow.mutate(true, { onSuccess: () => toast.success(t('ads.autoEnabled')) });
+  };
   const addAll = useMutation({
-    mutationFn: () => api<AdBulkResult>('/ads/products/all', { method: 'POST' }),
+    mutationFn: () =>
+      api<AdBulkResult>('/ads/products/all', { method: 'POST', body: { onlyWithPhoto: false } }),
     onSuccess: (r) => {
       invalidate();
       toast.success(r.created > 0 ? t('ads.addedAll', { n: r.created }) : t('ads.addedAllNone'));
+      if (r.created > 0) autoEnable();
+    },
+    onError,
+  });
+  const addChosen = useMutation({
+    mutationFn: (productIds: string[]) =>
+      api<AdBulkResult>('/ads/products/bulk', { method: 'POST', body: { productIds } }),
+    onSuccess: (r) => {
+      invalidate();
+      setBrowser(false);
+      toast.success(r.created > 0 ? t('ads.addedAll', { n: r.created }) : t('ads.addedAllNone'));
+      if (r.created > 0) autoEnable();
     },
     onError,
   });
 
-  const [dialog, setDialog] = useState<{ kind: AdKind; ad: AdSummary | null } | null>(null);
+  const [browser, setBrowser] = useState(false);
+  const [dialog, setDialog] = useState<{
+    kind: AdKind;
+    ad: AdSummary | null;
+    product?: ProductSummary;
+  } | null>(null);
   const [deleting, setDeleting] = useState<AdSummary | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -211,7 +263,7 @@ export function AdsPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={() => setDialog({ kind: 'product', ad: null })}
+                onClick={() => setBrowser(true)}
                 data-testid="ads-add-product"
               >
                 <Plus size={16} /> {t('ads.addProduct')}
@@ -221,9 +273,13 @@ export function AdsPage() {
         }
       />
 
-      <div className="ads-master" data-testid="ads-master">
+      <div
+        className={`ads-master ${slideshowOn ? '' : 'ads-master--off'}`}
+        data-testid="ads-master"
+        data-on={slideshowOn ? 'true' : 'false'}
+      >
         <div className="ads-master__text">
-          <Megaphone size={18} />
+          {slideshowOn ? <Megaphone size={18} /> : <AlertTriangle size={18} />}
           <div>
             <strong>{slideshowOn ? t('ads.masterOn') : t('ads.masterOff')}</strong>
             <span className="muted">
@@ -260,10 +316,7 @@ export function AdsPage() {
             action={
               canManage ? (
                 <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
-                  <Button
-                    variant="primary"
-                    onClick={() => setDialog({ kind: 'product', ad: null })}
-                  >
+                  <Button variant="primary" onClick={() => setBrowser(true)}>
                     <Plus size={16} /> {t('ads.addProduct')}
                   </Button>
                   <Button onClick={() => addAll.mutate()} loading={addAll.isPending}>
@@ -298,7 +351,7 @@ export function AdsPage() {
                       <GripVertical size={16} />
                     </span>
                   )}
-                  <span className="ads-row__thumb">
+                  <span className="ads-row__thumb" style={themeStyle(a.theme)}>
                     {a.imageUrl ? (
                       <img src={fileUrl(a.imageUrl) ?? ''} alt="" draggable={false} />
                     ) : a.kind === 'product' ? (
@@ -311,11 +364,18 @@ export function AdsPage() {
                     <span className="ads-row__name">
                       {a.kind === 'product' ? a.productName : a.title}
                       {a.badge && <Badge tone="accent">{a.badge}</Badge>}
+                      {a.kind === 'product' && a.productInStock === false && (
+                        <span title={t('ads.outOfStockHint')} data-testid="ad-out-of-stock">
+                          <Badge tone="warning">{t('ads.outOfStock')}</Badge>
+                        </span>
+                      )}
                     </span>
                     <span className="ads-row__sub muted">
                       {a.kind === 'product'
-                        ? `${t('ads.kindProduct')}${a.productSku ? ` · ${a.productSku}` : ''}`
+                        ? a.body ||
+                          `${t('ads.kindProduct')}${a.productSku ? ` · ${a.productSku}` : ''}`
                         : a.body || t('ads.kindCustom')}
+                      {a.durationSeconds !== null && ` · ${a.durationSeconds} s`}
                     </span>
                   </span>
                   <span className="ads-row__price num">
@@ -417,15 +477,30 @@ export function AdsPage() {
         </div>
       )}
 
+      {browser && (
+        <ProductBrowserDialog
+          advertised={new Set(items.map((a) => a.productId).filter((id): id is string => !!id))}
+          busy={addChosen.isPending}
+          onClose={() => setBrowser(false)}
+          onAddMany={(ids) => addChosen.mutate(ids)}
+          onPickOne={(product) => {
+            setBrowser(false);
+            setDialog({ kind: 'product', ad: null, product });
+          }}
+        />
+      )}
       {dialog && (
         <AdDialog
           kind={dialog.kind}
           ad={dialog.ad}
+          product={dialog.product ?? null}
+          defaultIntervalSeconds={publicSettings.data?.['client.ads_interval_seconds'] ?? 8}
           onClose={() => setDialog(null)}
-          onSaved={(saved) => {
+          onSaved={(saved, created) => {
             invalidate();
             setSelectedId(saved.id);
             setDialog(null);
+            if (created) autoEnable();
           }}
         />
       )}
@@ -457,12 +532,17 @@ function AdPreview({ ad }: { ad: AdSummary }) {
   const name = ad.kind === 'product' ? ad.productName : ad.title;
   const src = fileUrl(ad.imageUrl);
   return (
-    <div className={`ad-preview ${src ? '' : 'ad-preview--text'}`} data-testid="ad-preview">
+    <div
+      className={`ad-preview ${src ? '' : 'ad-preview--text'}`}
+      style={themeStyle(ad.theme)}
+      data-testid="ad-preview"
+      data-theme={ad.theme ?? 'midnight'}
+    >
       {src ? <img src={src} alt="" draggable={false} /> : <div className="ad-preview__blank" />}
       {ad.badge && <span className="ad-preview__badge">{ad.badge}</span>}
       <div className="ad-preview__caption">
         <strong>{name}</strong>
-        {ad.kind === 'custom' && ad.body && <span>{ad.body}</span>}
+        {ad.body && <span>{ad.body}</span>}
         {ad.kind === 'product' && ad.productPriceCents !== null && (
           <span className="ad-preview__price">
             {promo && <s>{fmt.money(ad.productPriceCents)}</s>}
@@ -477,27 +557,38 @@ function AdPreview({ ad }: { ad: AdSummary }) {
 function AdDialog({
   kind,
   ad,
+  product: initialProduct,
+  defaultIntervalSeconds,
   onClose,
   onSaved,
 }: {
   kind: AdKind;
   ad: AdSummary | null;
+  /** New product ad: the product chosen in the browser. */
+  product: ProductSummary | null;
+  defaultIntervalSeconds: number;
   onClose: () => void;
-  onSaved: (ad: AdSummary) => void;
+  onSaved: (ad: AdSummary, created: boolean) => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
-  const [product, setProduct] = useState<{ id: string; name: string; priceCents: number } | null>(
-    ad?.productId
-      ? { id: ad.productId, name: ad.productName ?? '', priceCents: ad.productPriceCents ?? 0 }
-      : null,
-  );
+  const product = ad?.productId
+    ? { id: ad.productId, name: ad.productName ?? '', priceCents: ad.productPriceCents ?? 0 }
+    : initialProduct
+      ? {
+          id: initialProduct.id,
+          name: initialProduct.name,
+          priceCents: initialProduct.sellingPriceCents,
+        }
+      : null;
   const [form, setForm] = useState({
     title: ad?.title ?? '',
     body: ad?.body ?? '',
     promo: ad?.promoPriceCents != null ? (ad.promoPriceCents / 100).toFixed(2) : '',
     badge: ad?.badge ?? '',
+    theme: (ad?.theme ?? 'midnight') as AdTheme,
+    duration: ad?.durationSeconds != null ? String(ad.durationSeconds) : '',
     startsAt: toLocalInput(ad?.startsAt ?? null),
     endsAt: toLocalInput(ad?.endsAt ?? null),
     enabled: ad?.enabled ?? true,
@@ -519,20 +610,33 @@ function AdDialog({
   const windowInvalid = Boolean(startIso && endIso && new Date(endIso) <= new Date(startIso));
   const titleMissing = kind === 'custom' && form.title.trim().length === 0;
   const productMissing = kind === 'product' && product === null;
+  const durationSeconds = form.duration.trim() === '' ? null : Number(form.duration);
+  const durationInvalid =
+    durationSeconds !== null &&
+    (!Number.isInteger(durationSeconds) ||
+      durationSeconds < AD_DURATION_MIN_SECONDS ||
+      durationSeconds > AD_DURATION_MAX_SECONDS);
   const valid =
-    !promoInvalid && !promoNotBelow && !windowInvalid && !titleMissing && !productMissing;
+    !promoInvalid &&
+    !promoNotBelow &&
+    !windowInvalid &&
+    !titleMissing &&
+    !productMissing &&
+    !durationInvalid;
   const discountPct =
     promoCents !== null && product && product.priceCents > 0 && promoCents < product.priceCents
       ? Math.round((1 - promoCents / product.priceCents) * 100)
       : null;
 
-  useEffect(() => setError(null), [form, product]);
+  useEffect(() => setError(null), [form]);
 
   const save = useMutation({
     mutationFn: async (): Promise<AdSummary> => {
       const common = {
-        body: kind === 'custom' ? form.body.trim() || null : null,
+        body: form.body.trim() || null,
         badge: form.badge.trim() || null,
+        theme: form.theme === 'midnight' ? null : form.theme,
+        durationSeconds,
         startsAt: startIso,
         endsAt: endIso,
         enabled: form.enabled,
@@ -578,7 +682,7 @@ function AdDialog({
     },
     onSuccess: (saved) => {
       toast.success(t('ads.saved'));
-      onSaved(saved);
+      onSaved(saved, ad === null);
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
@@ -589,7 +693,11 @@ function AdDialog({
       onClose={onClose}
       size="md"
       title={
-        ad ? t('ads.editTitle') : kind === 'product' ? t('ads.addProduct') : t('ads.addCustom')
+        ad
+          ? t('ads.editTitle')
+          : kind === 'product'
+            ? t('ads.productDialogTitle')
+            : t('ads.addCustom')
       }
       description={kind === 'product' ? t('ads.productDialogHint') : t('ads.customDialogHint')}
       footer={
@@ -616,30 +724,15 @@ function AdDialog({
           if (valid && !save.isPending) save.mutate();
         }}
       >
-        {kind === 'product' && (
+        {kind === 'product' && product && (
           <Field label={t('ads.product')} className="span-2">
-            {(id) =>
-              product ? (
-                <div className="ads-picked" data-testid="ad-picked-product">
-                  <Package size={16} />
-                  <strong>{product.name}</strong>
-                  <span className="muted num">{fmt.money(product.priceCents)}</span>
-                  {!ad && (
-                    <Button size="sm" variant="ghost" onClick={() => setProduct(null)}>
-                      {t('ads.changeProduct')}
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <ProductPicker
-                  id={id}
-                  autoFocus
-                  onPick={(p: ProductSummary) =>
-                    setProduct({ id: p.id, name: p.name, priceCents: p.sellingPriceCents })
-                  }
-                />
-              )
-            }
+            {() => (
+              <div className="ads-picked" data-testid="ad-picked-product">
+                <Package size={16} />
+                <strong>{product.name}</strong>
+                <span className="muted num">{fmt.money(product.priceCents)}</span>
+              </div>
+            )}
           </Field>
         )}
         {kind === 'product' && (
@@ -663,6 +756,7 @@ function AdDialog({
             {(id, invalid) => (
               <Input
                 id={id}
+                autoFocus
                 className="num"
                 inputMode="decimal"
                 placeholder="0.00"
@@ -692,9 +786,14 @@ function AdDialog({
             )}
           </Field>
         )}
-        {kind === 'custom' && (
-          <Field label={t('ads.bodyField')} hint={t('ads.bodyHint')} className="span-2" optional>
-            {(id) => (
+        <Field
+          label={t('ads.bodyField')}
+          hint={kind === 'custom' ? t('ads.bodyHint') : t('ads.productBodyHint')}
+          className="span-2"
+          optional
+        >
+          {(id) =>
+            kind === 'custom' ? (
               <Textarea
                 id={id}
                 rows={3}
@@ -703,9 +802,59 @@ function AdDialog({
                 onChange={(e) => set('body', e.target.value)}
                 data-testid="ad-body"
               />
-            )}
-          </Field>
-        )}
+            ) : (
+              <Input
+                id={id}
+                maxLength={120}
+                value={form.body}
+                onChange={(e) => set('body', e.target.value)}
+                data-testid="ad-body"
+              />
+            )
+          }
+        </Field>
+        <Field label={t('ads.theme')} hint={t('ads.themeHint')} className="span-2">
+          {() => (
+            <div className="ad-themes" role="radiogroup" data-testid="ad-themes">
+              {AD_THEMES.map((theme) => (
+                <button
+                  key={theme}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.theme === theme}
+                  className={`ad-theme ${form.theme === theme ? 'is-on' : ''}`}
+                  title={t(`ads.themes.${theme}`)}
+                  onClick={() => set('theme', theme)}
+                  data-testid={`ad-theme-${theme}`}
+                >
+                  <span className="ad-theme__swatch" style={themeStyle(theme)}>
+                    {form.theme === theme && <Check size={14} />}
+                  </span>
+                  <span className="ad-theme__label">{t(`ads.themes.${theme}`)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Field>
+        <Field
+          label={t('ads.duration')}
+          hint={t('ads.durationHint', { n: defaultIntervalSeconds })}
+          optional
+          error={durationInvalid ? t('common.invalid') : undefined}
+        >
+          {(id, invalid) => (
+            <Input
+              id={id}
+              className="num"
+              inputMode="numeric"
+              placeholder={String(defaultIntervalSeconds)}
+              aria-invalid={invalid || undefined}
+              value={form.duration}
+              onChange={(e) => set('duration', e.target.value)}
+              data-testid="ad-duration"
+            />
+          )}
+        </Field>
         <Field label={t('ads.badge')} hint={t('ads.badgeHint')} optional>
           {(id) => (
             <Input
@@ -770,6 +919,221 @@ function AdDialog({
           </div>
         )}
       </form>
+    </Dialog>
+  );
+}
+
+/**
+ * Catalogue browser for new product ads: every active product (search, category chips,
+ * tick boxes). One ticked product continues into the details dialog (promo price, look…);
+ * several are added at once at their regular price. Products that already have an ad are shown
+ * but cannot be ticked twice.
+ */
+function ProductBrowserDialog({
+  advertised,
+  busy,
+  onClose,
+  onAddMany,
+  onPickOne,
+}: {
+  advertised: Set<string>;
+  busy: boolean;
+  onClose: () => void;
+  onAddMany: (productIds: string[]) => void;
+  onPickOne: (product: ProductSummary) => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const [q, setQ] = useState('');
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const products = useQuery({
+    queryKey: ['products', 'ads-browser'],
+    queryFn: () =>
+      api<{ items: ProductSummary[]; total: number }>('/products', {
+        query: { active: 'active', pageSize: 500 },
+      }),
+    staleTime: 10_000,
+  });
+  const categories = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => api<CategorySummary[]>('/catalog/categories'),
+    staleTime: 60_000,
+  });
+  const all = useMemo(() => products.data?.items ?? [], [products.data]);
+  const needle = q.trim().toLowerCase();
+  const shown = useMemo(
+    () =>
+      all.filter(
+        (p) =>
+          (categoryId === null || p.categoryId === categoryId) &&
+          (needle === '' ||
+            p.name.toLowerCase().includes(needle) ||
+            p.sku.toLowerCase().includes(needle) ||
+            p.barcodes.some((b) => b.barcode.includes(needle))),
+      ),
+    [all, categoryId, needle],
+  );
+  const usedCategories = useMemo(() => {
+    const ids = new Set(all.map((p) => p.categoryId).filter((id): id is string => !!id));
+    return (categories.data ?? []).filter((c) => ids.has(c.id));
+  }, [all, categories.data]);
+  const pickedSet = new Set(picked);
+  const toggle = (p: ProductSummary) => {
+    if (advertised.has(p.id)) return;
+    setPicked((cur) => (cur.includes(p.id) ? cur.filter((id) => id !== p.id) : [...cur, p.id]));
+  };
+  const selectShown = () =>
+    setPicked((cur) => [
+      ...cur,
+      ...shown.filter((p) => !advertised.has(p.id) && !cur.includes(p.id)).map((p) => p.id),
+    ]);
+  const one = picked.length === 1 ? all.find((p) => p.id === picked[0]) : undefined;
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title={t('ads.browserTitle')}
+      description={t('ads.browserHint')}
+      footer={
+        <>
+          <span className="muted" style={{ marginRight: 'auto' }} data-testid="browser-count">
+            {t('ads.browserSelected', { n: picked.length })}
+          </span>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
+          {one ? (
+            <Button variant="primary" onClick={() => onPickOne(one)} data-testid="browser-next">
+              {t('ads.browserNext')}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              disabled={picked.length === 0}
+              loading={busy}
+              onClick={() => onAddMany(picked)}
+              data-testid="browser-add"
+            >
+              {t('ads.browserAdd', { n: picked.length })}
+            </Button>
+          )}
+        </>
+      }
+    >
+      <div className="ads-browser" data-testid="ads-browser">
+        <div className="ads-browser__bar">
+          <div className="customer-picker" style={{ flex: 1 }}>
+            <Search size={14} className="customer-picker__icon" aria-hidden />
+            <input
+              className="input customer-picker__input"
+              autoFocus
+              placeholder={t('ads.browserSearch')}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              data-testid="browser-search"
+            />
+          </div>
+          <Button size="sm" variant="ghost" onClick={selectShown} disabled={shown.length === 0}>
+            {t('ads.browserSelectShown')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setPicked([])}
+            disabled={picked.length === 0}
+          >
+            {t('ads.browserClear')}
+          </Button>
+        </div>
+        {usedCategories.length > 0 && (
+          <div className="ads-browser__cats">
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={categoryId === null}
+              onClick={() => setCategoryId(null)}
+            >
+              {t('ads.browserAll')}
+            </button>
+            {usedCategories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="chip"
+                aria-pressed={categoryId === c.id}
+                onClick={() => setCategoryId(c.id)}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
+        {products.isLoading ? (
+          <Loading />
+        ) : products.isError ? (
+          <Alert tone="danger">{t('common.errorGeneric')}</Alert>
+        ) : all.length === 0 ? (
+          <EmptyState icon={<Package size={24} />} title={t('ads.browserNone')} />
+        ) : shown.length === 0 ? (
+          <EmptyState icon={<Search size={24} />} title={t('ads.browserEmpty')} />
+        ) : (
+          <ul className="ads-browser__list" data-testid="browser-list">
+            {shown.map((p) => {
+              const already = advertised.has(p.id);
+              const on = pickedSet.has(p.id);
+              const src = fileUrl(p.imageUrl);
+              return (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className={`ads-browser__item ${on ? 'is-on' : ''} ${already ? 'is-used' : ''}`}
+                    onClick={() => toggle(p)}
+                    disabled={already}
+                    aria-pressed={on}
+                    data-testid="browser-item"
+                    data-product={p.id}
+                    data-state={already ? 'used' : on ? 'on' : 'off'}
+                  >
+                    <span className={`ads-browser__check ${on ? 'is-on' : ''}`} aria-hidden>
+                      {on && <Check size={14} />}
+                    </span>
+                    <span className="ads-browser__thumb">
+                      {src ? <img src={src} alt="" draggable={false} /> : <Package size={16} />}
+                    </span>
+                    <span className="ads-browser__main">
+                      <span className="ads-browser__name">{p.name}</span>
+                      <span className="ads-browser__sub muted">
+                        {p.sku}
+                        {p.categoryName ? ` · ${p.categoryName}` : ''}
+                        {!p.imageUrl && ` · ${t('ads.browserNoPhoto')}`}
+                      </span>
+                    </span>
+                    <span className="ads-browser__tags">
+                      {already && <Badge tone="info">{t('ads.browserAlready')}</Badge>}
+                      {p.trackStock && p.stockMilli <= 0 && (
+                        <Badge tone="warning">{t('ads.browserOutOfStock')}</Badge>
+                      )}
+                    </span>
+                    <span className="ads-browser__price num">
+                      {p.promoPriceCents !== null ? (
+                        <>
+                          <s className="muted">{fmt.money(p.sellingPriceCents)}</s>{' '}
+                          <strong className="text-success">{fmt.money(p.promoPriceCents)}</strong>
+                        </>
+                      ) : (
+                        fmt.money(p.sellingPriceCents)
+                      )}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </Dialog>
   );
 }

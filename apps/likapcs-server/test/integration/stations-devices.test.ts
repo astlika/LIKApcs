@@ -262,6 +262,7 @@ describe('stations, device registration and realtime presence', () => {
         widgetShowPayment: true,
         lockTitle: 'brand',
         currency: 'EUR',
+        staffLoginUsername: '',
         ads: { enabled: false, layout: 'card', intervalSeconds: 8 },
       },
     });

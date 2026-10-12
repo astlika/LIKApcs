@@ -499,6 +499,14 @@ export function SettingsPage() {
               />
             </Card>
             <Card
+              title={t('settings.client.staffLoginTitle')}
+              subtitle={t('settings.client.staffLoginHint')}
+            >
+              {text('client.staff_login_username', t('settings.client.staffLoginUsername'), {
+                hint: t('settings.client.staffLoginUsernameHint'),
+              })}
+            </Card>
+            <Card
               title={t('settings.client.adsTitle')}
               subtitle={t('settings.client.adsHint')}
               actions={

@@ -3,8 +3,10 @@
  *
  * Two kinds: `product` (a product, optionally with a promo price) and `custom` (a free slide:
  * title, text, picture). The same table drives two things:
- *   * `clientFeed()` — what LIKApcs-Client shows: enabled ads inside their schedule, products only
- *     while active and in stock. Ordered by hand (`sort_order`).
+ *   * `clientFeed()` — what LIKApcs-Client shows: enabled ads inside their schedule; product ads
+ *     only while the product is active (archived ones drop out by themselves — being out of stock
+ *     does *not* hide an ad since 0.7.1, the Admin merely flags it). Ordered by hand
+ *     (`sort_order`). Each item carries its theme and its own duration (0017).
  *   * the **promo price** the POS charges: `ACTIVE_PROMO_SQL` is the single definition of "a
  *     promo is live", used by the catalogue (`ProductSummary.promoPriceCents`) and by
  *     `SalesService.loadProducts`, so the shelf, the screen and the receipt always agree.
@@ -18,6 +20,7 @@ import type {
   AdPatch,
   AdState,
   AdSummary,
+  AdTheme,
   ClientAdItem,
 } from '@likapcs/shared';
 import type { DbPool, Queryable } from '../db/pool.js';
@@ -54,6 +57,8 @@ interface AdRow {
   body: string | null;
   image_path: string | null;
   badge: string | null;
+  theme: AdTheme | null;
+  duration_seconds: number | null;
   starts_at: Date | null;
   ends_at: Date | null;
   enabled: boolean;
@@ -67,8 +72,9 @@ const AD_SELECT = `
          p.selling_price_cents::text AS product_price_cents,
          CASE WHEN p.id IS NULL THEN NULL ELSE (NOT p.track_stock OR p.stock_milli > 0) END AS product_in_stock,
          p.is_active AS product_active, p.image_path AS product_image_path,
-         a.promo_price_cents::text, a.title, a.body, a.image_path, a.badge, a.starts_at, a.ends_at,
-         a.enabled, a.sort_order, a.created_at, a.updated_at
+         a.promo_price_cents::text, a.title, a.body, a.image_path, a.badge, a.theme,
+         a.duration_seconds, a.starts_at, a.ends_at, a.enabled, a.sort_order, a.created_at,
+         a.updated_at
     FROM ads a
     LEFT JOIN products p ON p.id = a.product_id`;
 const AD_ORDER = 'ORDER BY a.sort_order, a.created_at, a.id';
@@ -95,8 +101,8 @@ export class AdsService {
     if (!row.enabled) return 'disabled';
     if (row.starts_at && row.starts_at > now) return 'scheduled';
     if (row.ends_at && row.ends_at <= now) return 'expired';
-    if (row.kind === 'product' && !(row.product_active && row.product_in_stock))
-      return 'unavailable';
+    // Archived products leave the screens by themselves; out of stock is only flagged in Admin.
+    if (row.kind === 'product' && !row.product_active) return 'unavailable';
     return 'live';
   }
 
@@ -117,6 +123,8 @@ export class AdsService {
       body: row.body,
       imageUrl: ProductImageStore.urlFor(row.image_path ?? row.product_image_path),
       badge: row.badge,
+      theme: row.theme,
+      durationSeconds: row.duration_seconds,
       startsAt: row.starts_at?.toISOString() ?? null,
       endsAt: row.ends_at?.toISOString() ?? null,
       enabled: row.enabled,
@@ -149,7 +157,7 @@ export class AdsService {
        WHERE a.enabled
          AND (a.starts_at IS NULL OR a.starts_at <= now())
          AND (a.ends_at IS NULL OR a.ends_at > now())
-         AND (a.kind = 'custom' OR (p.is_active AND (NOT p.track_stock OR p.stock_milli > 0)))
+         AND (a.kind = 'custom' OR p.is_active)
        ${AD_ORDER} LIMIT $1`,
       [limit],
     );
@@ -162,12 +170,14 @@ export class AdsService {
         id: row.id,
         kind: row.kind,
         name: row.kind === 'product' ? (row.product_name ?? '') : (row.title ?? ''),
-        body: row.kind === 'custom' ? row.body : null,
+        body: row.body,
         priceCents: row.kind === 'product' ? (promoLive ? promo : regular) : null,
         oldPriceCents: promoLive ? regular : null,
         badge: row.badge,
         imageUrl: ProductImageStore.urlFor(row.image_path ?? row.product_image_path),
         categoryName: row.kind === 'product' ? row.category_name : null,
+        theme: row.theme,
+        durationSeconds: row.duration_seconds,
       };
     });
   }
@@ -203,9 +213,9 @@ export class AdsService {
       );
       const r = await client
         .query<{ id: string }>(
-          `INSERT INTO ads (kind, product_id, title, body, promo_price_cents, badge, starts_at, ends_at,
-                            enabled, sort_order, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+          `INSERT INTO ads (kind, product_id, title, body, promo_price_cents, badge, theme,
+                            duration_seconds, starts_at, ends_at, enabled, sort_order, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
           [
             input.kind,
             input.kind === 'product' ? input.productId : null,
@@ -213,6 +223,8 @@ export class AdsService {
             input.body ?? null,
             input.kind === 'product' ? (input.promoPriceCents ?? null) : null,
             input.badge ?? null,
+            input.theme ?? null,
+            input.durationSeconds ?? null,
             input.startsAt ?? null,
             input.endsAt ?? null,
             input.enabled,
@@ -262,6 +274,8 @@ export class AdsService {
         body: 'body',
         promoPriceCents: 'promo_price_cents',
         badge: 'badge',
+        theme: 'theme',
+        durationSeconds: 'duration_seconds',
         startsAt: 'starts_at',
         endsAt: 'ends_at',
         enabled: 'enabled',
@@ -340,8 +354,11 @@ export class AdsService {
     });
   }
 
-  /** "Add all products with photos": one product ad per active product with a picture, no promo. */
-  async addAllProducts(actor: AuditActor): Promise<AdBulkResult> {
+  /**
+   * "Add all products": one plain product ad (no promo) per active product that has none yet,
+   * alphabetically after the existing slides. `onlyWithPhoto` restricts it to pictured products.
+   */
+  async addAllProducts(actor: AuditActor, onlyWithPhoto = false): Promise<AdBulkResult> {
     return withTransaction(this.pool, async (client) => {
       const r = await client.query<{ id: string }>(
         `INSERT INTO ads (kind, product_id, sort_order, created_by)
@@ -349,17 +366,50 @@ export class AdsService {
                   (SELECT COALESCE(max(sort_order), 0) FROM ads) + row_number() OVER (ORDER BY lower(p.name)) * 10,
                   $1
              FROM products p
-            WHERE p.is_active AND p.image_path IS NOT NULL
+            WHERE p.is_active AND ($2::boolean = false OR p.image_path IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM ads a WHERE a.kind = 'product' AND a.product_id = p.id)
          RETURNING id`,
-        [actor.userId],
+        [actor.userId, onlyWithPhoto],
       );
       if (r.rowCount) {
         await recordAudit(client, actor, {
           action: 'ads.bulk_products',
           entityType: 'ad',
           entityId: null,
-          details: { created: r.rowCount },
+          details: { created: r.rowCount, onlyWithPhoto },
+        });
+      }
+      return { created: r.rowCount ?? 0, items: await this.list(client) };
+    }).then((result) => {
+      if (result.created > 0) this.changed();
+      return result;
+    });
+  }
+
+  /**
+   * Product browser → "Add n products": plain ads for the chosen products in the given order;
+   * products that already have an ad (or do not exist / are archived) are skipped, not an error.
+   */
+  async addProducts(productIds: string[], actor: AuditActor): Promise<AdBulkResult> {
+    const ids = [...new Set(productIds)];
+    return withTransaction(this.pool, async (client) => {
+      const r = await client.query<{ id: string }>(
+        `INSERT INTO ads (kind, product_id, sort_order, created_by)
+           SELECT 'product', p.id,
+                  (SELECT COALESCE(max(sort_order), 0) FROM ads) + o.pos * 10,
+                  $2
+             FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, pos)
+             JOIN products p ON p.id = o.id AND p.is_active
+            WHERE NOT EXISTS (SELECT 1 FROM ads a WHERE a.kind = 'product' AND a.product_id = p.id)
+         RETURNING id`,
+        [ids, actor.userId],
+      );
+      if (r.rowCount) {
+        await recordAudit(client, actor, {
+          action: 'ads.bulk_products',
+          entityType: 'ad',
+          entityId: null,
+          details: { created: r.rowCount, requested: ids.length },
         });
       }
       return { created: r.rowCount ?? 0, items: await this.list(client) };

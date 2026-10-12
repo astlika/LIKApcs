@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PricingTerms } from './billing.js';
+import type { AdTheme } from './dto.js';
 import type {
   ClientAdsLayout,
   ClientAdsTransition,
@@ -218,6 +219,8 @@ export interface ClientDisplayConfig {
   widgetShowPayment: boolean;
   lockTitle: ClientLockTitle;
   currency: string;
+  /** Pre-filled username of the staff login that a left click on the locked screen opens. */
+  staffLoginUsername: string;
   ads: {
     enabled: boolean;
     layout: ClientAdsLayout;
@@ -248,7 +251,7 @@ export interface ClientAdItem {
   kind: 'product' | 'custom';
   /** Product name or slide title. */
   name: string;
-  /** Slide text (custom) — null for products. */
+  /** Slide text — a custom slide's text or the short line under a product's name. */
   body: string | null;
   /** Price shown (promo price while a promo is live); null for custom slides. */
   priceCents: number | null;
@@ -258,6 +261,10 @@ export interface ClientAdItem {
   /** Server-relative URL (`/api/v1/files/products/…`), or null for a text slide. */
   imageUrl: string | null;
   categoryName: string | null;
+  /** Background preset (`AD_THEMES`); null = `midnight`. */
+  theme: AdTheme | null;
+  /** Seconds this slide stays; null = `display.ads.intervalSeconds`. */
+  durationSeconds: number | null;
 }
 
 export interface ServerHeartbeatAck {

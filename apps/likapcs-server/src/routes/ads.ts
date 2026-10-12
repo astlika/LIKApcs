@@ -9,6 +9,8 @@ import {
   PERMISSIONS,
   PRODUCT_IMAGE_MAX_BYTES,
   PRODUCT_IMAGE_TYPES,
+  adAddAllSchema,
+  adBulkProductsSchema,
   adInputSchema,
   adPatchSchema,
   adReorderSchema,
@@ -52,7 +54,13 @@ export const adsRoutes: FastifyPluginAsync = async (app) => {
     items: await services.ads.reorder(adReorderSchema.parse(request.body).ids, actorOf(request)),
   }));
   app.post('/ads/products/all', manage, async (request) =>
-    services.ads.addAllProducts(actorOf(request)),
+    services.ads.addAllProducts(
+      actorOf(request),
+      adAddAllSchema.parse(request.body ?? {}).onlyWithPhoto,
+    ),
+  );
+  app.post('/ads/products/bulk', manage, async (request) =>
+    services.ads.addProducts(adBulkProductsSchema.parse(request.body).productIds, actorOf(request)),
   );
 
   // Pictures for custom slides (same store and limits as product photos).

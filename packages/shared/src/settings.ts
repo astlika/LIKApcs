@@ -80,6 +80,8 @@ export const SETTING_SCHEMAS = {
   'client.ads_transition': z.enum(CLIENT_ADS_TRANSITIONS),
   'client.ads_interval_seconds': z.number().int().min(3).max(120),
   'client.ads_show_price': z.boolean(),
+  /** Username pre-filled in the staff login that a left click on the locked screen opens. */
+  'client.staff_login_username': z.string().trim().max(64),
 
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   /** Open the print dialog as soon as a sale is completed (off: the cashier presses Print). */
@@ -164,6 +166,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.ads_transition': 'slide-left',
   'client.ads_interval_seconds': 8,
   'client.ads_show_price': true,
+  'client.staff_login_username': '',
 
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': false,
@@ -212,6 +215,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.ads_transition',
   'client.ads_interval_seconds',
   'client.ads_show_price',
+  'client.staff_login_username',
 ];
 
 /** Validates a partial settings patch; unknown keys are rejected. */
@@ -252,6 +256,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.ads_transition',
   'client.ads_interval_seconds',
   'client.ads_show_price',
+  'client.staff_login_username',
   'locale.currency',
   'locale.default_language',
   'business.name',
@@ -267,6 +272,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetShowPayment: settings['client.widget_show_payment'],
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
+    staffLoginUsername: settings['client.staff_login_username'],
     ads: {
       enabled: settings['client.ads_enabled'],
       layout: settings['client.ads_layout'],

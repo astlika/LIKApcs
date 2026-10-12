@@ -169,8 +169,21 @@ export function App() {
     !settingsOpen &&
     !unlockOpen;
 
+  // A left click anywhere on the locked screen opens the staff login (same as Ctrl+Alt+A), so
+  // staff never need the shortcut. Clicks inside dialogs / controls are left alone.
+  const onLockClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !snap.paired || settingsOpen || unlockOpen) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, a, textarea, select, .panel')) return;
+    setUnlockOpen(true);
+  };
+
   return (
-    <div className={`lock${showAds ? ' lock--ads' : ''}`}>
+    <div
+      className={`lock${showAds ? ' lock--ads' : ''}`}
+      onClick={onLockClick}
+      data-testid="lock-screen"
+    >
       <div className="lock__bg" />
       <header className="lock__header">
         <div className="brand" data-testid="lock-title">
@@ -225,8 +238,10 @@ export function App() {
 }
 
 /**
- * Staff unlock (Ctrl+Alt+A on the lock screen). The credentials go to the server, which verifies
- * them and — when allowed — sends the `unlock` command; the dialog only relays and reports.
+ * Staff unlock (a click on the lock screen or Ctrl+Alt+A). The credentials go to the server,
+ * which verifies them and — when allowed — sends the `unlock` command; the dialog only relays and
+ * reports. The owner can pre-fill the username (Settings › Client screen) so staff type only the
+ * password.
  */
 function StaffUnlockDialog({
   snap,
@@ -237,7 +252,8 @@ function StaffUnlockDialog({
   t: T;
   onClose: () => void;
 }) {
-  const [username, setUsername] = useState('');
+  const presetUser = snap.state.display?.staffLoginUsername?.trim() ?? '';
+  const [username, setUsername] = useState(presetUser);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Key | null>(null);
@@ -297,7 +313,7 @@ function StaffUnlockDialog({
           <label className="field">
             <span>{t('username')}</span>
             <input
-              autoFocus
+              autoFocus={presetUser === ''}
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -308,6 +324,7 @@ function StaffUnlockDialog({
           <label className="field">
             <span>{t('password')}</span>
             <input
+              autoFocus={presetUser !== ''}
               type="password"
               autoComplete="current-password"
               value={password}
@@ -675,6 +692,9 @@ function AdsSlideshow({
   const pages = Math.max(1, Math.ceil(items.length / perPage));
   const [page, setPage] = useState(0);
   const [ready, setReady] = useState<Record<string, boolean>>({});
+  // Pictures that failed to load (server unreachable, file gone): the slide is shown as a text
+  // slide instead of being skipped — a screen must never stay empty because of one picture.
+  const [broken, setBroken] = useState<Record<string, true>>({});
   const [layers, setLayers] = useState<{ a: number | null; b: number | null; front: 'a' | 'b' }>({
     a: 0,
     b: null,
@@ -698,14 +718,24 @@ function AdsSlideshow({
       requested.current.add(url);
       const img = new Image();
       img.decoding = 'async';
-      img.onload = () => setReady((r) => ({ ...r, [item.id]: true }));
+      img.onload = () => {
+        setBroken((b) => {
+          if (!b[item.id]) return b;
+          const next = { ...b };
+          delete next[item.id];
+          return next;
+        });
+        setReady((r) => ({ ...r, [item.id]: true }));
+      };
       img.onerror = () => {
         requested.current.delete(url); // retried on the next list refresh
-        setReady((r) => ({ ...r, [item.id]: false }));
+        setBroken((b) => ({ ...b, [item.id]: true }));
+        setReady((r) => ({ ...r, [item.id]: true }));
       };
       img.src = url;
     }
   }, [items]);
+  const pictureOf = (item: ClientAdItem) => (broken[item.id] ? null : item.imageUrl);
 
   const pageItems = useCallback(
     (index: number) => items.slice(index * perPage, index * perPage + perPage),
@@ -719,10 +749,20 @@ function AdsSlideshow({
     [pageItems, ready],
   );
 
-  // Advance on the owner's interval — only onto a fully decoded page (skips broken pictures).
+  // Advance after the current page's own time (the longest `durationSeconds` on it, else the
+  // owner's interval) — only onto a fully decoded page.
+  const pageSeconds = useCallback(
+    (index: number) => {
+      const own = pageItems(index)
+        .map((item) => item.durationSeconds ?? 0)
+        .reduce((a, b) => Math.max(a, b), 0);
+      return Math.max(3, own > 0 ? own : intervalSeconds);
+    },
+    [pageItems, intervalSeconds],
+  );
   useEffect(() => {
     if (pages <= 1) return;
-    const timer = window.setInterval(
+    const timer = window.setTimeout(
       () => {
         setPage((current) => {
           for (let step = 1; step <= pages; step += 1) {
@@ -732,10 +772,10 @@ function AdsSlideshow({
           return current;
         });
       },
-      Math.max(3, intervalSeconds) * 1000,
+      pageSeconds(page) * 1000,
     );
-    return () => window.clearInterval(timer);
-  }, [pages, intervalSeconds, pageReady]);
+    return () => window.clearTimeout(timer);
+  }, [page, pages, pageSeconds, pageReady]);
 
   // The current page is not decoded yet (start-up, or its picture failed): jump to the first
   // page that is, so the very first frame shown is a complete one.
@@ -786,6 +826,7 @@ function AdsSlideshow({
     ) : null;
   const badge = (item: ClientAdItem) =>
     item.badge ? <span className="ads__badge">{item.badge}</span> : null;
+  const themeClass = (item: ClientAdItem) => `ads__theme--${item.theme ?? 'midnight'}`;
   const renderPage = (index: number | null, key: 'a' | 'b') => {
     if (index === null) return null;
     const slice = pageItems(index);
@@ -807,11 +848,12 @@ function AdsSlideshow({
             {slice.map((item) => (
               <figure
                 key={item.id}
-                className={`ads__cell ${item.imageUrl ? '' : 'ads__cell--text'}`}
+                className={`ads__cell ${pictureOf(item) ? '' : 'ads__cell--text'} ${themeClass(item)}`}
                 data-kind={item.kind}
+                data-theme={item.theme ?? 'midnight'}
               >
-                {item.imageUrl ? (
-                  <img src={item.imageUrl} alt="" draggable={false} />
+                {pictureOf(item) ? (
+                  <img src={pictureOf(item)!} alt="" draggable={false} />
                 ) : (
                   <div className="ads__blank" aria-hidden />
                 )}
@@ -828,11 +870,12 @@ function AdsSlideshow({
           slice.map((item) => (
             <figure
               key={item.id}
-              className={`ads__slide ads__slide--${layout} ${item.imageUrl ? '' : 'ads__slide--text'}`}
+              className={`ads__slide ads__slide--${layout} ${pictureOf(item) ? '' : 'ads__slide--text'} ${themeClass(item)}`}
               data-kind={item.kind}
+              data-theme={item.theme ?? 'midnight'}
             >
-              {item.imageUrl ? (
-                <img src={item.imageUrl} alt="" draggable={false} />
+              {pictureOf(item) ? (
+                <img src={pictureOf(item)!} alt="" draggable={false} />
               ) : (
                 <div className="ads__blank" aria-hidden />
               )}

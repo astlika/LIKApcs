@@ -376,6 +376,7 @@ describe('reduce()', () => {
         widgetShowPayment: false,
         lockTitle: 'station',
         currency: 'EUR',
+        staffLoginUsername: 'admin',
         ads: {
           enabled: true,
           layout: 'full',

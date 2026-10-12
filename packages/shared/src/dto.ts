@@ -1993,6 +1993,13 @@ export interface DebtPaymentResult {
 export const AD_KINDS = ['product', 'custom'] as const;
 export type AdKind = (typeof AD_KINDS)[number];
 
+/** Slide background presets (0017). `null` on an ad means `midnight`, the default look. */
+export const AD_THEMES = ['midnight', 'ocean', 'sunset', 'forest', 'ruby', 'gold', 'mono'] as const;
+export type AdTheme = (typeof AD_THEMES)[number];
+/** Per-slide time on screen; null = the owner's global interval (`client.ads_interval_seconds`). */
+export const AD_DURATION_MIN_SECONDS = 3;
+export const AD_DURATION_MAX_SECONDS = 120;
+
 const adBadge = z.string().trim().min(1).max(16).nullable().optional();
 const adInstant = z.string().datetime({ offset: true }).nullable().optional();
 
@@ -2009,6 +2016,14 @@ export const adInputSchema = z
     body: z.string().trim().max(300).nullable().optional(),
     promoPriceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
     badge: adBadge,
+    theme: z.enum(AD_THEMES).nullable().optional(),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(AD_DURATION_MIN_SECONDS)
+      .max(AD_DURATION_MAX_SECONDS)
+      .nullable()
+      .optional(),
     startsAt: adInstant,
     endsAt: adInstant,
     enabled: z.boolean().default(true),
@@ -2037,7 +2052,20 @@ export type AdPatch = z.infer<typeof adPatchSchema>;
 export const adReorderSchema = z.object({ ids: z.array(uuidSchema).min(1).max(500) });
 export type AdReorderRequest = z.infer<typeof adReorderSchema>;
 
-/** Why an ad is (not) on the screens right now — shown as a status chip in Admin. */
+/** `POST /ads/products/bulk` — one plain product ad (no promo) per chosen product, in that order. */
+export const adBulkProductsSchema = z.object({
+  productIds: z.array(uuidSchema).min(1).max(500),
+});
+export type AdBulkProductsRequest = z.infer<typeof adBulkProductsSchema>;
+/** `POST /ads/products/all` — every active product (optionally only those with a photo). */
+export const adAddAllSchema = z.object({ onlyWithPhoto: z.boolean().default(false) });
+export type AdAddAllRequest = z.infer<typeof adAddAllSchema>;
+
+/**
+ * Why an ad is (not) on the screens right now — shown as a status chip in Admin. `unavailable`
+ * = the product was archived; being out of stock does not hide an ad (0.7.1), the Admin only
+ * flags it.
+ */
 export const AD_STATES = ['live', 'disabled', 'scheduled', 'expired', 'unavailable'] as const;
 export type AdState = (typeof AD_STATES)[number];
 
@@ -2052,12 +2080,16 @@ export interface AdSummary {
   productInStock: boolean | null;
   productActive: boolean | null;
   promoPriceCents: number | null;
-  /** Custom ads */
+  /** Custom ads: title. `body` is the slide text — also allowed under a product's name. */
   title: string | null;
   body: string | null;
   /** Picture: the custom ad's own upload, or the product's photo. Server-relative URL. */
   imageUrl: string | null;
   badge: string | null;
+  /** Background preset; null = `midnight`. */
+  theme: AdTheme | null;
+  /** Seconds on screen; null = the global interval. */
+  durationSeconds: number | null;
   startsAt: string | null;
   endsAt: string | null;
   enabled: boolean;
@@ -2068,7 +2100,7 @@ export interface AdSummary {
   updatedAt: string;
 }
 
-/** `POST /ads/products/all` — every active product with a photo that has no ad yet. */
+/** `POST /ads/products/all|bulk` — the products that had no ad yet were added. */
 export interface AdBulkResult {
   created: number;
   items: AdSummary[];

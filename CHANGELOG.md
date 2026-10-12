@@ -8,6 +8,46 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.7.1] - 2026-10-12
+
+Update both apps again: **Update** in LIKApcs (Admin) first (server + migration 0017), then the
+gaming PCs (self-update or **Update clients**). The picture fix below needs the 0.7.1 client on
+the PC.
+
+### Fixed
+
+- **Ads did not show on the gaming PCs.** The client's content-security policy only allowed
+  pictures from the app itself, so product photos coming from the server were blocked on real
+  PCs — and because a slide waited for its picture, the slideshow stayed empty. Pictures from the
+  server are now allowed, and a slide whose picture cannot be loaded is shown as a text slide
+  (name, text, price) instead of being skipped: the screens never stay blank because of a photo.
+- A product that is **out of stock no longer disappears** from the screens (most shops do not keep
+  exact counts); the Ads page flags it with an "Out of stock" tag instead. Archived products still
+  leave the screens by themselves.
+- Creating the first ad while the slideshow was switched off now **switches it on** (with a toast)
+  — the "OFF" strip is also shown as a warning.
+
+### Added
+
+- **Catalogue browser for ads** ("Add products"): every active product with search, category
+  chips, tick boxes, "Select all shown"; one ticked product continues into the details dialog
+  (promo price, look…), several are added at once (`POST /ads/products/bulk`). Products that
+  already have an ad are marked. "Add all products" now adds every active product, with or
+  without a photo.
+- **More options per ad:** a short text line under a product's name ("2 for 1 until 20:00"),
+  seven background **looks** (midnight, ocean, sunset, forest, ruby, gold, mono) and an own
+  **time on screen** (3–120 s; empty = the general interval). The preview and the client render
+  them; the client advances slide by slide using each slide's own time.
+- **Staff login with the mouse:** a left click anywhere on the locked screen opens the staff login
+  (Ctrl+Alt+A still works). Settings › Client screen › "Staff login on the locked PC" can pre-fill
+  the username (`client.staff_login_username`) so staff only type the password; the password field
+  is focused in that case.
+- The client refreshes its ad list every 10 minutes (was hourly) as a safety net behind the push.
+
+### Database
+
+- Migration 0017: `ads.theme`, `ads.duration_seconds`; setting `client.staff_login_username`.
+
 ## [0.7.0] - 2026-10-12
 
 Update both apps: run **Update** in LIKApcs (Admin) first — it updates the server and applies

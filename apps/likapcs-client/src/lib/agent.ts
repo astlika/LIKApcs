@@ -131,7 +131,8 @@ const PROBE_TIMEOUT_MS = 2500;
 const UPDATE_FIRST_CHECK_MS = 2 * 60_000;
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const UPDATE_RETRY_MS = 30 * 60_000;
-const ADS_REFRESH_MS = 60 * 60_000;
+/** Safety net behind the `server.display` push (a missed push must not keep stale ads for long). */
+const ADS_REFRESH_MS = 10 * 60_000;
 
 type Listener = () => void;
 
@@ -797,7 +798,7 @@ export class Agent {
 
   // ─── Lock-screen slideshow ───────────────────────────────────────────────────
 
-  /** The owner's ads (Admin › Ads) for the lock screen; refreshed on connect, on `server.display`, hourly. */
+  /** The owner's ads (Admin › Ads) for the lock screen; refreshed on connect, on `server.display`, every 10 min. */
   private refreshAds(force = false): void {
     const { pairing, state } = this.snapshot;
     if (!pairing || !state.display?.ads.enabled) {
@@ -1008,7 +1009,7 @@ export class Agent {
     if (state.notice && state.notice.untilServerMs <= now) next = { ...next, notice: null };
     if (next !== state) this.setState(next);
     this.set({ serverNowMs: now });
-    // Hourly slideshow refresh while locked (new products / photos appear without a reconnect).
+    // Periodic slideshow refresh while locked (new products / photos appear without a reconnect).
     if (next.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();
   }
 }

@@ -707,11 +707,55 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   margin: 0;
   display: grid;
 }
+/* Theme presets (Admin › Ads › Look): two base tones + two glows, used by cards, cells and the
+   text-slide backdrop. `midnight` is the historical look and the default. */
+.ads__theme--midnight {
+  --ad-a: #1e293b;
+  --ad-b: #0f172a;
+  --ad-glow-1: rgba(99, 102, 241, 0.55);
+  --ad-glow-2: rgba(14, 165, 233, 0.45);
+}
+.ads__theme--ocean {
+  --ad-a: #0c4a6e;
+  --ad-b: #082f49;
+  --ad-glow-1: rgba(34, 211, 238, 0.55);
+  --ad-glow-2: rgba(59, 130, 246, 0.5);
+}
+.ads__theme--sunset {
+  --ad-a: #7c2d12;
+  --ad-b: #3b0764;
+  --ad-glow-1: rgba(251, 146, 60, 0.6);
+  --ad-glow-2: rgba(236, 72, 153, 0.5);
+}
+.ads__theme--forest {
+  --ad-a: #14532d;
+  --ad-b: #052e16;
+  --ad-glow-1: rgba(74, 222, 128, 0.5);
+  --ad-glow-2: rgba(45, 212, 191, 0.45);
+}
+.ads__theme--ruby {
+  --ad-a: #7f1d1d;
+  --ad-b: #27060a;
+  --ad-glow-1: rgba(248, 113, 113, 0.55);
+  --ad-glow-2: rgba(244, 63, 94, 0.45);
+}
+.ads__theme--gold {
+  --ad-a: #78350f;
+  --ad-b: #1c1917;
+  --ad-glow-1: rgba(251, 191, 36, 0.6);
+  --ad-glow-2: rgba(245, 158, 11, 0.4);
+}
+.ads__theme--mono {
+  --ad-a: #262626;
+  --ad-b: #0a0a0a;
+  --ad-glow-1: rgba(163, 163, 163, 0.35);
+  --ad-glow-2: rgba(82, 82, 82, 0.45);
+}
 /* card: one product on an opaque card, photo contained on the left, text on the right */
 .ads__slide--card {
   grid-template-columns: 1.1fr 1fr;
   grid-template-rows: 100%;
-  background: linear-gradient(135deg, #1e293b, #0f172a);
+  background: linear-gradient(135deg, var(--ad-a, #1e293b), var(--ad-b, #0f172a));
 }
 .ads__slide--card img {
   width: 100%;
@@ -812,7 +856,7 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   grid-template-rows: 1fr auto;
   border-radius: 20px;
   overflow: hidden;
-  background: rgba(30, 41, 59, 0.75);
+  background: linear-gradient(160deg, var(--ad-a, #1e293b), var(--ad-b, #0f172a));
   border: 1px solid var(--border);
   min-height: 0;
 }
@@ -1136,9 +1180,9 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.55), transparent 55%),
-    radial-gradient(circle at 85% 85%, rgba(14, 165, 233, 0.45), transparent 55%),
-    linear-gradient(135deg, #1e293b, #0f172a);
+    radial-gradient(circle at 15% 20%, var(--ad-glow-1, rgba(99, 102, 241, 0.55)), transparent 55%),
+    radial-gradient(circle at 85% 85%, var(--ad-glow-2, rgba(14, 165, 233, 0.45)), transparent 55%),
+    linear-gradient(135deg, var(--ad-a, #1e293b), var(--ad-b, #0f172a));
 }
 .ads__slide--text {
   grid-template-columns: 1fr;
