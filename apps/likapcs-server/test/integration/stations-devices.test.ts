@@ -263,6 +263,7 @@ describe('stations, device registration and realtime presence', () => {
         lockTitle: 'brand',
         currency: 'EUR',
         staffLoginUsername: '',
+        customerLogin: true,
         ads: {
           enabled: false,
           layout: 'card',

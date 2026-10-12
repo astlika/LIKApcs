@@ -75,6 +75,11 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               // A backup was restored on the server: every cached view is stale.
               void queryClient.invalidateQueries();
               break;
+            case 'request.changed':
+              // A customer asked for time / staff answered: bell, PC tile and detail refresh.
+              void queryClient.invalidateQueries({ queryKey: ['session-requests'] });
+              void queryClient.invalidateQueries({ queryKey: ['stations'] });
+              break;
             case 'permissions.changed':
               // A role was edited: the auth provider re-reads /auth/me so the navigation,
               // buttons and the home page follow the new permissions immediately.

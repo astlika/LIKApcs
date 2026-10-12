@@ -304,6 +304,46 @@ _Open shift_ dialog and retrying the original request once the shift exists.
 `POST /customers` / `PATCH` also take `creditLimitCents` (0 = no limit) — the cap on the customer's
 open "pay later" balance; summaries carry `balanceDueCents` (sum of open debt remainders).
 
+**PC login (0.9.0, migration 0019).** `POST` / `PATCH` additionally take `loginUsername`
+(2–32 chars `[a-zA-Z0-9._-]`, unique case-insensitively; `null`/`""` removes the login),
+`loginPassword` (PIN, ≥ 4 chars — scrypt-hashed, **never returned**; on `PATCH` it is optional and
+keeps the current PIN when omitted) and `loginEnabled` (default `true`; `false` blocks the login
+without removing it). A new username without a PIN → `400 bad_request {field: "loginPassword"}`; a
+taken username → `409 conflict {field: "loginUsername"}`. Summaries carry `loginUsername`,
+`loginEnabled`, `lastLoginAt`. Archiving a customer frees the username.
+
+### Session requests — customers ask for time from the PC (0.9.0)
+
+Setting `requests.enabled` (default on) shows a small **Client** button on the locked screen;
+`requests.quick_minutes` (default `[30, 60, 120, 180]`) are the durations offered besides the
+station's gaming packages. The flow is **request → staff decision**: the PC never unlocks or extends
+by itself — an approval is the normal `POST /sessions` / `POST /sessions/:id/extend` with
+`requestId`, which marks the request `approved` **in the same transaction** as the session (so it is
+approved exactly once; a second approval → `409 request_not_pending`). Requests never expire; they
+end only by a decision, the customer's cancel, or a server auto-cancel with a machine-readable
+`reason` (`session_started`, `session_extended`, `session_ended`, `device_revoked`,
+`station_disabled`). One pending request per PC.
+
+PC side (device token; the **customer token** from the login — header `x-customer-token`, 20 min,
+bound to the device — is needed only to _create_ a request; show/cancel are device-scoped):
+
+| Method | Path                          | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/client/customer-login`      | `{username, password}` → `{customerToken, expiresAt, customer{id, name, code, balanceDueCents}, pending}`. `401 invalid_credentials` (same message for unknown user / wrong PIN, constant-time), `423 locked {until}` after `security.max_failed_logins` wrong PINs, `403 login_disabled` / `403 blocked`, `403 requests_disabled`. 30 attempts/min per PC; audited (`customer.login`) |
+| POST   | `/client/customer-logout`     | forgets the customer token → `{ok: true}`                                                                                                                                                                                                                                                                                                                                              |
+| GET    | `/client/request-options`     | `{kind: "start" \| "extend" \| "none", sessionId, quickMinutes, quickPrices{"60": cents \| null}, packages[{id, name, durationMinutes, priceCents}], currency, staffOnline}` — `start` while locked, `extend` while a **prepaid** session runs, `none` otherwise (postpaid, disabled PC)                                                                                               |
+| POST   | `/client/session-request`     | `{kind, minutes}` (one of the quick durations) **or** `{kind, packageId}` → `201 SessionRequest`. `409 request_pending`, `409 session_active` (start while a session runs), `409 no_session` (extend without a prepaid session), `401 unauthorized` (customer token missing/expired)                                                                                                   |
+| GET    | `/client/session-request/:id` | current state (reconnects / restarts) — only requests of this PC                                                                                                                                                                                                                                                                                                                       |
+| DELETE | `/client/session-request/:id` | the customer takes it back → `cancelled`, `reason: "customer"`                                                                                                                                                                                                                                                                                                                         |
+
+Admin side: `GET /session-requests?status=&stationId=&limit=` and `GET /session-requests/:id`
+(`stations.view`); `POST /session-requests/:id/reject {reason?}` (`stations.control`) — the reason
+(≤ 120 chars) is shown to the customer on the PC. `StationSummary.pendingRequest` carries the
+waiting request `{id, kind, customerId, customerName, minutes, packageId, packageName,
+durationMinutes, requestedAt}` for the PC tile / banner. Every change is announced as the admin event
+`request.changed` (payload: `SessionRequest`) and to the PC as `server.request`; on a staff action
+the server announces the request result **first**, then mirrors the session command.
+
 ### Debts — "pay later" (`debts.give` to sell on credit; `customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
 
 Permission-gated: a `credit` tender is accepted only from a user whose role has `debts.give`
@@ -438,7 +478,7 @@ device-authenticated connection and shows the server's answer.
 Admin → Server   { "type": "admin.hello", "token": "<bearer token>", "protocolVersion": 1 }
 Server → Admin   { "type": "server.welcome", "protocolVersion": 1, "serverVersion": "0.1.0", "serverTime": "…" }
 Server → Admin   { "type": "server.event", "event": "station.changed" | "device.registered" | "device.changed"
-                   | "session.changed" | "notification" | "system.restored" | "permissions.changed",
+                   | "session.changed" | "request.changed" | "notification" | "system.restored" | "permissions.changed",
                    "payload": {...}, "ts": "…" }
                    // session.changed carries the full SessionSummary; station.changed follows it
 Admin → Server   { "type": "admin.ping" }      →   { "type": "server.pong", "serverTime": "…" }
@@ -466,11 +506,12 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
                                        "billing"?: { "billingMode", "paidCents", "terms", "billableSeconds", "asOf" } },
                    "maintenance": null | { "until": "…", "byName": "…" },
                    "display": { "widgetSize", "widgetPosition", "widgetStyle", "widgetShowPayment", "lockTitle",
-                                "currency", "staffLoginUsername",
+                                "currency", "staffLoginUsername", "customerLogin",
                                 "ads": { "enabled", "layout", "transition", "intervalSeconds", "showPrice",
                                          "grid", "fullscreen", "showClock", "showBrand", "showStation", "showStatus",
                                          "showCategory", "showProgress", "imageFit", "caption", "motion",
-                                         "background", "tickerText" } } }
+                                         "background", "tickerText" } },
+                   "request": null | { "id", "kind", "status", "reason", "decidedAt" } }   // 0.9.0
 ```
 
 `hardware` (0.6.0) is the PC's static specification as the OS reports it — fields the OS does not
@@ -525,6 +566,13 @@ Server → Client  { "type": "server.heartbeat_ack", "serverTime": "…" }
 
 Server → Client  { "type": "server.display", "display": {...same shape as in server.welcome...},
                    "businessName": "…", "welcomeMessage": "…", "language": "sq" }
+
+Server → Client  { "type": "server.request", "request": { "id": "<uuid>", "kind": "start" | "extend",
+                   "status": "pending" | "approved" | "rejected" | "cancelled", "reason": null | "…",
+                   "decidedAt": null | "…" } }
+                   // 0.9.0: the answer to the customer's request; an approval is followed by the
+                   // real session.start / session.extend command. server.welcome carries the
+                   // still-pending request as "request" so a restarted PC keeps showing it.
 
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"

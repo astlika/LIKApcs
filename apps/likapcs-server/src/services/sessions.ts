@@ -48,6 +48,7 @@ import type { RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { nextDocumentNumber } from './documents.js';
 import type { PricingService } from './pricing.js';
+import type { RequestCancelReason, SessionRequestsService } from './requests.js';
 import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
@@ -167,6 +168,51 @@ export class SessionsService {
     hub.on('device.online', (presence) => {
       void this.onDeviceOnline(presence.stationId, presence.deviceId);
     });
+  }
+
+  /** Customer session requests (0.9.0) — wired after construction (the requests service quotes through us). */
+  private requests: SessionRequestsService | null = null;
+  useRequests(requests: SessionRequestsService): void {
+    this.requests = requests;
+  }
+
+  /**
+   * Inside a session transaction: answer the request this action approves, or cancel the pending
+   * ones it made moot. Returns the ids to announce once the transaction committed.
+   */
+  private async settleRequests(
+    client: DbClient,
+    opts: {
+      stationId: string;
+      sessionId: string;
+      approve?: { requestId: string; kind: 'start' | 'extend' } | null;
+      cancel: { kinds: ('start' | 'extend')[]; reason: RequestCancelReason };
+    },
+    actor: SessionActorContext,
+  ): Promise<{ approved: string | null; cancelled: string[] }> {
+    if (!this.requests) return { approved: null, cancelled: [] };
+    if (opts.approve) {
+      await this.requests.approveInTransaction(
+        client,
+        opts.approve.requestId,
+        { kind: opts.approve.kind, stationId: opts.stationId, sessionId: opts.sessionId },
+        actor,
+      );
+    }
+    const cancelled = await this.requests.cancelForStation(
+      client,
+      opts.stationId,
+      opts.cancel.kinds,
+      opts.cancel.reason,
+      actor,
+    );
+    return { approved: opts.approve?.requestId ?? null, cancelled };
+  }
+
+  private async announceRequests(settled: { approved: string | null; cancelled: string[] }) {
+    if (!this.requests) return;
+    if (settled.approved) await this.requests.announceApproved(settled.approved);
+    if (settled.cancelled.length) await this.requests.announceCancelled(settled.cancelled);
   }
 
   // ─── Mapping ─────────────────────────────────────────────────────────────────
@@ -366,6 +412,7 @@ export class SessionsService {
     const quote = await this.quote(req, now);
     const plannedSeconds = quote.minutes ? quote.minutes * 60 : null;
     let payment: SessionPaymentSummary | null = null;
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
 
     const session = await withTransaction(this.pool, async (client) => {
       const live = await client.query(
@@ -440,10 +487,24 @@ export class SessionsService {
           billingMode: req.billingMode,
           minutes: quote.minutes,
           priceCents: quote.priceCents,
+          requestId: req.requestId ?? null,
         },
       });
+      // A customer's start request is answered by this start (approved) — any other pending
+      // start request on the PC is moot now; a pending extension cannot exist without a session.
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: req.stationId,
+          sessionId: id,
+          approve: req.requestId ? { requestId: req.requestId, kind: 'start' } : null,
+          cancel: { kinds: ['start', 'extend'], reason: 'session_started' },
+        },
+        actor,
+      );
       return this.getById(id, client);
     });
+    await this.announceRequests(settled);
 
     const ack = await this.mirror(
       session,
@@ -538,6 +599,7 @@ export class SessionsService {
   ): Promise<SessionMutationResult> {
     const now = new Date();
     let payment: SessionPaymentSummary | null = null;
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.billing_mode !== 'prepaid')
@@ -591,10 +653,25 @@ export class SessionsService {
         action: 'session.extend',
         entityType: 'gaming_session',
         entityId: id,
-        details: { minutes: quote.minutes, priceCents: quote.priceCents },
+        details: {
+          minutes: quote.minutes,
+          priceCents: quote.priceCents,
+          requestId: req.requestId ?? null,
+        },
       });
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: row.station_id,
+          sessionId: id,
+          approve: req.requestId ? { requestId: req.requestId, kind: 'extend' } : null,
+          cancel: { kinds: ['extend'], reason: 'session_extended' },
+        },
+        actor,
+      );
       return this.getById(id, client);
     });
+    await this.announceRequests(settled);
     this.warned.forEach((k) => k.startsWith(`${id}:`) && this.warned.delete(k));
     const ack = await this.mirror(
       session,
@@ -614,6 +691,7 @@ export class SessionsService {
     at: Date = new Date(),
   ): Promise<SessionMutationResult> {
     let payment: SessionPaymentSummary | null = null;
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
     const requestedAt = at;
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
@@ -703,8 +781,18 @@ export class SessionsService {
         entityId: id,
         details: { billableSeconds: seconds, billingMode: row.billing_mode },
       });
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: row.station_id,
+          sessionId: id,
+          cancel: { kinds: ['extend'], reason: 'session_ended' },
+        },
+        actor,
+      );
       return this.getById(id, client);
     });
+    await this.announceRequests(settled);
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
     return { session, client: ack, payment };
@@ -717,6 +805,7 @@ export class SessionsService {
     reason: string,
     at: Date = new Date(),
   ): Promise<SessionMutationResult> {
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.status !== 'active' && row.status !== 'paused')
@@ -736,8 +825,18 @@ export class SessionsService {
         details: { reason },
         severity: 'warning',
       });
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: row.station_id,
+          sessionId: id,
+          cancel: { kinds: ['extend'], reason: 'session_ended' },
+        },
+        actor,
+      );
       return this.getById(id, client);
     });
+    await this.announceRequests(settled);
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
     return { session, client: ack };
@@ -748,6 +847,7 @@ export class SessionsService {
     id: string,
     actor: AuditActor = { label: 'system' },
   ): Promise<SessionSummary | null> {
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       if (row.status !== 'active' || row.billing_mode !== 'prepaid' || !row.ends_at) return null;
@@ -763,9 +863,19 @@ export class SessionsService {
         [id, seconds],
       );
       await this.addEvent(client, id, 'expired', actor, { endsAt: row.ends_at.toISOString() });
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: row.station_id,
+          sessionId: id,
+          cancel: { kinds: ['extend'], reason: 'session_ended' },
+        },
+        actor,
+      );
       return this.getById(id, client);
     });
     if (!session) return null;
+    await this.announceRequests(settled);
     await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
     return session;

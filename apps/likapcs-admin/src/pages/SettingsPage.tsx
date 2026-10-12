@@ -438,6 +438,43 @@ export function SettingsPage() {
           </div>
         </Card>
       )}
+      {tab === 'stations' && (
+        <Card title={t('settings.requests.title')} subtitle={t('settings.requests.subtitle')}>
+          <div className="grid grid--2">
+            <div className="span-2" data-testid="settings-requests-enabled">
+              {bool(
+                'requests.enabled',
+                t('settings.requests.enabled'),
+                t('settings.requests.enabledHint'),
+              )}
+            </div>
+            <Field
+              label={t('settings.requests.quickMinutes')}
+              hint={t('settings.requests.quickMinutesHint')}
+              error={errors['requests.quick_minutes']}
+            >
+              {(id, invalid) => (
+                <Input
+                  id={id}
+                  data-testid="settings-requests-quick"
+                  value={current['requests.quick_minutes'].join(', ')}
+                  onChange={(e) =>
+                    set(
+                      'requests.quick_minutes',
+                      e.target.value
+                        .split(',')
+                        .map((v) => Number(v.trim()))
+                        .filter((v) => Number.isInteger(v) && v > 0),
+                    )
+                  }
+                  aria-invalid={invalid}
+                  disabled={ro || !current['requests.enabled']}
+                />
+              )}
+            </Field>
+          </div>
+        </Card>
+      )}
 
       {tab === 'client' && (
         <div className="client-screen">

@@ -6,7 +6,8 @@
  * the scrolling canvas).
  */
 import { useMemo } from 'react';
-import type { StationStatus, StationSummary } from '@likapcs/shared';
+import { Bell } from 'lucide-react';
+import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
 import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
@@ -195,6 +196,16 @@ export function StationTile({
       }}
     >
       <PcIcon status={status} number={station.number} size={size} />
+      {station.pendingRequest && (
+        <span
+          className="pc-tile__request"
+          title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
+          data-testid="tile-request"
+        >
+          <Bell size={10} />
+          {compact ? '' : t('requests.tile')}
+        </span>
+      )}
       <div className="pc-tile__code">{station.code}</div>
       {!compact && station.name !== station.code && (
         <div className="pc-tile__name">{station.name}</div>

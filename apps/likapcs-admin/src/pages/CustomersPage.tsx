@@ -5,10 +5,12 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Archive, Pencil, Plus, UserRound } from 'lucide-react';
+import { Archive, KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
 import {
+  CUSTOMER_LOGIN_MIN_PASSWORD,
   CUSTOMER_STATUSES,
   PERMISSIONS,
+  customerLoginUsernameSchema,
   formatDuration,
   parseMoneyInput,
   type CustomerDetail,
@@ -35,6 +37,7 @@ import {
   Pagination,
   Select,
   StatTile,
+  Switch,
   Textarea,
 } from '../components/ui/primitives';
 
@@ -142,6 +145,16 @@ export function CustomersPage() {
                   <td className="mono">{c.code}</td>
                   <td>
                     <strong>{c.name}</strong>
+                    {c.loginUsername && (
+                      <span
+                        className={`badge ${c.loginEnabled ? 'badge--info' : ''}`}
+                        style={{ marginLeft: 8 }}
+                        title={`${t('customers.loginBadge')}: ${c.loginUsername}`}
+                        data-testid="customer-login-badge"
+                      >
+                        <KeyRound size={11} /> {c.loginUsername}
+                      </span>
+                    )}
                     {c.email && (
                       <div className="faint" style={{ fontSize: 12 }}>
                         {c.email}
@@ -245,16 +258,30 @@ function CustomerDialog({
       customer && customer.creditLimitCents > 0 ? (customer.creditLimitCents / 100).toFixed(2) : '',
     notes: customer?.notes ?? '',
     status: (customer?.status ?? 'active') as CustomerStatus,
+    loginUsername: customer?.loginUsername ?? '',
+    loginPassword: '',
+    loginEnabled: customer?.loginEnabled ?? true,
   });
   const discountBp = Math.round(Number(form.discountPct.replace(',', '.')) * 100);
   const creditLimitCents = form.creditLimit.trim() ? parseMoneyInput(form.creditLimit) : 0;
+  const hadLogin = Boolean(customer?.loginUsername);
+  const loginUsername = form.loginUsername.trim();
+  const loginUsernameOk =
+    loginUsername === '' || customerLoginUsernameSchema.safeParse(loginUsername).success;
+  const loginPasswordOk =
+    form.loginPassword === '' || form.loginPassword.length >= CUSTOMER_LOGIN_MIN_PASSWORD;
+  // A brand-new login needs a PIN; an existing one keeps its PIN when the field stays empty.
+  const loginPinMissing = loginUsername !== '' && !hadLogin && form.loginPassword === '';
   const valid =
     form.name.trim().length > 0 &&
     Number.isFinite(discountBp) &&
     discountBp >= 0 &&
     discountBp <= 10_000 &&
     creditLimitCents !== null &&
-    creditLimitCents >= 0;
+    creditLimitCents >= 0 &&
+    loginUsernameOk &&
+    loginPasswordOk &&
+    !loginPinMissing;
   const mutation = useMutation({
     mutationFn: () => {
       const body = {
@@ -268,6 +295,12 @@ function CustomerDialog({
         creditLimitCents: creditLimitCents ?? 0,
         notes: form.notes.trim() || null,
         status: form.status,
+        // Login: send the username only when it changed (or is removed), the PIN only when typed.
+        ...(loginUsername !== (customer?.loginUsername ?? '')
+          ? { loginUsername: loginUsername || null }
+          : {}),
+        ...(form.loginPassword ? { loginPassword: form.loginPassword } : {}),
+        ...(loginUsername ? { loginEnabled: form.loginEnabled } : {}),
       };
       return customer
         ? api<CustomerSummary>(`/customers/${customer.id}`, { method: 'PATCH', body })
@@ -466,6 +499,101 @@ function CustomerDialog({
             />
           )}
         </Field>
+
+        <fieldset className="fieldset" data-testid="customer-login">
+          <legend className="fieldset__legend">
+            <KeyRound size={14} /> {t('customers.login')}
+          </legend>
+          <p className="faint" style={{ fontSize: 12, margin: '0 0 10px' }}>
+            {t('customers.loginHint')}
+          </p>
+          <div className="grid grid--2">
+            <Field
+              label={t('customers.loginUsername')}
+              optional
+              error={
+                !loginUsernameOk
+                  ? t('common.invalid')
+                  : err instanceof ApiError &&
+                      err.status === 409 &&
+                      fieldError(err, 'loginUsername')
+                    ? t('customers.loginTaken')
+                    : fieldError(err, 'loginUsername')
+              }
+            >
+              {(id, invalid) => (
+                <Input
+                  id={id}
+                  aria-invalid={invalid || undefined}
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder="lika"
+                  value={form.loginUsername}
+                  onChange={(e) => setForm({ ...form, loginUsername: e.target.value })}
+                  maxLength={32}
+                  data-testid="customer-login-username"
+                />
+              )}
+            </Field>
+            <Field
+              label={t('customers.loginPassword')}
+              hint={hadLogin ? t('customers.loginPasswordKeep') : t('customers.loginPasswordHint')}
+              optional={hadLogin}
+              error={
+                !loginPasswordOk || loginPinMissing
+                  ? t('customers.loginPasswordHint')
+                  : fieldError(err, 'loginPassword')
+              }
+            >
+              {(id, invalid) => (
+                <Input
+                  id={id}
+                  type="password"
+                  aria-invalid={invalid || undefined}
+                  autoComplete="new-password"
+                  placeholder={hadLogin ? '••••' : '1998'}
+                  value={form.loginPassword}
+                  onChange={(e) => setForm({ ...form, loginPassword: e.target.value })}
+                  maxLength={128}
+                  disabled={loginUsername === ''}
+                  data-testid="customer-login-password"
+                />
+              )}
+            </Field>
+          </div>
+          {loginUsername !== '' && (
+            <div className="row row--between" style={{ marginTop: 6 }}>
+              <Switch
+                checked={form.loginEnabled}
+                onChange={(v) => setForm({ ...form, loginEnabled: v })}
+                label={
+                  <span>
+                    {t('customers.loginEnabled')}
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      {t('customers.loginEnabledHint')}
+                    </div>
+                  </span>
+                }
+              />
+              {hadLogin && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setForm({ ...form, loginUsername: '', loginPassword: '' })}
+                  data-testid="customer-login-remove"
+                >
+                  {t('customers.loginRemove')}
+                </Button>
+              )}
+            </div>
+          )}
+          {customer?.lastLoginAt && (
+            <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+              {t('customers.lastLogin')}: {fmt.dateTime(customer.lastLoginAt)}
+            </div>
+          )}
+        </fieldset>
       </form>
     </Dialog>
   );

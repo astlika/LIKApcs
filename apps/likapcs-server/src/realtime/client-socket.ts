@@ -152,6 +152,17 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             session: await services.sessions.welcomePayload(device.station.id),
             maintenance: await services.stations.maintenanceOf(device.station.id),
             display: clientDisplayFromSettings(settings),
+            request: await services.requests.pendingForStation(device.station.id).then((r) =>
+              r
+                ? {
+                    id: r.id,
+                    kind: r.kind,
+                    status: r.status,
+                    reason: r.reason,
+                    decidedAt: r.decidedAt,
+                  }
+                : null,
+            ),
           };
           send(socket, welcome);
           request.log.info(

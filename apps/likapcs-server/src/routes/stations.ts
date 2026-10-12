@@ -61,7 +61,11 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const { id } = idParams.parse(request.params);
       const body = updateStationSchema.parse(request.body);
-      return services.stations.update(id, body, actorOf(request));
+      const station = await services.stations.update(id, body, actorOf(request));
+      // A PC taken out of service cannot be unlocked: whatever a customer asked for is cancelled.
+      if (body.isEnabled === false)
+        await services.requests.cancelAndAnnounce(id, 'station_disabled', actorOf(request));
+      return station;
     },
   );
 

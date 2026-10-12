@@ -357,8 +357,21 @@ export class DevicesService {
     const presence = this.hub.getDevice(deviceId);
     if (presence) presence.socket.close(WS_CLOSE_CODES.DEVICE_REVOKED, 'device revoked');
     this.hub.broadcastToAdmins('device.changed', device);
-    if (stationId) await this.stations.broadcastStation(stationId);
+    if (stationId) {
+      for (const listener of this.revokeListeners) {
+        await listener(stationId, deviceId, actor).catch(() => undefined);
+      }
+      await this.stations.broadcastStation(stationId);
+    }
     return device;
+  }
+
+  private readonly revokeListeners: Array<
+    (stationId: string, deviceId: string, actor: AuditActor) => Promise<void>
+  > = [];
+  /** Runs after a device was revoked (e.g. pending customer requests of that PC are cancelled). */
+  onRevoked(listener: (stationId: string, deviceId: string, actor: AuditActor) => Promise<void>) {
+    this.revokeListeners.push(listener);
   }
 
   /** Lets an approved client that lost its token collect a new one with its registration secret. */

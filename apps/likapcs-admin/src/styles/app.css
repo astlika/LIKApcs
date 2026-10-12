@@ -2572,6 +2572,7 @@ body:has(.pos) .toasts {
 
 /* Tile */
 .pc-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4246,4 +4247,193 @@ body:has(.pos) .toasts {
   display: inline-flex;
   gap: 6px;
   align-items: baseline;
+}
+
+/* ─── Customer requests (0.9.0): bell in the top bar + dropdown panel ─────────── */
+.requests-bell {
+  position: relative;
+}
+.requests-bell__btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.requests-bell__btn:hover {
+  background: var(--bg-input);
+  color: var(--text);
+}
+.requests-bell__btn--active {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  animation: requests-ring 1.6s ease-in-out infinite;
+}
+@keyframes requests-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--warning) 0%, transparent);
+  }
+}
+.requests-bell__count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.requests-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 380px;
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-2);
+  z-index: 60;
+  overflow: hidden;
+}
+.requests-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.requests-panel__empty {
+  padding: 22px 16px;
+  text-align: center;
+}
+.requests-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.request-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 10px;
+}
+.request-row + .request-row {
+  margin-top: 2px;
+}
+.request-row:hover {
+  background: var(--bg-input);
+}
+.request-row__main {
+  flex: 1;
+  min-width: 0;
+}
+.request-row__title {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.request-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.request-row__meta .muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.request-row__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Banner above the start / extend forms of a PC with a waiting request. */
+/* Icon | text on the first row, actions on their own row: the session column is narrow. */
+.request-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+.request-banner > svg {
+  margin-top: 2px;
+  color: var(--warning);
+}
+.request-banner--approving {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.request-banner--approving > svg {
+  color: var(--success);
+}
+.request-banner__text {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.request-banner__actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* PC tile badge. */
+.pc-tile__request {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--warning);
+  color: #1a1200;
+  font-size: 11px;
+  font-weight: 700;
+  animation: requests-ring 1.6s ease-in-out infinite;
+}
+/* Grouped form section (customer PC login). */
+.fieldset {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-input);
+}
+.fieldset__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
 }

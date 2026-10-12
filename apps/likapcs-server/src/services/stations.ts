@@ -7,6 +7,7 @@ import {
   type PricingTerms,
   type StationDeviceSummary,
   type StationMaintenance,
+  type StationPendingRequest,
   type StationStatus,
   type StationSummary,
   type UpdateStationRequest,
@@ -52,6 +53,15 @@ interface StationRow {
   maintenance_until: Date | null;
   maintenance_by: string | null;
   maintenance_by_name: string | null;
+  request_id: string | null;
+  request_kind: 'start' | 'extend' | null;
+  request_customer_id: string | null;
+  request_customer_name: string | null;
+  request_minutes: number | null;
+  request_quick_minutes: number | null;
+  request_package_id: string | null;
+  request_package_name: string | null;
+  request_requested_at: Date | null;
 }
 
 const STATION_SELECT = `
@@ -65,11 +75,18 @@ const STATION_SELECT = `
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
          g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour,
-         s.maintenance_until, s.maintenance_by, s.maintenance_by_name
+         s.maintenance_until, s.maintenance_by, s.maintenance_by_name,
+         r.id AS request_id, r.kind AS request_kind, r.customer_id AS request_customer_id,
+         rc.name AS request_customer_name, COALESCE(r.minutes, rp.duration_minutes) AS request_minutes,
+         r.minutes AS request_quick_minutes, r.package_id AS request_package_id, rp.name AS request_package_name,
+         r.requested_at AS request_requested_at
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
-    LEFT JOIN customers c ON c.id = g.customer_id`;
+    LEFT JOIN customers c ON c.id = g.customer_id
+    LEFT JOIN session_requests r ON r.station_id = s.id AND r.status = 'pending'
+    LEFT JOIN customers rc ON rc.id = r.customer_id
+    LEFT JOIN gaming_packages rp ON rp.id = r.package_id`;
 
 /** Live session summary for the station grid (server clock; the PC only mirrors it). */
 function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
@@ -157,6 +174,20 @@ export class StationsService {
             byName: row.maintenance_by_name,
           }
         : null;
+    const pendingRequest: StationPendingRequest | null =
+      row.request_id && row.request_kind && row.request_requested_at
+        ? {
+            id: row.request_id,
+            kind: row.request_kind,
+            customerId: row.request_customer_id ?? '',
+            customerName: row.request_customer_name ?? '',
+            durationMinutes: row.request_minutes ?? 0,
+            minutes: row.request_quick_minutes,
+            packageId: row.request_package_id,
+            packageName: row.request_package_name,
+            requestedAt: row.request_requested_at.toISOString(),
+          }
+        : null;
     let status: StationStatus;
     if (!row.is_enabled) status = 'disabled';
     else if (activeSession) status = activeSession.status === 'paused' ? 'paused' : 'occupied';
@@ -176,6 +207,7 @@ export class StationsService {
       device,
       activeSession,
       maintenance,
+      pendingRequest,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };

@@ -77,6 +77,14 @@ export const SETTING_SCHEMAS = {
   'stations.client_welcome_message': z.string().max(300),
   /** How long a staff unlock (maintenance) keeps a station PC open before it locks again. */
   'stations.maintenance_minutes': z.number().int().min(1).max(480),
+  /** Customer login on the PCs ("Client" button on the locked screen) + session requests. */
+  'requests.enabled': z.boolean(),
+  /** Quick durations (minutes) a signed-in customer can ask for, besides the gaming packages. */
+  'requests.quick_minutes': z
+    .array(z.number().int().min(5).max(1440))
+    .min(1)
+    .max(8)
+    .refine((xs) => new Set(xs).size === xs.length, 'durations must be distinct'),
 
   // ── Client screen (LIKApcs-Client on the customer PC) ──────────────────────
   /** Countdown widget during a session: footprint. */
@@ -194,6 +202,8 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.expiry_warning_minutes': [5, 1],
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
   'stations.maintenance_minutes': 15,
+  'requests.enabled': true,
+  'requests.quick_minutes': [30, 60, 120, 180],
 
   'client.widget_size': 'normal',
   'client.widget_position': 'top-right',
@@ -311,6 +321,7 @@ export function validateSettingsPatch(input: unknown): Partial<SettingsMap> {
 
 /** Keys whose change must be pushed to every connected customer PC (`server.display`). */
 export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
+  'requests.enabled',
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
@@ -351,6 +362,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],
+    customerLogin: settings['requests.enabled'],
     ads: {
       enabled: settings['client.ads_enabled'],
       layout: settings['client.ads_layout'],

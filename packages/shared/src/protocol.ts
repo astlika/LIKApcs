@@ -196,6 +196,8 @@ export interface ServerWelcomeToClient {
   maintenance?: null | { until: string; byName: string | null };
   /** How the customer screen looks (widget, lock title, product slideshow). Added in 0.6.0. */
   display?: ClientDisplayConfig;
+  /** A customer's request for time still waiting on this PC (0.9.0), so a restart keeps showing it. */
+  request?: ServerRequestUpdate['request'] | null;
 }
 
 /**
@@ -224,6 +226,8 @@ export interface ClientDisplayConfig {
   currency: string;
   /** Pre-filled username of the staff login that a left click on the locked screen opens. */
   staffLoginUsername: string;
+  /** Show the small "Client" button (customer login → session requests, 0.9.0). */
+  customerLogin: boolean;
   ads: {
     enabled: boolean;
     layout: ClientAdsLayout;
@@ -313,8 +317,29 @@ export interface ServerError {
   message: string;
 }
 
+/**
+ * A session request made on this PC changed (approved / rejected / cancelled) — pushed so the
+ * customer sees the answer instantly. Carries the facts the PC shows, nothing it must act on:
+ * an approval is followed by the real `session.start` / `session.extend` command.
+ */
+export interface ServerRequestUpdate {
+  type: 'server.request';
+  request: {
+    id: string;
+    kind: 'start' | 'extend';
+    status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+    reason: string | null;
+    decidedAt: string | null;
+  };
+}
+
 export type ServerToClientMessage =
-  ServerWelcomeToClient | ServerHeartbeatAck | ServerCommand | ServerDisplay | ServerError;
+  | ServerWelcomeToClient
+  | ServerHeartbeatAck
+  | ServerCommand
+  | ServerDisplay
+  | ServerRequestUpdate
+  | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
 export const ADMIN_EVENTS = [
@@ -327,6 +352,8 @@ export const ADMIN_EVENTS = [
   'system.restored',
   /** A role's permission set changed: signed-in users must refresh their permissions. */
   'permissions.changed',
+  /** A customer's session request was created / answered / cancelled (payload: SessionRequest). */
+  'request.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

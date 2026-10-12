@@ -1345,10 +1345,14 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   width: 100%;
   height: 100vh;
   max-height: 100vh;
+  max-width: none;
   box-sizing: border-box;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 0;
   box-shadow: none;
+  /* `.panel--center` positions by transform on the lock screen; in the flyout it fills the window. */
+  transform: none;
+  overflow: auto;
 }
 
 /* ─── Ads 0.7.0: promos, badges, custom / text-only slides ────────────────── */
@@ -1467,4 +1471,222 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   display: block;
   white-space: normal;
   font-size: clamp(13px, 1.2vw, 18px);
+}
+
+/* ─── 0.9.0: customer login + session requests ───────────────────────────── */
+/* The way in is a faint word in the corner: visible to someone who looks for it, invisible to
+   everyone else. It brightens on hover / focus only. */
+.customer-link {
+  position: fixed;
+  right: 18px;
+  bottom: 12px;
+  z-index: 5;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--muted);
+  opacity: 0.32;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    opacity 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+.customer-link:hover,
+.customer-link:focus-visible {
+  opacity: 1;
+  border-color: var(--border);
+  background: rgba(2, 6, 23, 0.5);
+  outline: none;
+}
+.panel--customer {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+}
+.customer-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.customer-debt {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fcd34d;
+}
+.choice-group {
+  margin-top: 12px;
+}
+.choice-group__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #0b0f17;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.1s;
+}
+.choice strong {
+  font-size: 15px;
+}
+.choice small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.choice:hover {
+  border-color: rgba(99, 102, 241, 0.6);
+}
+.choice--active {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+.choice--active small {
+  color: #c7d2fe;
+}
+.request-wait {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  background: rgba(34, 211, 238, 0.07);
+}
+.request-wait .spinner {
+  margin: 0;
+  flex: 0 0 auto;
+}
+.request-result {
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(148, 163, 184, 0.08);
+}
+.request-result--approved {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+.request-result--rejected {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fecaca;
+}
+/* Lock-screen status line while a request waits / was just answered. */
+.request-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  background: rgba(34, 211, 238, 0.1);
+  color: #a5f3fc;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.request-pill i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.request-pill--approved {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+.request-pill--rejected,
+.request-pill--cancelled {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fecaca;
+}
+/* "+ time" in the countdown widget's top row (prepaid session, customer login on). Sized like the
+   status label so the fixed-size window never clips it. */
+.overlay__more {
+  flex: 0 0 auto;
+  margin-left: auto;
+  background: rgba(99, 102, 241, 0.18);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay__more + .overlay__label {
+  margin-left: 0;
+}
+.overlay__more:hover {
+  background: rgba(99, 102, 241, 0.32);
+}
+.overlay__more--pending {
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #a5f3fc;
+  background: rgba(34, 211, 238, 0.12);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.overlay__mini-more {
+  margin-left: 6px;
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 7px;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1.3;
 }

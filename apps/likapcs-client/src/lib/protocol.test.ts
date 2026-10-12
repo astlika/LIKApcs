@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ServerCommand, ServerWelcomeToClient } from '@likapcs/shared';
+import type { ServerCommand, ServerWelcomeToClient, SessionRequest } from '@likapcs/shared';
 import {
+  REQUEST_RESULT_MS,
+  mergeRequestPush,
+  requestResultExpired,
   candidateServerUrls,
   normalizeServerUrl,
   Clock,
@@ -377,6 +380,7 @@ describe('reduce()', () => {
         lockTitle: 'station',
         currency: 'EUR',
         staffLoginUsername: 'admin',
+        customerLogin: true,
         ads: {
           enabled: true,
           layout: 'full',
@@ -489,5 +493,66 @@ describe('helpers', () => {
     expect(backoffMs(3, 0)).toBe(8000);
     expect(backoffMs(20, 0)).toBe(30_000);
     expect(backoffMs(20, 1)).toBe(36_000);
+  });
+});
+
+describe('customer session requests (0.9.0)', () => {
+  const pending: SessionRequest = {
+    id: 'r1',
+    stationId: 's1',
+    stationCode: 'PC1',
+    stationName: 'PC 1',
+    customerId: 'c1',
+    customerName: 'Lika',
+    customerCode: 'C-0001',
+    customerBalanceDueCents: 0,
+    kind: 'start',
+    minutes: 60,
+    packageId: null,
+    packageName: null,
+    durationMinutes: 60,
+    sessionId: null,
+    status: 'pending',
+    reason: null,
+    requestedAt: '2026-10-12T10:00:00.000Z',
+    decidedAt: null,
+    decidedByName: null,
+  };
+
+  it('takes the staff answer over for the request on screen', () => {
+    const merged = mergeRequestPush(pending, {
+      id: 'r1',
+      kind: 'start',
+      status: 'rejected',
+      reason: 'Full house',
+      decidedAt: '2026-10-12T10:01:00.000Z',
+    });
+    expect(merged).toEqual({
+      request: {
+        ...pending,
+        status: 'rejected',
+        reason: 'Full house',
+        decidedAt: '2026-10-12T10:01:00.000Z',
+      },
+    });
+  });
+
+  it('asks the shell to load an unknown pending request and ignores answers to unknown ones', () => {
+    const push = { id: 'r2', kind: 'extend' as const, reason: null, decidedAt: null };
+    expect(mergeRequestPush(null, { ...push, status: 'pending' })).toEqual({ fetch: 'r2' });
+    expect(mergeRequestPush(pending, { ...push, status: 'pending' })).toEqual({ fetch: 'r2' });
+    expect(
+      mergeRequestPush(null, { ...push, status: 'approved', decidedAt: '2026-10-12T10:01:00Z' }),
+    ).toBeNull();
+  });
+
+  it('fades an answered request after a minute, never a pending one', () => {
+    const decidedAt = '2026-10-12T10:01:00.000Z';
+    const answered: SessionRequest = { ...pending, status: 'approved', decidedAt };
+    const t0 = Date.parse(decidedAt);
+    expect(requestResultExpired(pending, t0 + 10 * REQUEST_RESULT_MS)).toBe(false);
+    expect(requestResultExpired(answered, t0 + REQUEST_RESULT_MS - 1)).toBe(false);
+    expect(requestResultExpired(answered, t0 + REQUEST_RESULT_MS + 1)).toBe(true);
+    expect(requestResultExpired(null, t0)).toBe(false);
   });
 });

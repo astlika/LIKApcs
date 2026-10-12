@@ -239,6 +239,8 @@ export interface StationSummary {
   activeSession: ActiveSessionSummary | null;
   /** Present while a staff unlock (maintenance) grant is in force. */
   maintenance: StationMaintenance | null;
+  /** A customer's request for time waiting for staff (0.9.0); at most one per station. */
+  pendingRequest: StationPendingRequest | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -247,6 +249,20 @@ export interface StationMaintenance {
   until: string;
   byUserId: string | null;
   byName: string | null;
+}
+
+export interface StationPendingRequest {
+  id: string;
+  kind: 'start' | 'extend';
+  customerId: string;
+  customerName: string;
+  /** Package duration or the quick duration asked for. */
+  durationMinutes: number;
+  /** Quick duration (null when a package was asked for). */
+  minutes: number | null;
+  packageId: string | null;
+  packageName: string | null;
+  requestedAt: string;
 }
 
 /** Staff unlock at the station PC (device-token authenticated, see POST /client/staff-unlock). */
@@ -574,6 +590,8 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   notes: z.string().trim().max(500).optional(),
   /** Idempotency key: a retried request never starts a second session. */
   clientRequestId: z.string().min(8).max(64).optional(),
+  /** Approving a customer's request: it is marked approved in the same transaction (once). */
+  requestId: z.string().uuid().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
 
@@ -588,6 +606,8 @@ export const extendSessionSchema = z
       .optional(),
     ...sessionTenders,
     clientRequestId: z.string().min(8).max(64).optional(),
+    /** Approving a customer's extension request (see startSessionSchema.requestId). */
+    requestId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
@@ -1309,6 +1329,14 @@ export interface CustomerSummary {
   creditLimitCents: number;
   notes: string | null;
   status: CustomerStatus;
+  /**
+   * Customer login on the gaming PCs (0.9.0): the username they sign in with on the locked
+   * screen to request time; null = no login. The PIN/password is stored hashed and never returned.
+   */
+  loginUsername: string | null;
+  /** Staff can switch the login off without clearing the username/PIN. */
+  loginEnabled: boolean;
+  lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1325,6 +1353,15 @@ export interface CustomerDetail extends CustomerSummary {
   recentSessions: SessionSummary[];
 }
 
+/** Customer PINs are short by design (e.g. `1998`): the server rate-limits and locks them out. */
+export const CUSTOMER_LOGIN_MIN_PASSWORD = 4;
+export const customerLoginUsernameSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(32)
+  .regex(/^[a-zA-Z0-9._-]+$/, 'Only letters, digits, dot, underscore and dash are allowed');
+
 export const customerSchema = z.object({
   code: z.string().trim().max(32).optional(),
   name: z.string().trim().min(1).max(120),
@@ -1337,6 +1374,12 @@ export const customerSchema = z.object({
   creditLimitCents: z.number().int().min(0).max(100_000_000).default(0),
   notes: z.string().trim().max(1000).nullable().optional(),
   status: z.enum(CUSTOMER_STATUSES).default('active'),
+  /** Login on the gaming PCs: username (null/'' = remove the login) … */
+  loginUsername: customerLoginUsernameSchema.nullable().optional().or(z.literal('')),
+  /** … and the PIN/password (≥ 4 chars). Required when a username is set for the first time;
+   * omit on later edits to keep the current one. Never returned by the API. */
+  loginPassword: z.string().min(CUSTOMER_LOGIN_MIN_PASSWORD).max(128).optional(),
+  loginEnabled: z.boolean().optional(),
 });
 export type CustomerRequest = z.infer<typeof customerSchema>;
 export const customerPatchSchema = customerSchema.partial();
@@ -1347,6 +1390,102 @@ export const customerListQuerySchema = paginationQuerySchema.extend({
   status: z.enum(CUSTOMER_STATUSES).optional(),
 });
 export type CustomerListQuery = z.infer<typeof customerListQuerySchema>;
+
+// Session requests (customer login on the PCs, 0.9.0)
+
+export const SESSION_REQUEST_KINDS = ['start', 'extend'] as const;
+export type SessionRequestKind = (typeof SESSION_REQUEST_KINDS)[number];
+export const SESSION_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type SessionRequestStatus = (typeof SESSION_REQUEST_STATUSES)[number];
+
+/**
+ * A customer's request for time, made on the locked (or their running) PC. Staff answer it in
+ * the Admin: approve = the normal start / extend dialog pre-filled (payment stays a staff
+ * decision), reject = short reason shown on the PC. Pending requests never expire on their own.
+ */
+export interface SessionRequest {
+  id: string;
+  stationId: string;
+  stationCode: string;
+  stationName: string;
+  customerId: string;
+  customerName: string;
+  customerCode: string;
+  /** Open debt of the customer at read time — staff see it next to "pay later". */
+  customerBalanceDueCents: number;
+  kind: SessionRequestKind;
+  minutes: number | null;
+  packageId: string | null;
+  packageName: string | null;
+  /** Minutes the request amounts to (package duration or `minutes`). */
+  durationMinutes: number;
+  /** `extend`: the session being extended. `start`: the session the approval created (if any). */
+  sessionId: string | null;
+  status: SessionRequestStatus;
+  reason: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+}
+
+/** `POST /client/customer-login` (device token): the customer signs in on the PC. */
+export const customerLoginSchema = z.object({
+  username: customerLoginUsernameSchema,
+  password: z.string().min(1).max(128),
+});
+export type CustomerLoginInput = z.infer<typeof customerLoginSchema>;
+
+export interface CustomerLoginResponse {
+  /** Short-lived bearer token for the request endpoints (bound to this device). */
+  customerToken: string;
+  expiresAt: string;
+  customer: { id: string; name: string; code: string; balanceDueCents: number };
+  /** The customer's pending request on this PC, if one is already waiting. */
+  pending: SessionRequest | null;
+}
+
+/** `GET /client/request-options`: what the customer may ask for on this PC right now. */
+export interface ClientRequestOptions {
+  /** `start` while the PC is locked, `extend` while the customer's prepaid session runs,
+   * `none` when nothing can be requested (someone else's session, postpaid, PC disabled). */
+  kind: SessionRequestKind | 'none';
+  sessionId: string | null;
+  quickMinutes: number[];
+  packages: { id: string; name: string; durationMinutes: number; priceCents: number }[];
+  /** Price of each quick duration under the station's pricing rule (null = no rule). */
+  quickPrices: Record<string, number | null>;
+  currency: string;
+  /** Someone is signed in to LIKApcs right now (the request will be seen promptly). */
+  staffOnline: boolean;
+}
+
+export const sessionRequestCreateSchema = z
+  .object({
+    kind: z.enum(SESSION_REQUEST_KINDS),
+    minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .optional(),
+    packageId: z.string().uuid().optional(),
+  })
+  .refine((r) => Boolean(r.packageId) !== Boolean(r.minutes), {
+    message: 'either a package or a number of minutes',
+    path: ['minutes'],
+  });
+export type SessionRequestCreate = z.infer<typeof sessionRequestCreateSchema>;
+
+export const sessionRequestRejectSchema = z.object({
+  reason: z.string().trim().max(120).optional(),
+});
+
+export const sessionRequestListQuerySchema = z.object({
+  status: z.enum(SESSION_REQUEST_STATUSES).optional(),
+  stationId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type SessionRequestListQuery = z.infer<typeof sessionRequestListQuerySchema>;
 
 // Reports
 

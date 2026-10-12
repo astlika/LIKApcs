@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock, Pause, Play, Plus, Square, XCircle } from 'lucide-react';
+import { Bell, Check, Clock, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
 import {
   PERMISSIONS,
   parseMoneyInput,
@@ -16,7 +16,9 @@ import {
   type CustomerSummary,
   type SessionMutationResponse,
   type SessionQuoteResponse,
+  type SessionRequest,
   type SessionSummary,
+  type StationPendingRequest,
   type StationSummary,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
@@ -29,6 +31,7 @@ import { useToast } from '../../state/toast';
 import { useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
+import { RejectRequestDialog, requestDuration } from '../requests/requests';
 import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 import {
   Alert,
@@ -96,9 +99,12 @@ function useEnterSubmits(submit: () => void) {
 export function SessionPanel({
   station,
   onChanged,
+  approveRequestId = null,
 }: {
   station: StationSummary;
   onChanged: () => void;
+  /** Deep link "Approve" (bell / toast): the matching request is pre-filled straight away. */
+  approveRequestId?: string | null;
 }) {
   const { t } = useI18n();
   const { can } = useAuth();
@@ -106,23 +112,134 @@ export function SessionPanel({
   // "paid" dialog must survive the swap.
   const [paid, setPaid] = useState<SessionPaid | null>(null);
   const live = station.activeSession;
-  if (!can(PERMISSIONS.STATIONS_CONTROL) && !live) {
+  const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  // The customer's waiting request (if any) and whether staff chose to approve it: approving
+  // pre-fills the start form / opens the extend dialog with `requestId`; the server then marks the
+  // request approved in the same transaction as the session.
+  const request = station.pendingRequest;
+  const [approving, setApproving] = useState<string | null>(approveRequestId);
+  const [rejecting, setRejecting] = useState(false);
+  useEffect(() => {
+    if (approveRequestId) setApproving(approveRequestId);
+  }, [approveRequestId]);
+  const approvedRequest = request && approving === request.id ? request : null;
+  if (!canControl && !live) {
     return <p className="muted">{t('sessions.noSession')}</p>;
   }
   return (
     <>
+      {request && canControl && (
+        <RequestBanner
+          request={request}
+          approving={approvedRequest !== null}
+          onApprove={() => setApproving(request.id)}
+          onReject={() => setRejecting(true)}
+        />
+      )}
       {live ? (
         <ActiveSession
           sessionId={live.id}
           station={station}
           onChanged={onChanged}
           onPaid={setPaid}
+          approveRequest={approvedRequest?.kind === 'extend' ? approvedRequest : null}
+          onApproveHandled={() => setApproving(null)}
         />
       ) : (
-        <StartSessionForm station={station} onChanged={onChanged} onPaid={setPaid} />
+        <StartSessionForm
+          key={approvedRequest?.id ?? 'blank'}
+          station={station}
+          onChanged={onChanged}
+          onPaid={setPaid}
+          request={approvedRequest?.kind === 'start' ? approvedRequest : null}
+        />
+      )}
+      {rejecting && request && (
+        <RejectRequestDialog
+          request={toRequest(request, station)}
+          onClose={() => setRejecting(false)}
+          onDone={() => setApproving(null)}
+        />
       )}
       {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
     </>
+  );
+}
+
+/** The tile's compact request + the station → what the reject dialog needs to describe it. */
+function toRequest(r: StationPendingRequest, station: StationSummary): SessionRequest {
+  return {
+    id: r.id,
+    stationId: station.id,
+    stationCode: station.code,
+    stationName: station.name,
+    customerId: r.customerId,
+    customerName: r.customerName,
+    customerCode: '',
+    customerBalanceDueCents: 0,
+    kind: r.kind,
+    minutes: r.minutes,
+    packageId: r.packageId,
+    packageName: r.packageName,
+    durationMinutes: r.durationMinutes,
+    sessionId: null,
+    status: 'pending',
+    reason: null,
+    requestedAt: r.requestedAt,
+    decidedAt: null,
+    decidedByName: null,
+  };
+}
+
+function RequestBanner({
+  request,
+  approving,
+  onApprove,
+  onReject,
+}: {
+  request: StationPendingRequest;
+  approving: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const duration = requestDuration(request, t('requests.package'));
+  return (
+    <div
+      className={`request-banner ${approving ? 'request-banner--approving' : ''}`}
+      data-testid="request-banner"
+      data-approving={approving || undefined}
+    >
+      <Bell size={16} />
+      <div className="request-banner__text">
+        <div>
+          {t(request.kind === 'extend' ? 'requests.bannerExtend' : 'requests.bannerStart', {
+            customer: request.customerName,
+            duration,
+          })}
+          <span className="faint">
+            {' '}
+            · {t('requests.since', { time: fmt.relative(request.requestedAt) })}
+          </span>
+        </div>
+        {approving && (
+          <div className="faint" style={{ fontSize: 12 }}>
+            {t(request.kind === 'extend' ? 'requests.approveExtendHint' : 'requests.approveHint')}
+          </div>
+        )}
+      </div>
+      <div className="request-banner__actions">
+        {!approving && (
+          <Button size="sm" variant="primary" onClick={onApprove} data-testid="banner-approve">
+            <Check size={14} /> {t('requests.approve')}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={onReject} data-testid="banner-reject">
+          <X size={14} /> {t('requests.reject')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -136,23 +253,39 @@ function StartSessionForm({
   station,
   onChanged,
   onPaid,
+  request = null,
 }: {
   station: StationSummary;
   onChanged: () => void;
   onPaid: (paid: SessionPaid | null) => void;
+  /** Approving a customer's request: duration + customer pre-filled, `requestId` sent along. */
+  request?: StationPendingRequest | null;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const [mode, setMode] = useState<'prepaid' | 'postpaid'>('prepaid');
-  const [packageId, setPackageId] = useState<string | null>(null);
-  const [minutes, setMinutes] = useState('60');
+  const [packageId, setPackageId] = useState<string | null>(request?.packageId ?? null);
+  const [minutes, setMinutes] = useState(
+    request && !request.packageId ? String(request.durationMinutes) : '60',
+  );
   const [customerName, setCustomerName] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [notes, setNotes] = useState('');
   // One request id per form instance: a retried click can never start two sessions.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  // The requesting customer, as a full summary (debt / credit limit for "pay later").
+  const requester = useQuery({
+    queryKey: ['customers', request?.customerId ?? null],
+    queryFn: () => api<CustomerSummary>(`/customers/${request!.customerId}`),
+    enabled: !!request?.customerId,
+    staleTime: 15_000,
+  });
+  useEffect(() => {
+    if (requester.data && !customer) setCustomer(requester.data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the requester arrives
+  }, [requester.data]);
 
   const packages = useQuery({
     queryKey: ['pricing', 'packages', 'available', station.id],
@@ -194,6 +327,7 @@ function StartSessionForm({
           ...(prepaid ? { payments: tender.payments } : {}),
           notes: notes.trim() || undefined,
           clientRequestId: requestId,
+          ...(request ? { requestId: request.id } : {}),
         },
       }),
     onSuccess: (result) => {
@@ -385,11 +519,16 @@ function ActiveSession({
   station,
   onChanged,
   onPaid,
+  approveRequest = null,
+  onApproveHandled,
 }: {
   sessionId: string;
   station: StationSummary;
   onChanged: () => void;
   onPaid: (paid: SessionPaid | null) => void;
+  /** Approving a customer's extension request: the extend dialog opens pre-filled. */
+  approveRequest?: StationPendingRequest | null;
+  onApproveHandled?: () => void;
 }) {
   const { t } = useI18n();
   const { can } = useAuth();
@@ -400,6 +539,9 @@ function ActiveSession({
   const now = useNow();
   const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | null>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  useEffect(() => {
+    if (approveRequest) setDialog('extend');
+  }, [approveRequest]);
 
   const session = useQuery({
     queryKey: ['sessions', sessionId],
@@ -552,9 +694,14 @@ function ActiveSession({
       )}
       {dialog === 'extend' && (
         <ExtendSessionDialog
+          key={approveRequest?.id ?? 'manual'}
           session={s}
           busy={act.isPending}
-          onClose={() => setDialog(null)}
+          request={approveRequest}
+          onClose={() => {
+            setDialog(null);
+            onApproveHandled?.();
+          }}
           onConfirm={(body) => act.mutate({ action: 'extend', body })}
         />
       )}
@@ -710,16 +857,21 @@ export function ExtendSessionDialog({
   busy,
   onClose,
   onConfirm,
+  request = null,
 }: {
   session: SessionSummary;
   busy: boolean;
   onClose: () => void;
   onConfirm: (body: Record<string, unknown>) => void;
+  /** Approving a customer's extension request: duration pre-filled, `requestId` sent along. */
+  request?: StationPendingRequest | null;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
-  const [packageId, setPackageId] = useState<string | null>(null);
-  const [minutes, setMinutes] = useState('30');
+  const [packageId, setPackageId] = useState<string | null>(request?.packageId ?? null);
+  const [minutes, setMinutes] = useState(
+    request && !request.packageId ? String(request.durationMinutes) : '30',
+  );
   const [requestId] = useState(() => crypto.randomUUID());
   const minutesValue = Number.parseInt(minutes, 10);
   const minutesValid = Number.isInteger(minutesValue) && minutesValue > 0 && minutesValue <= 1440;
@@ -744,7 +896,12 @@ export function ExtendSessionDialog({
   const ready = !!body && !!quote.data && tender.covered;
   const submit = () => {
     if (ready && !busy)
-      onConfirm({ ...body, payments: tender.payments, clientRequestId: requestId });
+      onConfirm({
+        ...body,
+        payments: tender.payments,
+        clientRequestId: requestId,
+        ...(request ? { requestId: request.id } : {}),
+      });
   };
   useEnterSubmits(submit);
   return (
@@ -752,7 +909,11 @@ export function ExtendSessionDialog({
       open
       onClose={onClose}
       title={t('sessions.extendTitle')}
-      description={t('sessions.extendBody')}
+      description={
+        request
+          ? `${t('requests.bannerExtend', { customer: request.customerName, duration: requestDuration(request, t('requests.package')) })} — ${t('requests.approveExtendHint')}`
+          : t('sessions.extendBody')
+      }
       size="md"
       footer={
         <>

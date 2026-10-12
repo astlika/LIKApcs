@@ -12,6 +12,8 @@ type Key =
   | 'sidebarCollapsed'
   | 'mapIconSize'
   | 'mapGroupZones'
+  /** Customer requests: '0' = no beep on a new request. */
+  | 'requestsSound'
   | 'rememberChoice'
   /** '1' when the desktop app should start in full screen (restored at launch). */
   | 'fullscreen'

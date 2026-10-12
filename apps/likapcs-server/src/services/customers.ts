@@ -14,7 +14,8 @@ import type {
 } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { conflict, notFound } from '../errors.js';
+import { badRequest, conflict, notFound } from '../errors.js';
+import { hashPassword } from '../security/password.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { SalesService } from './sales.js';
 import type { SessionsService } from './sessions.js';
@@ -34,6 +35,9 @@ interface CustomerRow {
   credit_limit_cents: string;
   notes: string | null;
   status: CustomerStatus;
+  login_username: string | null;
+  login_enabled: boolean;
+  last_login_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -41,7 +45,7 @@ interface CustomerRow {
 const SELECT = `
   SELECT c.id, c.code, c.name, c.phone, c.email, c.membership, to_char(c.membership_until, 'YYYY-MM-DD') AS membership_until,
          c.discount_bp, c.loyalty_points, c.wallet_balance_cents, c.balance_due_cents, c.credit_limit_cents, c.notes,
-         c.status, c.created_at, c.updated_at
+         c.status, c.login_username, c.login_enabled, c.last_login_at, c.created_at, c.updated_at
     FROM customers c`;
 
 function toSummary(r: CustomerRow): CustomerSummary {
@@ -60,9 +64,79 @@ function toSummary(r: CustomerRow): CustomerSummary {
     creditLimitCents: Number(r.credit_limit_cents),
     notes: r.notes,
     status: r.status,
+    loginUsername: r.login_username,
+    loginEnabled: r.login_enabled,
+    lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
   };
+}
+
+/** Audit details never carry the PIN — only the fact that it was set. */
+function auditable<T extends { loginPassword?: string }>(
+  input: T,
+): Omit<T, 'loginPassword'> & {
+  loginPasswordSet?: boolean;
+} {
+  const { loginPassword, ...rest } = input;
+  return loginPassword === undefined ? rest : { ...rest, loginPasswordSet: true };
+}
+
+/**
+ * Login fields of a create / update: `loginUsername` '' or null removes the login (and its PIN);
+ * a new username needs a PIN unless the customer already has one. Uniqueness is case-insensitive
+ * (the partial unique index backs it up against races).
+ */
+async function applyLogin(
+  client: DbClient,
+  id: string,
+  input: Pick<CustomerPatch, 'loginUsername' | 'loginPassword' | 'loginEnabled'>,
+  current: { login_username: string | null; has_hash: boolean },
+): Promise<void> {
+  const hash = input.loginPassword ? await hashPassword(input.loginPassword) : null;
+  if (input.loginUsername !== undefined) {
+    const username = input.loginUsername?.trim() || null;
+    if (!username) {
+      await client.query(
+        `UPDATE customers SET login_username = NULL, login_password_hash = NULL, login_enabled = false,
+                login_failed_count = 0, login_locked_until = NULL WHERE id = $1`,
+        [id],
+      );
+      return;
+    }
+    const dup = await client.query(
+      'SELECT 1 FROM customers WHERE lower(login_username) = lower($1) AND id <> $2',
+      [username, id],
+    );
+    if (dup.rowCount)
+      throw conflict('Another customer already uses this username', { field: 'loginUsername' });
+    if (!current.has_hash && !hash)
+      throw badRequest('A PIN/password is required for the customer login', {
+        field: 'loginPassword',
+      });
+    // Username and hash land together: the table forbids a username without a hash.
+    await client.query(
+      `UPDATE customers SET login_username = $2, login_enabled = $3,
+              login_password_hash = COALESCE($4, login_password_hash),
+              login_failed_count = 0, login_locked_until = NULL
+        WHERE id = $1`,
+      [id, username, input.loginEnabled ?? true, hash],
+    );
+    return;
+  }
+  if (input.loginEnabled !== undefined && current.login_username) {
+    await client.query('UPDATE customers SET login_enabled = $2 WHERE id = $1', [
+      id,
+      input.loginEnabled,
+    ]);
+  }
+  if (hash) {
+    if (!current.login_username) throw badRequest('Set a username for the customer login first');
+    await client.query(
+      `UPDATE customers SET login_password_hash = $2, login_failed_count = 0, login_locked_until = NULL WHERE id = $1`,
+      [id, hash],
+    );
+  }
 }
 
 async function nextCustomerCode(client: DbClient): Promise<string> {
@@ -181,11 +255,12 @@ export class CustomersService {
           input.creditLimitCents,
         ],
       );
+      await applyLogin(client, r.rows[0]!.id, input, { login_username: null, has_hash: false });
       await recordAudit(client, actor, {
         action: 'customer.create',
         entityType: 'customer',
         entityId: r.rows[0]!.id,
-        details: { code, name: input.name },
+        details: { code, name: input.name, loginUsername: input.loginUsername?.trim() || null },
       });
       return r.rows[0]!.id;
     });
@@ -194,7 +269,10 @@ export class CustomersService {
 
   async update(id: string, patch: CustomerPatch, actor: AuditActor): Promise<CustomerSummary> {
     await withTransaction(this.pool, async (client) => {
-      const current = await client.query<CustomerRow>(`${SELECT} WHERE c.id = $1 FOR UPDATE`, [id]);
+      const current = await client.query<CustomerRow & { has_hash: boolean }>(
+        `${SELECT.replace('c.last_login_at,', 'c.last_login_at, (c.login_password_hash IS NOT NULL) AS has_hash,')} WHERE c.id = $1 FOR UPDATE`,
+        [id],
+      );
       if (!current.rows[0]) throw notFound('Customer');
       if (patch.code !== undefined && patch.code.trim()) {
         const dup = await client.query(
@@ -236,11 +314,18 @@ export class CustomersService {
           patch.creditLimitCents ?? null,
         ],
       );
+      // Archiving frees the username: an archived customer cannot sign in anyway, and the name
+      // may be reused by the next registration.
+      const login =
+        patch.status === 'archived' && patch.loginUsername === undefined
+          ? { ...patch, loginUsername: null }
+          : patch;
+      await applyLogin(client, id, login, current.rows[0]);
       await recordAudit(client, actor, {
         action: 'customer.update',
         entityType: 'customer',
         entityId: id,
-        details: patch,
+        details: auditable(patch),
       });
     });
     return (await this.get(id))!;

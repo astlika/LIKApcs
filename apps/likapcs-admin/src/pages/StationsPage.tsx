@@ -188,6 +188,8 @@ export function StationsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  // Deep link "Approve" from the requests bell: the detail opens with the request pre-filled.
+  const [approveRequestId, setApproveRequestId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
   // Selection: an ordered id list (several PCs via marquee / Ctrl+click / Shift+click) plus the
   // anchor — the PC last clicked, which single-PC flows and Shift ranges work from.
@@ -219,13 +221,15 @@ export function StationsPage() {
     () => storage.get('mapGroupZones') !== '0',
   );
 
-  // Deep link from the command palette (?focus=<stationId>).
+  // Deep link from the command palette (?focus=<stationId>) or the requests bell (&request=<id>).
   useEffect(() => {
     const focus = params.get('focus');
     if (focus) {
       setSelectedId(focus);
       setDetailId(focus);
+      setApproveRequestId(params.get('request'));
       params.delete('focus');
+      params.delete('request');
       setParams(params, { replace: true });
     }
   }, [params, setParams, setSelectedId]);
@@ -773,7 +777,11 @@ export function StationsPage() {
       {detail && (
         <StationDetailDialog
           station={detail}
-          onClose={() => setDetailId(null)}
+          approveRequestId={approveRequestId}
+          onClose={() => {
+            setDetailId(null);
+            setApproveRequestId(null);
+          }}
           onChanged={invalidate}
         />
       )}
@@ -1181,10 +1189,12 @@ function StationDetailDialog({
   station,
   onClose,
   onChanged,
+  approveRequestId = null,
 }: {
   station: StationSummary;
   onClose: () => void;
   onChanged: () => void;
+  approveRequestId?: string | null;
 }) {
   const { t, td } = useI18n();
   const { can } = useAuth();
@@ -1272,7 +1282,11 @@ function StationDetailDialog({
             </div>
           </Card>
           <Card title={t('sessions.title')}>
-            <SessionPanel station={station} onChanged={onChanged} />
+            <SessionPanel
+              station={station}
+              onChanged={onChanged}
+              approveRequestId={approveRequestId}
+            />
           </Card>
           <Card title={t('stations.device')}>
             {device ? (

@@ -12,7 +12,9 @@ import {
   type ClientSessionBilling,
   type ServerCommand,
   type ServerDisplay,
+  type ServerRequestUpdate,
   type ServerWelcomeToClient,
+  type SessionRequest,
 } from '@likapcs/shared';
 
 // ─── Command guard ──────────────────────────────────────────────────────────────
@@ -491,4 +493,37 @@ export function candidateServerUrls(server: {
 
 function formatHost(ip: string): string {
   return ip.includes(':') && !ip.startsWith('[') ? `[${ip}]` : ip;
+}
+
+// ─── Customer session requests (0.9.0) ──────────────────────────────────────────
+/** How long an answered request stays on screen before it fades on its own. */
+export const REQUEST_RESULT_MS = 60_000;
+
+/**
+ * `server.request` against the request the PC already shows. The same request → its answer is
+ * taken over (status / reason / decision time). A pending request we do not know yet (made before
+ * a restart, or the push overtook the create response) → `{ fetch: id }` so the shell loads it.
+ * An answer to an unknown request is ignored: there is nothing on screen to update.
+ */
+export function mergeRequestPush(
+  local: SessionRequest | null,
+  push: ServerRequestUpdate['request'],
+): { request: SessionRequest } | { fetch: string } | null {
+  if (local && local.id === push.id) {
+    return {
+      request: {
+        ...local,
+        status: push.status,
+        reason: push.reason,
+        decidedAt: push.decidedAt,
+      },
+    };
+  }
+  return push.status === 'pending' ? { fetch: push.id } : null;
+}
+
+/** An answered request older than REQUEST_RESULT_MS is cleared from the screen by the tick. */
+export function requestResultExpired(request: SessionRequest | null, nowMs: number): boolean {
+  if (!request || request.status === 'pending' || !request.decidedAt) return false;
+  return Date.parse(request.decidedAt) + REQUEST_RESULT_MS < nowMs;
 }

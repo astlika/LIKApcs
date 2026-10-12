@@ -14,11 +14,16 @@ import {
   WS_CLOSE_CODES,
   type ClientAdItem,
   type ClientMetrics,
+  type ClientRequestOptions,
+  type CustomerLoginResponse,
   type HardwareInfo,
   type RegisterDeviceResponse,
   type RegistrationPollResponse,
   type ServerCommand,
+  type ServerRequestUpdate,
   type ServerToClientMessage,
+  type SessionRequest,
+  type SessionRequestCreate,
 } from '@likapcs/shared';
 import {
   APP_VERSION,
@@ -53,8 +58,10 @@ import {
   backoffMs,
   candidateServerUrls,
   initialState,
+  mergeRequestPush,
   normalizeServerUrl,
   reduce,
+  requestResultExpired,
   sessionView,
   type ClientState,
   type Effect,
@@ -101,7 +108,36 @@ export interface AgentSnapshot {
   windowMode: WindowMode;
   /** Lock-screen slideshow items (absolute image URLs, null for text slides); empty when ads are off. */
   ads: ClientAdItem[];
+  /** Customer signed in through the "Client" button (memory only; cleared when the PC locks). */
+  customer: CustomerLoginState | null;
+  /** The customer's request on this PC: pending while the staff decide, then the answer until dismissed. */
+  request: SessionRequest | null;
 }
+
+/** Who is signed in at the PC. The token only lets this device create requests (20 min). */
+export interface CustomerLoginState {
+  token: string;
+  expiresAt: string;
+  customer: CustomerLoginResponse['customer'];
+}
+
+export type CustomerActionError =
+  | 'not_paired'
+  | 'network'
+  | 'rate_limited'
+  | 'invalid_credentials'
+  | 'locked'
+  | 'login_disabled'
+  | 'blocked'
+  | 'requests_disabled'
+  | 'unauthorized'
+  | 'session_active'
+  | 'no_session'
+  | 'request_pending'
+  | 'conflict'
+  | 'validation_error'
+  | 'not_found'
+  | 'generic';
 
 export type ManualConnectResult =
   | { ok: true; url: string; name: string; version: string }
@@ -154,6 +190,8 @@ export class Agent {
     autoUpdate: true,
     windowMode: 'locked',
     ads: [],
+    customer: null,
+    request: null,
   };
   private readonly listeners = new Set<Listener>();
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -192,7 +230,13 @@ export class Agent {
   }
   private setState(state: ClientState): void {
     const modeChanged = state.mode !== this.snapshot.state.mode;
-    this.set({ state });
+    // Locking signs the customer out: the next person at the PC must not inherit the login.
+    const customer = modeChanged && state.mode === 'locked' ? null : this.snapshot.customer;
+    // A lock ⇄ session flip is the answer itself (approved → the session runs; ended → locked):
+    // an already-decided request would only linger as stale text, so it goes with the flip.
+    const request =
+      modeChanged && this.snapshot.request?.status !== 'pending' ? null : this.snapshot.request;
+    this.set({ state, customer, request });
     if (modeChanged || !this.modeApplied) {
       this.modeApplied = true;
       void this.applyWindowMode(state.mode === 'locked' ? 'locked' : 'overlay');
@@ -723,8 +767,12 @@ export class Agent {
             this.setPhase({ phase: 'online' });
             this.startHeartbeat();
             this.refreshAds(true);
+            void this.reconcileRequest(message.request?.id ?? null);
             break;
           }
+          case 'server.request':
+            this.onRequestPush(message.request);
+            break;
           case 'server.heartbeat_ack':
             this.clock.sync(message.serverTime);
             this.lastAckAt = Date.now();
@@ -984,6 +1032,174 @@ export class Agent {
     }).catch(() => undefined);
   }
 
+  // ─── customer login + session requests (0.9.0) ────────────────────────────
+  // The PC never unlocks or extends by itself here: these calls only create / cancel a request
+  // record on the server. Staff answer in LIKApcs; an approval arrives as the usual
+  // `session.start` / `session.extend` command, the decision itself as `server.request`.
+
+  private async customerCall<T>(
+    path: string,
+    init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown; customer?: boolean },
+  ): Promise<{ ok: true; body: T } | { ok: false; error: CustomerActionError; until?: string }> {
+    const { pairing } = this.snapshot;
+    const token = await secretGet(KEYS.token);
+    if (!pairing || !token) return { ok: false, error: 'not_paired' };
+    // No content-type without a body: Fastify rejects an empty JSON body (DELETE / GET).
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${token}`,
+      ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
+    };
+    if (init.customer) {
+      const customer = this.snapshot.customer;
+      if (!customer || Date.parse(customer.expiresAt) <= Date.now()) {
+        this.set({ customer: null });
+        return { ok: false, error: 'unauthorized' };
+      }
+      headers['x-customer-token'] = customer.token;
+    }
+    try {
+      const res = await this.api<T | { error: { code: string; details?: { until?: string } } }>(
+        pairing,
+        path,
+        {
+          method: init.method,
+          headers,
+          ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        },
+      );
+      if (res.status >= 200 && res.status < 300) return { ok: true, body: res.body as T };
+      const err =
+        res.body && typeof res.body === 'object' && 'error' in res.body ? res.body.error : null;
+      const code = err?.code ?? (res.status === 429 ? 'rate_limited' : 'generic');
+      if (code === 'unauthorized' && init.customer) this.set({ customer: null });
+      const known: CustomerActionError[] = [
+        'rate_limited',
+        'invalid_credentials',
+        'locked',
+        'login_disabled',
+        'blocked',
+        'requests_disabled',
+        'unauthorized',
+        'session_active',
+        'no_session',
+        'request_pending',
+        'conflict',
+        'validation_error',
+        'not_found',
+      ];
+      return {
+        ok: false,
+        error: known.includes(code as CustomerActionError)
+          ? (code as CustomerActionError)
+          : 'generic',
+        ...(err?.details?.until ? { until: err.details.until } : {}),
+      };
+    } catch {
+      return { ok: false, error: 'network' };
+    }
+  }
+
+  /** Customer signs in with the username + PIN the staff gave them (verified by the server). */
+  async customerLogin(
+    username: string,
+    password: string,
+  ): Promise<
+    | { ok: true; customer: CustomerLoginResponse['customer']; pending: SessionRequest | null }
+    | { ok: false; error: CustomerActionError; until?: string }
+  > {
+    const res = await this.customerCall<CustomerLoginResponse>('/client/customer-login', {
+      method: 'POST',
+      body: { username: username.trim().toLowerCase(), password },
+    });
+    if (!res.ok) return res;
+    this.set({
+      customer: {
+        token: res.body.customerToken,
+        expiresAt: res.body.expiresAt,
+        customer: res.body.customer,
+      },
+      request: res.body.pending ?? this.snapshot.request,
+    });
+    return { ok: true, customer: res.body.customer, pending: res.body.pending };
+  }
+
+  async customerLogout(): Promise<void> {
+    const { customer } = this.snapshot;
+    this.set({ customer: null });
+    if (!customer) return;
+    await this.customerCall('/client/customer-logout', { method: 'POST', body: {} }).catch(
+      () => undefined,
+    );
+  }
+
+  /** A signed-in customer whose token is still valid (null otherwise). */
+  customerSignedIn(): CustomerLoginState | null {
+    const { customer } = this.snapshot;
+    return customer && Date.parse(customer.expiresAt) > Date.now() ? customer : null;
+  }
+
+  /** What may be requested on this PC right now (quick durations with prices, packages). */
+  async requestOptions(): Promise<
+    { ok: true; options: ClientRequestOptions } | { ok: false; error: CustomerActionError }
+  > {
+    const res = await this.customerCall<ClientRequestOptions>('/client/request-options', {
+      method: 'GET',
+    });
+    return res.ok ? { ok: true, options: res.body } : res;
+  }
+
+  async createRequest(
+    input: SessionRequestCreate,
+  ): Promise<{ ok: true; request: SessionRequest } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<SessionRequest>('/client/session-request', {
+      method: 'POST',
+      body: input,
+      customer: true,
+    });
+    if (!res.ok) return res;
+    this.set({ request: res.body });
+    return { ok: true, request: res.body };
+  }
+
+  /** The customer takes the waiting request back (device-scoped — no customer token needed). */
+  async cancelRequest(): Promise<boolean> {
+    const current = this.snapshot.request;
+    if (!current || current.status !== 'pending') return false;
+    const res = await this.customerCall<SessionRequest>(`/client/session-request/${current.id}`, {
+      method: 'DELETE',
+    });
+    // The customer took it back themselves — nothing to announce on screen. (A request the staff
+    // answered in the meantime comes back with its real status and stays visible.)
+    if (res.ok) this.set({ request: res.body.status === 'cancelled' ? null : res.body });
+    else if (res.error === 'not_found') this.set({ request: null });
+    return res.ok;
+  }
+
+  /** Clears an answered request from the screen. */
+  dismissRequest(): void {
+    if (this.snapshot.request?.status !== 'pending') this.set({ request: null });
+  }
+
+  /** On every welcome: the server's view of the pending request wins (restart / reconnect). */
+  private async reconcileRequest(pendingId: string | null): Promise<void> {
+    const local = this.snapshot.request;
+    const id = pendingId ?? (local?.status === 'pending' ? local.id : null);
+    if (!id) return;
+    const res = await this.customerCall<SessionRequest>(`/client/session-request/${id}`, {
+      method: 'GET',
+    });
+    if (res.ok) this.set({ request: res.body });
+    else if (res.error === 'not_found') this.set({ request: null });
+  }
+
+  /** `server.request`: the staff answered (or the server cancelled) — show it instantly. */
+  private onRequestPush(push: ServerRequestUpdate['request']): void {
+    const merged = mergeRequestPush(this.snapshot.request, push);
+    if (!merged) return;
+    if ('request' in merged) this.set({ request: merged.request });
+    else void this.reconcileRequest(merged.fetch);
+  }
+
   // ─── 1 s tick: countdown, local expiry, notice expiry ─────────────────────
   private onTick(): void {
     const now = this.clock.now();
@@ -1008,6 +1224,7 @@ export class Agent {
     }
     if (state.notice && state.notice.untilServerMs <= now) next = { ...next, notice: null };
     if (next !== state) this.setState(next);
+    if (requestResultExpired(this.snapshot.request, now)) this.set({ request: null });
     this.set({ serverNowMs: now });
     // Periodic slideshow refresh while locked (new products / photos appear without a reconnect).
     if (next.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();

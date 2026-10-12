@@ -12,8 +12,15 @@ import {
   formatMoney,
   type ClientAdItem,
   type ClientDisplayConfig,
+  type ClientRequestOptions,
+  type SessionRequest,
 } from '@likapcs/shared';
-import { agent, type AgentSnapshot, type ManualConnectResult } from './lib/agent';
+import {
+  agent,
+  type AgentSnapshot,
+  type CustomerActionError,
+  type ManualConnectResult,
+} from './lib/agent';
 import {
   discoverServers,
   isDesktopApp,
@@ -58,6 +65,8 @@ export function App() {
   const t: T = (key, vars) => translate(snap.state.language, key, vars);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
+  // Customer login / "request time" dialog (lock screen) or "+ time" panel (during a session).
+  const [customerOpen, setCustomerOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const locked = snap.state.mode === 'locked';
   // Mirrors `settingsOpen` for the native tray listener, which is registered once and therefore
@@ -71,10 +80,21 @@ export function App() {
   }, []);
   const openSettings = useCallback(async () => {
     setUnlockOpen(false);
+    setCustomerOpen(false);
     // Read the live snapshot (not render-time props): during a session the window is the small
     // countdown widget and must first grow into the panel, otherwise nothing would be visible.
     if (agent.getSnapshot().state.mode !== 'locked') await agent.openPanel();
     setSettingsOpen(true);
+  }, []);
+  const closeCustomer = useCallback(() => {
+    setCustomerOpen(false);
+    void agent.closePanel();
+  }, []);
+  const openCustomer = useCallback(async () => {
+    setUnlockOpen(false);
+    setSettingsOpen(false);
+    if (agent.getSnapshot().state.mode !== 'locked') await agent.openPanel();
+    setCustomerOpen(true);
   }, []);
   const toggleSettings = useCallback(() => {
     if (settingsOpenRef.current) closeSettings();
@@ -95,12 +115,13 @@ export function App() {
       }
       if (e.key === 'Escape') {
         if (settingsOpen) closeSettings();
+        if (customerOpen) closeCustomer();
         setUnlockOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [settingsOpen, locked, closeSettings, toggleSettings]);
+  }, [settingsOpen, customerOpen, locked, closeSettings, closeCustomer, toggleSettings]);
 
   // Tray (native) → actions: a left click on the icon toggles the settings panel, the context
   // menu offers settings / update / quit. The native side already refuses "quit" while locked.
@@ -149,8 +170,14 @@ export function App() {
     if (locked && snap.windowMode === 'panel') void agent.closePanel();
     if (locked) setSettingsOpen(false);
   }, [locked, snap.windowMode]);
+  // Lock ⇄ session flips (an approved request, a session end) close the customer dialog: the
+  // overlay / lock screen that follows starts clean.
+  useEffect(() => {
+    setCustomerOpen(false);
+  }, [snap.state.mode]);
 
   const notice = snap.state.notice;
+  const customerLogin = Boolean(snap.state.display?.customerLogin) && snap.paired;
   if (!locked) {
     if (snap.windowMode === 'panel' && settingsOpen) {
       return (
@@ -159,7 +186,24 @@ export function App() {
         </div>
       );
     }
-    return <Overlay snap={snap} notice={notice?.text ?? null} />;
+    if (snap.windowMode === 'panel' && customerOpen) {
+      return (
+        <div className="panel-window">
+          <CustomerDialog snap={snap} t={t} onClose={closeCustomer} />
+        </div>
+      );
+    }
+    return (
+      <Overlay
+        snap={snap}
+        notice={notice?.text ?? null}
+        onRequestTime={
+          customerLogin && snap.state.session?.billing?.billingMode === 'prepaid'
+            ? () => void openCustomer()
+            : null
+        }
+      />
+    );
   }
 
   const display = snap.state.display;
@@ -173,12 +217,13 @@ export function App() {
     snap.paired &&
     snap.phase.phase === 'online' &&
     !settingsOpen &&
-    !unlockOpen;
+    !unlockOpen &&
+    !customerOpen;
 
   // A left click anywhere on the locked screen opens the staff login (same as Ctrl+Alt+A), so
   // staff never need the shortcut. Clicks inside dialogs / controls are left alone.
   const onLockClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !snap.paired || settingsOpen || unlockOpen) return;
+    if (e.button !== 0 || !snap.paired || settingsOpen || unlockOpen || customerOpen) return;
     const target = e.target as HTMLElement;
     if (target.closest('button, input, a, textarea, select, .panel')) return;
     setUnlockOpen(true);
@@ -261,11 +306,451 @@ export function App() {
           </span>
         )}
         {ticker && <Ticker text={ticker} />}
+        {snap.request && !customerOpen && (
+          <RequestPill request={snap.request} t={t} onOpen={() => void openCustomer()} />
+        )}
       </footer>
+
+      {/* Customer login — deliberately quiet: a faint word in the corner that only brightens on
+          hover. Customers who know about it find it; it never competes with the screen. */}
+      {customerLogin && !customerOpen && !settingsOpen && !unlockOpen && (
+        <button
+          type="button"
+          className="customer-link"
+          onClick={() => void openCustomer()}
+          data-testid="customer-button"
+        >
+          {t('customerButton')}
+        </button>
+      )}
 
       {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
       {unlockOpen && snap.paired && (
         <StaffUnlockDialog snap={snap} t={t} onClose={() => setUnlockOpen(false)} />
+      )}
+      {customerOpen && snap.paired && <CustomerDialog snap={snap} t={t} onClose={closeCustomer} />}
+    </div>
+  );
+}
+
+/** Why a request ended: staff text as typed; server cancel codes translated for the customer. */
+function requestReason(request: SessionRequest, t: T): string | null {
+  if (!request.reason) return null;
+  if (request.status !== 'cancelled') return request.reason;
+  const codes: Record<string, Key> = {
+    session_started: 'reasonSessionStarted',
+    session_extended: 'reasonSessionExtended',
+    session_ended: 'reasonSessionEnded',
+    device_revoked: 'reasonStationUnavailable',
+    station_disabled: 'reasonStationUnavailable',
+  };
+  const key = codes[request.reason];
+  return key ? t(key) : request.reason === 'customer' ? null : request.reason;
+}
+
+/** Small status line on the lock screen while a request waits / was just answered. */
+function RequestPill({
+  request,
+  t,
+  onOpen,
+}: {
+  request: SessionRequest;
+  t: T;
+  onOpen: () => void;
+}) {
+  const text =
+    request.status === 'pending'
+      ? t('requestWaiting')
+      : request.status === 'approved'
+        ? t('requestApproved')
+        : request.status === 'rejected'
+          ? t('requestRejected')
+          : t('requestCancelled');
+  const reason = requestReason(request, t);
+  return (
+    <button
+      type="button"
+      className={`request-pill request-pill--${request.status}`}
+      onClick={onOpen}
+      data-testid="request-pill"
+      data-status={request.status}
+    >
+      {request.status === 'pending' && <i />}
+      {text}
+      {reason && <span className="muted"> · {reason}</span>}
+    </button>
+  );
+}
+
+const CUSTOMER_ERRORS: Partial<Record<CustomerActionError, Key>> = {
+  invalid_credentials: 'errCustomerCredentials',
+  locked: 'errCustomerLockedUntil',
+  login_disabled: 'errCustomerLoginDisabled',
+  blocked: 'errCustomerBlocked',
+  requests_disabled: 'customerLoginOff',
+  rate_limited: 'errRateLimited',
+  network: 'errNetwork',
+  not_paired: 'errNetwork',
+  request_pending: 'requestPending',
+  session_active: 'requestSessionActive',
+  no_session: 'requestNoneSession',
+  unauthorized: 'errCustomerCredentials',
+};
+
+/**
+ * Customer flow: sign in (username + PIN given by the staff) → pick a duration or package → wait
+ * for the staff's answer. The dialog follows the agent's state, so a decision pushed by the server
+ * switches the view by itself. Nothing here unlocks the PC: an approval arrives as a session
+ * command from the server.
+ */
+function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClose: () => void }) {
+  const language = snap.state.language;
+  const connected = snap.phase.phase === 'online';
+  const signedIn = snap.customer && Date.parse(snap.customer.expiresAt) > Date.now();
+  const request = snap.request;
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Key | null>(null);
+  const [options, setOptions] = useState<ClientRequestOptions | null>(null);
+  const [choice, setChoice] = useState<{ minutes?: number; packageId?: string } | null>(null);
+  const step: 'login' | 'choose' | 'waiting' | 'result' =
+    request?.status === 'pending' ? 'waiting' : request ? 'result' : signedIn ? 'choose' : 'login';
+
+  // What may be requested right now (quick durations with prices, packages, staff presence).
+  // While nothing can be requested (PC disabled, someone else's session) it re-asks every few
+  // seconds so the options appear by themselves once the situation changes.
+  const [optionsTick, setOptionsTick] = useState(0);
+  useEffect(() => {
+    if (step !== 'choose') return;
+    let cancelled = false;
+    void agent.requestOptions().then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setOptions(res.options);
+        setChoice((current) => {
+          if (current?.packageId && res.options.packages.some((p) => p.id === current.packageId))
+            return current;
+          if (current?.minutes && res.options.quickMinutes.includes(current.minutes))
+            return current;
+          const first = res.options.quickMinutes[0];
+          return first ? { minutes: first } : null;
+        });
+        if (res.options.kind === 'none')
+          window.setTimeout(() => !cancelled && setOptionsTick((n) => n + 1), 5000);
+      } else setError(CUSTOMER_ERRORS[res.error] ?? 'errGeneric');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, snap.state.mode, optionsTick]);
+
+  // An approval needs no acknowledgement: the time is already running. The panel closes by itself.
+  const approved = step === 'result' && request?.status === 'approved';
+  useEffect(() => {
+    if (!approved) return;
+    const timer = window.setTimeout(() => {
+      agent.dismissRequest();
+      onClose();
+    }, 2500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onClose is stable enough per step
+  }, [approved]);
+
+  const login = async () => {
+    if (!username.trim() || !password || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await agent.customerLogin(username.trim(), password);
+    setBusy(false);
+    setPassword('');
+    if (!res.ok) setError(CUSTOMER_ERRORS[res.error] ?? 'errGeneric');
+  };
+  const send = async () => {
+    if (!options || options.kind === 'none' || !choice || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await agent.createRequest({
+      kind: options.kind,
+      ...(choice.packageId ? { packageId: choice.packageId } : { minutes: choice.minutes! }),
+    });
+    setBusy(false);
+    if (!res.ok) setError(CUSTOMER_ERRORS[res.error] ?? 'errGeneric');
+  };
+  const cancel = async () => {
+    if (busy) return;
+    setBusy(true);
+    await agent.cancelRequest();
+    setBusy(false);
+  };
+  const money = (cents: number | null | undefined) =>
+    cents === null || cents === undefined
+      ? ''
+      : formatMoney(cents, { currency: options?.currency ?? 'EUR', locale: language });
+  // "30 min", "1 h", "1 h 30 min" — whole hours without a dangling "00min".
+  const minutesLabel = (m: number) => {
+    if (m < 60) return `${m} ${t('minShort')}`;
+    const h = Math.floor(m / 60);
+    const rest = m % 60;
+    return rest === 0
+      ? `${h} ${t('hourShort')}`
+      : `${h} ${t('hourShort')} ${rest} ${t('minShort')}`;
+  };
+  const requestedLabel = (r: SessionRequest) =>
+    r.packageName
+      ? `${r.packageName} · ${minutesLabel(r.durationMinutes)}`
+      : minutesLabel(r.durationMinutes);
+
+  return (
+    <div
+      className="panel panel--center panel--customer"
+      role="dialog"
+      aria-labelledby="customer-title"
+      data-testid="customer-dialog"
+      data-step={step}
+    >
+      <div className="panel__head">
+        <strong id="customer-title">
+          {step === 'login'
+            ? t('customerTitle')
+            : step === 'choose'
+              ? options?.kind === 'extend'
+                ? t('requestExtendTitle')
+                : t('requestTitle')
+              : step === 'waiting'
+                ? t('requestWaiting')
+                : request?.status === 'approved'
+                  ? t('requestApproved')
+                  : request?.status === 'rejected'
+                    ? t('requestRejected')
+                    : t('requestCancelled')}
+        </strong>
+        {signedIn && snap.customer && (
+          <span className="customer-who" data-testid="customer-who">
+            {t('customerHello', { name: snap.customer.customer.name })}
+            {step === 'choose' && (
+              <button
+                type="button"
+                className="link"
+                onClick={() => void agent.customerLogout()}
+                data-testid="customer-signout"
+              >
+                {t('customerSignOut')}
+              </button>
+            )}
+          </span>
+        )}
+      </div>
+
+      {step === 'login' && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void login();
+          }}
+        >
+          <p className="muted small" style={{ marginTop: 0 }}>
+            {t('customerHint')}
+          </p>
+          <label className="field">
+            <span>{t('username')}</span>
+            <input
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={busy}
+              data-testid="customer-username"
+            />
+          </label>
+          <label className="field">
+            <span>{t('customerPin')}</span>
+            <input
+              type="password"
+              autoComplete="off"
+              inputMode="numeric"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              data-testid="customer-password"
+            />
+          </label>
+          {error && (
+            <div className="card__error" role="alert">
+              {t(error)}
+            </div>
+          )}
+          {!connected && !error && <div className="card__error">{t('errNotConnected')}</div>}
+          <div className="row">
+            <button className="btn btn--ghost" type="button" onClick={onClose} disabled={busy}>
+              {t('cancel')}
+            </button>
+            <button
+              className="btn btn--primary"
+              type="submit"
+              disabled={busy || !connected || !username.trim() || password.length < 4}
+              data-testid="customer-signin"
+            >
+              {busy ? t('customerSigningIn') : t('customerSignIn')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === 'choose' && (
+        <div>
+          {snap.customer && snap.customer.customer.balanceDueCents > 0 && (
+            <p className="customer-debt small" data-testid="customer-debt">
+              {t('customerDebt', { amount: money(snap.customer.customer.balanceDueCents) })}
+            </p>
+          )}
+          {!options && !error && <p className="muted small">{t('connecting')}</p>}
+          {options && options.kind === 'none' && (
+            <p className="muted" data-testid="request-none">
+              {snap.state.mode === 'session' ? t('requestNoneSession') : t('requestNone')}
+            </p>
+          )}
+          {options && options.kind !== 'none' && (
+            <>
+              <p className="muted small" style={{ marginTop: 0 }}>
+                {options.kind === 'extend' ? t('requestExtendHint') : t('requestHint')}
+              </p>
+              {options.quickMinutes.length > 0 && (
+                <div className="choice-group">
+                  <span className="choice-group__label">{t('requestQuick')}</span>
+                  <div className="choices">
+                    {options.quickMinutes.map((m) => {
+                      const active = !choice?.packageId && choice?.minutes === m;
+                      const price = options.quickPrices[String(m)];
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`choice ${active ? 'choice--active' : ''}`}
+                          onClick={() => setChoice({ minutes: m })}
+                          data-testid="request-quick"
+                          data-minutes={m}
+                          aria-pressed={active}
+                        >
+                          <strong>{minutesLabel(m)}</strong>
+                          {price !== null && price !== undefined && <small>{money(price)}</small>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {options.packages.length > 0 && (
+                <div className="choice-group">
+                  <span className="choice-group__label">{t('requestPackages')}</span>
+                  <div className="choices">
+                    {options.packages.map((p) => {
+                      const active = choice?.packageId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`choice ${active ? 'choice--active' : ''}`}
+                          onClick={() => setChoice({ packageId: p.id })}
+                          data-testid="request-package"
+                          aria-pressed={active}
+                        >
+                          <strong>{p.name}</strong>
+                          <small>
+                            {minutesLabel(p.durationMinutes)} · {money(p.priceCents)}
+                          </small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {!options.staffOnline && <p className="muted small">{t('requestStaffAway')}</p>}
+            </>
+          )}
+          {error && (
+            <div className="card__error" role="alert">
+              {t(error)}
+            </div>
+          )}
+          <div className="row">
+            <button className="btn btn--ghost" type="button" onClick={onClose} disabled={busy}>
+              {t('cancel')}
+            </button>
+            {options && options.kind !== 'none' && (
+              <button
+                className="btn btn--primary"
+                type="button"
+                onClick={() => void send()}
+                disabled={busy || !connected || !choice}
+                data-testid="request-send"
+              >
+                {busy ? t('requestSending') : t('requestSend')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {step === 'waiting' && request && (
+        <div data-testid="request-waiting">
+          <div className="request-wait">
+            <span className="spinner" aria-hidden />
+            <div>
+              <strong>{requestedLabel(request)}</strong>
+              <p className="muted small" style={{ margin: '4px 0 0' }}>
+                {request.kind === 'extend'
+                  ? t('requestWaitingExtendHint')
+                  : t('requestWaitingHint')}
+              </p>
+            </div>
+          </div>
+          {options && !options.staffOnline && (
+            <p className="muted small">{t('requestStaffAway')}</p>
+          )}
+          <div className="row">
+            <button className="btn btn--ghost" type="button" onClick={onClose} disabled={busy}>
+              {t('ok')}
+            </button>
+            <button
+              className="btn"
+              type="button"
+              onClick={() => void cancel()}
+              disabled={busy || !connected}
+              data-testid="request-cancel"
+            >
+              {t('requestCancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'result' && request && (
+        <div data-testid="request-result" data-status={request.status}>
+          <div className={`request-result request-result--${request.status}`}>
+            <strong>{requestedLabel(request)}</strong>
+            {requestReason(request, t) && (
+              <p style={{ margin: '6px 0 0' }}>
+                {t('requestReason', { reason: requestReason(request, t)! })}
+              </p>
+            )}
+          </div>
+          <div className="row">
+            <button
+              className="btn btn--primary"
+              type="button"
+              onClick={() => {
+                agent.dismissRequest();
+                if (request.status === 'approved' || !signedIn) onClose();
+              }}
+              data-testid="request-ok"
+            >
+              {request.status === 'approved' || !signedIn ? t('ok') : t('back')}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -563,7 +1048,16 @@ function moneyLine(
  * Two styles: `detailed` (code + label, big timer, paid / owed, progress bar) and `minimal` (one
  * calm line such as "PC 01 · 23 min · 1.50 €").
  */
-function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null }) {
+function Overlay({
+  snap,
+  notice,
+  onRequestTime = null,
+}: {
+  snap: AgentSnapshot;
+  notice: string | null;
+  /** Prepaid session with customer login on: the "+ time" button asks the staff for more. */
+  onRequestTime?: (() => void) | null;
+}) {
   const t = (key: Key) => translate(snap.state.language, key);
   const session = snap.state.session;
   const display = snap.state.display;
@@ -628,6 +1122,17 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
             </>
           )}
           {offline && <span className="overlay__offline" title={t('offlineSession')} />}
+          {onRequestTime && (
+            <button
+              type="button"
+              className="overlay__mini-more"
+              onClick={onRequestTime}
+              title={t('requestExtendTitle')}
+              data-testid="overlay-more"
+            >
+              {snap.request?.status === 'pending' ? '…' : '+'}
+            </button>
+          )}
         </div>
         {fraction !== null && (
           <div className="overlay__bar" aria-hidden>
@@ -645,6 +1150,17 @@ function Overlay({ snap, notice }: { snap: AgentSnapshot; notice: string | null 
           <span className="overlay__mark">L</span>
           <span className="overlay__code">{code}</span>
         </span>
+        {onRequestTime && !notice && !maintenance && (
+          <button
+            type="button"
+            className={`overlay__more ${snap.request?.status === 'pending' ? 'overlay__more--pending' : ''}`}
+            onClick={onRequestTime}
+            title={t('requestExtendTitle')}
+            data-testid="overlay-more"
+          >
+            {snap.request?.status === 'pending' ? t('requestPendingShort') : t('requestMoreTime')}
+          </button>
+        )}
         <span className="overlay__label" data-tauri-drag-region>
           {notice
             ? ''

@@ -8,6 +8,56 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.9.0] - 2026-10-12
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0019), then the gaming
+PCs (self-update or **Update clients**). Older 0.8.x clients keep working — they simply do not show
+the new _Client_ button until they are updated.
+
+### Added
+
+- **Customers sign in on the PC and ask for time** (Settings › Stations › _Customer requests_,
+  on by default):
+  - **Customers › PC login:** give any registered customer a username and a PIN of 4+ characters
+    (e.g. `lika` / `1998`). The PIN is hashed and never shown again; the login can be switched off
+    or removed; the list shows a small badge with the username. Usernames are unique
+    (case-insensitive) and freed when a customer is archived.
+  - **On the locked PC** a small, deliberately quiet **Client / Klient** button in the corner
+    (a left click elsewhere still opens the staff login). The customer signs in, picks a quick
+    duration (**30 min / 1 h / 2 h / 3 h** by default, with the price under the station's pricing
+    rule) or one of the gaming packages, and sends the request. Wrong PINs lock the login after the
+    same number of attempts as staff accounts; the PC shows the server's answer only.
+  - **In LIKApcs** the request arrives instantly: a **bell** in the top bar (count, sound — can be
+    muted, toast), a badge on the PC tile and a banner in the station dialog. **Approve** opens the
+    usual _Start session_ form **pre-filled** with the duration/package and the customer — pick the
+    payment, press Enter, the PC unlocks. **Reject** asks for a short reason (quick chips: _PC
+    reserved_, _Closing soon_, _Unpaid debt_, _Come to the desk_) that the customer reads on the PC.
+  - **More time during a prepaid session:** a **+ time** button in the countdown widget lets the
+    signed-in customer ask for an extension; approving opens the _Extend_ dialog pre-filled.
+  - Requests **never expire** — they wait until someone answers, the customer cancels, or the
+    server cancels them with a reason the PC explains (staff started a session by hand, the session
+    ended, the PC was taken out of service). One request per PC at a time; approval is bound to the
+    session transaction, so a request can never be approved twice.
+  - New permission use: approving/rejecting needs `stations.control`; viewing needs
+    `stations.view`. Audit entries: `customer.login`, `request.create`, `request.approve`,
+    `request.reject`, `request.cancel`.
+
+### Changed
+
+- Archiving a customer now also removes their PC login (the username becomes available again).
+- Disabling a station cancels its waiting customer request (`station_disabled`).
+
+### Server / protocol
+
+- Migration **0019**: `customers.login_username / login_password_hash / login_enabled /
+  login_failed_count / login_locked_until / last_login_at`; new table `session_requests`; settings
+  `requests.enabled`, `requests.quick_minutes`.
+- New routes `/client/customer-login`, `/client/customer-logout`, `/client/request-options`,
+  `/client/session-request(/:id)`, `/session-requests…`; `POST /sessions` and
+  `POST /sessions/:id/extend` take `requestId`; `StationSummary.pendingRequest`; admin event
+  `request.changed`; client push `server.request`; `server.welcome` carries the pending `request`
+  and `display.customerLogin`.
+
 ## [0.8.0] - 2026-10-12
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0018), then the gaming

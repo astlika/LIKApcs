@@ -55,6 +55,7 @@ import { useUpdates } from '../../state/updates';
 import { Badge, Button, Kbd, Segmented } from '../ui/primitives';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
+import { RequestsBell } from '../requests/requests';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
@@ -413,6 +414,7 @@ export function AppShell() {
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
+          <RequestsBell />
 
           {cashStatus.isSuccess && (
             <Link
