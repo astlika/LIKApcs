@@ -17,12 +17,28 @@ export const CLIENT_WIDGET_STYLES = ['minimal', 'detailed'] as const;
 export const CLIENT_LOCK_TITLES = ['brand', 'station'] as const;
 export const CLIENT_ADS_LAYOUTS = ['card', 'full', 'grid'] as const;
 export const CLIENT_ADS_TRANSITIONS = ['slide-left', 'slide-right', 'fade', 'zoom'] as const;
+/** Grid pages: columns × rows → 4, 6, 8, 9, 12 or 16 products per page. */
+export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4'] as const;
+export const CLIENT_ADS_IMAGE_FITS = ['contain', 'cover'] as const;
+export const CLIENT_ADS_CAPTIONS = ['bottom', 'top', 'hidden'] as const;
+/** Slide / backdrop colour presets (ads 0017, screen backdrop 0018). `midnight` is the default. */
+export const AD_THEMES = ['midnight', 'ocean', 'sunset', 'forest', 'ruby', 'gold', 'mono'] as const;
 export type ClientWidgetSize = (typeof CLIENT_WIDGET_SIZES)[number];
 export type ClientWidgetPosition = (typeof CLIENT_WIDGET_POSITIONS)[number];
 export type ClientWidgetStyle = (typeof CLIENT_WIDGET_STYLES)[number];
 export type ClientLockTitle = (typeof CLIENT_LOCK_TITLES)[number];
 export type ClientAdsLayout = (typeof CLIENT_ADS_LAYOUTS)[number];
 export type ClientAdsTransition = (typeof CLIENT_ADS_TRANSITIONS)[number];
+export type ClientAdsGrid = (typeof CLIENT_ADS_GRIDS)[number];
+export type ClientAdsImageFit = (typeof CLIENT_ADS_IMAGE_FITS)[number];
+export type ClientAdsCaption = (typeof CLIENT_ADS_CAPTIONS)[number];
+export type AdTheme = (typeof AD_THEMES)[number];
+
+/** `'3x2'` → `{cols: 3, rows: 2}` (products per grid page = cols × rows). */
+export function adsGridSize(grid: ClientAdsGrid): { cols: number; rows: number } {
+  const [cols, rows] = grid.split('x').map(Number) as [number, number];
+  return { cols, rows };
+}
 
 export const LANGUAGES = ['en', 'sq'] as const;
 export type Language = (typeof LANGUAGES)[number];
@@ -82,6 +98,29 @@ export const SETTING_SCHEMAS = {
   'client.ads_show_price': z.boolean(),
   /** Username pre-filled in the staff login that a left click on the locked screen opens. */
   'client.staff_login_username': z.string().trim().max(64),
+  // ── Screen (0018): what the locked PC shows around and inside the slideshow ──
+  /** Grid layout page size (columns × rows). */
+  'client.ads_grid': z.enum(CLIENT_ADS_GRIDS),
+  /** Slideshow edge to edge; brand, clock, PC code and status become overlays (toggles below). */
+  'client.ads_fullscreen': z.boolean(),
+  'client.ads_show_clock': z.boolean(),
+  'client.ads_show_brand': z.boolean(),
+  'client.ads_show_station': z.boolean(),
+  /** The "This PC is locked — ask the staff" strip. */
+  'client.ads_show_status': z.boolean(),
+  /** Category chip ("DRINKS") above the product name. */
+  'client.ads_show_category': z.boolean(),
+  /** Page dots + progress bar of the current slide. */
+  'client.ads_show_progress': z.boolean(),
+  'client.ads_image_fit': z.enum(CLIENT_ADS_IMAGE_FITS),
+  /** Full layout: caption at the bottom, at the top, or no caption at all. */
+  'client.ads_caption': z.enum(CLIENT_ADS_CAPTIONS),
+  /** Slow zoom / pan on full-screen pictures (Ken Burns). */
+  'client.ads_motion': z.boolean(),
+  /** Backdrop behind the slides (same presets as the slide themes). */
+  'client.ads_background': z.enum(AD_THEMES),
+  /** Scrolling line at the bottom of the locked screen; empty = none. */
+  'client.ads_ticker_text': z.string().trim().max(200),
 
   'pos.receipt_width_mm': z.union([z.literal(58), z.literal(80)]),
   /** Open the print dialog as soon as a sale is completed (off: the cashier presses Print). */
@@ -167,6 +206,19 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.ads_interval_seconds': 8,
   'client.ads_show_price': true,
   'client.staff_login_username': '',
+  'client.ads_grid': '2x2',
+  'client.ads_fullscreen': false,
+  'client.ads_show_clock': true,
+  'client.ads_show_brand': true,
+  'client.ads_show_station': true,
+  'client.ads_show_status': true,
+  'client.ads_show_category': true,
+  'client.ads_show_progress': true,
+  'client.ads_image_fit': 'contain',
+  'client.ads_caption': 'bottom',
+  'client.ads_motion': true,
+  'client.ads_background': 'midnight',
+  'client.ads_ticker_text': '',
 
   'pos.receipt_width_mm': 80,
   'pos.auto_print_receipt': false,
@@ -216,6 +268,19 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.ads_interval_seconds',
   'client.ads_show_price',
   'client.staff_login_username',
+  'client.ads_grid',
+  'client.ads_fullscreen',
+  'client.ads_show_clock',
+  'client.ads_show_brand',
+  'client.ads_show_station',
+  'client.ads_show_status',
+  'client.ads_show_category',
+  'client.ads_show_progress',
+  'client.ads_image_fit',
+  'client.ads_caption',
+  'client.ads_motion',
+  'client.ads_background',
+  'client.ads_ticker_text',
 ];
 
 /** Validates a partial settings patch; unknown keys are rejected. */
@@ -257,6 +322,19 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.ads_interval_seconds',
   'client.ads_show_price',
   'client.staff_login_username',
+  'client.ads_grid',
+  'client.ads_fullscreen',
+  'client.ads_show_clock',
+  'client.ads_show_brand',
+  'client.ads_show_station',
+  'client.ads_show_status',
+  'client.ads_show_category',
+  'client.ads_show_progress',
+  'client.ads_image_fit',
+  'client.ads_caption',
+  'client.ads_motion',
+  'client.ads_background',
+  'client.ads_ticker_text',
   'locale.currency',
   'locale.default_language',
   'business.name',
@@ -279,6 +357,19 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
       transition: settings['client.ads_transition'],
       intervalSeconds: settings['client.ads_interval_seconds'],
       showPrice: settings['client.ads_show_price'],
+      grid: settings['client.ads_grid'],
+      fullscreen: settings['client.ads_fullscreen'],
+      showClock: settings['client.ads_show_clock'],
+      showBrand: settings['client.ads_show_brand'],
+      showStation: settings['client.ads_show_station'],
+      showStatus: settings['client.ads_show_status'],
+      showCategory: settings['client.ads_show_category'],
+      showProgress: settings['client.ads_show_progress'],
+      imageFit: settings['client.ads_image_fit'],
+      caption: settings['client.ads_caption'],
+      motion: settings['client.ads_motion'],
+      background: settings['client.ads_background'],
+      tickerText: settings['client.ads_ticker_text'],
     },
   };
 }

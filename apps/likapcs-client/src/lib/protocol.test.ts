@@ -383,6 +383,19 @@ describe('reduce()', () => {
           transition: 'fade',
           intervalSeconds: 5,
           showPrice: false,
+          grid: '3x3',
+          fullscreen: true,
+          showClock: false,
+          showBrand: true,
+          showStation: true,
+          showStatus: false,
+          showCategory: true,
+          showProgress: true,
+          imageFit: 'cover',
+          caption: 'top',
+          motion: true,
+          background: 'ocean',
+          tickerText: 'Happy hour 18:00 – 20:00',
         },
       },
       businessName: 'Arena 2',
@@ -392,6 +405,10 @@ describe('reduce()', () => {
     expect(next.mode).toBe('session');
     expect(next.display?.widgetStyle).toBe('minimal');
     expect(next.display?.ads.layout).toBe('full');
+    expect(next.display?.ads.fullscreen).toBe(true);
+    expect(next.display?.ads.showClock).toBe(false);
+    expect(next.display?.ads.grid).toBe('3x3');
+    expect(next.display?.ads.tickerText).toBe('Happy hour 18:00 – 20:00');
     expect(next.businessName).toBe('Arena 2');
     expect(next.language).toBe('sq');
   });

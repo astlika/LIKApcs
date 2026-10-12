@@ -467,7 +467,10 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
                    "maintenance": null | { "until": "…", "byName": "…" },
                    "display": { "widgetSize", "widgetPosition", "widgetStyle", "widgetShowPayment", "lockTitle",
                                 "currency", "staffLoginUsername",
-                                "ads": { "enabled", "layout", "transition", "intervalSeconds", "showPrice" } } }
+                                "ads": { "enabled", "layout", "transition", "intervalSeconds", "showPrice",
+                                         "grid", "fullscreen", "showClock", "showBrand", "showStation", "showStatus",
+                                         "showCategory", "showProgress", "imageFit", "caption", "motion",
+                                         "background", "tickerText" } } }
 ```
 
 `hardware` (0.6.0) is the PC's static specification as the OS reports it — fields the OS does not
@@ -486,6 +489,14 @@ computed by the server when the session ends — the PC never bills.
 
 `display` (0.6.0) mirrors the `client.*` settings (countdown widget size / corner / style /
 paid-or-owed line, lock-screen title brand-or-station-code, product slideshow) plus the currency.
+`display.ads` (0.8.0, migration 0018) also carries the whole look of the locked screen: `grid`
+(`2x2 | 3x2 | 4x2 | 3x3 | 4x3 | 4x4` — products per grid page = columns × rows), `fullscreen` (the
+slideshow fills the screen; title / clock / PC pill / status strip become overlays), the overlay
+switches `showClock`, `showBrand`, `showStation`, `showStatus`, the slide switches `showCategory`,
+`showProgress` (page dots + progress bar), `imageFit` (`contain | cover`), `caption`
+(`bottom | top | hidden`, big-photo layout), `motion` (slow zoom on big pictures), `background`
+(backdrop preset, same names as the ad themes) and `tickerText` (scrolling line, `''` = none).
+Older clients ignore the fields they do not know; defaults reproduce the 0.7.x look.
 
 Failure codes (`server.error` is sent first, then the socket closes):
 

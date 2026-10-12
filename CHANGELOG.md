@@ -8,6 +8,46 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _Nothing yet._
 
+## [0.8.0] - 2026-10-12
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0018), then the gaming
+PCs (self-update or **Update clients**). Older 0.7.x clients keep working — they simply ignore the
+new screen options until they are updated.
+
+### Added
+
+- **The locked screen is now fully yours** (Settings › Client screen, everything previewed live
+  and pushed to every PC the moment you save — no restart):
+  - **Grid sizes** beyond the classic 4-box: 2×2, 3×2, 4×2, 3×3, 4×3 and 4×4 — 4, 6, 8, 9, 12 or
+    16 products per page, chosen from a visual picker. Dense grids use smaller type; the rest of
+    the ads follow on the next pages.
+  - **Full-screen slideshow**: the pictures run edge to edge like a digital-signage display;
+    the title, clock, PC code pill and the "This PC is locked" strip float over them as
+    translucent overlays — and the pictures keep clear of whatever you leave on.
+  - **Every overlay is switchable:** clock & date, title (business name or PC code), PC code
+    pill, status strip, page dots & progress bar, category chip. Switch them all off and the
+    screen is nothing but the ads; a left click still opens the staff login.
+  - **Pictures:** whole picture (default) or **fill the frame**; **gentle motion** (slow zoom) on
+    full-screen and filled photos; **name & price at the bottom, at the top or hidden** in the
+    big-photo layout.
+  - **Background behind the slides:** the seven colour presets (midnight, ocean, sunset, forest,
+    ruby, gold, mono) now also colour the lock screen itself.
+  - **Scrolling line** at the bottom (up to 200 characters — opening hours, a tournament, a
+    promo), seamless loop whose speed follows the length.
+  - A thin **progress bar** shows how long the current page stays; the page dots remain.
+- Admin: the Settings preview mirrors all of it — full screen, grid size, overlays, caption,
+  picture fit, backdrop, ticker — so what you see is what the PCs show.
+
+### Changed
+
+- The welcome / `server.display` payload gained `display.ads.{grid, fullscreen, showClock,
+  showBrand, showStation, showStatus, showCategory, showProgress, imageFit, caption, motion,
+  background, tickerText}`; defaults reproduce the 0.7.x look exactly.
+- Migration `0018_client_screen_options` seeds the thirteen new `client.ads_*` settings
+  (schema v18).
+- Client: a new page size (layout or grid change) restarts the slideshow from the first page; the
+  lock screen's layout can no longer be widened by long content (ticker).
+
 ## [0.7.1] - 2026-10-12
 
 Update both apps again: **Update** in LIKApcs (Admin) first (server + migration 0017), then the

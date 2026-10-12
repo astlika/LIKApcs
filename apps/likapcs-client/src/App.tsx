@@ -4,9 +4,15 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type FormEvent,
 } from 'react';
-import { formatMoney, type ClientAdItem, type ClientDisplayConfig } from '@likapcs/shared';
+import {
+  adsGridSize,
+  formatMoney,
+  type ClientAdItem,
+  type ClientDisplayConfig,
+} from '@likapcs/shared';
 import { agent, type AgentSnapshot, type ManualConnectResult } from './lib/agent';
 import {
   discoverServers,
@@ -178,38 +184,64 @@ export function App() {
     setUnlockOpen(true);
   };
 
+  // With the slideshow on, every piece of chrome is the owner's choice (Settings › Client
+  // screen): brand, clock, status strip, ticker. In full-screen mode the pictures run edge to
+  // edge and whatever stays on becomes a translucent overlay.
+  const ads = showAds && display ? display.ads : null;
+  const fullscreen = Boolean(ads?.fullscreen);
+  const showBrand = !ads || ads.showBrand;
+  const showClock = !ads || ads.showClock;
+  const showStatus = !ads || ads.showStatus;
+  const ticker = ads?.tickerText.trim() ?? '';
+  const lockClass = [
+    'lock',
+    showAds ? 'lock--ads' : '',
+    fullscreen ? 'lock--fullscreen' : '',
+    ads ? `ads__theme--${ads.background}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const slideshow =
+    showAds && display ? (
+      <AdsSlideshow
+        items={snap.ads}
+        display={display}
+        language={snap.state.language}
+        station={snap.state.station}
+      />
+    ) : null;
+
   return (
     <div
-      className={`lock${showAds ? ' lock--ads' : ''}`}
+      className={lockClass}
       onClick={onLockClick}
       data-testid="lock-screen"
+      data-fullscreen={fullscreen ? 'true' : undefined}
     >
       <div className="lock__bg" />
+      {fullscreen && slideshow}
       <header className="lock__header">
-        <div className="brand" data-testid="lock-title">
-          <span className="brand__mark">L</span>
-          <span>{lockTitle}</span>
-        </div>
-        <Clock serverNowMs={snap.serverNowMs} />
+        {showBrand ? (
+          <div className="brand" data-testid="lock-title">
+            <span className="brand__mark">L</span>
+            <span>{lockTitle}</span>
+          </div>
+        ) : (
+          <span />
+        )}
+        {showClock && <Clock serverNowMs={snap.serverNowMs} />}
       </header>
 
       <main className="lock__main">
-        {showAds && display ? (
-          <AdsSlideshow
-            items={snap.ads}
-            display={display}
-            language={snap.state.language}
-            station={snap.state.station}
-          />
-        ) : (
-          snap.state.station && (
-            <div className="station">
-              <div className="station__code">{snap.state.station.code}</div>
-              <div className="station__name">{snap.state.station.name}</div>
-            </div>
-          )
-        )}
-        <StatusCard snap={snap} t={t} compact={showAds} />
+        {showAds
+          ? !fullscreen && slideshow
+          : snap.state.station && (
+              <div className="station">
+                <div className="station__code">{snap.state.station.code}</div>
+                <div className="station__name">{snap.state.station.name}</div>
+              </div>
+            )}
+        {showStatus && <StatusCard snap={snap} t={t} compact={showAds} />}
         {notice && <div className="toast">{notice.text}</div>}
         {flash && (
           <div className="toast" role="status">
@@ -218,8 +250,9 @@ export function App() {
         )}
       </main>
 
-      {/* The lock screen carries no footer text at all; the only extra element is a small
-          pill while the server cannot be reached, so staff see the problem at a glance. */}
+      {/* The lock screen carries no footer text of its own; the only extra elements are the
+          owner's optional ticker line and a small pill while the server cannot be reached, so
+          staff see the problem at a glance. */}
       <footer className="lock__footer">
         {snap.phase.phase === 'offline' && (
           <span className="offline-pill" role="status">
@@ -227,6 +260,7 @@ export function App() {
             {t('offlineBanner')}
           </span>
         )}
+        {ticker && <Ticker text={ticker} />}
       </footer>
 
       {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
@@ -353,6 +387,20 @@ function StaffUnlockDialog({
           </div>
         </form>
       )}
+    </div>
+  );
+}
+
+/** Owner's scrolling line at the bottom of the locked screen (`client.ads_ticker_text`). The
+ *  text is doubled so the loop is seamless; speed follows the length (~6 chars / second). */
+function Ticker({ text }: { text: string }) {
+  const seconds = Math.max(14, Math.round(text.length / 6) + 6);
+  return (
+    <div className="ticker" data-testid="ticker" aria-label={text}>
+      <div className="ticker__track" style={{ animationDuration: `${seconds}s` }}>
+        <span>{text}</span>
+        <span aria-hidden="true">{text}</span>
+      </div>
     </div>
   );
 }
@@ -687,8 +735,21 @@ function AdsSlideshow({
   language: Language;
   station: { code: string; name: string } | null;
 }) {
-  const { layout, transition, intervalSeconds, showPrice } = display.ads;
-  const perPage = layout === 'grid' ? 4 : 1;
+  const {
+    layout,
+    transition,
+    intervalSeconds,
+    showPrice,
+    fullscreen,
+    showStation,
+    showCategory,
+    showProgress,
+    imageFit,
+    caption,
+    motion,
+  } = display.ads;
+  const grid = adsGridSize(display.ads.grid);
+  const perPage = layout === 'grid' ? grid.cols * grid.rows : 1;
   const pages = Math.max(1, Math.ceil(items.length / perPage));
   const [page, setPage] = useState(0);
   const [ready, setReady] = useState<Record<string, boolean>>({});
@@ -700,9 +761,42 @@ function AdsSlideshow({
     b: null,
     front: 'a',
   });
-  // The station pill repeats the PC code only when the lock title is the brand (never twice), and
-  // not over the grid's own frames.
-  const showPill = station !== null && display.lockTitle !== 'station' && layout !== 'grid';
+  // The station pill repeats the PC code only when it is not already the lock title (never
+  // twice) and only when the owner wants it; over a grid it gets its own band above the frames.
+  const showPill =
+    showStation &&
+    station !== null &&
+    !(display.lockTitle === 'station' && display.ads.showBrand && !fullscreen);
+  const frameClass = [
+    'ads',
+    `ads--${layout}`,
+    fullscreen ? 'ads--fullscreen' : '',
+    `ads--fit-${imageFit}`,
+    `ads--caption-${caption}`,
+    motion ? 'ads--motion' : '',
+    showPill ? 'ads--pill' : '',
+    showProgress && pages > 1 ? 'ads--paged' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  // Dense grids get smaller type and tighter gaps so 16 products still read well on 1080p. In
+  // full-screen mode the pictures also keep clear of whatever overlays the owner left on.
+  const headerPx = display.ads.showBrand || display.ads.showClock ? 100 : 28;
+  const insetTop = fullscreen ? headerPx + (showPill ? 58 : 0) : 0;
+  const insetBottom = fullscreen
+    ? 24 +
+      (display.ads.showStatus ? 70 : 0) +
+      (display.ads.tickerText.trim() ? 58 : 0) +
+      (showProgress ? 24 : 0)
+    : 0;
+  const gridStyle = {
+    '--cols': grid.cols,
+    '--rows': grid.rows,
+    '--cell-scale': grid.cols >= 4 ? 0.68 : grid.cols === 3 ? 0.82 : 1,
+    '--inset-top': `${insetTop}px`,
+    '--inset-bottom': `${insetBottom}px`,
+    '--pill-top': `${headerPx}px`,
+  } as CSSProperties;
 
   // Preload every picture once; a slide only becomes eligible when all of its pictures decoded.
   // Text-only slides (custom ads without a picture) are ready at once.
@@ -741,6 +835,10 @@ function AdsSlideshow({
     (index: number) => items.slice(index * perPage, index * perPage + perPage),
     [items, perPage],
   );
+  // A new page size (layout or grid changed by the owner) restarts from the first page.
+  useEffect(() => {
+    setPage(0);
+  }, [perPage]);
   const pageReady = useCallback(
     (index: number) => {
       const slice = pageItems(index);
@@ -804,7 +902,7 @@ function AdsSlideshow({
   const frontIndex = layers.front === 'a' ? layers.a : layers.b;
   if (frontIndex === null || !pageReady(frontIndex)) {
     return (
-      <div className={`ads ads--${layout}`} data-testid="ads" data-state="loading">
+      <div className={frameClass} data-testid="ads" data-state="loading" style={gridStyle}>
         {showPill && (
           <div className="ads__station">
             <span className="ads__code">{station.code}</span>
@@ -859,8 +957,11 @@ function AdsSlideshow({
                 )}
                 {badge(item)}
                 <figcaption>
+                  {showCategory && item.categoryName && perPage <= 9 && (
+                    <span className="ads__cat">{item.categoryName}</span>
+                  )}
                   <span className="ads__name">{item.name}</span>
-                  {item.body && <span className="ads__body">{item.body}</span>}
+                  {item.body && perPage <= 6 && <span className="ads__body">{item.body}</span>}
                   {price(item)}
                 </figcaption>
               </figure>
@@ -880,12 +981,16 @@ function AdsSlideshow({
                 <div className="ads__blank" aria-hidden />
               )}
               {badge(item)}
-              <figcaption>
-                {item.categoryName && <span className="ads__cat">{item.categoryName}</span>}
-                <span className="ads__name">{item.name}</span>
-                {item.body && <span className="ads__body">{item.body}</span>}
-                {price(item)}
-              </figcaption>
+              {!(layout === 'full' && caption === 'hidden' && pictureOf(item)) && (
+                <figcaption>
+                  {showCategory && item.categoryName && (
+                    <span className="ads__cat">{item.categoryName}</span>
+                  )}
+                  <span className="ads__name">{item.name}</span>
+                  {item.body && <span className="ads__body">{item.body}</span>}
+                  {price(item)}
+                </figcaption>
+              )}
             </figure>
           ))
         )}
@@ -894,7 +999,14 @@ function AdsSlideshow({
   };
 
   return (
-    <div className={`ads ads--${layout}`} data-testid="ads" data-state="ready" data-page={page}>
+    <div
+      className={frameClass}
+      data-testid="ads"
+      data-state="ready"
+      data-page={page}
+      data-per-page={perPage}
+      style={gridStyle}
+    >
       {renderPage(layers.a, 'a')}
       {renderPage(layers.b, 'b')}
       {showPill && (
@@ -902,12 +1014,18 @@ function AdsSlideshow({
           <span className="ads__code">{station.code}</span>
         </div>
       )}
-      {pages > 1 && (
-        <div className="ads__dots" aria-hidden>
-          {Array.from({ length: Math.min(pages, 12) }, (_, i) => (
-            <i key={i} className={i === page % 12 ? 'is-on' : ''} />
-          ))}
-        </div>
+      {showProgress && pages > 1 && (
+        <>
+          <div className="ads__dots" aria-hidden>
+            {Array.from({ length: Math.min(pages, 12) }, (_, i) => (
+              <i key={i} className={i === page % 12 ? 'is-on' : ''} />
+            ))}
+          </div>
+          {/* Thin bar filling over the page's own time; re-keyed per page so it restarts. */}
+          <div className="ads__progress" aria-hidden data-testid="ads-progress">
+            <i key={page} style={{ animationDuration: `${pageSeconds(page)}s` }} />
+          </div>
+        </>
       )}
     </div>
   );

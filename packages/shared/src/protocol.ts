@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import type { PricingTerms } from './billing.js';
-import type { AdTheme } from './dto.js';
 import type {
+  AdTheme,
+  ClientAdsCaption,
+  ClientAdsGrid,
+  ClientAdsImageFit,
   ClientAdsLayout,
   ClientAdsTransition,
   ClientLockTitle,
@@ -227,6 +230,27 @@ export interface ClientDisplayConfig {
     transition: ClientAdsTransition;
     intervalSeconds: number;
     showPrice: boolean;
+    /** Grid layout: columns × rows per page (`client.ads_grid`, e.g. `3x3` → 9 products). */
+    grid: ClientAdsGrid;
+    /** The slideshow fills the whole screen; brand / clock / PC code / status become overlays. */
+    fullscreen: boolean;
+    showClock: boolean;
+    showBrand: boolean;
+    showStation: boolean;
+    showStatus: boolean;
+    showCategory: boolean;
+    /** Page dots + the thin progress bar of the current slide. */
+    showProgress: boolean;
+    /** Pictures: `contain` (whole picture, padded) or `cover` (fills the frame, may crop). */
+    imageFit: ClientAdsImageFit;
+    /** Full layout: where the name / price caption sits. */
+    caption: ClientAdsCaption;
+    /** Slow zoom / pan on full-screen pictures. */
+    motion: boolean;
+    /** Lock-screen backdrop behind the slides (`AD_THEMES`). */
+    background: AdTheme;
+    /** Scrolling line at the bottom; empty = none. */
+    tickerText: string;
   };
 }
 

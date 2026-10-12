@@ -158,11 +158,14 @@ export function Segmented<T extends string>({
   options,
   onChange,
   ariaLabel,
+  testId,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
   ariaLabel?: string;
+  /** Each option gets `data-testid="<testId>-<value>"`. */
+  testId?: string;
 }) {
   return (
     <div className="seg" role="group" aria-label={ariaLabel}>
@@ -173,6 +176,7 @@ export function Segmented<T extends string>({
           className="seg__btn"
           aria-pressed={o.value === value}
           onClick={() => onChange(o.value)}
+          data-testid={testId ? `${testId}-${o.value}` : undefined}
         >
           {o.label}
         </button>
@@ -207,6 +211,7 @@ export function Card({
   children,
   flush,
   className = '',
+  testId,
 }: {
   title?: ReactNode;
   /** One quiet line under the title explaining what the card controls. */
@@ -215,9 +220,10 @@ export function Card({
   children: ReactNode;
   flush?: boolean;
   className?: string;
+  testId?: string;
 }) {
   return (
-    <section className={`card ${className}`}>
+    <section className={`card ${className}`} data-testid={testId}>
       {(title || actions) && (
         <header className="card__header">
           <div className="card__heading">

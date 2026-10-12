@@ -43,6 +43,8 @@ html[data-mode='overlay'] body {
   height: 100%;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  /* minmax(0, …): a wide child (ticker track) must never widen the screen */
+  grid-template-columns: minmax(0, 1fr);
   padding: 40px 56px;
 }
 .lock__bg {
@@ -844,10 +846,18 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   inset: 0;
   background: #0b0f17;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: 18px;
-  padding: 18px;
+  grid-template-columns: repeat(var(--cols, 2), 1fr);
+  grid-template-rows: repeat(var(--rows, 2), 1fr);
+  gap: calc(18px * var(--cell-scale, 1));
+  padding: calc(18px * var(--cell-scale, 1));
+}
+/* The PC pill needs its own band above a grid, otherwise it would cover the first product; the
+   page dots need a little room under the last row. */
+.ads--grid.ads--pill .ads__grid {
+  padding-top: 64px;
+}
+.ads--grid.ads--paged .ads__grid {
+  padding-bottom: calc(18px * var(--cell-scale, 1) + 14px);
 }
 .ads__cell {
   margin: 0;
@@ -872,20 +882,38 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 18px 16px;
+  padding: calc(12px * var(--cell-scale, 1)) calc(18px * var(--cell-scale, 1))
+    calc(16px * var(--cell-scale, 1));
 }
 .ads__cell .ads__name {
-  font-size: clamp(16px, 1.6vw, 24px);
+  font-size: calc(clamp(16px, 1.6vw, 24px) * var(--cell-scale, 1));
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ads__cell .ads__price {
-  padding: 6px 14px;
+  padding: calc(6px * var(--cell-scale, 1)) calc(14px * var(--cell-scale, 1));
   border-radius: 10px;
-  font-size: clamp(15px, 1.5vw, 22px);
+  font-size: calc(clamp(15px, 1.5vw, 22px) * var(--cell-scale, 1));
   box-shadow: none;
+}
+.ads__cell .ads__cat {
+  position: absolute;
+  top: calc(12px * var(--cell-scale, 1));
+  left: calc(14px * var(--cell-scale, 1));
+  padding: 3px 9px;
+  font-size: calc(11px * var(--cell-scale, 1));
+  background: rgba(2, 6, 23, 0.55);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #e0e7ff;
+}
+.ads__cell .ads__badge {
+  z-index: 1;
+}
+.ads__cell .ads__cat + .ads__name {
+  /* the chip sits over the picture; the name keeps its own line */
+  margin-top: 0;
 }
 .ads__station {
   position: absolute;
@@ -924,6 +952,208 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   width: 20px;
   border-radius: 3px;
   background: #fff;
+}
+/* Thin bar along the bottom edge filling over the page's time (Settings › Progress). */
+.ads__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.12);
+}
+.ads__progress i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  animation: ads-progress linear forwards;
+}
+@keyframes ads-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* ─── Owner options (Settings › Client screen, 0018) ────────────────────────── */
+/* Picture fit: `cover` fills the frame (card photo side + cells), `contain` is the default. */
+.ads--fit-cover .ads__slide--card img,
+.ads--fit-cover .ads__cell img {
+  object-fit: cover;
+  padding: 0;
+  filter: none;
+}
+.ads--fit-cover .ads__cell img {
+  border-radius: 0;
+}
+/* Caption position in the full layout: bottom (default) / top / hidden (picture only). */
+.ads--caption-top .ads__slide--full figcaption {
+  top: 0;
+  bottom: auto;
+  padding: max(5%, 64px) 5% 120px;
+  align-items: flex-start;
+  background: linear-gradient(0deg, transparent, rgba(2, 6, 23, 0.9));
+}
+.ads--caption-top .ads__slide--full .ads__cat {
+  top: calc(max(5%, 64px) - 44px);
+}
+/* Motion: slow zoom / pan on full-screen pictures and covered photos (Ken Burns). */
+.ads--motion .ads__slide--full img,
+.ads--motion.ads--fit-cover .ads__slide--card img {
+  animation: ads-kenburns 24s ease-in-out infinite alternate;
+}
+@keyframes ads-kenburns {
+  from {
+    transform: scale3d(1, 1, 1) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale3d(1.1, 1.1, 1) translate3d(-1.5%, -1%, 0);
+  }
+}
+/* Full screen: the slideshow is the screen; everything else floats above it. */
+.lock--fullscreen {
+  padding: 28px 36px;
+}
+.ads--fullscreen {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  flex: none;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  z-index: 0;
+}
+.lock--fullscreen .lock__header,
+.lock--fullscreen .lock__main,
+.lock--fullscreen .lock__footer {
+  pointer-events: none;
+}
+.lock--fullscreen .lock__header > *,
+.lock--fullscreen .lock__main > *,
+.lock--fullscreen .lock__footer > * {
+  pointer-events: auto;
+}
+.lock--fullscreen .brand,
+.lock--fullscreen .clock {
+  padding: 10px 18px;
+  border-radius: 16px;
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.lock--fullscreen .brand {
+  font-size: 18px;
+}
+.lock--fullscreen .brand__mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+.lock--fullscreen .clock__time {
+  font-size: 40px;
+}
+.lock--fullscreen .clock__date {
+  font-size: 13px;
+  margin-top: 4px;
+}
+.lock--fullscreen .lock__main {
+  justify-content: flex-end;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+.lock--fullscreen .card--strip {
+  background: rgba(2, 6, 23, 0.55);
+  border-color: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.lock--fullscreen .ads__dots {
+  bottom: 10px;
+}
+/* Full screen keeps the pictures clear of the overlays: the slideshow receives the space the
+   header (brand / clock), PC pill, status strip, ticker and progress bar take as CSS variables
+   (`--inset-top` / `--inset-bottom`, computed from the same toggles in AdsSlideshow). */
+.ads--fullscreen .ads__station {
+  top: var(--pill-top, 28px);
+  left: 36px;
+}
+.ads--fullscreen.ads--grid .ads__grid {
+  padding: calc(var(--inset-top, 0px) + 8px) 36px calc(var(--inset-bottom, 0px) + 8px);
+  /* the owner's backdrop preset shows between the frames */
+  background: transparent;
+}
+.ads--fullscreen.ads--grid {
+  background: transparent;
+}
+.ads--fullscreen .ads__slide--card {
+  padding: var(--inset-top, 0px) 36px var(--inset-bottom, 0px);
+}
+.ads--fullscreen .ads__slide--full figcaption {
+  padding-bottom: calc(3% + var(--inset-bottom, 0px));
+}
+.ads--fullscreen.ads--caption-top .ads__slide--full figcaption {
+  padding-top: calc(3% + var(--inset-top, 0px) + 44px);
+  padding-bottom: 120px;
+}
+.ads--fullscreen.ads--caption-top .ads__slide--full .ads__cat {
+  top: calc(3% + var(--inset-top, 0px));
+}
+/* Ticker: owner's scrolling line at the bottom (text doubled → seamless loop). */
+.lock__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.ticker {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 10px 0;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.ticker__track {
+  display: inline-flex;
+  white-space: nowrap;
+  will-change: transform;
+  animation: ticker-scroll linear infinite;
+}
+.ticker__track span {
+  padding: 0 4vw;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #e2e8f0;
+}
+@keyframes ticker-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+/* Backdrop preset behind the slides (Settings › Background) — the ad theme palette. */
+.lock--ads .lock__bg {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, var(--ad-glow-1), transparent 60%),
+    radial-gradient(900px 500px at 100% 110%, var(--ad-glow-2), transparent 60%),
+    linear-gradient(180deg, var(--ad-b), #05070c);
 }
 
 /* ─── Technician panel ──────────────────────────────────────────────────────── */

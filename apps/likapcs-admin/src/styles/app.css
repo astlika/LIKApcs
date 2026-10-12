@@ -3295,9 +3295,120 @@ body:has(.pos) .toasts {
   color: #e2e8f0;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
   padding: 10px 14px;
   font-size: 11px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+/* With the slideshow on, the backdrop follows the chosen preset (same palette as the PCs). */
+.csp--ads {
+  background:
+    radial-gradient(60% 50% at 10% -10%, var(--csp-glow-1), transparent 60%),
+    radial-gradient(50% 40% at 100% 110%, var(--csp-glow-2), transparent 60%),
+    linear-gradient(180deg, var(--csp-b), #05070c);
+}
+.csp__bottom {
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  min-width: 0;
+}
+.csp__ticker {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 9px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.csp__pill {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.csp__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.csp__progress i {
+  display: block;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #22d3ee);
+}
+.csp__cat {
+  display: inline-block;
+  width: fit-content;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.3);
+  border: 1px solid rgba(129, 140, 248, 0.5);
+  color: #c7d2fe;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* Full screen: the slideshow is the whole preview; chrome floats over it. */
+.csp--fullscreen {
+  padding: 8px 10px;
+}
+.csp--fullscreen .csp__ads {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border-radius: 0;
+  border: 0;
+  z-index: 0;
+}
+.csp--fullscreen .csp__header,
+.csp--fullscreen .csp__bottom,
+.csp--fullscreen .csp__big {
+  position: relative;
+  z-index: 1;
+}
+.csp--fullscreen .csp__brand,
+.csp--fullscreen .csp__clock {
+  padding: 3px 7px;
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+.csp--fullscreen .csp__pill {
+  top: 32px;
+  left: 10px;
+}
+.csp--fullscreen:not(:has(.csp__header .csp__brand)) .csp__pill {
+  top: 8px;
+}
+.csp--fullscreen .csp__strip {
+  background: rgba(2, 6, 23, 0.6);
+}
+.csp--fullscreen .csp__grid {
+  padding: 34px 10px 44px;
+}
+.csp--fullscreen .csp__ads--full .csp__full-cap {
+  padding-bottom: 26px;
 }
 .csp__header {
   display: flex;
@@ -3375,6 +3486,10 @@ body:has(.pos) .toasts {
 .csp__full-cap {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+.csp__card-cap {
+  padding-right: 8px;
 }
 .csp__card-cap b {
   font-size: 15px;
@@ -3411,36 +3526,106 @@ body:has(.pos) .toasts {
   font-size: 14px;
 }
 .csp__ads--grid {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 6px;
-  padding: 6px;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.csp__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), 1fr);
+  grid-template-rows: repeat(var(--rows, 2), 1fr);
+  gap: calc(6px * var(--cell-scale, 1));
+  padding: calc(6px * var(--cell-scale, 1));
+  min-height: 0;
 }
 .csp__cell {
+  position: relative;
   display: grid;
-  grid-template-rows: 1fr auto;
-  border-radius: 8px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  border-radius: calc(8px * var(--cell-scale, 1));
   overflow: hidden;
   background: rgba(30, 41, 59, 0.75);
   min-height: 0;
+  min-width: 0;
 }
 .csp__cell .csp-photo {
-  width: 40%;
+  /* sized by the row height so dense grids still leave room for the name line */
+  height: calc(100% - 6px);
+  max-width: 60%;
   aspect-ratio: 1;
-  margin: 4px auto;
+  margin: 3px auto;
   border-radius: 50%;
+  align-self: center;
+  min-height: 0;
 }
 .csp__cell-cap {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 6px;
-  padding: 3px 7px 5px;
-  font-size: 9.5px;
+  gap: 4px;
+  padding: calc(3px * var(--cell-scale, 1)) calc(6px * var(--cell-scale, 1))
+    calc(4px * var(--cell-scale, 1));
+  font-size: calc(9.5px * var(--cell-scale, 1));
+  min-width: 0;
+}
+.csp__cell-cap b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .csp__cell-cap em {
-  font-size: 9px;
-  padding: 1px 5px;
+  font-size: calc(9px * var(--cell-scale, 1));
+  padding: 1px 4px;
+  flex: none;
+}
+.csp__cell-cap .csp__cat {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: calc(6.5px * var(--cell-scale, 1));
+  background: rgba(2, 6, 23, 0.55);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #e0e7ff;
+}
+/* picture fit: fill = the photo covers the frame (cells + card photo) */
+.csp--fit-cover .csp__cell .csp-photo {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+  margin: 0;
+  border-radius: 0;
+}
+.csp--fit-cover .csp-photo--card {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  aspect-ratio: auto;
+}
+.csp--fit-cover .csp__ads--card {
+  align-items: stretch;
+}
+.csp--fit-cover .csp__ads--card .csp__card-cap {
+  align-self: center;
+  padding: 0 10px;
+}
+/* caption position in the big-photo layout */
+.csp--caption-top .csp__ads--full .csp__full-cap {
+  top: 0;
+  bottom: auto;
+  padding: 10px 12px 30px;
+  align-items: start;
+  background: linear-gradient(0deg, transparent, rgba(2, 6, 23, 0.9));
+}
+.csp--fullscreen.csp--caption-top .csp__ads--full .csp__full-cap {
+  padding-top: 32px;
+}
+.csp--fullscreen.csp--caption-top .csp__ads--full:has(.csp__pill) .csp__full-cap {
+  padding-top: 54px;
+}
+.csp__full-cap .csp__cat,
+.csp__card-cap .csp__cat {
+  grid-column: 1 / -1;
 }
 .csp__dots {
   position: absolute;
@@ -3716,6 +3901,67 @@ body:has(.pos) .toasts {
   color: rgba(255, 255, 255, 0.75);
 }
 /* Theme chips in the ad dialog */
+/* Settings › Client screen: toggle rows + grid-size picker */
+.toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px 18px;
+}
+.grid-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.grid-pick__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.1s;
+}
+.grid-pick__opt:hover {
+  border-color: var(--accent);
+}
+.grid-pick__opt.is-on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.grid-pick__thumb {
+  display: grid;
+  width: 52px;
+  height: 32px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 6px;
+  background: #0b0f17;
+}
+.grid-pick__thumb i {
+  display: block;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  opacity: 0.85;
+}
+.grid-pick__label {
+  display: grid;
+  line-height: 1.1;
+}
+.grid-pick__label b {
+  font-size: 15px;
+  font-weight: 800;
+}
+.grid-pick__label small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
 .ad-themes {
   display: flex;
   flex-wrap: wrap;

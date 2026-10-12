@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
 import type { ClientMetrics, HardwareInfo } from './protocol.js';
-import { LANGUAGES } from './settings.js';
+import { AD_THEMES, LANGUAGES, type AdTheme } from './settings.js';
 
 /**
  * HTTP API request/response contracts (v1). The server validates every request body with these
@@ -1993,9 +1993,6 @@ export interface DebtPaymentResult {
 export const AD_KINDS = ['product', 'custom'] as const;
 export type AdKind = (typeof AD_KINDS)[number];
 
-/** Slide background presets (0017). `null` on an ad means `midnight`, the default look. */
-export const AD_THEMES = ['midnight', 'ocean', 'sunset', 'forest', 'ruby', 'gold', 'mono'] as const;
-export type AdTheme = (typeof AD_THEMES)[number];
 /** Per-slide time on screen; null = the owner's global interval (`client.ads_interval_seconds`). */
 export const AD_DURATION_MIN_SECONDS = 3;
 export const AD_DURATION_MAX_SECONDS = 120;

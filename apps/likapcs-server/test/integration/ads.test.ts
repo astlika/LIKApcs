@@ -19,6 +19,8 @@ import {
   type RegisterDeviceResponse,
   type RegistrationPollResponse,
   type SaleDetail,
+  type ServerDisplay,
+  type SettingsMap,
   type StationSummary,
 } from '@likapcs/shared';
 import { SERVER_VERSION } from '../../src/version.js';
@@ -71,11 +73,11 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
       payload,
     });
   /** Drains the device socket until a `server.display` arrives (or fails after 5 s). */
-  const expectDisplayPush = async () => {
+  const expectDisplayPush = async (where: (m: Record<string, unknown>) => boolean = () => true) => {
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
       const msg = await client.next(deadline - Date.now());
-      if (msg.type === 'server.display') return msg;
+      if (msg.type === 'server.display' && where(msg)) return msg;
     }
     throw new Error('no server.display push');
   };
@@ -371,6 +373,83 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
       body: null,
     });
     expect(cleared.body).toMatchObject({ theme: null, durationSeconds: null, body: null });
+  });
+
+  it('screen options (0018): grid size, full screen, overlays, backdrop and ticker reach the PC live', async () => {
+    // Fresh install = the 0.7.x look, so nothing changes on upgrade.
+    const before = (await call<SettingsMap>(owner.token, 'GET', '/settings')).body;
+    expect(before).toMatchObject({
+      'client.ads_grid': '2x2',
+      'client.ads_fullscreen': false,
+      'client.ads_show_clock': true,
+      'client.ads_ticker_text': '',
+    });
+    // Validation happens on the server, field by field.
+    const bad = await call<{ error: { code: string } }>(owner.token, 'PATCH', '/settings', {
+      'client.ads_grid': '5x5',
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('validation_error');
+    expect(
+      (
+        await call(owner.token, 'PATCH', '/settings', {
+          'client.ads_ticker_text': 'x'.repeat(201),
+        })
+      ).status,
+    ).toBe(400);
+    // Cashiers may read the screen options (the Admin preview) but not change them.
+    expect(
+      (await call(cashier.token, 'PATCH', '/settings', { 'client.ads_fullscreen': true })).status,
+    ).toBe(403);
+
+    const saved = await call(owner.token, 'PATCH', '/settings', {
+      'client.ads_layout': 'grid',
+      'client.ads_grid': '4x3',
+      'client.ads_fullscreen': true,
+      'client.ads_show_clock': false,
+      'client.ads_show_status': false,
+      'client.ads_image_fit': 'cover',
+      'client.ads_caption': 'top',
+      'client.ads_motion': false,
+      'client.ads_background': 'gold',
+      'client.ads_ticker_text': '  Happy hour 18:00 – 20:00  ',
+    });
+    expect(saved.status).toBe(200);
+    // Earlier tests left older display pushes (ad changes) queued on the socket; the one for
+    // this save is the first that carries the new grid.
+    const push = (await expectDisplayPush(
+      (m) => (m as unknown as ServerDisplay).display.ads.grid === '4x3',
+    )) as unknown as ServerDisplay;
+    expect(push.display.ads).toMatchObject({
+      layout: 'grid',
+      grid: '4x3',
+      fullscreen: true,
+      showClock: false,
+      showBrand: true,
+      showStation: true,
+      showStatus: false,
+      showCategory: true,
+      showProgress: true,
+      imageFit: 'cover',
+      caption: 'top',
+      motion: false,
+      background: 'gold',
+      tickerText: 'Happy hour 18:00 – 20:00',
+    });
+    // Stored trimmed; the Admin preview reads exactly what the PCs received.
+    const after = (await call<SettingsMap>(owner.token, 'GET', '/settings')).body;
+    expect(after['client.ads_grid']).toBe('4x3');
+    expect(after['client.ads_ticker_text']).toBe('Happy hour 18:00 – 20:00');
+    await call(owner.token, 'PATCH', '/settings', {
+      'client.ads_layout': 'card',
+      'client.ads_fullscreen': false,
+      'client.ads_show_clock': true,
+      'client.ads_show_status': true,
+      'client.ads_ticker_text': '',
+    });
+    await expectDisplayPush(
+      (m) => (m as unknown as ServerDisplay).display.ads.fullscreen === false,
+    );
   });
 
   it('custom slides: title/body, picture upload + link + removal, text-only slides are fed too', async () => {

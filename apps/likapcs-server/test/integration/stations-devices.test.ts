@@ -263,7 +263,16 @@ describe('stations, device registration and realtime presence', () => {
         lockTitle: 'brand',
         currency: 'EUR',
         staffLoginUsername: '',
-        ads: { enabled: false, layout: 'card', intervalSeconds: 8 },
+        ads: {
+          enabled: false,
+          layout: 'card',
+          intervalSeconds: 8,
+          grid: '2x2',
+          fullscreen: false,
+          showClock: true,
+          background: 'midnight',
+          tickerText: '',
+        },
       },
     });
     expect(typeof welcome.serverTime).toBe('string');

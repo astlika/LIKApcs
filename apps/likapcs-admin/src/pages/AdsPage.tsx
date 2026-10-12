@@ -67,6 +67,7 @@ import {
 } from '../components/ui/primitives';
 import { useI18n } from '../i18n';
 import { api, ApiError, apiUpload, fileUrl } from '../lib/api';
+import { themeStyle } from '../lib/ad-themes';
 import { useFormat } from '../lib/format';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -83,19 +84,6 @@ const STATE_TONE: Record<
 };
 
 /** Theme swatches — the same two base tones the client uses (see client styles `.ads__theme--*`). */
-const THEME_COLORS: Record<AdTheme, [string, string]> = {
-  midnight: ['#1e293b', '#0f172a'],
-  ocean: ['#0c4a6e', '#082f49'],
-  sunset: ['#7c2d12', '#3b0764'],
-  forest: ['#14532d', '#052e16'],
-  ruby: ['#7f1d1d', '#27060a'],
-  gold: ['#78350f', '#1c1917'],
-  mono: ['#262626', '#0a0a0a'],
-};
-const themeStyle = (theme: AdTheme | null) => {
-  const [a, b] = THEME_COLORS[theme ?? 'midnight'];
-  return { background: `linear-gradient(135deg, ${a}, ${b})` };
-};
 
 /** `datetime-local` value (local time, minutes) ⇄ ISO instant. */
 function toLocalInput(iso: string | null): string {
