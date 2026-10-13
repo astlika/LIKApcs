@@ -28,6 +28,7 @@ import {
   type TaxCategorySummary,
 } from '@likapcs/shared';
 import { api, apiUpload, ApiError, fieldError } from '../lib/api';
+import { useOpenParam } from '../lib/open-param';
 import {
   ProductImageField,
   ProductThumb,
@@ -77,6 +78,9 @@ export function ProductsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ProductSummary | 'new' | null>(null);
+  useOpenParam('open', (id) => {
+    api<ProductSummary>(`/products/${id}`).then(setEditing, () => setEditing(null));
+  });
   const [adjusting, setAdjusting] = useState<ProductSummary | null>(null);
   const [movementsFor, setMovementsFor] = useState<ProductSummary | null>(null);
   const [deleting, setDeleting] = useState<ProductSummary | null>(null);

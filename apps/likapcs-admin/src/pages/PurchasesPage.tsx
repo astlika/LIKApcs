@@ -26,6 +26,7 @@ import {
   type SupplierSummary,
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
+import { useOpenParam } from '../lib/open-param';
 import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
@@ -85,6 +86,7 @@ export function PurchasesPage() {
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  useOpenParam('open', setOpenId);
 
   const suppliers = useQuery({
     queryKey: ['suppliers', { q: '', includeInactive: true }],

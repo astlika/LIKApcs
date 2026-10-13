@@ -620,6 +620,21 @@ isolated iframe, so the A4 layout never depends on the application stylesheet.
 The PC never evaluates credentials or permissions itself; it only relays them over the pinned,
 device-authenticated connection and shows the server's answer.
 
+### Global search (any signed-in user; 0.15.0)
+
+`GET /search?q=<text>&limit=<1–20, default 6>` → `{ q, exact, hits }`. One query across receipts
+(`R-`), refunds (`K-`), invoices (`F-`), purchases (`B-`, also the supplier's own invoice number),
+customers (name / phone / e-mail / code / PC username), products (name / SKU / barcode) and
+stations (code / name / number). Each kind is included only when the caller holds its page
+permission (`pos.sell` for receipts + refunds, `invoices.view`, `purchases.view`,
+`customers.view`, `products.view`, `stations.view`) and is capped at `limit` rows; `%` and `_`
+are matched literally. Document numbers are understood in every spelling — `R-2026-000123`,
+`r123`, `R2026000123`, `R-2026-123` — and when the text names exactly one document it is returned
+as `exact` and placed first in `hits`. A bare number (`123`) lists matching documents but is never
+`exact`. Hits are discriminated by `kind` (`sale | refund | invoice | purchase | customer |
+product | station`) and carry only what the palette shows (number, name, total, status, …) plus
+the id to open; a refund hit also carries its `saleId`.
+
 ### Audit (`audit.view`)
 
 `GET /audit-logs?page&pageSize&action&actorUserId&entityType&from&to&search`,

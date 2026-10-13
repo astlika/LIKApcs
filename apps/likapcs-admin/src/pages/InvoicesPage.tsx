@@ -31,6 +31,7 @@ import {
 } from '../components/ui/primitives';
 import { useI18n } from '../i18n';
 import { api, ApiError, fieldError } from '../lib/api';
+import { useOpenParam } from '../lib/open-param';
 import { useFormat } from '../lib/format';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -93,6 +94,7 @@ export function InvoicesPage() {
     },
     onError,
   });
+  useOpenParam('open', (id) => open.mutate(id));
 
   const data = list.data;
   return (

@@ -59,12 +59,14 @@ import { sessionRoutes } from './routes/sessions.js';
 import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
 import { auditRoutes } from './routes/audit.js';
+import { searchRoutes } from './routes/search.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
 import { AuditQueryService } from './services/audit-query.js';
+import { SearchService } from './services/search.js';
 import { AuthService } from './services/auth.js';
 import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
@@ -96,6 +98,7 @@ export interface Services {
   stations: StationsService;
   devices: DevicesService;
   audit: AuditQueryService;
+  search: SearchService;
   dashboard: DashboardService;
   commands: CommandsService;
   wake: WakeService;
@@ -162,6 +165,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
   const audit = new AuditQueryService(pool);
+  const search = new SearchService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const maintenance = new MaintenanceService(pool, hub, stations, auth, users, settings);
   const commands = new CommandsService(pool, hub, maintenance);
@@ -239,6 +243,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     stations,
     devices,
     audit,
+    search,
     dashboard,
     commands,
     wake,
@@ -314,6 +319,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(updateRoutes);
       await api.register(invoiceRoutes);
       await api.register(auditRoutes);
+      await api.register(searchRoutes);
     },
     { prefix: '/api/v1' },
   );

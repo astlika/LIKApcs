@@ -28,6 +28,7 @@ import {
   type Paginated,
 } from '@likapcs/shared';
 import { api, ApiError, fieldError } from '../lib/api';
+import { useOpenParam } from '../lib/open-param';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAppSettings } from '../state/app-settings';
@@ -76,6 +77,7 @@ export function CustomersPage() {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<CustomerSummary | 'new' | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  useOpenParam('open', setOpenId);
 
   const query = useMemo(
     () => ({ q: q.trim() || undefined, status: status || undefined, page, pageSize: PAGE_SIZE }),

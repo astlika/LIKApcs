@@ -4,6 +4,20 @@ All notable changes to LIKApcs are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
 
+## [Unreleased]
+
+### Added
+
+- **Global search (Ctrl+K).** The command palette now searches the whole database, not only
+  pages and PCs: receipts (`R-`), refunds (`K-`), invoices (`F-`), purchases (`B-` and the
+  supplier's invoice number), customers (name, phone, e-mail, code, PC username), products (name,
+  SKU, barcode — a scanner works straight into the box) and stations. Results come grouped with
+  the number, the amount / stock and the date; a document number typed in any spelling
+  (`R-2026-000123`, `r123`, `R2026000123`) is recognised and placed first. Enter opens the
+  record on its page (sale detail, refund → its sale, invoice document, purchase, customer,
+  product editor, PC). Every kind is filtered server-side by the user's permissions. New endpoint
+  `GET /search` (shared `SearchHit` / `SearchResponse`); pages accept `?open=<id>` deep links.
+
 ## [0.14.0] - 2026-10-13
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migrations 0024

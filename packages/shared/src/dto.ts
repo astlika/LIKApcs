@@ -2794,3 +2794,81 @@ export interface AdAlbumSummary {
   createdAt: string;
   updatedAt: string;
 }
+
+// ─── Global search (0.15.0) ──────────────────────────────────────────────────────
+export const searchQuerySchema = z.object({
+  q: z.string().trim().min(1).max(80),
+  /** Per-group cap (the palette shows a handful per kind). */
+  limit: z.coerce.number().int().min(1).max(20).default(6),
+});
+export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+export type SearchHit =
+  | {
+      kind: 'sale';
+      id: string;
+      receiptNo: string;
+      status: SaleStatus;
+      totalCents: number;
+      customerName: string | null;
+      completedAt: string | null;
+    }
+  | {
+      kind: 'refund';
+      id: string;
+      refundNo: string;
+      saleId: string;
+      receiptNo: string | null;
+      totalCents: number;
+      createdAt: string;
+    }
+  | {
+      kind: 'invoice';
+      id: string;
+      invoiceNo: string;
+      status: string;
+      billingName: string | null;
+      issuedAt: string;
+      saleId: string | null;
+    }
+  | {
+      kind: 'purchase';
+      id: string;
+      referenceNo: string;
+      status: string;
+      supplierName: string | null;
+      totalCents: number;
+      orderDate: string | null;
+    }
+  | {
+      kind: 'customer';
+      id: string;
+      code: string;
+      name: string;
+      phone: string | null;
+      loginUsername: string | null;
+      balanceDueCents: number;
+      walletBalanceCents: number;
+    }
+  | {
+      kind: 'product';
+      id: string;
+      name: string;
+      /** The barcode that matched the query (or the first one). */
+      barcode: string | null;
+      sellingPriceCents: number;
+      stockMilli: number;
+      trackStock: boolean;
+      isActive: boolean;
+    }
+  | { kind: 'station'; id: string; code: string; name: string; enabled: boolean };
+
+export type SearchKind = SearchHit['kind'];
+
+export interface SearchResponse {
+  q: string;
+  /** A document number typed in full (receipt, refund, invoice, purchase) — opened directly on Enter. */
+  exact: SearchHit | null;
+  /** Grouped, each group capped at `limit`, only the kinds the user may see. */
+  hits: SearchHit[];
+}

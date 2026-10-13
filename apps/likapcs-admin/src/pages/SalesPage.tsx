@@ -17,6 +17,7 @@ import {
   type InvoiceData,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
+import { useOpenParam } from '../lib/open-param';
 import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
@@ -76,6 +77,7 @@ export function SalesPage() {
   const [to, setTo] = useState(todayLocal());
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
+  useOpenParam('open', setOpenId);
 
   const query = useMemo(
     () => ({
