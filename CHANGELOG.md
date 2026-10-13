@@ -6,6 +6,14 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-13
+
+Update both apps: **Update** in LIKApcs (Admin) first (server fix; no new migration), then the
+gaming PCs (the Client is unchanged in behaviour and is rebuilt only so both installers carry the
+same version). Covered by tests (shared 61, server 224 incl. the new concurrency test, admin 40,
+client 48) and the browser smokes `multistart` (14 checks), `debts1click` (10), `orderbill` (12),
+`display` (28).
+
 ### Fixed
 
 - **Several PCs on one tab at once no longer fail.** Starting many PCs together with _Pay
