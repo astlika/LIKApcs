@@ -96,7 +96,7 @@ mod policy {
     }
 
     mod shell {
-        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::Foundation::{HWND, RECT};
         use windows_sys::Win32::UI::Shell::{
             SHAppBarMessage, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA,
         };
@@ -107,7 +107,12 @@ mod policy {
                 hWnd: HWND::default(),
                 uCallbackMessage: 0,
                 uEdge: 0,
-                rc: Default::default(),
+                rc: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
                 lParam: if on { ABS_AUTOHIDE as isize } else { 0 },
             };
             // SAFETY: SHAppBarMessage only reads the descriptor we pass.
