@@ -4,13 +4,15 @@ All notable changes to LIKApcs are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
 
-## [Unreleased]
+## [0.14.0] - 2026-10-13
 
-Work towards 0.14.0 (server migrations 0024 `orders.locked_screen` and 0025 end-pay columns on
-`gaming_sessions`). Covered by tests (shared 61, server 205, admin 35, client 36) and the browser
-smokes `lockscreen` (34 checks) and `endpay` (41 checks: method order, start without payment, add
-time on the bill, early end capped + "Collect later", strip on Stations and home, tile badge,
-Collect with receipt, exactly once, expiry, Waive).
+Update both apps: **Update** in LIKApcs (Admin) first (server + migrations 0024
+`orders.locked_screen` and 0025 end-pay columns on `gaming_sessions`), then the gaming PCs. Older
+0.13.0 clients keep working: they ignore the locked-screen menu flag and show an End Pay session as
+a plain countdown without the money line. Covered by tests (shared 61, server 205, admin 35,
+client 36) and the browser smokes `lockscreen` (34 checks) and `endpay` (41 checks: method order,
+start without payment, add time on the bill, early end capped + "Collect later", strip on Stations
+and home, tile badge, Collect with receipt, exactly once, expiry, Waive).
 
 ### Added
 
