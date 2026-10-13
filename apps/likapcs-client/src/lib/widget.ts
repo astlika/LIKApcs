@@ -4,6 +4,7 @@
  */
 import { widgetDesign } from '@likapcs/shared';
 import type { Key } from './i18n';
+import type { OrderView, SessionView } from './protocol';
 
 type T = (k: Key, vars?: Record<string, string | number>) => string;
 
@@ -44,4 +45,30 @@ export function bigNumber(seconds: number): { value: number; unit: 'minShort' | 
   const safe = Math.max(0, Math.floor(seconds));
   if (safe < 60) return { value: safe, unit: 'secShort' };
   return { value: Math.floor(safe / 60), unit: 'minShort' };
+}
+
+/**
+ * Orders the desk accepted "on the bill" — settled together with the PC time when the session
+ * ends. Pending ones are not promised yet; paid / billed ones are already settled.
+ */
+export function ordersOnBillCents(orders: readonly OrderView[]): number {
+  return orders
+    .filter((o) => o.status === 'accepted' && o.settlement === 'on_bill')
+    .reduce((acc, o) => acc + o.totalCents, 0);
+}
+
+/**
+ * What the customer will pay at the desk (0.16.0): the time part the server gave (postpaid so far,
+ * end pay reserved; prepaid is already paid → 0) plus the orders on the bill. null when the server
+ * gave no figure for the time and nothing is on the bill.
+ */
+export function billTotalCents(
+  view: SessionView | null,
+  orders: readonly OrderView[],
+): number | null {
+  const onBill = ordersOnBillCents(orders);
+  if (!view) return onBill > 0 ? onBill : null;
+  const time = view.owedCents ?? 0;
+  if (view.owedCents === null && view.paidCents === null && onBill === 0) return null;
+  return time + onBill;
 }

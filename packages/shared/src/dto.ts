@@ -2394,6 +2394,12 @@ export const debtRescheduleSchema = z.object({
 });
 export type DebtRescheduleRequest = z.infer<typeof debtRescheduleSchema>;
 
+/** `POST /customers/:id/debts/reschedule` — every open debt of the customer gets the new date. */
+export interface DebtRescheduleAllResult {
+  debts: DebtDetail[];
+  count: number;
+}
+
 export const debtWriteOffSchema = z.object({ reason: z.string().trim().min(2).max(200) });
 export type DebtWriteOffRequest = z.infer<typeof debtWriteOffSchema>;
 

@@ -57,10 +57,9 @@ export function LoginPage() {
     retry: false,
   });
 
-  useEffect(() => {
-    if (setup.data && !storageHasLanguage()) setLanguage(setup.data.defaultLanguage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setup.data]);
+  // 0.16.0: the staff UI opens in English until this PC picks a language (remembered here);
+  // the business language (Settings › Locale) is for customers — receipts, the PC lock screen,
+  // the customer display — and no longer flips the Admin UI by itself.
   useEffect(() => {
     if (setup.isError) setShowServer(true);
   }, [setup.isError]);
@@ -342,12 +341,4 @@ export function LoginPage() {
       </form>
     </div>
   );
-}
-
-function storageHasLanguage(): boolean {
-  try {
-    return window.localStorage.getItem('likapcs.language') !== null;
-  } catch {
-    return false;
-  }
 }

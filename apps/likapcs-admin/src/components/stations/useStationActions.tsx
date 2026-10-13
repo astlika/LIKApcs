@@ -33,7 +33,6 @@ import {
   wakeReadiness,
   type GamingPackageSummary,
   type CustomerSummary,
-  type PaymentMethod,
   type SalePaymentInput,
   type SessionMutationResponse,
   type SessionQuoteResponse,
@@ -49,13 +48,13 @@ import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
 import { useFormat } from '../../lib/format';
-import { usePaymentMethods } from '../../lib/payment-methods';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { isShiftRequired, useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
+import { allocatePayments } from '../../lib/allocate-payments';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
@@ -65,16 +64,7 @@ import {
   paidFrom,
   useNow,
 } from '../sessions/SessionPanel';
-import {
-  Button,
-  ConfirmDialog,
-  Dialog,
-  Field,
-  Input,
-  Kbd,
-  Loading,
-  Segmented,
-} from '../ui/primitives';
+import { Button, ConfirmDialog, Dialog, Field, Input, Kbd, Loading } from '../ui/primitives';
 
 export type StationActionId =
   | 'start'
@@ -743,18 +733,21 @@ export function QuickStartDialog({
   const fmt = useFormat();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const { cardEnabled } = usePaymentMethods();
   const [customerName, setCustomerName] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [custom, setCustom] = useState('');
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
-  // Single PC, prepaid: the tile picks the time, then the tender step takes the money (cash with
-  // change, card, pay later) — the same panel as the POS. Bulk starts and open time skip it.
+  const [quoting, setQuoting] = useState(false);
+  // Prepaid: the tile picks the time, then the tender step takes the money (cash with change,
+  // End Pay, balance, pay later) — the same panel as the POS. For a multi-selection every PC is
+  // quoted by its own rule and the step shows the sum; the tenders are then split per session.
+  // Open time skips the step (billed at the end).
   const [pending, setPending] = useState<{
     body: Record<string, unknown>;
     label: string;
     totalCents: number;
+    /** One bill per start target (same order as `startTargets`). */
+    bills: number[];
   } | null>(null);
   // Only PCs that can actually take a session; the server is still the judge.
   const startTargets = useMemo(
@@ -805,7 +798,6 @@ export function QuickStartDialog({
       method: 'POST',
       body: {
         stationId: target.id,
-        paymentMethod: method,
         ...body,
         customerId: customer?.id,
         customerName: customer ? undefined : customerName.trim() || undefined,
@@ -813,13 +805,20 @@ export function QuickStartDialog({
         clientRequestId: bulk ? `${requestId}:${target.number}` : requestId,
       },
     });
+  type StartVars = {
+    body: Record<string, unknown>;
+    /** Bulk + paid now: the tenders of each target, split from the one amount handed over. */
+    perTarget?: SalePaymentInput[][];
+    /** Bulk + cash: what goes back to the customer (shown in the toast). */
+    changeCents?: number;
+  };
   const start = useMutation({
-    mutationFn: async (body: Record<string, unknown>) => {
+    mutationFn: async ({ body, perTarget }: StartVars) => {
       if (!bulk) return { single: await startOne(station, body), outcomes: [] as BulkOutcome[] };
       const outcomes = await Promise.all(
-        startTargets.map(async (s): Promise<BulkOutcome> => {
+        startTargets.map(async (s, i): Promise<BulkOutcome> => {
           try {
-            await startOne(s, body);
+            await startOne(s, perTarget ? { ...body, payments: perTarget[i] ?? [] } : body);
             return { station: s, ok: true };
           } catch (err) {
             // A missing cash shift stops the whole batch: onError offers to open one and retries.
@@ -834,7 +833,7 @@ export function QuickStartDialog({
       );
       return { single: null, outcomes };
     },
-    onSuccess: ({ single, outcomes }) => {
+    onSuccess: ({ single, outcomes }, vars) => {
       if (single) {
         toast.success(t('sessions.started', { code: station.code }));
         notifyClientAck(single, toast, t);
@@ -842,7 +841,12 @@ export function QuickStartDialog({
         return;
       }
       const sum = summarizeBulk(outcomes);
-      if (sum.failed === 0) toast.success(t('map.startedMany', { n: sum.ok }));
+      if (sum.failed === 0)
+        toast.success(
+          vars.changeCents
+            ? t('map.startedManyChange', { n: sum.ok, change: fmt.money(vars.changeCents) })
+            : t('map.startedMany', { n: sum.ok }),
+        );
       else
         toast.error(
           t('map.startedPartial', {
@@ -854,17 +858,42 @@ export function QuickStartDialog({
       setRequestId(crypto.randomUUID());
       if (sum.ok > 0) onStarted();
     },
-    onError: (err, body) => {
+    onError: (err, vars) => {
       setRequestId(crypto.randomUUID());
-      if (shiftGuard.handle(err, () => start.mutate(body))) return;
+      if (shiftGuard.handle(err, () => start.mutate(vars))) return;
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
   const noPricing = openQuote && !openQuote.rule;
-  /** A tile was chosen: start now (bulk / open time / free) or take the money first. */
-  const choose = (body: Record<string, unknown>, label: string, totalCents: number) => {
-    if (bulk || totalCents <= 0) start.mutate(body);
-    else setPending({ body, label, totalCents });
+  /**
+   * A tile was chosen: open time and free time start right away; paid time goes to the tender
+   * step. A multi-selection is quoted PC by PC first (each has its own rule) so the step can show
+   * the real sum and split the money correctly.
+   */
+  const choose = async (body: Record<string, unknown>, label: string, totalCents: number) => {
+    if (!bulk) {
+      if (totalCents <= 0) start.mutate({ body });
+      else setPending({ body, label, totalCents, bills: [totalCents] });
+      return;
+    }
+    setQuoting(true);
+    try {
+      const bills = await Promise.all(
+        startTargets.map((s) =>
+          api<SessionQuoteResponse>('/sessions/quote', {
+            method: 'POST',
+            body: { stationId: s.id, ...body },
+          }).then((q) => q.priceCents),
+        ),
+      );
+      const sum = bills.reduce((a, b) => a + b, 0);
+      if (sum <= 0) start.mutate({ body });
+      else setPending({ body, label, totalCents: sum, bills });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    } finally {
+      setQuoting(false);
+    }
   };
 
   if (pending) {
@@ -872,21 +901,51 @@ export function QuickStartDialog({
       <Dialog
         open
         onClose={onClose}
-        title={t('map.startTitle', { code: station.code })}
-        description={pending.label}
+        title={
+          bulk
+            ? t('map.startManyTitle', { n: startTargets.length })
+            : t('map.startTitle', { code: station.code })
+        }
+        description={
+          bulk ? `${startTargets.map((s) => s.code).join(', ')} · ${pending.label}` : pending.label
+        }
         size="md"
       >
+        {bulk && (
+          <ul className="bulk-bills" data-testid="quick-start-bills">
+            {startTargets.map((s, i) => (
+              <li key={s.id}>
+                <span>{s.code}</span>
+                <strong>{fmt.money(pending.bills[i] ?? 0)}</strong>
+              </li>
+            ))}
+          </ul>
+        )}
         <QuickStartTender
           totalCents={pending.totalCents}
           customer={customer}
           onCustomerChange={setCustomer}
           busy={start.isPending}
           onBack={() => setPending(null)}
-          onStart={(payments, endPay) =>
-            start.mutate(
-              endPay ? { ...pending.body, billingMode: 'endpay' } : { ...pending.body, payments },
-            )
-          }
+          onStart={(payments, endPay, changeCents) => {
+            if (endPay) {
+              start.mutate({ body: { ...pending.body, billingMode: 'endpay' } });
+              return;
+            }
+            if (!bulk) {
+              start.mutate({ body: { ...pending.body, payments } });
+              return;
+            }
+            try {
+              start.mutate({
+                body: pending.body,
+                perTarget: allocatePayments(payments, pending.bills),
+                changeCents,
+              });
+            } catch {
+              toast.error(t('map.bulkTenderShort'));
+            }
+          }}
         />
       </Dialog>
     );
@@ -912,17 +971,6 @@ export function QuickStartDialog({
           </p>
         )}
         <div className="row row--between row--wrap" style={{ gap: 10 }}>
-          {bulk && cardEnabled && (
-            <Segmented
-              value={method}
-              onChange={setMethod}
-              options={[
-                { value: 'cash', label: t('sessions.methods.cash') },
-                { value: 'card', label: t('sessions.methods.card') },
-              ]}
-              ariaLabel={t('sessions.paymentMethod')}
-            />
-          )}
           <CustomerPicker
             value={customer}
             onChange={setCustomer}
@@ -938,8 +986,8 @@ export function QuickStartDialog({
           <button
             type="button"
             className="start-tile start-tile--open"
-            disabled={start.isPending || !openQuote?.rule}
-            onClick={() => start.mutate({ billingMode: 'postpaid' })}
+            disabled={start.isPending || quoting || !openQuote?.rule}
+            onClick={() => start.mutate({ body: { billingMode: 'postpaid' } })}
             data-testid="quick-start-open"
           >
             <Clock size={22} />
@@ -955,7 +1003,7 @@ export function QuickStartDialog({
               key={p.id}
               type="button"
               className="start-tile"
-              disabled={start.isPending}
+              disabled={start.isPending || quoting}
               onClick={() =>
                 choose(
                   { billingMode: 'prepaid', packageId: p.id },
@@ -979,7 +1027,7 @@ export function QuickStartDialog({
                 key={minutes}
                 type="button"
                 className="start-tile"
-                disabled={start.isPending || !q?.rule}
+                disabled={start.isPending || quoting || !q?.rule}
                 onClick={() =>
                   choose({ billingMode: 'prepaid', minutes }, `${minutes} min`, q?.priceCents ?? 0)
                 }
@@ -1020,7 +1068,7 @@ export function QuickStartDialog({
           <Button
             variant="primary"
             disabled={!customValid || !customQuote.data?.rule}
-            loading={start.isPending}
+            loading={start.isPending || quoting}
             onClick={() =>
               customQuote.data &&
               choose(
@@ -1059,12 +1107,13 @@ function QuickStartTender({
   busy: boolean;
   onBack: () => void;
   /** `endPay`: nothing paid now — start the session as end pay instead of prepaid. */
-  onStart: (payments: SalePaymentInput[], endPay: boolean) => void;
+  onStart: (payments: SalePaymentInput[], endPay: boolean, changeCents: number) => void;
 }) {
   const { t } = useI18n();
   const tender = useTender({ totalCents, customer, allowEndPay: true });
   const submit = () => {
-    if (tender.covered && !busy) onStart(tender.endPay ? [] : tender.payments, tender.endPay);
+    if (tender.covered && !busy)
+      onStart(tender.endPay ? [] : tender.payments, tender.endPay, tender.changeCents);
   };
   // End Pay has no cash field to press Enter in — Enter anywhere in the step starts the session.
   useEnterSubmits(submit);

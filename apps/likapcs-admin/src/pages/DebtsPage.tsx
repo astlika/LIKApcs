@@ -7,7 +7,7 @@
  * `POST /customers/:id/debts/pay` and the server settles the oldest debts first.
  * A new due date needs `customers.manage`; forgiving a debt needs `debts.write_off` and a reason.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -22,25 +22,19 @@ import {
 import {
   DEBT_LIST_FILTERS,
   PERMISSIONS,
-  parseMoneyInput,
   type DebtDetail,
-  type DebtPaymentResult,
   type DebtSummary,
   type DebtsOverview,
   type Paginated,
-  type CustomerSummary,
-  type DebtPaymentRequest,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
 import { useFormat } from '../lib/format';
-import { usePaymentMethods } from '../lib/payment-methods';
-import { suggestTenders } from '../lib/tender';
 import { useI18n } from '../i18n';
-import { useAppSettings } from '../state/app-settings';
 import { useAuth } from '../state/auth';
-import { useShiftGuard } from '../state/shift-guard';
 import { useToast } from '../state/toast';
 import { dueDateFromToday } from '../components/payments/TenderPanel';
+import { PayDebtDialog } from '../components/debts/PayDebtDialog';
+import { RescheduleAllDialog } from '../components/debts/RescheduleAllDialog';
 import {
   Alert,
   Badge,
@@ -49,7 +43,6 @@ import {
   EmptyState,
   Field,
   Input,
-  Kbd,
   Loading,
   PageHeader,
   Pagination,
@@ -283,7 +276,11 @@ export function DebtsPage() {
         />
       )}
       {paying && (
-        <PayDebtDialog debt={paying.debt} all={paying.all} onClose={() => setPaying(null)} />
+        <PayDebtDialog
+          customer={{ id: paying.debt.customerId, name: paying.debt.customerName }}
+          debt={paying.all ? undefined : paying.debt}
+          onClose={() => setPaying(null)}
+        />
       )}
     </>
   );
@@ -316,8 +313,11 @@ function DebtDetailDialog({
         query: { filter: 'open', customerId: d!.customerId, page: 1, pageSize: 1 },
       }),
     enabled: Boolean(d?.customerId),
+    // Decides which bulk buttons show — always fresh.
+    staleTime: 0,
   });
   const [mode, setMode] = useState<'view' | 'reschedule' | 'writeOff'>('view');
+  const [extendingAll, setExtendingAll] = useState(false);
   const [dueDate, setDueDate] = useState('');
   const [note, setNote] = useState('');
   const [reason, setReason] = useState('');
@@ -369,14 +369,22 @@ function DebtDetailDialog({
               </Button>
             )}
             {open && can(PERMISSIONS.CUSTOMERS_MANAGE) && mode === 'view' && (
-              <Button
-                onClick={() => {
-                  setDueDate(d.dueDate);
-                  setMode('reschedule');
-                }}
-              >
-                <CalendarClock size={14} /> {t('debts.reschedule')}
-              </Button>
+              <>
+                {(openForCustomer.data?.total ?? 0) > 1 && (
+                  <Button onClick={() => setExtendingAll(true)} data-testid="debt-extend-all">
+                    <CalendarClock size={14} />{' '}
+                    {t('debts.extendAllN', { n: openForCustomer.data!.total })}
+                  </Button>
+                )}
+                <Button
+                  onClick={() => {
+                    setDueDate(d.dueDate);
+                    setMode('reschedule');
+                  }}
+                >
+                  <CalendarClock size={14} /> {t('debts.reschedule')}
+                </Button>
+              </>
             )}
             {mode !== 'view' && (
               <Button onClick={() => setMode('view')}>{t('common.cancel')}</Button>
@@ -419,6 +427,13 @@ function DebtDetailDialog({
       }
     >
       {detail.isLoading && <Loading />}
+      {d && extendingAll && (
+        <RescheduleAllDialog
+          customer={{ id: d.customerId, name: d.customerName }}
+          count={openForCustomer.data?.total}
+          onClose={() => setExtendingAll(false)}
+        />
+      )}
       {d && (
         <div className="stack">
           <div className="debt-head">
@@ -537,330 +552,3 @@ function DebtDetailDialog({
 }
 
 // ─── Pay ───────────────────────────────────────────────────────────────────────
-function PayDebtDialog({
-  debt,
-  all,
-  onClose,
-}: {
-  debt: DebtSummary;
-  /** Customer-level payment: the server settles the oldest debts first. */
-  all: boolean;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const fmt = useFormat();
-  const toast = useToast();
-  const shiftGuard = useShiftGuard();
-  const queryClient = useQueryClient();
-  const { methods: cashMethods } = usePaymentMethods();
-  const walletOn = useAppSettings()['wallet.enabled'];
-  const outstanding = useQuery({
-    queryKey: ['debts', 'customer-open', debt.customerId],
-    queryFn: () =>
-      api<Paginated<DebtSummary>>('/debts', {
-        query: { filter: 'open', customerId: debt.customerId, page: 1, pageSize: 200 },
-      }),
-    enabled: all,
-  });
-  // The customer's prepaid balance (0.11.0) can settle the debt — offered when there is one.
-  const customerQuery = useQuery({
-    queryKey: ['customers', 'detail', debt.customerId],
-    queryFn: () => api<CustomerSummary>(`/customers/${debt.customerId}`),
-    enabled: walletOn,
-  });
-  const walletCents = walletOn ? (customerQuery.data?.walletBalanceCents ?? 0) : 0;
-  const methods: DebtPaymentRequest['method'][] =
-    walletCents > 0 ? [...cashMethods, 'wallet'] : cashMethods;
-  const maxCents = all
-    ? (outstanding.data?.items.reduce((a, d) => a + d.remainingCents, 0) ?? debt.remainingCents)
-    : debt.remainingCents;
-  const [amountText, setAmountText] = useState((debt.remainingCents / 100).toFixed(2));
-  const [method, setMethod] = useState<DebtPaymentRequest['method']>('cash');
-  const [tenderedText, setTenderedText] = useState('');
-  const [reference, setReference] = useState('');
-  const [result, setResult] = useState<DebtPaymentResult | null>(null);
-  const amountRef = useRef<HTMLInputElement>(null);
-  const tenderedRef = useRef<HTMLInputElement>(null);
-
-  // "Pay everything" pre-fills the whole balance once it is known.
-  useEffect(() => {
-    if (all && outstanding.data) setAmountText((maxCents / 100).toFixed(2));
-  }, [all, outstanding.data, maxCents]);
-
-  const amountCents = amountText.trim() ? parseMoneyInput(amountText) : 0;
-  const tenderedCents = tenderedText.trim() ? parseMoneyInput(tenderedText) : null;
-  const walletShort = method === 'wallet' && amountCents !== null && amountCents > walletCents;
-  const amountOk =
-    amountCents !== null && amountCents > 0 && amountCents <= maxCents && !walletShort;
-  const tenderedOk =
-    method !== 'cash' ||
-    tenderedCents === null ||
-    (amountCents !== null && tenderedCents >= amountCents);
-  const change =
-    method === 'cash' &&
-    tenderedCents !== null &&
-    amountCents !== null &&
-    tenderedCents >= amountCents
-      ? tenderedCents - amountCents
-      : 0;
-
-  const pay = useMutation({
-    mutationFn: () =>
-      api<DebtPaymentResult>(
-        all ? `/customers/${debt.customerId}/debts/pay` : `/debts/${debt.id}/pay`,
-        {
-          method: 'POST',
-          body: {
-            amountCents,
-            method,
-            tenderedCents: method === 'cash' && tenderedCents !== null ? tenderedCents : undefined,
-            reference: reference.trim() || undefined,
-          },
-        },
-      ),
-    onSuccess: (r) => {
-      void queryClient.invalidateQueries({ queryKey: ['debts'] });
-      void queryClient.invalidateQueries({ queryKey: ['customers'] });
-      void queryClient.invalidateQueries({ queryKey: ['cash'] });
-      setResult(r);
-    },
-    onError: (err) => {
-      if (shiftGuard.handle(err, () => pay.mutate())) return;
-      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
-    },
-  });
-  const submit = () => {
-    if (amountOk && tenderedOk && !pay.isPending && !result) pay.mutate();
-  };
-
-  // Enter anywhere in the dialog pays; on the result screen it closes.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.repeat) return;
-      const target = e.target as HTMLElement | null;
-      if (target && target.tagName === 'TEXTAREA') return;
-      e.preventDefault();
-      if (result) onClose();
-      else submit();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  });
-
-  if (result) {
-    const settled = result.debts.filter((d) => d.status === 'paid').length;
-    return (
-      <Dialog
-        open
-        onClose={onClose}
-        title={t('debts.paidTitle')}
-        size="sm"
-        footer={
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={onClose}
-            data-testid="debt-paid-done"
-            autoFocus
-          >
-            {t('pos.done')} <Kbd>Enter</Kbd>
-          </Button>
-        }
-      >
-        <div className="pos-done">
-          <div className="pos-done__row">
-            <span>{t('debts.paid')}</span>
-            <span className="num">{fmt.money(result.paidCents)}</span>
-          </div>
-          <div className="pos-done__row">
-            <span>{t('debts.stillOwes', { name: result.customer.name })}</span>
-            <span className="num" data-testid="debt-paid-balance">
-              {fmt.money(result.customer.balanceDueCents)}
-            </span>
-          </div>
-          {settled > 0 && (
-            <div className="pos-done__row">
-              <span>{t('debts.settledCount', { n: settled })}</span>
-              <span />
-            </div>
-          )}
-          <div className="pos-done__change" data-testid="debt-paid-change">
-            <span>{t('pos.change')}</span>
-            <strong className="num">{fmt.money(result.changeCents)}</strong>
-          </div>
-        </div>
-      </Dialog>
-    );
-  }
-
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={all ? t('debts.payAllTitle', { name: debt.customerName }) : t('debts.payTitle')}
-      description={
-        all
-          ? t('debts.payAllHint')
-          : `${debt.customerName}${debt.receiptNo ? ` · ${debt.receiptNo}` : ''} · ${t('debts.due')} ${fmt.date(debt.dueDate)}`
-      }
-      size="md"
-      footer={
-        <>
-          <Button onClick={onClose}>
-            {t('common.cancel')} <Kbd>Esc</Kbd>
-          </Button>
-          <Button
-            variant="primary"
-            size="lg"
-            disabled={!amountOk || !tenderedOk}
-            loading={pay.isPending}
-            onClick={submit}
-            data-testid="debt-pay-confirm"
-          >
-            {t('debts.confirmPay')} <Kbd>Enter</Kbd>
-          </Button>
-        </>
-      }
-    >
-      <div className="stack">
-        <div className="pos__grand" style={{ fontSize: 24 }}>
-          <span>{t('debts.remaining')}</span>
-          <span className="num">{fmt.money(maxCents)}</span>
-        </div>
-        <div className="grid grid--2">
-          <Field
-            label={t('debts.amountToPay')}
-            error={amountCents !== null && amountCents > maxCents ? t('debts.overpay') : undefined}
-          >
-            {(id) => (
-              <Input
-                id={id}
-                ref={amountRef}
-                inputMode="decimal"
-                className="num"
-                style={{ fontSize: 20, height: 44 }}
-                value={amountText}
-                onChange={(e) => setAmountText(e.target.value)}
-                onFocus={(e) => e.currentTarget.select()}
-                aria-invalid={!amountOk}
-                autoFocus
-                data-testid="debt-amount"
-              />
-            )}
-          </Field>
-          {methods.length > 1 ? (
-            <Field label={t('debts.method')}>
-              {(id) => (
-                <Select
-                  id={id}
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as DebtPaymentRequest['method'])}
-                  data-testid="debt-method"
-                >
-                  {methods.map((m) => (
-                    <option key={m} value={m}>
-                      {m === 'wallet'
-                        ? `${t('pos.wallet')} · ${fmt.money(walletCents)}`
-                        : t(`sessions.methods.${m}` as 'sessions.methods.cash')}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          ) : (
-            <Field label={t('debts.method')}>
-              {(id) => <Input id={id} value={t('pos.cash')} readOnly />}
-            </Field>
-          )}
-        </div>
-        <div className="chips">
-          <button
-            type="button"
-            className="chip"
-            onClick={() => setAmountText((maxCents / 100).toFixed(2))}
-          >
-            {t('debts.payFull')}
-          </button>
-          {[0.5, 0.25].map((f) => {
-            const c = Math.floor((maxCents * f) / 10) * 10;
-            return c > 0 && c < maxCents ? (
-              <button
-                key={f}
-                type="button"
-                className="chip"
-                onClick={() => setAmountText((c / 100).toFixed(2))}
-              >
-                {f === 0.5 ? '½' : '¼'} · {fmt.money(c)}
-              </button>
-            ) : null;
-          })}
-        </div>
-        {method === 'cash' && (
-          <>
-            <div className="chips">
-              {suggestTenders(amountCents ?? 0).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className="chip chip--tender"
-                  onClick={() => {
-                    setTenderedText((c / 100).toFixed(2));
-                    tenderedRef.current?.focus();
-                  }}
-                >
-                  {fmt.money(c)}
-                </button>
-              ))}
-            </div>
-            <Field label={t('pos.tendered')} optional hint={t('debts.tenderedHint')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  ref={tenderedRef}
-                  inputMode="decimal"
-                  className="num"
-                  value={tenderedText}
-                  onChange={(e) => setTenderedText(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  aria-invalid={!tenderedOk}
-                  data-testid="debt-tendered"
-                />
-              )}
-            </Field>
-          </>
-        )}
-        {method === 'wallet' && (
-          <div className="pos__change pos__change--wallet" data-testid="debt-wallet">
-            <span>{t('pos.walletTaken')}</span>
-            <strong className="num">
-              {fmt.money(Math.min(amountCents ?? 0, walletCents))} ·{' '}
-              {t('pos.walletLeft', {
-                amount: fmt.money(Math.max(0, walletCents - (amountCents ?? 0))),
-              })}
-            </strong>
-          </div>
-        )}
-        {walletShort && <Alert tone="danger">{t('pos.walletOver')}</Alert>}
-        {method !== 'cash' && method !== 'wallet' && (
-          <Field label={t('pos.reference')} optional>
-            {(id) => (
-              <Input
-                id={id}
-                value={reference}
-                maxLength={80}
-                onChange={(e) => setReference(e.target.value)}
-              />
-            )}
-          </Field>
-        )}
-        {!tenderedOk && <Alert tone="danger">{t('debts.tenderedShort')}</Alert>}
-        {amountOk && method === 'cash' && tenderedCents !== null && tenderedOk && (
-          <div className="pos__change" data-testid="debt-change">
-            <span>{t('pos.change')}</span>
-            <strong className="num">{fmt.money(change)}</strong>
-          </div>
-        )}
-      </div>
-    </Dialog>
-  );
-}

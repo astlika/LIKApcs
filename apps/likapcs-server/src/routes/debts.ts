@@ -61,6 +61,13 @@ export const debtRoutes: FastifyPluginAsync = async (app) => {
       actorOf(request),
     ),
   );
+  app.post('/customers/:id/debts/reschedule', manage, async (request) =>
+    services.debts.rescheduleCustomer(
+      idParams.parse(request.params).id,
+      debtRescheduleSchema.parse(request.body),
+      actorOf(request),
+    ),
+  );
   app.post('/debts/:id/write-off', writeOff, async (request) =>
     services.debts.writeOff(
       idParams.parse(request.params).id,

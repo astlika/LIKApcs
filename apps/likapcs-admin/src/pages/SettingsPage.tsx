@@ -311,7 +311,11 @@ export function SettingsPage() {
       {tab === 'locale' && (
         <Card>
           <div className="form-grid">
-            <Field label={t('settings.locale.language')} error={errors['locale.default_language']}>
+            <Field
+              label={t('settings.locale.language')}
+              hint={t('settings.locale.languageHint')}
+              error={errors['locale.default_language']}
+            >
               {(id) => (
                 <Select
                   id={id}

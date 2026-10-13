@@ -17,6 +17,7 @@ import type {
   OrderPrepare,
   ProductLookupResponse,
   ReceiptData,
+  SessionSummary,
   StationOrder,
 } from '@likapcs/shared';
 import { ApiError, api } from '../../lib/api';
@@ -140,6 +141,22 @@ export function AcceptOrderDialog({
   const tender = useTender({ totalCents: order.totalCents, customer });
   const payNow = settlement === 'pay_now';
   const ready = !payNow || tender.covered;
+  // "On the bill" (0.16.0): show what the customer will pay at the desk — the PC time so far
+  // (nothing for prepaid: already paid), the orders already on the bill and this one.
+  const session = useQuery({
+    queryKey: ['sessions', 'detail', order.sessionId],
+    queryFn: () => api<SessionSummary>(`/sessions/${order.sessionId}`),
+    enabled: mode === 'accept' && !payNow && Boolean(order.sessionId),
+    staleTime: 0,
+  });
+  const bill = session.data
+    ? {
+        timeCents: session.data.billingMode === 'prepaid' ? 0 : session.data.currentPriceCents,
+        otherOrdersCents: session.data.openOrdersCents,
+        billingMode: session.data.billingMode,
+      }
+    : null;
+  const billTotal = bill ? bill.timeCents + bill.otherOrdersCents + order.totalCents : null;
 
   const act = useMutation({
     mutationFn: () =>
@@ -294,10 +311,36 @@ export function AcceptOrderDialog({
           />
         )}
         {!payNow && (
-          <div className="quote">
+          <div className="quote" data-testid="order-bill-preview">
+            {bill && (
+              <>
+                <div className="quote__row">
+                  <span>
+                    {bill.billingMode === 'prepaid'
+                      ? t('orders.billTimePrepaid')
+                      : bill.billingMode === 'endpay'
+                        ? t('orders.billTimeEndPay')
+                        : t('orders.billTimeSoFar')}
+                  </span>
+                  <span className="num">{fmt.money(bill.timeCents)}</span>
+                </div>
+                {bill.otherOrdersCents > 0 && (
+                  <div className="quote__row">
+                    <span>{t('orders.billOtherOrders')}</span>
+                    <span className="num">{fmt.money(bill.otherOrdersCents)}</span>
+                  </div>
+                )}
+              </>
+            )}
+            <div className="quote__row">
+              <span>{t('orders.billThisOrder')}</span>
+              <span className="num">{fmt.money(order.totalCents)}</span>
+            </div>
             <div className="quote__row quote__row--total">
-              <span>{t('orders.total')}</span>
-              <strong className="num">{fmt.money(order.totalCents)}</strong>
+              <span>{bill ? t('orders.billTotal') : t('orders.total')}</span>
+              <strong className="num" data-testid="order-bill-total">
+                {fmt.money(billTotal ?? order.totalCents)}
+              </strong>
             </div>
           </div>
         )}

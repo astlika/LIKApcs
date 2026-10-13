@@ -23,33 +23,65 @@ import {
 import { agent, type AgentSnapshot } from './lib/agent';
 import { formatHMS, sessionView, type OrderView, type SessionView } from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
-import { TRAY_LINGER_MS, bigNumber, compactDuration, effectiveWidgetStyle } from './lib/widget';
+import {
+  TRAY_LINGER_MS,
+  bigNumber,
+  billTotalCents,
+  compactDuration,
+  effectiveWidgetStyle,
+  ordersOnBillCents,
+} from './lib/widget';
 
 type T = (k: Key, vars?: Record<string, string | number>) => string;
 
 export { effectiveWidgetStyle, TRAY_LINGER_MS } from './lib/widget';
 
 /**
- * Paid (prepaid), amount due at the end (end pay) or running amount owed (postpaid) — null when
- * the server gave no figure.
+ * The money line of the widget: what is still to pay at the desk — the time part (running amount
+ * for postpaid, the reserved amount for end pay) plus orders accepted on the bill (0.16.0). A
+ * prepaid session with nothing on the bill shows what was paid instead. null when the server gave
+ * no figure.
  */
+export interface MoneyLine {
+  label: string;
+  amount: string;
+  kind: 'paid' | 'owed';
+  /** An order was just accepted on the bill: the line reads "total to pay" and pulses briefly. */
+  highlight: boolean;
+}
+
 export function moneyLine(
   view: SessionView | null,
   display: ClientDisplayConfig | null,
   language: Language,
   t: T,
-): { label: string; amount: string; kind: 'paid' | 'owed' } | null {
+  orders: readonly OrderView[] = [],
+  billFlash = false,
+): MoneyLine | null {
   if (!view || !display?.widgetShowPayment) return null;
   const options = { currency: display.currency, locale: language };
-  if (view.paidCents !== null)
-    return { label: t('paid'), amount: formatMoney(view.paidCents, options), kind: 'paid' };
-  if (view.owedCents !== null)
+  const onBill = ordersOnBillCents(orders);
+  if (view.paidCents !== null && onBill === 0)
     return {
-      label: t(view.billingMode === 'endpay' ? 'dueAtEnd' : 'owed'),
-      amount: formatMoney(view.owedCents, options),
-      kind: 'owed',
+      label: t('paid'),
+      amount: formatMoney(view.paidCents, options),
+      kind: 'paid',
+      highlight: false,
     };
-  return null;
+  const total = billTotalCents(view, orders);
+  if (total === null) return null;
+  const highlight = billFlash && onBill > 0;
+  return {
+    label: highlight ? t('billTotal') : t(view.billingMode === 'endpay' ? 'dueAtEnd' : 'owed'),
+    amount: formatMoney(total, options),
+    kind: 'owed',
+    highlight,
+  };
+}
+
+/** True while the widget flashes an order the desk just accepted on the bill. */
+export function isBillFlash(order: OrderView | null | undefined): boolean {
+  return Boolean(order && order.status === 'accepted' && order.settlement === 'on_bill');
 }
 
 /** "Order #3 · accepted" for the widget (eight seconds after a decision / the preparation). */
@@ -213,7 +245,10 @@ export function Overlay({
       flash: Boolean(flash),
     }),
   );
-  const money = spec.money === 'none' ? null : moneyLine(view, display, snap.state.language, t);
+  const money =
+    spec.money === 'none'
+      ? null
+      : moneyLine(view, display, snap.state.language, t, snap.orders, isBillFlash(flash?.order));
   // Progress of a prepaid session (fraction of planned time still left).
   let fraction: number | null = null;
   if (session?.endsAt && view?.kind === 'countdown') {
@@ -384,7 +419,7 @@ interface Ctx {
   t: T;
   spec: WidgetDesignSpec;
   view: SessionView | null;
-  money: { label: string; amount: string; kind: 'paid' | 'owed' } | null;
+  money: MoneyLine | null;
   code: string;
   fraction: number | null;
   flashText: string | null;
@@ -501,9 +536,10 @@ function ClassicCard({ ctx }: { ctx: Ctx }) {
           </span>
           {money && (
             <span
-              className={`overlay__money overlay__money--${money.kind}`}
+              className={`overlay__money overlay__money--${money.kind} ${money.highlight ? 'overlay__money--bill' : ''}`}
               data-tauri-drag-region
               data-testid="overlay-money"
+              data-bill={money.highlight || undefined}
             >
               <small>{money.label}</small>
               <strong>{money.amount}</strong>

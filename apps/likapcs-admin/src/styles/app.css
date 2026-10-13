@@ -2990,6 +2990,42 @@ body:has(.pos) .toasts {
 }
 
 /* Quick start tiles */
+/* Customers list › debt cell: amount + one-click pay / extend. */
+.debt-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.debt-cell .btn {
+  opacity: 0.55;
+}
+tr:hover .debt-cell .btn,
+.debt-cell .btn:focus-visible {
+  opacity: 1;
+}
+
+/* Bulk start › tender step: one line per PC with its own quoted price. */
+.bulk-bills {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+  max-height: 112px;
+  overflow: auto;
+}
+.bulk-bills li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
 .start-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -5443,6 +5479,24 @@ button.ads-album .ads-album__meta {
 }
 .wm__money--owed strong {
   color: var(--ov-warn);
+}
+/* 0.16.0: an order was just accepted on the bill — the total (time + orders) pulses for a moment. */
+.wm__money--bill small {
+  color: var(--ov-warn);
+}
+.wm__money--bill strong {
+  animation: ov-bill-pulse 1.2s ease-in-out 3;
+}
+@keyframes ov-bill-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.12);
+    filter: brightness(1.35);
+  }
 }
 .wm__notice {
   flex: 1;

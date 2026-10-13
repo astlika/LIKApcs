@@ -10,6 +10,8 @@ import {
   Archive,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Banknote,
+  CalendarClock,
   KeyRound,
   Pencil,
   Plus,
@@ -41,6 +43,8 @@ import {
   WalletPill,
   WithdrawDialog,
 } from '../components/customers/CustomerAccount';
+import { PayDebtDialog } from '../components/debts/PayDebtDialog';
+import { RescheduleAllDialog } from '../components/debts/RescheduleAllDialog';
 import {
   Badge,
   Button,
@@ -77,6 +81,12 @@ export function CustomersPage() {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<CustomerSummary | 'new' | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  // One-click debt actions straight from the list (0.16.0): pay everything / extend every due date.
+  const [debtAction, setDebtAction] = useState<{
+    kind: 'pay' | 'extend';
+    customer: CustomerSummary;
+  } | null>(null);
+  const canCollect = can(PERMISSIONS.POS_SELL);
   useOpenParam('open', setOpenId);
 
   const query = useMemo(
@@ -201,14 +211,44 @@ export function CustomersPage() {
                   </td>
                   <td className="right num">
                     {c.balanceDueCents > 0 ? (
-                      <Link
-                        to={`/debts?customer=${c.id}`}
-                        className="text-danger"
-                        onClick={(e) => e.stopPropagation()}
-                        title={t('customers.viewDebts')}
-                      >
-                        <strong>{fmt.money(c.balanceDueCents)}</strong>
-                      </Link>
+                      <span className="debt-cell">
+                        <Link
+                          to={`/debts?customer=${c.id}`}
+                          className="text-danger"
+                          onClick={(e) => e.stopPropagation()}
+                          title={t('customers.viewDebts')}
+                        >
+                          <strong>{fmt.money(c.balanceDueCents)}</strong>
+                        </Link>
+                        {canCollect && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title={t('debts.payEverything')}
+                            data-testid="customer-pay-all"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDebtAction({ kind: 'pay', customer: c });
+                            }}
+                          >
+                            <Banknote size={14} />
+                          </Button>
+                        )}
+                        {canManage && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title={t('debts.extendAll')}
+                            data-testid="customer-extend-all"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDebtAction({ kind: 'extend', customer: c });
+                            }}
+                          >
+                            <CalendarClock size={14} />
+                          </Button>
+                        )}
+                      </span>
                     ) : (
                       '—'
                     )}
@@ -245,6 +285,18 @@ export function CustomersPage() {
         <CustomerDialog
           customer={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
+        />
+      )}
+      {debtAction?.kind === 'pay' && (
+        <PayDebtDialog
+          customer={{ id: debtAction.customer.id, name: debtAction.customer.name }}
+          onClose={() => setDebtAction(null)}
+        />
+      )}
+      {debtAction?.kind === 'extend' && (
+        <RescheduleAllDialog
+          customer={{ id: debtAction.customer.id, name: debtAction.customer.name }}
+          onClose={() => setDebtAction(null)}
         />
       )}
       {openId && (
@@ -649,6 +701,7 @@ function CustomerDetailDialog({
   const [archiving, setArchiving] = useState(false);
   const [tab, setTab] = useState<'overview' | 'statement' | 'wallet'>('overview');
   const [money, setMoney] = useState<'topup' | 'withdraw' | null>(null);
+  const [debtAction, setDebtAction] = useState<'pay' | 'extend' | null>(null);
   const detail = useQuery({
     queryKey: ['customers', 'detail', customerId],
     queryFn: () => api<CustomerDetail>(`/customers/${customerId}`),
@@ -672,6 +725,19 @@ function CustomerDetailDialog({
       footer={
         c && (
           <>
+            {c.balanceDueCents > 0 && can(PERMISSIONS.POS_SELL) && (
+              <Button onClick={() => setDebtAction('pay')} data-testid="customer-detail-pay-all">
+                <Banknote size={14} /> {t('debts.payEverything')} · {fmt.money(c.balanceDueCents)}
+              </Button>
+            )}
+            {c.balanceDueCents > 0 && canManage && (
+              <Button
+                onClick={() => setDebtAction('extend')}
+                data-testid="customer-detail-extend-all"
+              >
+                <CalendarClock size={14} /> {t('debts.extendAll')}
+              </Button>
+            )}
             {walletOn && can(PERMISSIONS.WALLET_REFUND) && c.walletBalanceCents > 0 && (
               <Button onClick={() => setMoney('withdraw')} data-testid="customer-withdraw">
                 <ArrowUpFromLine size={14} /> {t('customers.withdraw')}
@@ -701,6 +767,15 @@ function CustomerDetailDialog({
       }
     >
       {detail.isLoading && <Loading />}
+      {c && debtAction === 'pay' && (
+        <PayDebtDialog customer={{ id: c.id, name: c.name }} onClose={() => setDebtAction(null)} />
+      )}
+      {c && debtAction === 'extend' && (
+        <RescheduleAllDialog
+          customer={{ id: c.id, name: c.name }}
+          onClose={() => setDebtAction(null)}
+        />
+      )}
       {c && (
         <Tabs
           value={tab}

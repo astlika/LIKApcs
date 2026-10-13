@@ -398,6 +398,24 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
 .overlay__money--owed strong {
   color: var(--ov-warn);
 }
+/* 0.16.0: an order was just accepted on the bill — the total (time + orders) pulses for a moment. */
+.overlay__money--bill small {
+  color: var(--ov-warn);
+}
+.overlay__money--bill strong {
+  animation: ov-bill-pulse 1.2s ease-in-out 3;
+}
+@keyframes ov-bill-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.12);
+    filter: brightness(1.35);
+  }
+}
 .overlay__notice {
   flex: 1;
   display: -webkit-box;
@@ -3153,6 +3171,38 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
   padding: 12px;
   font-size: 15px;
   font-weight: 700;
+}
+/* 0.16.0: the bill so far — PC time + orders accepted on the bill. */
+.order__bill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12.5px;
+}
+.order__bill-head {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.order__bill-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.order__bill-row--total {
+  opacity: 1;
+  font-size: 14px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 .order__mine {
   border-top: 1px solid var(--border);

@@ -10,6 +10,7 @@ import type {
   CustomerSummary,
   DebtDetail,
   DebtPaymentResult,
+  DebtRescheduleAllResult,
   DebtSummary,
   DebtsOverview,
   LoginResponse,
@@ -342,6 +343,41 @@ describe('customer debts (pay later)', () => {
     expect(rescheduled.body.dueDate).toBe('2030-01-15');
     expect(rescheduled.body.notes).toBe('Promised after payday');
 
+    // Customers › "extend all": one date for every open debt of the customer (0.16.0).
+    const third = await call<SaleDetail>(cashier.token, 'POST', '/sales', {
+      items: [{ productId: cola.id, quantityMilli: 1000 }],
+      customerId: arben.id,
+      payments: [{ method: 'credit', amountCents: 150 }],
+    });
+    expect(third.status).toBe(201);
+    const allMoved = await call<DebtRescheduleAllResult>(
+      cashier.token,
+      'POST',
+      `/customers/${arben.id}/debts/reschedule`,
+      { dueDate: '2030-02-01' },
+    );
+    expect(allMoved.status).toBe(200);
+    expect(allMoved.body.count).toBe(2);
+    expect(allMoved.body.debts.map((d) => [d.status, d.dueDate]).sort()).toEqual([
+      ['open', '2030-02-01'],
+      ['partial', '2030-02-01'],
+    ]);
+    // The settled debt keeps its date.
+    const paidOne = await call<DebtDetail>(
+      cashier.token,
+      'GET',
+      `/debts/${fifo.body.debts[0]!.id}`,
+    );
+    expect(paidOne.body.dueDate).not.toBe('2030-02-01');
+    // Settle the third debt again so the rest of the test sees the same balance as before.
+    const thirdDebt = allMoved.body.debts.find((d) => d.status === 'open')!;
+    const payThird = await call(cashier.token, 'POST', `/debts/${thirdDebt.id}/pay`, {
+      amountCents: 150,
+      method: 'cash',
+    });
+    expect(payThird.status).toBe(200);
+    expect(await balanceOf(arben.id)).toBe(100);
+
     const cashBefore = await expectedCash();
     const written = await call<DebtDetail>(
       owner.token,
@@ -372,10 +408,11 @@ describe('customer debts (pay later)', () => {
     const audit = await ctx.pool.query<{ action: string; n: string }>(
       `SELECT action, count(*)::text AS n FROM audit_logs WHERE action LIKE 'debt.%' GROUP BY action ORDER BY action`,
     );
+    // 5 opened (incl. the third debt above), 5 paid, 1 + 2 rescheduled (single + "extend all").
     expect(Object.fromEntries(audit.rows.map((r) => [r.action, Number(r.n)]))).toEqual({
-      'debt.opened': 4,
-      'debt.paid': 4,
-      'debt.rescheduled': 1,
+      'debt.opened': 5,
+      'debt.paid': 5,
+      'debt.rescheduled': 3,
       'debt.written_off': 1,
     });
   });

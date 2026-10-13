@@ -9,8 +9,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatMoney, type ClientMenu, type ClientMenuItem } from '@likapcs/shared';
 import { agent, type AgentSnapshot, type CustomerActionError } from './lib/agent';
-import type { OrderView } from './lib/protocol';
+import { sessionView, type OrderView } from './lib/protocol';
 import { t as translate, type Key } from './lib/i18n';
+import { billTotalCents, ordersOnBillCents } from './lib/widget';
 
 const ORDER_ERRORS: Partial<Record<CustomerActionError, Key>> = {
   orders_disabled: 'errOrdersDisabled',
@@ -128,6 +129,10 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
 
   const open = snap.orders.filter((o) => o.status === 'pending' || o.status === 'accepted');
   const done = snap.orders.filter((o) => o.status !== 'pending' && o.status !== 'accepted');
+  // 0.16.0: what the desk will ask for — PC time (postpaid / end pay) plus orders on the bill.
+  const view = snap.state.session ? sessionView(snap.state.session, snap.serverNowMs) : null;
+  const onBill = ordersOnBillCents(snap.orders);
+  const billTotal = onBill > 0 ? billTotalCents(view, snap.orders) : null;
   // Browse-only (0.14.0): the lock screen shows the menu even when sending must wait for a
   // session — the products are still worth looking at.
   const browseOnly = Boolean(
@@ -352,6 +357,25 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
         </>
       )}
 
+      {billTotal !== null && (
+        <div className="order__bill" data-testid="order-bill">
+          <span className="order__bill-head">{t('billSoFar')}</span>
+          {view && view.owedCents !== null && view.owedCents > 0 && (
+            <span className="order__bill-row">
+              <span>{t('billTime')}</span>
+              <span>{money(view.owedCents)}</span>
+            </span>
+          )}
+          <span className="order__bill-row">
+            <span>{t('billOrders')}</span>
+            <span>{money(onBill)}</span>
+          </span>
+          <span className="order__bill-row order__bill-row--total">
+            <span>{t('orderTotal')}</span>
+            <b data-testid="order-bill-total">{money(billTotal)}</b>
+          </span>
+        </div>
+      )}
       {snap.orders.length > 0 && (
         <div className="order__mine" data-testid="order-mine">
           <strong>{t('orderMine')}</strong>

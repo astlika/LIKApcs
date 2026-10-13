@@ -25,6 +25,34 @@ All notable changes to LIKApcs are documented here. The format follows
   (`planAlbums` / `buildProgram`) so PC and counter play the same program. _Note: the native
   window placement (Rust) is built only by the release pipeline — it is verified with the 0.16.0
   installers._
+- **Start several PCs with a payment step.** Selecting more than one free PC and pressing _Start_
+  now offers the same payment methods as a single PC — Cash (with change), **End Pay**, Balance,
+  Pay later. Every PC is quoted by its own pricing rule first; the step lists the bills per PC
+  and the sum; one amount handed over is split per session (non-cash tenders first, then cash),
+  so each receipt carries exactly its own price and the only change is the cashier's (shown in
+  the toast). Open time still starts right away.
+- **Customers › one-click debt actions.** In the customers list (next to the amount owed) and in
+  the customer dialog: **Pay all debt** (the collect dialog pre-filled with everything owed →
+  Enter) and **Extend due date** for every open debt of the customer at once (date, +7 / +14 /
+  +30 chips, optional note; logged per debt). The Debts page offers _Extend all (n)_ next to
+  _Collect all (n)_. New endpoint `POST /customers/:id/debts/reschedule`
+  (`customers.manage`).
+- **Total to pay on the PC after an order is accepted.** When the desk accepts an order _on the
+  bill_, the PC widget's money line switches to the whole amount now due at the desk — PC time
+  (running / reserved; nothing for prepaid) **plus** the orders on the bill — and pulses for a
+  moment as "Total to pay"; the order panel shows the breakdown (PC time, orders on the bill,
+  total). The Admin accept dialog previews the same bill (PC time so far, orders already on the
+  bill, this order, total) before the staff confirm.
+
+### Changed
+
+- **"Pagesë në fund"** is the Albanian label of End Pay everywhere in LIKApcs (English keeps
+  _End Pay_); open time is "Kohë e hapur (paguan sipas orës në fund)".
+- **English first.** LIKApcs opens in English on a PC that has not picked a language yet (EN / SQ
+  in the top bar, remembered per PC); the business language in Settings › Locale is now called
+  _Customer language_ and drives receipts, the PC lock screen and the customer display only.
+- Customer display: the window re-introduces itself when the register window is reloaded, keeps
+  a slow heartbeat, text-only slides are centred, and the sale summary carries the clock.
 
 ## [0.15.0] - 2026-10-13
 

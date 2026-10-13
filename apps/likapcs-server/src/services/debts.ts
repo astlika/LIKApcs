@@ -18,6 +18,7 @@ import type {
   DebtPaymentRequest,
   DebtPaymentResult,
   DebtPaymentSummary,
+  DebtRescheduleAllResult,
   DebtRescheduleRequest,
   DebtStatus,
   DebtSummary,
@@ -437,6 +438,38 @@ export class DebtsService {
         details: { from: debt.due_date, to: input.dueDate },
       });
       return (await this.get(id, client))!;
+    });
+  }
+
+  /** One new due date for every open / partial debt of a customer (Customers › "extend all"). */
+  async rescheduleCustomer(
+    customerId: string,
+    input: DebtRescheduleRequest,
+    actor: AuditActor,
+  ): Promise<DebtRescheduleAllResult> {
+    return withTransaction(this.pool, async (client) => {
+      const open = await client.query<DebtRow>(
+        `${SELECT} WHERE d.customer_id = $1 AND d.status IN ('open', 'partial')
+         ORDER BY d.due_date ASC, d.created_at ASC FOR UPDATE OF d`,
+        [customerId],
+      );
+      if (!open.rows.length) throw conflict('This customer has no open debt');
+      await client.query(
+        `UPDATE customer_debts SET due_date = $2::date, notes = COALESCE($3, notes)
+         WHERE customer_id = $1 AND status IN ('open', 'partial')`,
+        [customerId, input.dueDate, input.notes ?? null],
+      );
+      for (const debt of open.rows) {
+        await recordAudit(client, actor, {
+          action: 'debt.rescheduled',
+          entityType: 'customer_debt',
+          entityId: debt.id,
+          details: { from: debt.due_date, to: input.dueDate, all: true },
+        });
+      }
+      const debts: DebtDetail[] = [];
+      for (const debt of open.rows) debts.push((await this.get(debt.id, client))!);
+      return { debts, count: debts.length };
     });
   }
 
