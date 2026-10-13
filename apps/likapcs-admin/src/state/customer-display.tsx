@@ -106,7 +106,9 @@ export function CustomerDisplayProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const channel = useMemo(() => new DisplayChannel(), []);
   const [tender, setTenderState] = useState<DisplayTender | null>(null);
-  const [done, setDoneState] = useState<DisplayDone | null>(null);
+  // The completed sale + the cart it came from: the thank-you screen outlives that cart (the POS
+  // keeps the lines until Finish / auto-finish) and only a *new* cart with lines replaces it.
+  const [done, setDoneState] = useState<{ done: DisplayDone; cartId: string } | null>(null);
   const [connected, setConnected] = useState(false);
   const [prefsEnabled] = useState(() => loadDisplayPrefs().enabled);
 
@@ -131,16 +133,18 @@ export function CustomerDisplayProvider({ children }: { children: ReactNode }) {
   // The thank-you screen ends by itself; a new sale ends it at once (see `state`).
   useEffect(() => {
     if (!done) return;
-    const left = done.at + DISPLAY_THANKS_SECONDS * 1000 - Date.now();
+    const left = done.done.at + DISPLAY_THANKS_SECONDS * 1000 - Date.now();
     const timer = window.setTimeout(() => setDoneState(null), Math.max(0, left));
     return () => window.clearTimeout(timer);
   }, [done]);
 
+  const cartId = cart.clientRequestId;
   const state = useMemo<DisplayState>(() => {
+    const thanks = done && (done.cartId === cartId || !sale);
+    if (thanks) return { kind: 'done', done: done.done };
     if (sale) return tender ? { kind: 'paying', sale, tender } : { kind: 'sale', sale };
-    if (done) return { kind: 'done', done };
     return { kind: 'idle' };
-  }, [sale, tender, done]);
+  }, [sale, tender, done, cartId]);
 
   const brand = useMemo<DisplayBrand>(
     () => ({
@@ -195,9 +199,11 @@ export function CustomerDisplayProvider({ children }: { children: ReactNode }) {
   }, [prefsEnabled]);
 
   const setTender = useCallback((t: DisplayTender | null) => setTenderState(t), []);
+  const cartIdRef = useRef(cartId);
+  cartIdRef.current = cartId;
   const setDone = useCallback((d: Omit<DisplayDone, 'at'>) => {
     setTenderState(null);
-    setDoneState({ ...d, at: Date.now() });
+    setDoneState({ done: { ...d, at: Date.now() }, cartId: cartIdRef.current });
   }, []);
 
   const value = useMemo<CustomerDisplayValue>(
