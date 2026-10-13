@@ -564,7 +564,9 @@ mod diag {
                 return None;
             }
             if let Ok(own) = window.hwnd() {
-                if fg == own {
+                // windows-sys HWND is a raw pointer; tauri's comes from the `windows` crate as a
+                // struct — compare the addresses, not the types.
+                if fg as isize == own.0 as isize {
                     return None;
                 }
             }
