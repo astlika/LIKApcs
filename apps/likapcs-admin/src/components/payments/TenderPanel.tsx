@@ -625,7 +625,7 @@ export function TenderPanel({
           <strong className="num">{fmt.money(tender.walletCents ?? 0)}</strong>
         </div>
       )}
-      {tender.covered && (mode !== 'credit' || tender.creditCents === 0) && (
+      {tender.covered && mode !== 'endpay' && (mode !== 'credit' || tender.creditCents === 0) && (
         <div className="pos__change" data-testid={`${testId}-change`}>
           <span>{t('pos.change')}</span>
           <strong className="num">{fmt.money(tender.changeCents)}</strong>

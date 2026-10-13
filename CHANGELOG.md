@@ -7,8 +7,10 @@ All notable changes to LIKApcs are documented here. The format follows
 ## [Unreleased]
 
 Work towards 0.14.0 (server migrations 0024 `orders.locked_screen` and 0025 end-pay columns on
-`gaming_sessions`). Covered by tests (shared 61, server 204, admin 35, client 36) and the browser
-smoke `lockscreen` (34 checks); the `endpay` smoke follows.
+`gaming_sessions`). Covered by tests (shared 61, server 205, admin 35, client 36) and the browser
+smokes `lockscreen` (34 checks) and `endpay` (41 checks: method order, start without payment, add
+time on the bill, early end capped + "Collect later", strip on Stations and home, tile badge,
+Collect with receipt, exactly once, expiry, Waive).
 
 ### Added
 

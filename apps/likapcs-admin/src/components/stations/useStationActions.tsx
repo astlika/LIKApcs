@@ -45,6 +45,7 @@ import {
   type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
+import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
 import { useFormat } from '../../lib/format';
@@ -1065,6 +1066,8 @@ function QuickStartTender({
   const submit = () => {
     if (tender.covered && !busy) onStart(tender.endPay ? [] : tender.payments, tender.endPay);
   };
+  // End Pay has no cash field to press Enter in — Enter anywhere in the step starts the session.
+  useEnterSubmits(submit);
   return (
     <div className="stack">
       <TenderPanel

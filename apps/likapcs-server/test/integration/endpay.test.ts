@@ -343,4 +343,40 @@ describe('pay-at-the-end sessions', () => {
     expect((await post(`/sessions/${prepaid.body.session.id}/collect`, {})).status).toBe(409);
     await post(`/sessions/${prepaid.body.session.id}/end`, {});
   });
+
+  it('waive: a full discount collects a zero bill; an empty tender list never pays a real one', async () => {
+    const before = await money();
+    const s = await post<SessionMutationResponse>('/sessions', {
+      stationId: station.id,
+      billingMode: 'endpay',
+      minutes: 30,
+    });
+    expect(s.status).toBe(201);
+    at(plusMinutes(31));
+    await ctx.app.services.sessions.tick();
+    expect((await stationNow()).awaitingPayment).toEqual({ count: 1, amountCents: 75 });
+    // Nothing handed over while 75 is due → refused, nothing recorded.
+    const unpaid = await post(`/sessions/${s.body.session.id}/collect`, { payments: [] });
+    expect(unpaid.status).toBe(400);
+    expect(await money()).toEqual(before);
+    // The whole time price discounted (pos.discount): a zero receipt, the PC's bill is closed.
+    const waived = await post<SessionMutationResponse>(`/sessions/${s.body.session.id}/collect`, {
+      discountCents: 75,
+      payments: [],
+    });
+    expect(waived.status).toBe(200);
+    expect(waived.body.session).toMatchObject({
+      status: 'expired',
+      finalPriceCents: 0,
+      discountCents: 75,
+      awaitingPayment: false,
+    });
+    expect(waived.body.session.billedAt).not.toBeNull();
+    expect(waived.body.payment).toMatchObject({ totalCents: 0, paidCents: 0, changeCents: 0 });
+    const after = await money();
+    expect(after.sales - before.sales).toBe(1);
+    expect(after.salesTotal - before.salesTotal).toBe(0);
+    expect((await stationNow()).awaitingPayment).toEqual({ count: 0, amountCents: 0 });
+    expect((await awaiting()).total).toBe(0);
+  });
 });

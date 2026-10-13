@@ -5,7 +5,7 @@
  * "done" dialog with the change, the receipt and Print / Finish. All amounts and timers are
  * authoritative on the server; this panel only mirrors them and ticks locally between refreshes.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Check, Clock, Hourglass, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
@@ -29,7 +29,7 @@ import {
   projectSession,
 } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
-import { isEditableElement } from '../../lib/scanner';
+import { useEnterSubmits } from '../../lib/enter-submit';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
@@ -83,22 +83,6 @@ export function useSessionCustomer(session: SessionSummary | null) {
     pickedId: picked && picked.id !== customerId ? picked.id : undefined,
     setCustomer: setPicked,
   };
-}
-
-/** Enter anywhere in a dialog (outside text fields) runs `submit`; events older than the dialog are ignored. */
-function useEnterSubmits(submit: () => void) {
-  const openedAt = useRef(performance.now());
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.timeStamp <= openedAt.current) return;
-      if (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element)) {
-        e.preventDefault();
-        submit();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  });
 }
 
 export function SessionPanel({
@@ -941,6 +925,12 @@ export function EndSessionDialog({
                 value={discount}
                 style={{ maxWidth: 160 }}
                 onChange={(e) => setDiscount(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
                 data-testid="session-end-discount"
               />
             )}

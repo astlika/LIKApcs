@@ -453,9 +453,12 @@ export function Dialog({
       if (at >= 0) openDialogs.splice(at, 1);
     };
   }, [open]);
-  // Focus the first control once, when the dialog opens.
+  // Focus the first control once, when the dialog opens — unless a child already placed the
+  // focus itself (the tender panel's cash field, so Enter pays even when a discount field comes first).
   useEffect(() => {
     if (!open) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && ref.current?.contains(active)) return;
     const first = ref.current?.querySelector<HTMLElement>(
       'input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([data-close])',
     );

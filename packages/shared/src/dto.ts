@@ -617,7 +617,11 @@ export type SessionQuoteRequest = z.infer<typeof sessionQuoteSchema>;
  */
 const sessionTenders = {
   paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
-  payments: z.lazy(() => z.array(salePaymentInputSchema).min(1).max(5)).optional(),
+  /**
+   * Tenders for the bill. An empty list is "nothing handed over": valid only when nothing is due
+   * (a waived collect, a fully discounted end) — a non-zero bill with `[]` is refused (`PAYMENT`).
+   */
+  payments: z.lazy(() => z.array(salePaymentInputSchema).max(5)).optional(),
 };
 
 export const startSessionSchema = sessionQuoteSchema.innerType().extend({

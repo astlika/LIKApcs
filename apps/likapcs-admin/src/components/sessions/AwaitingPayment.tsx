@@ -8,7 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Hourglass, Wallet } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   PERMISSIONS,
   parseMoneyInput,
@@ -19,7 +19,7 @@ import { useI18n } from '../../i18n';
 import { api, ApiError } from '../../lib/api';
 import { useFormat } from '../../lib/format';
 import { formatHms } from '../../lib/session-time';
-import { isEditableElement } from '../../lib/scanner';
+import { useEnterSubmits } from '../../lib/enter-submit';
 import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
 import { useToast } from '../../state/toast';
@@ -119,22 +119,6 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
       {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
     </>
   );
-}
-
-/** Enter anywhere in the dialog (outside text fields) runs `submit`; events older than the dialog are ignored. */
-function useEnterSubmits(submit: () => void) {
-  const openedAt = useRef(performance.now());
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.timeStamp <= openedAt.current) return;
-      if (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element)) {
-        e.preventDefault();
-        submit();
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [submit]);
 }
 
 export function CollectDialog({
@@ -297,6 +281,12 @@ export function CollectDialog({
                   value={discount}
                   style={{ maxWidth: 160 }}
                   onChange={(e) => setDiscount(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
                   data-testid="collect-discount"
                 />
               )}
