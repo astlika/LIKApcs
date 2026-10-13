@@ -57,6 +57,7 @@ import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import type { StationsService } from './stations.js';
+import { lockCustomers } from '../db/locks.js';
 
 interface SessionRow {
   id: string;
@@ -511,6 +512,9 @@ export class SessionsService {
     let settled = { approved: null as string | null, cancelled: [] as string[] };
 
     const session = await withTransaction(this.pool, async (client) => {
+      // Customer first (see db/locks.ts): several PCs started at once on one tab must queue, not
+      // deadlock on the receipt number.
+      await lockCustomers(client, req.customerId);
       const live = await client.query(
         'SELECT id FROM gaming_sessions WHERE station_id = $1 AND status IN ($2, $3) FOR UPDATE',
         [req.stationId, 'active', 'paused'],
@@ -710,6 +714,7 @@ export class SessionsService {
     let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id);
       if (row.billing_mode === 'postpaid')
         throw conflict(
           'Only prepaid / end-pay sessions can be extended; postpaid sessions run until stopped',
@@ -810,6 +815,7 @@ export class SessionsService {
     const requestedAt = at;
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id, req.customerId);
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session already ${row.status}`);
       // Drinks / snacks ordered from the seat and accepted "on the bill" are settled right here,
@@ -1034,6 +1040,7 @@ export class SessionsService {
     let billedOrders: string[] = [];
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id, req.customerId);
       if (row.billing_mode !== 'endpay')
         throw conflict('Only pay-at-the-end sessions are collected at the desk');
       if (row.status === 'active' || row.status === 'paused')
@@ -1125,6 +1132,7 @@ export class SessionsService {
     let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id);
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session already ${row.status}`);
       // End pay (0.14.0) took no money, so it cancels like postpaid.

@@ -35,6 +35,7 @@ import { recordAudit, type AuditActor } from './audit.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
 import type { WalletService } from './wallet.js';
+import { lockCustomers } from '../db/locks.js';
 
 interface DebtRow {
   id: string;
@@ -375,6 +376,7 @@ export class DebtsService {
     actor: AuditActor,
   ): Promise<DebtPaymentResult> {
     return withTransaction(this.pool, async (client) => {
+      await lockCustomers(client, customerId);
       const open = await client.query<DebtRow>(
         `${SELECT} WHERE d.customer_id = $1 AND d.status IN ('open', 'partial')
          ORDER BY d.due_date ASC, d.created_at ASC FOR UPDATE OF d`,
@@ -448,6 +450,7 @@ export class DebtsService {
     actor: AuditActor,
   ): Promise<DebtRescheduleAllResult> {
     return withTransaction(this.pool, async (client) => {
+      await lockCustomers(client, customerId);
       const open = await client.query<DebtRow>(
         `${SELECT} WHERE d.customer_id = $1 AND d.status IN ('open', 'partial')
          ORDER BY d.due_date ASC, d.created_at ASC FOR UPDATE OF d`,
@@ -501,7 +504,14 @@ export class DebtsService {
 
   // ─── Internals ──────────────────────────────────────────────────────────────
 
+  /** Locks the debt row — after its customer (see db/locks.ts for the ordering rule). */
   private async lock(client: DbClient, id: string): Promise<DebtRow> {
+    const owner = await client.query<{ customer_id: string }>(
+      'SELECT customer_id FROM customer_debts WHERE id = $1',
+      [id],
+    );
+    if (!owner.rows[0]) throw notFound('Debt');
+    await lockCustomers(client, owner.rows[0].customer_id);
     const r = await client.query<DebtRow>(`${SELECT} WHERE d.id = $1 FOR UPDATE OF d`, [id]);
     if (!r.rows[0]) throw notFound('Debt');
     return r.rows[0];

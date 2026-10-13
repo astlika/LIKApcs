@@ -37,6 +37,7 @@ import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
+import { lockCustomers } from '../db/locks.js';
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -407,6 +408,9 @@ export class SalesService {
       );
       if (existing.rows[0]) return this.getById(existing.rows[0].id, client);
     }
+    // Customer first (see db/locks.ts): two sales on one tab at the same time queue instead of
+    // deadlocking on the receipt number.
+    await lockCustomers(client, input.customerId);
     const saleId = await this.insertSaleShell(client, input, actor, 'completed');
     await this.fillAndComplete(client, saleId, input, input.payments, actor, opts.fixedPrices);
     return this.getById(saleId, client);

@@ -6,6 +6,21 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Several PCs on one tab at once no longer fail.** Starting many PCs together with _Pay
+  later_ or _Balance_ for the same customer (new in 0.16.0) started only one of them — the
+  parallel starts deadlocked in the database on the receipt number, and the others came back
+  with a server error. The same crossing could hit two sales on the same customer's tab at the
+  same moment (a PC order and the POS, two cashiers). Every money movement of a customer now
+  takes the customer row first, so such transactions queue behind each other; a new server test
+  starts 4 PCs × 4 rounds in parallel and mixes concurrent sales, top-ups and repayments
+  (`customer-concurrency.test.ts`).
+- **Customer display: "Thank you" stays.** After the payment the display went back to the sale
+  lines until the cashier pressed _Finish_ (or the 5 s auto-finish) and only then showed the
+  thank-you screen for the rest of its 8 s. It now switches to "Thank you" the moment the payment
+  is done and stays until a new cart starts or the 8 s pass.
+
 ## [0.16.0] - 2026-10-13
 
 Update both apps: **Update** in LIKApcs (Admin) first (server: new endpoint
