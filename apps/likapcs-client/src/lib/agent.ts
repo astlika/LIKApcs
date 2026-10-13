@@ -35,7 +35,9 @@ import {
 import {
   APP_VERSION,
   applySelfUpdate,
+  applySelfUpdateFromServer,
   checkForUpdate,
+  checkUpdateFromServer,
   deviceIdentity,
   discoverServers,
   endTasks,
@@ -57,6 +59,7 @@ import {
   type TrayLabels,
   type UpdateCheck,
   type WindowMode,
+  widgetCheck,
 } from './native';
 import {
   Clock,
@@ -312,6 +315,43 @@ export class Agent {
   private async applyWindowMode(mode: WindowMode): Promise<void> {
     this.set({ windowMode: mode });
     await setWindowMode(mode);
+    this.syncWidgetReports(mode);
+  }
+
+  /**
+   * 0.17.1: while the widget is the visible window, the PC reports every 15 s (and on every
+   * change) whether the customer can really see it — the desk reads the answer and the cause on
+   * the station, without walking to the PC.
+   */
+  /** Server URL that offered the newest signed client (LAN updates, 0.17.1). */
+  private lanUpdateBase: string | null = null;
+  private widgetReportTimer: ReturnType<typeof setInterval> | null = null;
+  private lastWidgetOk: boolean | null = null;
+  private syncWidgetReports(mode: WindowMode): void {
+    if (this.widgetReportTimer) {
+      clearInterval(this.widgetReportTimer);
+      this.widgetReportTimer = null;
+    }
+    if (mode !== 'overlay') {
+      this.lastWidgetOk = null;
+      return;
+    }
+    const run = async () => {
+      try {
+        const check = await widgetCheck();
+        if (check.ok === this.lastWidgetOk) return;
+        this.lastWidgetOk = check.ok;
+        this.send({
+          type: 'client.event',
+          event: 'widget_report',
+          payload: { ok: check.ok, detail: check.detail, at: new Date().toISOString() },
+        });
+      } catch {
+        /* an older native shell has nothing to report */
+      }
+    };
+    void run();
+    this.widgetReportTimer = setInterval(() => void run(), 15_000);
   }
 
   /**
@@ -455,7 +495,21 @@ export class Agent {
    * the version is just remembered and offered in the settings panel.
    */
   async checkUpdates(trigger: 'scheduled' | 'manual'): Promise<UpdateCheck> {
-    const result = await checkForUpdate();
+    // LAN first (0.17.1): an offline PC never reaches GitHub; the desk publishes the installer
+    // to the server instead. GitHub stays the fallback when the server has nothing newer.
+    let result: UpdateCheck = { status: 'none' };
+    const pairing = this.snapshot.pairing;
+    if (pairing) {
+      const lan = await checkUpdateFromServer(pairing.serverUrl);
+      if (lan.status === 'available') {
+        this.lanUpdateBase = pairing.serverUrl;
+        result = lan;
+      }
+    }
+    if (result.status !== 'available') {
+      this.lanUpdateBase = null;
+      result = await checkForUpdate();
+    }
     this.set({
       updateCheckedAt: Date.now(),
       updateAvailable: result.status === 'available' ? (result.version ?? null) : null,
@@ -713,6 +767,8 @@ export class Agent {
   private closeSocket(code: number, reason: string): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
+    if (this.widgetReportTimer) clearInterval(this.widgetReportTimer);
+    this.widgetReportTimer = null;
     const s = this.socket;
     this.socket = null;
     if (s && (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING)) {
@@ -1095,9 +1151,11 @@ export class Agent {
       event: 'update_status',
       payload: { status: 'checking', trigger },
     });
-    const outcome = await applySelfUpdate((percent) =>
-      this.setPhase({ phase: 'updating', percent }),
-    );
+    const outcome = this.lanUpdateBase
+      ? await applySelfUpdateFromServer(this.lanUpdateBase, (percent) =>
+          this.setPhase({ phase: 'updating', percent }),
+        )
+      : await applySelfUpdate((percent) => this.setPhase({ phase: 'updating', percent }));
     this.send({
       type: 'client.event',
       event: 'update_status',

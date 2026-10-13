@@ -93,6 +93,11 @@ export class UpdatesService {
     };
   }
 
+  /** Feed the dashboard checks (overridable in tests / air-gapped installs). */
+  get feedBaseUrl(): string {
+    return this.check.feedUrl;
+  }
+
   // ─── Remote feed ─────────────────────────────────────────────────────────────
 
   /**

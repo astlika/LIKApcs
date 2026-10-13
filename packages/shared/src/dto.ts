@@ -6,6 +6,7 @@ import type {
   ClientDisplayConfig,
   ClientMetrics,
   HardwareInfo,
+  WidgetReportPayload,
 } from './protocol.js';
 import {
   AD_THEMES,
@@ -254,6 +255,8 @@ export interface StationDeviceSummary {
    * (cleared by the next session start) — the button shows as pressed while this is set.
    */
   tasksEnded: StationTasksEnded | null;
+  /** 0.17.1: last self-check of the countdown widget on the PC (null = none reported yet). */
+  widget: WidgetReportPayload | null;
 }
 
 export interface StationTasksEnded {

@@ -134,6 +134,8 @@ export const clientEventSchema = z.object({
     'wol_configured',
     /** Outcome of a `tasks.end` command (payload: `TasksEndedPayload`). */
     'tasks_ended',
+    /** 0.17.1: is the countdown widget actually visible on the PC (payload: `WidgetReportPayload`). */
+    'widget_report',
   ]),
   payload: z.record(z.unknown()).default({}),
 });
@@ -147,6 +149,18 @@ export const tasksEndedPayloadSchema = z.object({
   skipped: z.array(z.string().max(80)).max(100),
 });
 export type TasksEndedPayload = z.infer<typeof tasksEndedPayloadSchema>;
+
+/**
+ * The PC's own answer to "can the customer see the countdown?" (0.17.1). `ok` = the widget window
+ * is visible, on-screen and not covered by an exclusive-fullscreen app; `detail` says what is
+ * wrong otherwise, so the desk sees the cause without walking to the PC.
+ */
+export const widgetReportPayloadSchema = z.object({
+  ok: z.boolean(),
+  detail: z.string().max(300),
+  at: z.string(),
+});
+export type WidgetReportPayload = z.infer<typeof widgetReportPayloadSchema>;
 
 export const clientMessageSchema = z.discriminatedUnion('type', [
   clientHelloSchema,

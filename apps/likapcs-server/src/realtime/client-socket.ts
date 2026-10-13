@@ -8,6 +8,7 @@ import {
   hardwareInfoSchema,
   isCompatibleWithServer,
   tasksEndedPayloadSchema,
+  widgetReportPayloadSchema,
   type ServerError,
   type ServerHeartbeatAck,
   type ServerWelcomeToClient,
@@ -276,6 +277,33 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                   severity: p.ok === true ? 'info' : 'warning',
                 },
               );
+            }
+            if (message.event === 'widget_report') {
+              // 0.17.1: the PC says whether its countdown widget is really visible; the desk sees
+              // the answer (and the cause) on the station, without walking over to it.
+              const parsed = widgetReportPayloadSchema.safeParse(message.payload);
+              if (parsed.success) {
+                hub.setWidgetReport(presence.deviceId, parsed.data);
+                if (parsed.data.ok === false) {
+                  await recordAudit(
+                    app.pool,
+                    {
+                      deviceId: presence.deviceId,
+                      label: `client ${presence.deviceId.slice(0, 8)}`,
+                      ip,
+                    },
+                    {
+                      action: 'station.widget_hidden',
+                      entityType: 'station',
+                      entityId: presence.stationId,
+                      details: { detail: parsed.data.detail },
+                      severity: 'warning',
+                    },
+                  );
+                }
+                services.stations.broadcastStation(presence.stationId);
+              }
+              return;
             }
             if (message.event === 'tasks_ended') {
               // End Task (0.17.0): the PC closed the listed programs — keep the outcome on the

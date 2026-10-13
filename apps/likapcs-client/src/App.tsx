@@ -18,6 +18,7 @@ import {
   isDesktopApp,
   onTrayAction,
   reapplyWidgetWindow,
+  reportWebviewReady,
   setWidgetLayout,
   widgetWindowSizeOk,
   type TrayLabels,
@@ -117,6 +118,12 @@ export function App() {
     if (settingsOpenRef.current) closeSettings();
     else void openSettings();
   }, [closeSettings, openSettings]);
+
+  // 0.17.1 handshake: tell the native side the UI mounted. If this never arrives (blank window,
+  // broken WebView2…), the Rust guard shows a native message instead of leaving a silent PC.
+  useEffect(() => {
+    void reportWebviewReady();
+  }, []);
 
   // Ctrl+Alt+S opens the settings panel; Ctrl+Alt+A the staff unlock (lock screen only).
   useEffect(() => {

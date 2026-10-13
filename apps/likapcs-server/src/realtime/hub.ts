@@ -9,6 +9,7 @@ import {
   type ServerToClientMessage,
   type StationCommand,
   type StationTasksEnded,
+  type WidgetReportPayload,
 } from '@likapcs/shared';
 import { newId } from '../security/tokens.js';
 
@@ -65,6 +66,8 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
    * believe the games are open again. Cleared when the next session starts and on revoke.
    */
   private readonly endTaskRuns = new Map<string, StationTasksEnded>();
+  /** 0.17.1: the PC's own widget visibility self-check, keyed by device (survives reconnects). */
+  private readonly widgetReports = new Map<string, WidgetReportPayload>();
 
   // ─── Devices ─────────────────────────────────────────────────────────────────
   attachDevice(presence: DevicePresence): void {
@@ -115,6 +118,15 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
   }
 
   /** Forget the run (device revoked, or a new session started on that PC). */
+  widgetReport(deviceId: string): WidgetReportPayload | null {
+    return this.widgetReports.get(deviceId) ?? null;
+  }
+
+  setWidgetReport(deviceId: string, report: WidgetReportPayload | null): void {
+    if (report) this.widgetReports.set(deviceId, report);
+    else this.widgetReports.delete(deviceId);
+  }
+
   clearTasksEnded(deviceId: string): void {
     this.endTaskRuns.delete(deviceId);
   }

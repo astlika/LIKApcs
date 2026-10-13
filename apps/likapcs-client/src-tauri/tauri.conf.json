@@ -36,7 +36,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
@@ -48,7 +50,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English"],
+        "languages": [
+          "English"
+        ],
         "displayLanguageSelector": false,
         "installerHooks": "./windows/hooks.nsh"
       },
@@ -67,7 +71,8 @@
       ],
       "windows": {
         "installMode": "passive"
-      }
+      },
+      "dangerousInsecureTransportProtocol": true
     }
   }
 }

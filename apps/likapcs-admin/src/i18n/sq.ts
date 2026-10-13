@@ -245,6 +245,8 @@ export const sq: Dictionary = {
     viewStandardHint: 'Pak fakte shkurt: gjendja, sesioni, PC-ja dhe komandat e saj.',
     viewAdvancedHint:
       'Gjithçka: faktet e pajisjes, Wake-on-LAN, veprimet me token, regjistri i lidhjeve.',
+    widgetOk: 'Widget-i duket',
+    widgetHidden: "Widget-i s'shfaqet në PC",
     archived: 'E arkivuar',
     archivedAt: 'Arkivuar më {when} nga {who}',
     showArchived: 'Shfaq të arkivuara',
@@ -1619,6 +1621,17 @@ export const sq: Dictionary = {
     pushNone: 'Të gjithë klientët e lidhur punojnë tashmë me versionin e serverit.',
     pushed: 'Komanda e përditësimit u dërgua te {sent} nga {outdated} klientë të vjetruar.',
     allCurrent: 'PC-ja kryesore punon me versionin më të ri të publikuar.',
+    lanTitle: 'Përditësime në LAN (për PC-të pa internet)',
+    lanHint:
+      'Publiko një herë installerin më të ri të nënshkruar të klientit në këtë server. Pastaj çdo PC klient përditësohet përmes rrjetit lokal — pa internet në PC-të e lojërave.',
+    lanPublish: 'Publiko versionin e fundit në LAN',
+    lanPublished: 'U publikua v{version} në LAN.',
+    lanRemove: 'Hiq nga LAN',
+    lanRemoved: 'Përditësimi LAN u hoq.',
+    lanNone: 'Ende asgjë e publikuar.',
+    lanVersion: 'Versioni LAN',
+    lanPublishedAt: 'Publikuar',
+    lanBy: 'Publikuar nga',
     serverUpdate: 'Versioni {version} është i disponueshëm për PC-në kryesore.',
     serverUpdateHint:
       'Instalojeni fillimisht këtu (Admin + server përditësohen bashkë), pastaj përditësoni klientët.',

@@ -5269,6 +5269,26 @@ button.ads-album .ads-album__meta {
   font-weight: 600;
   white-space: nowrap;
 }
+/* 0.17.1: the PC's own answer to "can the customer see the countdown?". */
+.st-commands__widget {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 2px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.st-commands__widget[data-ok='false'] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
 .st-commands__tasks em {
   font-style: normal;
   font-weight: 500;

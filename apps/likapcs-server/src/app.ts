@@ -64,6 +64,7 @@ import { importRoutes } from './routes/imports.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
+import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
 import { AuditQueryService } from './services/audit-query.js';
@@ -310,6 +311,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(userRoutes);
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
+      await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
       await api.register(requestRoutes);

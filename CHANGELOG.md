@@ -10,6 +10,44 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _(nothing yet)_
 
+## [0.17.1] - 2026-10-13
+
+### Fixed
+
+- **The timer widget no longer disappears on Windows PCs.** Some Windows 10/11 machines ran a
+  session with games and an unlocked screen but showed no widget at all: the overlay window was
+  alive yet invisible — hidden or parked off-screen by the shell, a display that was unplugged,
+  or another program in exclusive fullscreen. The client now checks its own widget window every
+  15 seconds while a session runs: off-screen or hidden windows are moved back and shown again
+  automatically, and every check reports the truth to the server — `visible`,
+  `healed-offscreen-or-hidden`, `hidden-after-heal`, or `fullscreen-app:<game>` when a game in
+  exclusive fullscreen mode is covering everything (no window can draw above that; the report
+  says so instead of silently failing).
+- **The desk can see the widget state of every PC.** The station card shows a small widget badge
+  next to the tasks badge: green "Widget OK" or red "Widget hidden" with the PC's own detail, so
+  a café can tell instantly which PC needs attention. A hidden widget is also written to the
+  audit log (`station.widget_hidden`) for later review.
+- **A blank client window can no longer sit there silently.** If the interface does not report
+  itself mounted within 10 seconds (broken/ancient WebView2, GPU driver issues), the PC now shows
+  a native Windows message naming the cause and writes it to
+  `%LOCALAPPDATA%\LIKApcs-Client\crash.log` instead of leaving a black rectangle nobody can
+  explain.
+- **Ancient WebView2 runtimes are rejected with instructions.** Windows 10 PCs that were never
+  updated can carry WebView2 major versions below 90, which cannot render the app. The client now
+  checks the runtime version at startup and shows "update WebView2 / rerun the installer" rather
+  than failing invisibly.
+
+### Added
+
+- **LAN updates — client PCs update without internet.** Gaming PCs usually never see the
+  internet, so the GitHub update feed never reached them. Admin › Updates now has **"Publish
+  latest release to LAN"**: the server downloads the newest signed client installer once and
+  serves it at `/api/v1/updates/client-manifest` in the standard Tauri updater format. Every
+  client checks the LAN feed first (same minisign signature verification as GitHub — nothing
+  unsigned can ever install) and falls back to GitHub only when the server has nothing newer.
+  Publishing/removing is audited (`updates.lan_publish`, `updates.lan_unpublish`) and restricted
+  to update/device permissions.
+
 ## [0.17.0] - 2026-10-13
 
 ### Added

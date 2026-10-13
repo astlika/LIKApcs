@@ -396,6 +396,215 @@ fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
+/// What `widget_check` answers: can the customer actually see the countdown right now (0.17.1).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WidgetCheck {
+    ok: bool,
+    detail: String,
+}
+
+/// 0.17.1: update check against the LIKApcs server on the LAN (cafe PCs usually have no
+/// internet). The server serves the same signed manifest shape as the GitHub feed, so the
+/// updater verifies the minisign signature exactly like it does for GitHub.
+#[tauri::command]
+async fn update_check_server(app: AppHandle, base: String) -> Result<Option<String>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = lan_updater(&app, base)?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+    Ok(update.map(|u| u.version))
+}
+
+/// Downloads the LAN installer and runs it (the app exits inside `install`, the NSIS updater
+/// restarts it). Progress reaches the frontend as `update-progress` events (0..100 or null).
+#[tauri::command]
+async fn update_from_server(app: AppHandle, base: String) -> Result<Option<String>, String> {
+    use tauri::Emitter;
+    let updater = lan_updater(&app, base)?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let version = update.version.clone();
+    let progress = app.clone();
+    let finished = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                let pct = total.map(|t| ((chunk as f64 / t as f64) * 100.0).round() as u32);
+                let _ = progress.emit("update-progress", pct);
+            },
+            move || {
+                let _ = finished.emit("update-progress", 100u32);
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(version))
+}
+
+fn lan_updater(app: &AppHandle, base: String) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let base = base.trim_end_matches('/');
+    let url = format!("{base}/api/v1/updates/client-manifest");
+    app.updater_builder()
+        // `endpoints` returns Result; and the LAN feed is plain http:// — the config enables
+        // `dangerousInsecureTransportProtocol`, which is safe here because the installer itself
+        // is still minisign-verified with the same key as the GitHub feed.
+        .endpoints(vec![url
+            .parse()
+            .map_err(|e| format!("bad server url: {e}"))?])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// The PC's own answer to "is the widget visible?", plus the heal: a widget window that is
+/// hidden, empty or parked outside every connected monitor is put back on the primary monitor's
+/// work area before the report goes out. An exclusive-fullscreen foreground app (a game that
+/// bypasses the desktop compositor) hides every topmost window — that is reported as the cause,
+/// because no application can draw over it.
+#[tauri::command]
+async fn widget_check(
+    app: AppHandle,
+    state: tauri::State<'_, WidgetState>,
+) -> Result<WidgetCheck, String> {
+    if !state.overlay.load(Ordering::SeqCst) {
+        return Ok(WidgetCheck {
+            ok: true,
+            detail: "not-overlay".into(),
+        });
+    }
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main window missing")?;
+    let layout = *state.layout.lock().map_err(|_| "widget state poisoned")?;
+
+    let monitors = app.available_monitors().unwrap_or_default();
+    let broken = {
+        let visible = window.is_visible().unwrap_or(false);
+        let size = window.inner_size().ok();
+        let pos = window.outer_position().ok();
+        let inside = match (&pos, &size) {
+            (Some(p), Some(sz)) => monitors.iter().any(|m| {
+                let mp = m.position();
+                let ms = m.size();
+                p.x >= mp.x - 64
+                    && p.y >= mp.y - 64
+                    && p.x < mp.x + ms.width as i32
+                    && p.y < mp.y + ms.height as i32
+                    && sz.width > 8
+                    && sz.height > 8
+            }),
+            _ => false,
+        };
+        !visible || !inside
+    };
+    if broken {
+        // Heal on the primary monitor rather than trusting `current_monitor` mid-transition.
+        if let Some(primary) = app.primary_monitor().ok().flatten().or_else(|| monitors.first().cloned()) {
+            let scale = primary.scale_factor();
+            let work = primary.work_area();
+            let (w, h) = layout.dimensions();
+            let wa = work.size.to_logical::<f64>(scale);
+            let wp = work.position.to_logical::<f64>(scale);
+            let _ = window.set_size(LogicalSize::new(w, h));
+            let _ = window.set_position(LogicalPosition::new(
+                wp.x + wa.width - w - OVERLAY_MARGIN,
+                wp.y + OVERLAY_MARGIN,
+            ));
+        }
+        let _ = window.set_always_on_top(true);
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        let still = !window.is_visible().unwrap_or(false);
+        let detail = if still {
+            "hidden-after-heal".to_string()
+        } else {
+            "healed-offscreen-or-hidden".to_string()
+        };
+        append_crash_log(&format!("widget_check: broken → {detail}"));
+        return Ok(WidgetCheck {
+            ok: !still,
+            detail,
+        });
+    }
+    if let Some(title) = diag::exclusive_fullscreen_foreground(&window) {
+        append_crash_log(&format!("widget_check: covered by exclusive-fullscreen app {title}"));
+        return Ok(WidgetCheck {
+            ok: false,
+            detail: format!("fullscreen-app:{title}"),
+        });
+    }
+    Ok(WidgetCheck {
+        ok: true,
+        detail: "visible".into(),
+    })
+}
+
+/// Windows-only foreground check (see `widget_check`); always None elsewhere.
+#[cfg(windows)]
+mod diag {
+    use tauri::Manager;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowRect, GWL_STYLE,
+        WS_CAPTION,
+    };
+
+    /// Title of the foreground window when it covers its whole monitor without a caption — the
+    /// signature of an exclusive-fullscreen game (borderless ones keep WS_CAPTION-free popup
+    /// style too, but those are composed by DWM and never hide a topmost window; a false
+    /// positive there is harmless: the desk only reads it when the widget really is unseen).
+    pub fn exclusive_fullscreen_foreground(window: &tauri::WebviewWindow) -> Option<String> {
+        // SAFETY: plain Win32 queries without owned pointers.
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_null() {
+                return None;
+            }
+            if let Ok(own) = window.hwnd() {
+                if fg == own {
+                    return None;
+                }
+            }
+            let style = GetWindowLongW(fg, GWL_STYLE);
+            if style & WS_CAPTION as i32 != 0 {
+                return None;
+            }
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            if GetWindowRect(fg, &mut rect) == 0 {
+                return None;
+            }
+            let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+            let mut title = [0u16; 128];
+            let len = GetWindowTextW(fg, title.as_mut_ptr(), title.len() as i32);
+            let name = String::from_utf16_lossy(&title[..len.max(0) as usize]);
+            // "Covers the monitor" ≈ at least a full-HD-sized rect: smaller popups are not games.
+            if w >= 1280 && h >= 720 {
+                return Some(if name.is_empty() {
+                    "unknown".into()
+                } else {
+                    name
+                });
+            }
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod diag {
+    pub fn exclusive_fullscreen_foreground(_window: &tauri::WebviewWindow) -> Option<String> {
+        None
+    }
+}
+
 /// The card widget grows to fit its words (staff notice, maintenance, an order flash): the
 /// frontend measures what it rendered and asks for a window that shows all of it, so no text is
 /// ever cut (0.17.0). Ignored while the window is not the widget.
@@ -561,6 +770,16 @@ fn update_covers(app: &AppHandle, locked: bool) {
             let _ = cover.set_fullscreen(true);
         }
     }
+}
+
+/// 0.17.1: the frontend reports `webview_ready` the moment the React app has mounted. If that
+/// handshake never arrives, the window would sit blank forever with nothing to click — the guard
+/// in `setup` turns it into a native message + crash-log line instead.
+pub struct WebviewReady(AtomicBool);
+
+#[tauri::command]
+fn webview_ready(state: tauri::State<'_, WebviewReady>) {
+    state.0.store(true, Ordering::Release);
 }
 
 /// Async on purpose: creating webview windows (the covers) from a *synchronous* command
@@ -748,13 +967,33 @@ fn append_crash_log(line: &str) -> std::path::PathBuf {
 /// plain words instead of dying with a cryptic error.
 #[cfg(windows)]
 fn ensure_webview2() {
-    if let Err(err) = tauri::webview_version() {
-        let text = format!(
-            "LIKApcs Client needs the Microsoft Edge WebView2 Runtime, which is not installed on this PC ({err}).\n\nRun LIKApcs-Client-Setup.exe again while the PC is connected to the internet (the installer downloads it), or install the \"Evergreen Bootstrapper\" from https://developer.microsoft.com/microsoft-edge/webview2/ — then start LIKApcs Client again."
-        );
-        let path = append_crash_log(&format!("cannot start: {text}"));
-        show_fatal_box(&format!("{text}\n\n(Logged to {})", path.display()));
-        std::process::exit(1);
+    match tauri::webview_version() {
+        Err(err) => {
+            let text = format!(
+                "LIKApcs Client needs the Microsoft Edge WebView2 Runtime, which is not installed on this PC ({err}).\n\nRun LIKApcs-Client-Setup.exe again while the PC is connected to the internet (the installer downloads it), or install the \"Evergreen Bootstrapper\" from https://developer.microsoft.com/microsoft-edge/webview2/ — then start LIKApcs Client again."
+            );
+            let path = append_crash_log(&format!("cannot start: {text}"));
+            show_fatal_box(&format!("{text}\n\n(Logged to {})", path.display()));
+            std::process::exit(1);
+        }
+        Ok(version) => {
+            // 0.17.1: an ancient runtime (Win10 PCs that were never updated can still carry the
+            // WebView2 that shipped with Edge 1803, major < 90) cannot render this app — the
+            // window would stay blank forever. Say so instead, with a box and a log line.
+            let major: u32 = version
+                .split('.')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(u32::MAX);
+            if major < 90 {
+                let text = format!(
+                    "The WebView2 Runtime on this PC is too old (version {version}). LIKApcs Client needs WebView2 90 or newer.\n\nUpdate this PC's WebView2 Runtime / Microsoft Edge (easiest: run LIKApcs-Client-Setup.exe again while the PC has internet), then start LIKApcs Client."
+                );
+                let path = append_crash_log(&format!("webview2 too old: {version}"));
+                show_fatal_box(&format!("{text}\n\n(Logged to {})", path.display()));
+                std::process::exit(1);
+            }
+        }
     }
 }
 #[cfg(not(windows))]
@@ -795,6 +1034,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(KioskState { locked: locked.clone() })
+        .manage(WebviewReady(AtomicBool::new(false)))
         .manage(PanelAnchor(Mutex::new(None)))
         // Cheap handle only — the sysinfo/WMI workers start lazily on their own threads
         // (hardware.rs explains why they must never touch this, the UI, thread).
@@ -815,6 +1055,10 @@ pub fn run() {
             end_tasks,
             set_widget_layout,
             widget_fit,
+            widget_check,
+            update_check_server,
+            update_from_server,
+            webview_ready,
             secret_get,
             secret_set,
             secret_delete,
@@ -830,6 +1074,26 @@ pub fn run() {
             kiosk::set_enabled(true);
             // Next boot must lock at once: drop the Windows startup delay for autostart apps.
             kiosk::arm_boot();
+
+            // Blank-window guard (0.17.1): if the UI never reports itself mounted, the PC is
+            // left with a blank window and no clue anywhere — that is exactly what the cafes
+            // saw. Ten seconds later this becomes a native box + crash.log line.
+            let guard = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let ready = guard
+                    .try_state::<WebviewReady>()
+                    .map(|s| s.0.load(Ordering::Acquire))
+                    .unwrap_or(true);
+                if !ready {
+                    let path = append_crash_log("webview handshake timeout: UI never reported ready");
+                    show_fatal_box(&format!(
+                        "LIKApcs Client's interface did not start on this PC within 10 seconds.\n\nLogged to {}.\n\nThe usual cause is an outdated Microsoft Edge WebView2 Runtime: update it (or rerun LIKApcs-Client-Setup.exe with internet) and start the client again.",
+                        path.display()
+                    ));
+                    std::process::exit(2);
+                }
+            });
 
             // Tray icon: the only visible trace of the client during a session. Menu actions are
             // forwarded to the frontend, which knows the language and the lock state.

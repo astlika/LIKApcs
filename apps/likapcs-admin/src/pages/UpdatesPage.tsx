@@ -97,6 +97,33 @@ export function UpdatesPage() {
     onError,
   });
 
+  interface LanMeta {
+    version: string;
+    sha256: string;
+    publishedAt: string;
+    publishedBy: string;
+  }
+  const lan = useQuery({
+    queryKey: ['updates-lan'],
+    queryFn: () => api<{ update: LanMeta | null }>('/updates/lan'),
+  });
+  const publishLan = useMutation({
+    mutationFn: () => api<LanMeta>('/updates/lan/publish-remote', { method: 'POST', body: {} }),
+    onSuccess: (meta) => {
+      toast.success(t('updates.lanPublished', { version: meta.version }));
+      void queryClient.invalidateQueries({ queryKey: ['updates-lan'] });
+    },
+    onError,
+  });
+  const removeLan = useMutation({
+    mutationFn: () => api<{ ok: true }>('/updates/lan', { method: 'DELETE' }),
+    onSuccess: () => {
+      toast.toast('info', t('updates.lanRemoved'));
+      void queryClient.invalidateQueries({ queryKey: ['updates-lan'] });
+    },
+    onError,
+  });
+
   const row = (label: string, value: ReactNode) => (
     <div
       className="row row--between"
@@ -203,6 +230,50 @@ export function UpdatesPage() {
             <Alert tone="success" icon={<CheckCircle2 size={18} />}>
               {t('updates.allCurrent')}
             </Alert>
+          )}
+
+          {canManage && (
+            <div style={{ marginTop: 16 }}>
+              <Card title={t('updates.lanTitle')} testId="lan-card">
+                <p className="muted" style={{ margin: '0 0 10px' }}>
+                  {t('updates.lanHint')}
+                </p>
+                {lan.data?.update ? (
+                  <>
+                    {row(t('updates.lanVersion'), `v${lan.data.update.version}`)}
+                    {row(t('updates.lanPublishedAt'), fmt.relative(lan.data.update.publishedAt))}
+                    {row(t('updates.lanBy'), lan.data.update.publishedBy)}
+                    <div className="row" style={{ gap: 8, marginTop: 12 }}>
+                      <Button
+                        variant="primary"
+                        onClick={() => publishLan.mutate()}
+                        loading={publishLan.isPending}
+                        data-testid="lan-publish"
+                      >
+                        <ArrowUpCircle size={14} /> {t('updates.lanPublish')}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() => removeLan.mutate()}
+                        loading={removeLan.isPending}
+                        data-testid="lan-remove"
+                      >
+                        {t('updates.lanRemove')}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <Button
+                    variant="primary"
+                    onClick={() => publishLan.mutate()}
+                    loading={publishLan.isPending}
+                    data-testid="lan-publish"
+                  >
+                    <ArrowUpCircle size={14} /> {t('updates.lanPublish')}
+                  </Button>
+                )}
+              </Card>
+            </div>
           )}
 
           <div className="grid grid--2" style={{ marginTop: 16, alignItems: 'start' }}>

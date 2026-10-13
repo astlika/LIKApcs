@@ -196,6 +196,7 @@ export class StationsService {
           hardware: row.device_hardware,
           metrics: this.hub.deviceMetrics(row.device_id),
           tasksEnded: this.hub.tasksEnded(row.device_id),
+          widget: row.device_id ? this.hub.widgetReport(row.device_id) : null,
         }
       : null;
 

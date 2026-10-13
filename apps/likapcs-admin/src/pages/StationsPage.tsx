@@ -24,6 +24,7 @@ import {
   LockOpen,
   MessageSquare,
   Monitor,
+  MonitorCheck,
   OctagonX,
   Plus,
   Power,
@@ -1917,6 +1918,17 @@ function DeviceCommands({
           <OctagonX size={12} />
           {endedText}
           <em>{t(`stations.tasksEnd.${ended.trigger === 'auto' ? 'automatic' : 'byStaff'}`)}</em>
+        </span>
+      )}
+      {station.device?.widget && (
+        <span
+          className="st-commands__widget"
+          data-ok={station.device.widget.ok ? 'true' : 'false'}
+          data-testid="device-widget"
+          title={`${station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')} · ${station.device.widget.detail}`}
+        >
+          <MonitorCheck size={12} />
+          {station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')}
         </span>
       )}
       {!online && <span className="st-commands__offline">{t('stations.commandsOffline')}</span>}

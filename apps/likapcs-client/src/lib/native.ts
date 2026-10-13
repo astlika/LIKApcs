@@ -132,6 +132,25 @@ export async function setWidgetLayout(
 }
 
 /**
+ * Tells the Rust side the React app has mounted (0.17.1 handshake). If this never arrives the
+ * Rust guard replaces a silently blank window with a native message + crash.log line.
+ */
+export async function reportWebviewReady(): Promise<void> {
+  if (!isDesktopApp()) return;
+  try {
+    await invoke('webview_ready');
+  } catch {
+    /* a missing command only means an older native side — never worth breaking the UI for */
+  }
+}
+
+/** 0.17.1: the PC's own widget-visibility check (heals a hidden / off-screen widget window). */
+export async function widgetCheck(): Promise<{ ok: boolean; detail: string }> {
+  if (!isDesktopApp()) return { ok: true, detail: 'browser' };
+  return invoke<{ ok: boolean; detail: string }>('widget_check');
+}
+
+/**
  * The card widget grows to fit its words (staff notice, maintenance, an order flash): the overlay
  * measures what it rendered and asks the native shell for a window that shows all of it, so no
  * text is ever cut and a narrow footprint never clips the staff's message (0.17.0).
@@ -339,6 +358,42 @@ export async function checkForUpdate(): Promise<UpdateCheck> {
     return { status: 'available', version };
   } catch (err) {
     return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * 0.17.1: the LAN path first — cafe PCs usually have no internet, so the server on the local
+ * network serves the signed installer (Admin → Updates → "Publish to LAN"). Same minisign
+ * signature as GitHub; the updater verifies it before installing.
+ */
+export async function checkUpdateFromServer(serverUrl: string): Promise<UpdateCheck> {
+  if (!isDesktopApp()) return { status: 'unavailable' };
+  try {
+    const version = await invoke<string | null>('update_check_server', { base: serverUrl });
+    return version ? { status: 'available', version } : { status: 'none' };
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Downloads the LAN-published installer and applies it (the client relaunches itself). */
+export async function applySelfUpdateFromServer(
+  serverUrl: string,
+  onProgress?: (percent: number | null) => void,
+): Promise<UpdateOutcome> {
+  if (!isDesktopApp()) return { status: 'unavailable' };
+  const { listen } = await import('@tauri-apps/api/event');
+  const unlisten = await listen<number | null>('update-progress', (event) =>
+    onProgress?.(event.payload),
+  );
+  try {
+    const version = await invoke<string | null>('update_from_server', { base: serverUrl });
+    if (!version) return { status: 'none' };
+    return { status: 'installed', version };
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    unlisten();
   }
 }
 
