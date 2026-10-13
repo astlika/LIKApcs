@@ -260,6 +260,26 @@ video {
 }
 
 /* Summary panel */
+.cd-sum__top {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.6);
+  margin-bottom: auto;
+}
+.cd--portrait .cd-sum__top {
+  display: none;
+}
+.cd-sum__clock {
+  font-size: calc(var(--u) * 6);
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.cd-sum__hello {
+  font-size: calc(var(--u) * 2.6);
+  color: var(--cd-ink-2);
+}
 .cd-sum {
   grid-area: sum;
   display: flex;
@@ -359,11 +379,10 @@ video {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 0.5);
-  padding-bottom: calc(var(--u) * 1.2);
-  margin-bottom: auto;
-}
-.cd--portrait .cd-customer {
-  margin-bottom: 0;
+  padding: calc(var(--u) * 1.4) calc(var(--u) * 1.8);
+  border-radius: var(--cd-radius);
+  background: var(--cd-panel);
+  border: 1px solid var(--cd-line);
 }
 .cd-customer__label {
   font-size: calc(var(--u) * 2);
@@ -638,8 +657,12 @@ video {
     'picture'
     'text';
 }
-.cd-slide--text {
-  grid-template: 'text' 1fr / 1fr;
+/* Text-only slides: one centred column whatever the orientation (beats the rules above). */
+.cd--landscape .cd-slide--text,
+.cd--portrait .cd-slide--text {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'text';
 }
 .cd-slide__picture {
   grid-area: picture;

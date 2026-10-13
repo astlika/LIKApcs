@@ -100,7 +100,9 @@ export interface DisplayBrand {
 export type DisplayPayload =
   | { type: 'state'; state: DisplayState; brand: DisplayBrand }
   | { type: 'feed'; feed: CustomerDisplayFeed | null }
-  | { type: 'hello' };
+  | { type: 'hello' }
+  /** Browser build only: the display window closes itself (the desktop closes it natively). */
+  | { type: 'close' };
 export type DisplayMessage = DisplayPayload & { source: string; seq: number };
 
 // ─── Channel ────────────────────────────────────────────────────────────────────
@@ -275,6 +277,15 @@ export async function closeCustomerDisplay(): Promise<void> {
   if (isDesktopApp()) return invoke<void>('display_close');
   browserWindow?.close();
   browserWindow = null;
+  // The handle is lost after a reload of this page: ask the window to close itself.
+  try {
+    const bc = new BroadcastChannel(DISPLAY_CHANNEL);
+    const message: DisplayMessage = { type: 'close', source: 'control', seq: Date.now() };
+    bc.postMessage(message);
+    bc.close();
+  } catch {
+    /* no BroadcastChannel — nothing else to do */
+  }
 }
 
 export async function isCustomerDisplayOpen(): Promise<boolean> {

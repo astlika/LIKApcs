@@ -73,7 +73,19 @@ export function DisplayApp() {
   const vp = useViewport();
 
   useEffect(() => {
+    let lastSource: string | null = null;
     const off = channel.subscribe((message) => {
+      if (message.type === 'hello') return;
+      if (message.type === 'close') {
+        window.close();
+        return;
+      }
+      // A new sender (the Admin window was reloaded or reopened): introduce ourselves again so
+      // it starts fetching the ads program and sends the full picture.
+      if (message.source !== lastSource) {
+        lastSource = message.source;
+        channel.post({ type: 'hello' });
+      }
       if (message.type === 'state') {
         setState(message.state);
         setBrand(message.brand);
@@ -83,14 +95,17 @@ export function DisplayApp() {
         setFeed(message.feed);
       }
     });
-    // Announce until the register answers (also after a reload of this window).
+    // Announce until the register answers (also after a reload of this window), then keep a
+    // slow heartbeat so a register that lost track of us picks us up again.
     channel.post({ type: 'hello' });
-    const timer = window.setInterval(() => {
+    const fast = window.setInterval(() => {
       if (!linkedRef.current) channel.post({ type: 'hello' });
     }, 3000);
+    const slow = window.setInterval(() => channel.post({ type: 'hello' }), 20_000);
     return () => {
       off();
-      window.clearInterval(timer);
+      window.clearInterval(fast);
+      window.clearInterval(slow);
       channel.close();
     };
   }, [channel]);
@@ -141,6 +156,7 @@ export function DisplayApp() {
           tender={state.kind === 'paying' ? state.tender : null}
           businessName={businessName}
           language={language}
+          clock={clock}
           money={money}
           t={t}
         />
@@ -183,6 +199,7 @@ function SaleScreen({
   tender,
   businessName,
   language,
+  clock,
   money,
   t,
 }: {
@@ -190,6 +207,7 @@ function SaleScreen({
   tender: DisplayTender | null;
   businessName: string;
   language: DisplayLanguage;
+  clock: string;
   money: (cents: number) => string;
   t: (key: DisplayTextKey) => string;
 }) {
@@ -239,6 +257,10 @@ function SaleScreen({
         ))}
       </ol>
       <aside className={`cd-sum ${tender ? 'cd-sum--paying' : ''}`} data-testid="display-summary">
+        <div className="cd-sum__top" aria-hidden>
+          <span className="cd-sum__clock">{clock}</span>
+          <span className="cd-sum__hello">{t('welcome')}</span>
+        </div>
         {sale.customer && (
           <div className="cd-customer" data-testid="display-customer">
             <span className="cd-customer__label">{t('customer')}</span>

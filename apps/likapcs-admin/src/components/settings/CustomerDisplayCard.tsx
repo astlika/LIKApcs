@@ -78,6 +78,7 @@ export function CustomerDisplayCard() {
     <Card
       title={t('settings.display.title')}
       subtitle={t('settings.display.subtitle')}
+      testId="settings-display-card"
       actions={
         connected ? (
           <Badge tone="success">{t('settings.display.connected')}</Badge>
