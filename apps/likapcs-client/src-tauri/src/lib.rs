@@ -409,7 +409,6 @@ struct WidgetCheck {
 /// updater verifies the minisign signature exactly like it does for GitHub.
 #[tauri::command]
 async fn update_check_server(app: AppHandle, base: String) -> Result<Option<String>, String> {
-    use tauri_plugin_updater::UpdaterExt;
     let updater = lan_updater(&app, base)?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
     Ok(update.map(|u| u.version))
@@ -420,6 +419,7 @@ async fn update_check_server(app: AppHandle, base: String) -> Result<Option<Stri
 #[tauri::command]
 async fn update_from_server(app: AppHandle, base: String) -> Result<Option<String>, String> {
     use tauri::Emitter;
+
     let updater = lan_updater(&app, base)?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
@@ -545,7 +545,6 @@ async fn widget_check(
 /// Windows-only foreground check (see `widget_check`); always None elsewhere.
 #[cfg(windows)]
 mod diag {
-    use tauri::Manager;
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowRect, GWL_STYLE,
