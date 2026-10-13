@@ -99,6 +99,20 @@ jobs:
           path: apps/likapcs-admin/dist
           retention-days: 7
 
+  # Rust is otherwise only compiled by the release workflow (Windows, slow): this cheap check
+  # catches syntax/type errors in the Tauri crates — including the Windows-only cfg paths — on
+  # every push, so a broken client can never reach a release tag again.
+  rust-check:
+    name: Rust check (both Tauri crates, Windows target)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-targets
+        working-directory: apps/likapcs-client/src-tauri
+      - run: cargo check --all-targets
+        working-directory: apps/likapcs-admin/src-tauri
+
   # The native Windows build is slow (Rust); run it on demand and in the release workflow.
   windows-smoke:
     name: Windows native build (manual)

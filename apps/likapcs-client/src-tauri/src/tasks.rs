@@ -203,7 +203,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reduces_paths_and appends_the_extension() {
+    fn reduces_paths_and_appends_the_extension() {
         assert_eq!(sanitize("steam").as_deref(), Some("steam.exe"));
         assert_eq!(sanitize("  cs2.EXE ").as_deref(), Some("cs2.exe"));
         assert_eq!(
