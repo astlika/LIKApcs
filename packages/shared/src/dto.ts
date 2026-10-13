@@ -257,6 +257,8 @@ export interface StationSummary {
   pendingRequest: StationPendingRequest | null;
   /** Orders from the PC (0.10.0): how many wait for an answer and what is still on the bill. */
   orders: StationOrdersSummary;
+  /** End pay (0.14.0): ended sessions of this PC whose bill still waits at the desk. */
+  awaitingPayment: { count: number; amountCents: number };
   createdAt: string;
   updatedAt: string;
 }
@@ -304,11 +306,22 @@ export interface StaffUnlockResponse {
   minutes: number;
 }
 
+/**
+ * How a session is billed:
+ *   prepaid   fixed time, paid when it starts (extensions are paid too).
+ *   postpaid  open time, billed when staff stop it.
+ *   endpay    "pay at the end" (0.14.0): fixed time like prepaid, nothing paid at the start; when
+ *             the time runs out the PC locks and the bill waits at the desk until staff collect it
+ *             (ended early → the used time, capped at the reserved amount).
+ */
+export const BILLING_MODES = ['prepaid', 'postpaid', 'endpay'] as const;
+export type BillingMode = (typeof BILLING_MODES)[number];
+
 /** Populated from Phase 3 onwards; shape fixed now so clients and UI can rely on it. */
 export interface ActiveSessionSummary {
   id: string;
   customerName: string | null;
-  billingMode: 'prepaid' | 'postpaid';
+  billingMode: BillingMode;
   status: 'active' | 'paused';
   startedAt: string;
   endsAt: string | null;
@@ -582,7 +595,7 @@ export type SessionEndReason = (typeof SESSION_END_REASONS)[number];
 export const sessionQuoteSchema = z
   .object({
     stationId: z.string().uuid(),
-    billingMode: z.enum(['prepaid', 'postpaid']),
+    billingMode: z.enum(BILLING_MODES),
     packageId: z.string().uuid().optional(),
     minutes: z
       .number()
@@ -592,7 +605,7 @@ export const sessionQuoteSchema = z
       .optional(),
   })
   .refine((q) => q.billingMode === 'postpaid' || Boolean(q.packageId) !== Boolean(q.minutes), {
-    message: 'prepaid sessions need either a package or a number of minutes',
+    message: 'prepaid / end-pay sessions need either a package or a number of minutes',
     path: ['minutes'],
   });
 export type SessionQuoteRequest = z.infer<typeof sessionQuoteSchema>;
@@ -662,10 +675,10 @@ export const endSessionSchema = z.object({
 export type EndSessionRequest = z.infer<typeof endSessionSchema>;
 
 export interface SessionQuoteResponse {
-  billingMode: 'prepaid' | 'postpaid';
-  /** Prepaid: minutes bought. Postpaid: null. */
+  billingMode: BillingMode;
+  /** Prepaid / end pay: minutes booked. Postpaid: null. */
   minutes: number | null;
-  /** Prepaid: amount due now. Postpaid: 0. */
+  /** Prepaid: amount due now. End pay: amount due when the time ends. Postpaid: 0. */
   priceCents: number;
   rule: { id: string; name: string; rateCentsPerHour: number } | null;
   package: { id: string; name: string } | null;
@@ -689,7 +702,7 @@ export interface SessionSummary {
   stationName: string;
   customerId: string | null;
   customerName: string | null;
-  billingMode: 'prepaid' | 'postpaid';
+  billingMode: BillingMode;
   status: SessionStatus;
   ruleName: string | null;
   packageName: string | null;
@@ -723,8 +736,24 @@ export interface SessionSummary {
   /** Accepted "on the bill" orders still open on this session: settled together with it (0.10.0). */
   openOrdersCents: number;
   openOrdersCount: number;
+  /**
+   * End pay (0.14.0): the session has ended but the bill has not been collected yet — it sits in
+   * the "awaiting payment" strip until `POST /sessions/:id/collect`. `finalPriceCents` is the
+   * amount due for the time (open orders on the bill come on top, see `openOrdersCents`).
+   */
+  awaitingPayment: boolean;
   createdAt: string;
 }
+
+/** `POST /sessions/:id/collect` — staff take the money for an ended End Pay session. */
+export const collectSessionSchema = z.object({
+  discountCents: z.number().int().min(0).max(1_000_000).default(0),
+  /** Attach / change the customer at the desk (balance or pay later need one). */
+  customerId: z.string().uuid().optional(),
+  ...sessionTenders,
+  notes: z.string().trim().max(500).optional(),
+});
+export type CollectSessionRequest = z.infer<typeof collectSessionSchema>;
 
 /** Outcome of the command mirrored to the PC after a session transition. */
 export interface ClientAckSummary {
@@ -767,6 +796,11 @@ export const sessionListQuerySchema = z.object({
   status: z.enum(SESSION_STATUSES).optional(),
   stationId: z.string().uuid().optional(),
   customerId: z.string().uuid().optional(),
+  /** `true` = only ended End Pay sessions whose bill is still to be collected (0.14.0). */
+  awaitingPayment: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((v) => v === true || v === 'true')
+    .optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   page: z.coerce.number().int().min(1).default(1),

@@ -234,10 +234,12 @@ export interface ServerOrderUpdate {
  * from (postpaid). The server stays authoritative — the final price is always computed there.
  */
 export interface ClientSessionBilling {
-  billingMode: 'prepaid' | 'postpaid';
-  /** Prepaid: amount paid for the booked time (grows with extensions). Postpaid: 0. */
+  billingMode: 'prepaid' | 'postpaid' | 'endpay';
+  /** Prepaid: amount paid for the booked time (grows with extensions). Postpaid / end pay: 0. */
   paidCents: number;
-  /** Postpaid: pricing terms the running amount is derived from; null for prepaid. */
+  /** End pay (0.14.0): amount due at the desk when the time ends (grows with extensions). Else 0. */
+  dueCents?: number;
+  /** Postpaid: pricing terms the running amount is derived from; null for prepaid / end pay. */
   terms: PricingTerms | null;
   /** Billable seconds at `asOf` (pauses excluded) — the client counts on from there. */
   billableSeconds: number;

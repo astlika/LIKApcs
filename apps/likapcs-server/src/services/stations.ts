@@ -2,6 +2,7 @@ import {
   billableSeconds,
   priceForSeconds,
   type ActiveSessionSummary,
+  type BillingMode,
   type CreateStationRequest,
   type HardwareInfo,
   type PricingTerms,
@@ -41,7 +42,7 @@ interface StationRow {
   device_hardware: HardwareInfo | null;
   session_id: string | null;
   session_customer_name: string | null;
-  session_billing_mode: 'prepaid' | 'postpaid' | null;
+  session_billing_mode: BillingMode | null;
   session_status: 'active' | 'paused' | null;
   session_started_at: Date | null;
   session_ends_at: Date | null;
@@ -66,6 +67,8 @@ interface StationRow {
   orders_pending: string | number;
   orders_open_count: string | number;
   orders_open_cents: string | number;
+  awaiting_count: string | number;
+  awaiting_cents: string | number;
 }
 
 const STATION_SELECT = `
@@ -87,7 +90,12 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'pending') AS orders_pending,
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
-           WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents
+           WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode = 'endpay'
+           AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
+         (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
+           WHERE a.station_id = s.id AND a.billing_mode = 'endpay' AND a.billed_at IS NULL
+           AND a.status IN ('expired', 'completed')) AS awaiting_cents
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
@@ -136,10 +144,11 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
     remainingSeconds: row.session_ends_at
       ? Math.max(0, Math.round((row.session_ends_at.getTime() - reference) / 1000))
       : null,
+    // Prepaid: what was paid. End pay: what will be due. Postpaid: the running amount.
     currentPriceCents:
-      row.session_billing_mode === 'prepaid'
-        ? Number(row.session_quoted_price_cents ?? 0)
-        : priceForSeconds(elapsed, terms),
+      row.session_billing_mode === 'postpaid'
+        ? priceForSeconds(elapsed, terms)
+        : Number(row.session_quoted_price_cents ?? 0),
   };
 }
 
@@ -221,6 +230,10 @@ export class StationsService {
         pending: Number(row.orders_pending ?? 0),
         openCount: Number(row.orders_open_count ?? 0),
         openCents: Number(row.orders_open_cents ?? 0),
+      },
+      awaitingPayment: {
+        count: Number(row.awaiting_count ?? 0),
+        amountCents: Number(row.awaiting_cents ?? 0),
       },
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),

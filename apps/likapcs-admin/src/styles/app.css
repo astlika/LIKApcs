@@ -2071,6 +2071,102 @@ body:has(.pos) .toasts {
   background: var(--success-soft);
   color: var(--success);
 }
+/* "To collect" strip (0.14.0): ended end-pay sessions whose bill is still open. */
+.awaiting {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.awaiting__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.awaiting__head > svg {
+  color: var(--accent);
+}
+.awaiting__count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.awaiting__hint {
+  margin-left: auto;
+  font-size: 12px;
+}
+.awaiting__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.awaiting__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 13px;
+}
+.awaiting__code {
+  font-weight: 700;
+}
+.awaiting__who {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.awaiting__meta {
+  font-size: 12px;
+}
+.awaiting__amount {
+  font-size: 14px;
+}
+/* Station tile: an ended end-pay bill waiting at the desk. */
+.pc-tile__awaiting {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+@media (max-width: 900px) {
+  .awaiting__hint {
+    display: none;
+  }
+}
+/* "End Pay" tender (0.14.0): the PC runs now, the bill is collected at the desk at the end — accent. */
+.chip--endpay[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.tender-endpay {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.tender-endpay .tender-credit__who {
+  color: var(--accent);
+}
 /* Balance pill next to a customer name (POS, customers list, session dialogs). */
 .wallet-pill {
   display: inline-flex;

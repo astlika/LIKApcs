@@ -21,7 +21,7 @@
  * Keep the two together: a dialog calls the hook, reads `tender.covered` / `tender.payments` for
  * its submit button, and renders `<TenderPanel tender={tender} … />`.
  */
-import { Banknote, CalendarClock, CreditCard, UserRound, Wallet } from 'lucide-react';
+import { Banknote, CalendarClock, CreditCard, Hourglass, UserRound, Wallet } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CustomerSummary, SalePaymentInput } from '@likapcs/shared';
 import { PERMISSIONS, parseMoneyInput } from '@likapcs/shared';
@@ -33,7 +33,7 @@ import { useAuth } from '../../state/auth';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { Alert, Field, Input } from '../ui/primitives';
 
-export type TenderMode = 'cash' | 'card' | 'split' | 'credit' | 'wallet';
+export type TenderMode = 'cash' | 'endpay' | 'card' | 'split' | 'credit' | 'wallet';
 
 /** A number far above the total is a barcode that landed in the field, not money. */
 const MAX_OVERPAY_CENTS = 100_000_00;
@@ -52,6 +52,11 @@ export interface TenderInput {
   allowCredit?: boolean;
   /** Hide the balance tender (contexts without a customer concept). */
   allowWallet?: boolean;
+  /**
+   * Offer "End Pay" (session start only): nothing is paid now, the PC runs for the chosen time and
+   * the bill is collected at the desk when the session ends. Sits right after Cash.
+   */
+  allowEndPay?: boolean;
 }
 
 export interface Tender {
@@ -82,6 +87,8 @@ export interface Tender {
   changeCents: number;
   /** Total is covered by valid tenders and nothing is implausible → the sale may complete. */
   covered: boolean;
+  /** "End Pay" chosen: no payments now — the caller starts the session with `billingMode: 'endpay'`. */
+  endPay: boolean;
   problem:
     | 'cardOver'
     | 'implausible'
@@ -104,6 +111,7 @@ export function useTender({
   customer,
   allowCredit = true,
   allowWallet = true,
+  allowEndPay = false,
 }: TenderInput): Tender {
   const settings = useAppSettings();
   const { can } = useAuth();
@@ -144,7 +152,9 @@ export function useTender({
     }
   }
 
+  // Order is deliberate: Cash · End Pay · (Card · Cash + Card) · Balance · Pay later.
   const modes: TenderMode[] = ['cash'];
+  if (allowEndPay) modes.push('endpay');
   if (cardEnabled) modes.push('card', 'split');
   if (walletEnabled) modes.push('wallet');
   if (creditEnabled) modes.push('credit');
@@ -156,7 +166,9 @@ export function useTender({
   const payments: SalePaymentInput[] = [];
   let creditCents = 0;
   let problem: Tender['problem'] = null;
-  if (effective === 'card') {
+  if (effective === 'endpay') {
+    // Nothing changes hands now; the amount is collected when the session ends.
+  } else if (effective === 'card') {
     payments.push({ method: 'card', amountCents: totalCents, reference: reference || undefined });
   } else if (effective === 'wallet') {
     const fromWallet = walletCents ?? 0;
@@ -193,11 +205,12 @@ export function useTender({
   const valid =
     cashCents !== null && cardCents !== null && walletCents !== null && problem === null;
   const covered =
-    valid &&
-    paidCents >= totalCents &&
-    (effective !== 'credit' || !!dueDate) &&
-    (effective !== 'wallet' || (walletCents ?? 0) > 0);
-  const changeCents = covered ? paidCents - totalCents : 0;
+    effective === 'endpay' ||
+    (valid &&
+      paidCents >= totalCents &&
+      (effective !== 'credit' || !!dueDate) &&
+      (effective !== 'wallet' || (walletCents ?? 0) > 0));
+  const changeCents = covered && effective !== 'endpay' ? paidCents - totalCents : 0;
   const cashTargetCents =
     effective === 'split'
       ? Math.max(0, totalCents - (cardCents ?? 0))
@@ -229,6 +242,7 @@ export function useTender({
     creditCents,
     changeCents,
     covered,
+    endPay: effective === 'endpay',
     problem,
     customer,
   };
@@ -265,7 +279,7 @@ export function TenderPanel({
       tender.setWalletText((cover / 100).toFixed(2));
       tender.setCashText(((tender.totalCents - cover) / 100).toFixed(2));
     } else if (
-      (tender.mode === 'credit' || tender.mode === 'wallet') &&
+      (tender.mode === 'credit' || tender.mode === 'wallet' || tender.mode === 'endpay') &&
       (!tender.cashText.trim() || tender.cashText !== (tender.totalCents / 100).toFixed(2))
     )
       tender.setCashText((tender.totalCents / 100).toFixed(2));
@@ -284,6 +298,7 @@ export function TenderPanel({
 
   const modeLabel: Record<TenderMode, { label: string; icon: JSX.Element | null }> = {
     cash: { label: t('pos.cash'), icon: <Banknote size={14} /> },
+    endpay: { label: t('pos.endPay'), icon: <Hourglass size={14} /> },
     card: { label: t('pos.card'), icon: <CreditCard size={14} /> },
     split: { label: `${t('pos.cash')} + ${t('pos.card')}`, icon: null },
     credit: { label: t('pos.payLater'), icon: <CalendarClock size={14} /> },
@@ -310,7 +325,7 @@ export function TenderPanel({
             <button
               key={m}
               type="button"
-              className={`chip ${m === 'credit' ? 'chip--credit' : ''} ${m === 'wallet' ? 'chip--wallet' : ''}`}
+              className={`chip ${m === 'credit' ? 'chip--credit' : ''} ${m === 'wallet' ? 'chip--wallet' : ''} ${m === 'endpay' ? 'chip--endpay' : ''}`}
               aria-pressed={mode === m}
               onClick={() => switchMode(m)}
               data-testid={`${testId}-method-${m}`}
@@ -318,6 +333,33 @@ export function TenderPanel({
               {modeLabel[m].icon} {modeLabel[m].label}
             </button>
           ))}
+        </div>
+      )}
+
+      {mode === 'endpay' && (
+        <div className="tender-credit tender-endpay" data-testid={`${testId}-endpay`}>
+          <div className="tender-credit__who">
+            <Hourglass size={16} />
+            <div className="tender-credit__name">
+              <strong>{t('pos.endPayTitle')}</strong>
+              <span className="muted">
+                {t('pos.endPayHint', { amount: fmt.money(tender.totalCents) })}
+              </span>
+            </div>
+          </div>
+          {onCustomerChange && (
+            <Field label={t('pos.customer')} optional hint={t('pos.endPayCustomerHint')}>
+              {(id) => (
+                <CustomerPicker
+                  id={id}
+                  value={customer}
+                  onChange={onCustomerChange}
+                  placeholder={t('pos.customerPlaceholder')}
+                  allowCreate
+                />
+              )}
+            </Field>
+          )}
         </div>
       )}
 

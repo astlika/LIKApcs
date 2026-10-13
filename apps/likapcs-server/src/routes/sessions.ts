@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  collectSessionSchema,
   endSessionSchema,
   extendSessionSchema,
   sessionListQuerySchema,
@@ -63,6 +64,15 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.end(
       idParams.parse(request.params).id,
       endSessionSchema.parse(request.body ?? {}),
+      actorOf(request),
+    ),
+  );
+  /** End pay (0.14.0): "Collect" in the awaiting-payment strip — takes the money for an ended
+   * pay-at-the-end session (time + open orders on the bill), exactly once. */
+  app.post('/sessions/:id/collect', control, async (request) =>
+    services.sessions.collect(
+      idParams.parse(request.params).id,
+      collectSessionSchema.parse(request.body ?? {}),
       actorOf(request),
     ),
   );

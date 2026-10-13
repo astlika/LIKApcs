@@ -57,7 +57,8 @@ import {
 } from '../lib/map-selection';
 import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcDialog';
 import { useStationActions } from '../components/stations/useStationActions';
-import { formatHms, projectSession } from '../lib/session-time';
+import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
+import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
 import { storage } from '../lib/storage';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
@@ -549,6 +550,8 @@ export function StationsPage() {
 
       {canDevices && <FirewallCard bannerOnly />}
 
+      <AwaitingPaymentStrip />
+
       <div className="map-actions" role="toolbar" aria-label={t('common.actions')}>
         <div className="map-actions__target" data-multi={multi || undefined}>
           {multi && selected ? (
@@ -899,7 +902,7 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
   return (
     <span className="map-actions__status">
       <Badge tone={live.status === 'paused' ? 'warning' : 'accent'} dot>
-        {live.billingMode === 'prepaid' ? t('sessions.prepaidShort') : t('sessions.postpaidShort')}
+        {t(billingModeKey(live.billingMode))}
         {live.status === 'paused' ? ` · ${t('sessions.status.paused')}` : ''}
       </Badge>
       <span className="num">

@@ -237,14 +237,17 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 function billingOf(v: unknown): ClientSessionBilling | null {
   if (!v || typeof v !== 'object') return null;
   const b = v as Record<string, unknown>;
-  if (b.billingMode !== 'prepaid' && b.billingMode !== 'postpaid') return null;
+  if (b.billingMode !== 'prepaid' && b.billingMode !== 'postpaid' && b.billingMode !== 'endpay')
+    return null;
   const paidCents = num(b.paidCents);
   const billableSeconds = num(b.billableSeconds);
   const asOf = str(b.asOf);
   if (paidCents === null || billableSeconds === null || !asOf) return null;
   const terms =
     b.terms && typeof b.terms === 'object' ? (b.terms as ClientSessionBilling['terms']) : null;
-  return { billingMode: b.billingMode, paidCents, terms, billableSeconds, asOf };
+  // End pay (0.14.0): the amount due at the desk when the time ends.
+  const dueCents = num(b.dueCents) ?? 0;
+  return { billingMode: b.billingMode, paidCents, dueCents, terms, billableSeconds, asOf };
 }
 
 export function reduce(
@@ -404,10 +407,15 @@ export interface SessionView {
   paidCents: number | null;
   /** Postpaid: running amount owed, derived from the server's terms + snapshot. null = unknown. */
   owedCents: number | null;
+  /** How the session is billed (end pay labels the owed amount "pay at the end"). */
+  billingMode: 'prepaid' | 'postpaid' | 'endpay' | null;
 }
 
 export function sessionView(session: SessionState, serverNowMs: number): SessionView {
-  const money = sessionMoney(session, serverNowMs);
+  const money = {
+    ...sessionMoney(session, serverNowMs),
+    billingMode: session.billing?.billingMode ?? null,
+  };
   if (session.endsAt) {
     const remaining =
       session.status === 'paused' && session.remainingAtPauseSeconds !== null
@@ -433,9 +441,10 @@ export function sessionView(session: SessionState, serverNowMs: number): Session
 }
 
 /**
- * Display-only money: prepaid shows what was paid; postpaid counts billable seconds on from the
- * server's snapshot (frozen while paused) and prices them with the server's own terms. The real
- * invoice is always computed by the server when the session ends.
+ * Display-only money: prepaid shows what was paid; end pay shows the fixed amount due at the end;
+ * postpaid counts billable seconds on from the server's snapshot (frozen while paused) and prices
+ * them with the server's own terms. The real invoice is always computed by the server when the
+ * session ends.
  */
 function sessionMoney(
   session: SessionState,
@@ -444,6 +453,8 @@ function sessionMoney(
   const b = session.billing;
   if (!b) return { paidCents: null, owedCents: null };
   if (b.billingMode === 'prepaid') return { paidCents: b.paidCents, owedCents: null };
+  // End pay: a fixed amount, collected at the desk when the time ends (shown as "to pay").
+  if (b.billingMode === 'endpay') return { paidCents: null, owedCents: b.dueCents ?? 0 };
   if (!b.terms) return { paidCents: null, owedCents: null };
   const reference =
     session.status === 'paused' && session.pausedAt ? Date.parse(session.pausedAt) : serverNowMs;

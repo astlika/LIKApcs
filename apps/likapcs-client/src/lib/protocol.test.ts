@@ -210,6 +210,7 @@ describe('reduce()', () => {
       expired: false,
       paidCents: 150,
       owedCents: null,
+      billingMode: 'prepaid',
     });
 
     r = reduce(state, cmd({ command: 'session.pause', payload: { sessionId: 'g1' } }), T0 + 60_000);
@@ -222,6 +223,7 @@ describe('reduce()', () => {
       expired: false,
       paidCents: 150,
       owedCents: null,
+      billingMode: 'prepaid',
     });
     // A pause without a `pausedBy` (0.9 servers) counts as a staff pause; the covered screen is
     // the locked window, the widget comes back with the resume.
@@ -348,6 +350,39 @@ describe('reduce()', () => {
       // No billing snapshot from the server → the widget shows no money rather than a guess.
       paidCents: null,
       owedCents: null,
+      billingMode: null,
+    });
+  });
+
+  it('end-pay sessions show the fixed amount due at the end, labelled as such', () => {
+    const state = applyWelcome(initialState, welcome);
+    const r = reduce(
+      state,
+      cmd({
+        command: 'session.start',
+        payload: {
+          sessionId: 'g4',
+          startedAt: new Date(T0).toISOString(),
+          endsAt: new Date(T0 + 3_600_000).toISOString(),
+          billing: {
+            billingMode: 'endpay',
+            paidCents: 0,
+            dueCents: 300,
+            terms: null,
+            billableSeconds: 0,
+            asOf: new Date(T0).toISOString(),
+          },
+        },
+      }),
+      T0,
+    );
+    expect(r.ok).toBe(true);
+    expect(sessionView(r.state.session!, T0 + 60_000)).toMatchObject({
+      kind: 'countdown',
+      seconds: 3540,
+      paidCents: null,
+      owedCents: 300,
+      billingMode: 'endpay',
     });
   });
 

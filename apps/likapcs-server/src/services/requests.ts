@@ -295,7 +295,7 @@ export class SessionRequestsService {
     const kind: ClientRequestOptions['kind'] = !station.isEnabled
       ? 'none'
       : live
-        ? live.billingMode === 'prepaid'
+        ? live.billingMode !== 'postpaid' // prepaid / end pay: a fixed time that can be extended
           ? 'extend'
           : 'none'
         : 'start';
@@ -339,8 +339,8 @@ export class SessionRequestsService {
     const live = station.activeSession;
     if (input.kind === 'start' && live)
       throw new AppError(409, 'session_active', 'A session is already running on this PC');
-    if (input.kind === 'extend' && (!live || live.billingMode !== 'prepaid'))
-      throw new AppError(409, 'no_session', 'There is no prepaid session to extend on this PC');
+    if (input.kind === 'extend' && (!live || live.billingMode === 'postpaid'))
+      throw new AppError(409, 'no_session', 'There is no fixed-time session to extend on this PC');
     // Validates the package / duration for this station and rejects what cannot be priced.
     const quote = await this.pricing.quote({
       stationId: station.id,

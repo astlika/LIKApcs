@@ -4,6 +4,35 @@ All notable changes to LIKApcs are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
 
+## [Unreleased]
+
+Work towards 0.14.0 (server migrations 0024 `orders.locked_screen` and 0025 end-pay columns on
+`gaming_sessions`). Covered by tests (shared 61, server 204, admin 35, client 36) and the browser
+smoke `lockscreen` (34 checks); the `endpay` smoke follows.
+
+### Added
+
+- **End Pay — a third way to bill a PC.** After choosing the time, the payment step offers
+  **Cash · End Pay · Balance · Pay later** (in that order): End Pay starts the session for the
+  chosen time with nothing paid now. The tile and the session panel show _End Pay_ and _Due at the
+  end_; **Add time** grows the bill without a payment dialog; Cancel is allowed (nothing was
+  taken). When the time runs out the PC locks and the bill appears under **"To collect"** (strip
+  on the Stations page and the home page, badge on the tile); stopping early charges the used time
+  but **never more than the reservation**, either paid on the spot or parked with **"Collect
+  later"**. **Collect** is the usual tender panel (cash with change, balance, pay later, discount /
+  **Waive** for `pos.discount`), includes drinks ordered from the PC "on the bill", prints the
+  receipt and is exactly once on the server (`POST /sessions/:id/collect`, 409 when already paid).
+  The PC's widget reads _Pay at the end · amount_ instead of _Paid_. API:
+  `billingMode: 'endpay'`, `GET /sessions?awaitingPayment=true`, `StationSummary.awaitingPayment`,
+  client `billing.dueCents`, audit `session.collect`.
+- **Menu on the locked screen.** With Settings › Client screen › _Orders on the locked screen_ on,
+  a PC without a session shows the **Menu** button too: the customer logs in (username + PIN) and
+  orders to pay at the desk; staff accept / prepare / pay them like session orders. Orders of an
+  ended session stay visible on the PC for a short privacy window only.
+- **Customer login with one click** on the lock screen (small _Client_ button), a quieter
+  administrator word on the lock screen, and the **likaapps.com** link with the version in the
+  Admin sidebar, login page, Settings › About and Updates (opens in the system browser).
+
 ## [0.13.0] - 2026-10-13
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0023 — `station_orders.prepared_at / prepared_by`,

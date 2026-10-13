@@ -8,11 +8,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, Check, Clock, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
+import { Bell, Check, Clock, Hourglass, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
 import {
   PERMISSIONS,
   parseMoneyInput,
-  priceForSeconds,
   type GamingPackageSummary,
   type CustomerSummary,
   type SessionMutationResponse,
@@ -23,7 +22,12 @@ import {
   type StationSummary,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
-import { formatHms, projectSession } from '../../lib/session-time';
+import {
+  billingModeKey,
+  formatHms,
+  liveSessionPrice,
+  projectSession,
+} from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
 import { isEditableElement } from '../../lib/scanner';
 import { useI18n } from '../../i18n';
@@ -315,7 +319,11 @@ function StartSessionForm({
     staleTime: 10_000,
   });
   const prepaid = mode === 'prepaid';
-  const tender = useTender({ totalCents: prepaid ? (quote.data?.priceCents ?? 0) : 0, customer });
+  const tender = useTender({
+    totalCents: prepaid ? (quote.data?.priceCents ?? 0) : 0,
+    customer,
+    allowEndPay: true,
+  });
 
   const start = useMutation({
     mutationFn: () =>
@@ -323,9 +331,11 @@ function StartSessionForm({
         method: 'POST',
         body: {
           ...quoteBody,
+          // "End Pay": the same reserved time, nothing paid now, collected when it ends.
+          ...(prepaid && tender.endPay ? { billingMode: 'endpay' } : {}),
           customerId: customer?.id,
           customerName: customer ? undefined : customerName.trim() || undefined,
-          ...(prepaid ? { payments: tender.payments } : {}),
+          ...(prepaid && !tender.endPay ? { payments: tender.payments } : {}),
           notes: notes.trim() || undefined,
           clientRequestId: requestId,
           ...(request ? { requestId: request.id } : {}),
@@ -508,7 +518,10 @@ function StartSessionForm({
         onClick={submit}
         data-testid="session-start-submit"
       >
-        <Play size={16} /> {t('sessions.start')}
+        <Play size={16} />{' '}
+        {prepaid && tender.endPay && quote.data && quote.data.priceCents > 0
+          ? t('map.startEndPay')
+          : t('sessions.start')}
       </Button>
     </div>
   );
@@ -565,13 +578,17 @@ function ActiveSession({
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
-        end: t('sessions.ended', {
-          total: fmt.money(
-            result.payment?.totalCents ??
-              result.session.finalPriceCents ??
-              result.session.currentPriceCents,
-          ),
-        }),
+        end: result.session.awaitingPayment
+          ? t('sessions.endedAwaiting', {
+              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+            })
+          : t('sessions.ended', {
+              total: fmt.money(
+                result.payment?.totalCents ??
+                  result.session.finalPriceCents ??
+                  result.session.currentPriceCents,
+              ),
+            }),
         cancel: t('sessions.cancelled'),
       };
       toast.success(messages[action] ?? t('pricing.saved'));
@@ -589,10 +606,7 @@ function ActiveSession({
   if (session.isLoading || !session.data) return <Loading />;
   const s = session.data;
   const { elapsed, remaining } = projectSession(s, session.dataUpdatedAt, now);
-  const livePrice =
-    s.billingMode === 'postpaid'
-      ? priceForSeconds(Math.floor(elapsed), s.terms)
-      : s.currentPriceCents;
+  const livePrice = liveSessionPrice(s, Math.floor(elapsed));
   const expiringSoon = remaining !== null && remaining <= 300;
 
   return (
@@ -611,8 +625,8 @@ function ActiveSession({
               })}
             </span>
           )}
-          <Badge tone="default">
-            {s.billingMode === 'prepaid' ? t('sessions.prepaidShort') : t('sessions.postpaidShort')}
+          <Badge tone={s.billingMode === 'endpay' ? 'accent' : 'default'}>
+            {t(billingModeKey(s.billingMode))}
           </Badge>
         </div>
         <span className="muted">{s.customerName ?? t('sessions.customerOptional')}</span>
@@ -631,7 +645,11 @@ function ActiveSession({
         )}
         <div className="session-timer">
           <div className="session-timer__label">
-            {s.billingMode === 'prepaid' ? t('sessions.paid') : t('sessions.currentPrice')}
+            {s.billingMode === 'prepaid'
+              ? t('sessions.paid')
+              : s.billingMode === 'endpay'
+                ? t('sessions.dueAtEnd')
+                : t('sessions.currentPrice')}
           </div>
           <div className="session-timer__value num">{fmt.money(livePrice)}</div>
         </div>
@@ -691,7 +709,7 @@ function ActiveSession({
               <Play size={14} /> {t('sessions.resume')}
             </Button>
           )}
-          {s.billingMode === 'prepaid' && (
+          {s.billingMode !== 'postpaid' && (
             <Button onClick={() => setDialog('extend')}>
               <Plus size={14} /> {t('sessions.extend')}
             </Button>
@@ -699,7 +717,7 @@ function ActiveSession({
           <Button variant="primary" onClick={() => setDialog('end')} data-testid="session-end">
             <Square size={14} /> {t('sessions.end')}
           </Button>
-          {s.billingMode === 'postpaid' && (
+          {s.billingMode !== 'prepaid' && (
             <Button variant="ghost" onClick={() => setDialog('cancel')}>
               <XCircle size={14} /> {t('sessions.cancel')}
             </Button>
@@ -745,8 +763,9 @@ function ActiveSession({
 /**
  * Postpaid: the clock stops the moment this opens — the amount shown is the amount billed while
  * the money is counted (the server honours it within its own bounded window via
- * `stoppedSecondsAgo`) — then the shared tender panel takes the payment. Prepaid: nothing to pay,
- * just a confirmation.
+ * `stoppedSecondsAgo`) — then the shared tender panel takes the payment. End pay: the same, but
+ * the amount is capped at the reserved price and "Collect later" parks the bill under
+ * "To collect" instead of taking money now. Prepaid: nothing to pay, just a confirmation.
  */
 export function EndSessionDialog({
   session,
@@ -767,9 +786,12 @@ export function EndSessionDialog({
   const { can } = useAuth();
   const fmt = useFormat();
   const postpaid = session.billingMode === 'postpaid';
+  const endpay = session.billingMode === 'endpay';
+  /** The clock decides the amount (open time, end pay) — as opposed to prepaid. */
+  const metered = postpaid || endpay;
   // Drinks / snacks accepted "on the bill" are settled on this receipt (prepaid too).
   const ordersCents = session.openOrdersCents;
-  const bills = postpaid || ordersCents > 0;
+  const bills = metered || ordersCents > 0;
   // Frozen at open: the first render's live values and the moment they were taken.
   const [stopped] = useState(() => ({
     at: Date.now(),
@@ -780,25 +802,35 @@ export function EndSessionDialog({
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
   const discountInvalid =
     discountCents === null || discountCents < 0 || discountCents > stopped.priceCents;
-  const timeCents = postpaid ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
+  const timeCents = metered ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
   const total = timeCents + ordersCents;
   const { customer, pickedId, setCustomer } = useSessionCustomer(session);
   const tender = useTender({ totalCents: total, customer });
   const ready = !bills || (!discountInvalid && tender.covered);
+  const stoppedSecondsAgo = () => Math.max(0, Math.floor((Date.now() - stopped.at) / 1000));
   const submit = () => {
     if (!ready || busy) return;
     onConfirm(
-      postpaid
+      metered
         ? {
             discountCents: discountCents ?? 0,
             payments: tender.payments,
-            stoppedSecondsAgo: Math.max(0, Math.floor((Date.now() - stopped.at) / 1000)),
+            stoppedSecondsAgo: stoppedSecondsAgo(),
             customerId: pickedId,
           }
         : bills
           ? { payments: tender.payments, customerId: pickedId }
           : {},
     );
+  };
+  /** End pay only: lock the PC now, leave the bill open under "To collect". */
+  const collectLater = () => {
+    if (busy || discountInvalid) return;
+    onConfirm({
+      discountCents: discountCents ?? 0,
+      stoppedSecondsAgo: stoppedSecondsAgo(),
+      customerId: pickedId,
+    });
   };
   useEnterSubmits(submit);
 
@@ -807,13 +839,25 @@ export function EndSessionDialog({
       open
       onClose={onClose}
       title={t('sessions.endTitle')}
-      description={postpaid ? t('sessions.clockStoppedHint') : t('sessions.endBody')}
+      description={metered ? t('sessions.clockStoppedHint') : t('sessions.endBody')}
       size={bills ? 'md' : 'sm'}
       footer={
         <>
           <Button onClick={onClose}>
             {t('common.cancel')} <Kbd>Esc</Kbd>
           </Button>
+          {endpay && (
+            <Button
+              variant="ghost"
+              size="lg"
+              disabled={busy || discountInvalid}
+              title={t('sessions.collectLaterHint')}
+              onClick={collectLater}
+              data-testid="session-end-later"
+            >
+              <Hourglass size={14} /> {t('sessions.collectLater')}
+            </Button>
+          )}
           <Button
             variant="primary"
             size="lg"
@@ -837,7 +881,15 @@ export function EndSessionDialog({
             <span className="muted">{t('sessions.billable')}</span>
             <span className="num">{formatHms(stopped.elapsedSeconds)}</span>
           </div>
-          {postpaid && ((discountCents ?? 0) > 0 || ordersCents > 0) && (
+          {endpay && stopped.priceCents < session.currentPriceCents && (
+            <div className="quote__row" data-testid="session-end-reserved">
+              <span className="muted">{t('sessions.reserved')}</span>
+              <span className="num">
+                <s className="faint">{fmt.money(session.currentPriceCents)}</s>
+              </span>
+            </div>
+          )}
+          {metered && ((discountCents ?? 0) > 0 || ordersCents > 0 || endpay) && (
             <div className="quote__row">
               <span className="muted">
                 {ordersCents > 0 ? t('sessions.timePrice') : t('sessions.currentPrice')}
@@ -847,7 +899,7 @@ export function EndSessionDialog({
               </span>
             </div>
           )}
-          {!postpaid && (
+          {!metered && (
             <div className={`quote__row ${ordersCents > 0 ? '' : 'quote__row--total'}`}>
               <span>{t('sessions.paid')}</span>
               <strong className="num">{fmt.money(session.currentPriceCents)}</strong>
@@ -875,7 +927,7 @@ export function EndSessionDialog({
             {t('sessions.endOrdersHint')}
           </p>
         )}
-        {postpaid && can(PERMISSIONS.POS_DISCOUNT) && (
+        {metered && can(PERMISSIONS.POS_DISCOUNT) && (
           <Field
             label={t('sessions.discount')}
             optional
@@ -949,12 +1001,14 @@ export function ExtendSessionDialog({
   });
   const { customer, setCustomer } = useSessionCustomer(session);
   const tender = useTender({ totalCents: quote.data?.priceCents ?? 0, customer });
-  const ready = !!body && !!quote.data && tender.covered;
+  // End pay: the added time goes on the bill collected at the end — nothing is paid now.
+  const endpay = session.billingMode === 'endpay';
+  const ready = !!body && !!quote.data && (endpay || tender.covered);
   const submit = () => {
     if (ready && !busy)
       onConfirm({
         ...body,
-        payments: tender.payments,
+        ...(endpay ? {} : { payments: tender.payments }),
         clientRequestId: requestId,
         ...(request ? { requestId: request.id } : {}),
       });
@@ -968,7 +1022,9 @@ export function ExtendSessionDialog({
       description={
         request
           ? `${t('requests.bannerExtend', { customer: request.customerName, duration: requestDuration(request, t('requests.package')) })} — ${t('requests.approveExtendHint')}`
-          : t('sessions.extendBody')
+          : endpay
+            ? t('sessions.extendEndPayBody')
+            : t('sessions.extendBody')
       }
       size="md"
       footer={
@@ -1043,14 +1099,30 @@ export function ExtendSessionDialog({
                   {quote.data.package && ` · ${quote.data.package.name}`}
                 </span>
               </div>
+              {endpay && (
+                <>
+                  <div className="quote__row">
+                    <span className="muted">{t('sessions.addedToBill')}</span>
+                    <span className="num">{fmt.money(quote.data.priceCents)}</span>
+                  </div>
+                  <div className="quote__row quote__row--total">
+                    <span>{t('sessions.dueAtEnd')}</span>
+                    <strong className="num" data-testid="session-extend-due">
+                      {fmt.money(session.currentPriceCents + quote.data.priceCents)}
+                    </strong>
+                  </div>
+                </>
+              )}
             </div>
-            <TenderPanel
-              tender={tender}
-              onSubmit={submit}
-              onCustomerChange={setCustomer}
-              autoFocus={false}
-              testId="session-extend"
-            />
+            {!endpay && (
+              <TenderPanel
+                tender={tender}
+                onSubmit={submit}
+                onCustomerChange={setCustomer}
+                autoFocus={false}
+                testId="session-extend"
+              />
+            )}
           </>
         )}
       </div>

@@ -64,6 +64,8 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
               // Session bills land in the cash drawer.
               void queryClient.invalidateQueries({ queryKey: ['cash'] });
+              // An end-pay session ended / was collected: the "to collect" strip follows.
+              void queryClient.invalidateQueries({ queryKey: ['sessions', 'awaiting-payment'] });
               break;
             case 'device.registered':
             case 'device.changed':

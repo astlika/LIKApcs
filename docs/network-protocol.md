@@ -144,18 +144,19 @@ available for that station). Deleting a rule/package that sessions already refer
 
 ### Gaming sessions (`stations.view` to read, `stations.control` to act)
 
-| Route                          | Body                                                                            | Result                                                  |
-| ------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `POST /sessions/quote`         | `{stationId, billingMode, packageId? \| minutes?}`                              | `{minutes, priceCents, rule, package, terms}`           |
-| `POST /sessions`               | quote fields + `customerName?, customerId?, notes?, clientRequestId?` + tenders | `201 {session, client, payment}` — prepaid is paid here |
-| `POST /sessions/:id/pause`     | —                                                                               | `{session, client, payment: null}`                      |
-| `POST /sessions/:id/resume`    | —                                                                               | prepaid `endsAt` shifted by the paused time             |
-| `POST /sessions/:id/extend`    | `{packageId? \| minutes?, clientRequestId?}` + tenders (prepaid only)           | new sale + receipt                                      |
-| `POST /sessions/:id/end`       | `{discountCents?, stoppedSecondsAgo?, customerId?}` + tenders                   | postpaid billed exactly once; `409` if already over     |
-| `POST /sessions/:id/cancel`    | `{reason}` (postpaid only)                                                      | no charge                                               |
-| `GET /sessions`                | `?status&stationId&from&to&page&pageSize`                                       | `{items, total, page, pageSize}`                        |
-| `GET /sessions/:id`, `/events` | —                                                                               | summary / event timeline (incl. PC acks)                |
-| `GET /sessions/:id/receipt`    | —                                                                               | `ReceiptData` of the session's bill (`404` if none)     |
+| Route                          | Body                                                                                                     | Result                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `POST /sessions/quote`         | `{stationId, billingMode, packageId? \| minutes?}`                                                       | `{minutes, priceCents, rule, package, terms}`                                                            |
+| `POST /sessions`               | quote fields + `customerName?, customerId?, notes?, clientRequestId?` + tenders                          | `201 {session, client, payment}` — prepaid is paid here                                                  |
+| `POST /sessions/:id/pause`     | —                                                                                                        | `{session, client, payment: null}`                                                                       |
+| `POST /sessions/:id/resume`    | —                                                                                                        | prepaid `endsAt` shifted by the paused time                                                              |
+| `POST /sessions/:id/extend`    | `{packageId? \| minutes?, clientRequestId?}` + tenders (prepaid; end pay: no tenders, added to the bill) | new sale + receipt (end pay: bill grows)                                                                 |
+| `POST /sessions/:id/end`       | `{discountCents?, stoppedSecondsAgo?, customerId?}` + tenders                                            | postpaid / end pay billed exactly once; `409` if already over; end pay without `payments` parks the bill |
+| `POST /sessions/:id/collect`   | `{discountCents?, customerId?, notes?}` + tenders (end pay, ended, unpaid)                               | the parked bill paid exactly once; `409` running / cancelled / already paid                              |
+| `POST /sessions/:id/cancel`    | `{reason}` (postpaid / end pay only)                                                                     | no charge                                                                                                |
+| `GET /sessions`                | `?status&stationId&from&to&awaitingPayment&page&pageSize`                                                | `{items, total, page, pageSize}`                                                                         |
+| `GET /sessions/:id`, `/events` | —                                                                                                        | summary / event timeline (incl. PC acks)                                                                 |
+| `GET /sessions/:id/receipt`    | —                                                                                                        | `ReceiptData` of the session's bill (`404` if none)                                                      |
 
 **Tenders.** A session bill is paid exactly like a POS sale: `payments: [{method, amountCents,
 reference?, dueDate?}]` (1–5 entries; `cash`, `card`, `credit`). Cash above the total is change
@@ -166,6 +167,21 @@ reference?, dueDate?}]` (1–5 entries; `cash`, `card`, `credit`). Cash above th
 still accepted and means one exact tender; when both are present `payments` wins. The response's
 `payment` is `{saleId, receiptNo, totalCents, paidCents, changeCents, creditCents, dueDate}` or
 `null` when nothing was billed (postpaid start, prepaid end, pause/resume).
+
+**End Pay (0.14.0).** `billingMode: 'endpay'` reserves time like prepaid (`minutes` or
+`packageId`, same quote) but takes no money at start: `payment` is `null`, the PC unlocks, and
+`SessionSummary.currentPriceCents` is the amount that will be due (it grows with `/extend`, which
+needs no tenders). When the time runs out the server locks the PC and fixes
+`finalPriceCents = quotedPriceCents`; an early `/end` fixes it at the used time priced by the
+frozen terms, **capped at the reservation**. `/end` with `payments` bills on the spot (like
+postpaid, incl. `stoppedSecondsAgo` and `discountCents`); without `payments` the session is
+`completed` with `awaitingPayment: true` and `billedAt: null` — it is listed by
+`GET /sessions?awaitingPayment=true` and counted on the station (`StationSummary.awaitingPayment:
+{count, amountCents}`) until `POST /sessions/:id/collect` records the sale (open PC orders "on
+the bill" are settled on the same receipt; `discountCents` needs `pos.discount`; a full discount
+waives the bill with a zero sale). Collecting is exactly once: a second call answers `409`. The
+client's `billing` carries `dueCents` and the `stopped` event carries `{awaitingPayment, dueCents}`
+for an unpaid end pay session. Audit: `session.collect`.
 
 **Stopping the clock.** A postpaid `/end` may carry `stoppedSecondsAgo`: how many seconds before
 the request the operator opened the checkout. The server bills up to that moment — the amount the
@@ -640,7 +656,8 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
                    "heartbeatIntervalSeconds": 10, "offlineAfterSeconds": 30,
                    "language": "sq", "welcomeMessage": "…", "businessName": "…",
                    "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds",
-                                       "billing"?: { "billingMode", "paidCents", "terms", "billableSeconds", "asOf" } },
+                                       "billing"?: { "billingMode" /* prepaid | postpaid | endpay */, "paidCents", "dueCents" /* end pay, 0.14.0 */,
+                                                     "terms", "billableSeconds", "asOf" } },
                    "maintenance": null | { "until": "…", "byName": "…" },
                    "display": { "widgetSize", "widgetPosition", "widgetStyle" /* one of 13 designs, 0.13.0 */, "widgetShowPayment", "lockTitle",
                                 "currency", "staffLoginUsername", "customerLogin",

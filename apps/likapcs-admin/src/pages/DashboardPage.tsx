@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { PERMISSIONS, formatDate, toIsoDate, type DashboardSummary } from '@likapcs/shared';
 import { api } from '../lib/api';
+import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -62,6 +63,8 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {isToday && <AwaitingPaymentStrip testId="dash-awaiting" />}
 
       {summary.isLoading && <Loading />}
       {summary.isError && (

@@ -29,7 +29,10 @@ type T = (k: Key, vars?: Record<string, string | number>) => string;
 
 export { effectiveWidgetStyle, TRAY_LINGER_MS } from './lib/widget';
 
-/** Paid (prepaid) or running amount owed (postpaid) — null when the server gave no figure. */
+/**
+ * Paid (prepaid), amount due at the end (end pay) or running amount owed (postpaid) — null when
+ * the server gave no figure.
+ */
 export function moneyLine(
   view: SessionView | null,
   display: ClientDisplayConfig | null,
@@ -41,7 +44,11 @@ export function moneyLine(
   if (view.paidCents !== null)
     return { label: t('paid'), amount: formatMoney(view.paidCents, options), kind: 'paid' };
   if (view.owedCents !== null)
-    return { label: t('owed'), amount: formatMoney(view.owedCents, options), kind: 'owed' };
+    return {
+      label: t(view.billingMode === 'endpay' ? 'dueAtEnd' : 'owed'),
+      amount: formatMoney(view.owedCents, options),
+      kind: 'owed',
+    };
   return null;
 }
 

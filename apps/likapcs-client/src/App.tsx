@@ -241,7 +241,10 @@ export function App() {
         snap={snap}
         notice={notice?.text ?? null}
         onRequestTime={
-          customerLogin && snap.state.session?.billing?.billingMode === 'prepaid'
+          // Reserved time (prepaid / end pay) can be extended; open time runs until stopped.
+          customerLogin &&
+          snap.state.session?.billing &&
+          snap.state.session.billing.billingMode !== 'postpaid'
             ? () => void openCustomer()
             : null
         }

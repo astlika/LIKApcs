@@ -6,7 +6,7 @@
  * the scrolling canvas).
  */
 import { useMemo } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell, Hourglass } from 'lucide-react';
 import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
 import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
@@ -204,6 +204,16 @@ export function StationTile({
         >
           <Bell size={10} />
           {compact ? '' : t('requests.tile')}
+        </span>
+      )}
+      {station.awaitingPayment.count > 0 && (
+        <span
+          className="pc-tile__awaiting"
+          title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
+          data-testid="tile-awaiting"
+        >
+          <Hourglass size={10} />
+          {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
         </span>
       )}
       <div className="pc-tile__code">{station.code}</div>

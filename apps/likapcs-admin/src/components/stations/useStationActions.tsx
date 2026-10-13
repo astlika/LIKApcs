@@ -30,7 +30,6 @@ import {
 } from 'lucide-react';
 import {
   PERMISSIONS,
-  priceForSeconds,
   wakeReadiness,
   type GamingPackageSummary,
   type CustomerSummary,
@@ -46,7 +45,7 @@ import {
   type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
-import { projectSession } from '../../lib/session-time';
+import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
 import { useFormat } from '../../lib/format';
 import { usePaymentMethods } from '../../lib/payment-methods';
@@ -176,9 +175,13 @@ export function useStationActions(
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
-        end: t('sessions.ended', {
-          total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
-        }),
+        end: result.session.awaitingPayment
+          ? t('sessions.endedAwaiting', {
+              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+            })
+          : t('sessions.ended', {
+              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+            }),
         cancel: t('sessions.cancelled'),
       };
       toast.success(messages[action] ?? t('common.saving'));
@@ -441,8 +444,9 @@ export function useStationActions(
         label: t('map.addTime'),
         icon: Plus,
         bar: true,
-        enabled: canControl && !!live && live.billingMode === 'prepaid',
-        hint: live && live.billingMode !== 'prepaid' ? t('map.addTimePostpaid') : undefined,
+        // Prepaid and end pay reserve time; open time (postpaid) runs until stopped.
+        enabled: canControl && !!live && live.billingMode !== 'postpaid',
+        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
       {
         // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
@@ -497,7 +501,8 @@ export function useStationActions(
         label: t('sessions.cancel'),
         icon: XCircle,
         bar: false,
-        enabled: canControl && !!live && live.billingMode === 'postpaid',
+        // Nothing was taken for open time / end pay, so they can simply be voided.
+        enabled: canControl && !!live && live.billingMode !== 'prepaid',
       },
       { id: 'details', label: t('common.details'), icon: Info, bar: true, enabled: true },
     ];
@@ -713,10 +718,7 @@ function SessionFlow({
   }
   const s = session.data;
   const { elapsed } = projectSession(s, session.dataUpdatedAt, now);
-  const livePrice =
-    s.billingMode === 'postpaid'
-      ? priceForSeconds(Math.floor(elapsed), s.terms)
-      : s.currentPriceCents;
+  const livePrice = liveSessionPrice(s, Math.floor(elapsed));
   return <>{children(s, Math.floor(elapsed), livePrice)}</>;
 }
 
@@ -879,7 +881,11 @@ export function QuickStartDialog({
           onCustomerChange={setCustomer}
           busy={start.isPending}
           onBack={() => setPending(null)}
-          onStart={(payments) => start.mutate({ ...pending.body, payments })}
+          onStart={(payments, endPay) =>
+            start.mutate(
+              endPay ? { ...pending.body, billingMode: 'endpay' } : { ...pending.body, payments },
+            )
+          }
         />
       </Dialog>
     );
@@ -1051,12 +1057,13 @@ function QuickStartTender({
   onCustomerChange: (customer: CustomerSummary | null) => void;
   busy: boolean;
   onBack: () => void;
-  onStart: (payments: SalePaymentInput[]) => void;
+  /** `endPay`: nothing paid now — start the session as end pay instead of prepaid. */
+  onStart: (payments: SalePaymentInput[], endPay: boolean) => void;
 }) {
   const { t } = useI18n();
-  const tender = useTender({ totalCents, customer });
+  const tender = useTender({ totalCents, customer, allowEndPay: true });
   const submit = () => {
-    if (tender.covered && !busy) onStart(tender.payments);
+    if (tender.covered && !busy) onStart(tender.endPay ? [] : tender.payments, tender.endPay);
   };
   return (
     <div className="stack">
@@ -1079,9 +1086,11 @@ function QuickStartTender({
           data-testid="quick-start-submit"
         >
           <Play size={14} />{' '}
-          {tender.mode === 'credit' && tender.creditCents > 0
-            ? t('pos.completeOnTab')
-            : t('map.start')}{' '}
+          {tender.endPay
+            ? t('map.startEndPay')
+            : tender.mode === 'credit' && tender.creditCents > 0
+              ? t('pos.completeOnTab')
+              : t('map.start')}{' '}
           <Kbd>Enter</Kbd>
         </Button>
       </div>

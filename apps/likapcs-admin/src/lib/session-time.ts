@@ -2,7 +2,7 @@
  * Pure helpers for live session timers in the Admin. The server is authoritative; these only
  * project the last fetched summary forward to the current wall clock between refreshes.
  */
-import type { SessionSummary } from '@likapcs/shared';
+import { priceForSeconds, type SessionSummary } from '@likapcs/shared';
 
 export function formatHms(totalSeconds: number): string {
   const total = Math.max(0, Math.floor(totalSeconds));
@@ -26,4 +26,28 @@ export function projectSession(
     remaining = Math.max(0, (new Date(session.endsAt).getTime() - reference) / 1000);
   }
   return { elapsed, remaining };
+}
+
+/**
+ * What the session is worth right now, by billing mode: open time (postpaid) is metered; end pay
+ * is metered too but never above the reserved amount (ending early costs less, never more);
+ * prepaid is simply what was paid.
+ */
+export function liveSessionPrice(
+  session: Pick<SessionSummary, 'billingMode' | 'terms' | 'currentPriceCents'>,
+  elapsedSeconds: number,
+): number {
+  if (session.billingMode === 'postpaid') return priceForSeconds(elapsedSeconds, session.terms);
+  if (session.billingMode === 'endpay')
+    return Math.min(priceForSeconds(elapsedSeconds, session.terms), session.currentPriceCents);
+  return session.currentPriceCents;
+}
+
+/** Short label key for a billing mode (chips, badges, lists). */
+export function billingModeKey(
+  mode: SessionSummary['billingMode'],
+): 'sessions.prepaidShort' | 'sessions.postpaidShort' | 'sessions.endPayShort' {
+  if (mode === 'prepaid') return 'sessions.prepaidShort';
+  if (mode === 'endpay') return 'sessions.endPayShort';
+  return 'sessions.postpaidShort';
 }
