@@ -6,6 +6,15 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-13
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0026 `import_runs`,
+`import_links`, backup kind `pre_import`), then the gaming PCs. The Client is unchanged in
+behaviour; it is rebuilt only so both installers carry the same version. Covered by tests (shared
+61, server 222 incl. 6 search + 6 import, admin 35, client 36) and the browser smokes `search`
+(20 checks) and `import` (22 checks: unknown file refused, preview, test run writes nothing,
+import, pre-import backup listed, second run adds nothing, imported customer found by search).
+
 ### Added
 
 - **Global search (Ctrl+K).** The command palette now searches the whole database, not only
