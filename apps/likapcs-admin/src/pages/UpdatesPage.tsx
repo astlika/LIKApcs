@@ -35,6 +35,7 @@ import {
   Loading,
   PageHeader,
   StatTile,
+  WebLink,
 } from '../components/ui/primitives';
 import { useI18n } from '../i18n';
 import { api, ApiError } from '../lib/api';
@@ -227,9 +228,9 @@ export function UpdatesPage() {
               {row(
                 t('updates.policy.feed'),
                 <>
-                  <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
+                  <WebLink href={GITHUB_RELEASES_URL}>
                     GitHub Releases <ExternalLink size={12} />
-                  </a>
+                  </WebLink>
                   {latestClient && (
                     <span className="faint">
                       {' '}

@@ -3,7 +3,7 @@ import { useI18n } from '../i18n';
 import { useFormat } from '../lib/format';
 import { GITHUB_RELEASES_URL } from '../lib/updater';
 import { useUpdates } from '../state/updates';
-import { Alert, Button, Card } from './ui/primitives';
+import { Alert, Button, Card, WebLink } from './ui/primitives';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
@@ -25,9 +25,9 @@ export function UpdatePanel() {
           <>
             <Alert tone="info">{t('settings.updates.browserOnly')}</Alert>
             <div>
-              <a className="btn" href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
+              <WebLink className="btn" href={GITHUB_RELEASES_URL}>
                 <ExternalLink size={15} /> {t('settings.updates.openReleases')}
-              </a>
+              </WebLink>
             </div>
           </>
         )}

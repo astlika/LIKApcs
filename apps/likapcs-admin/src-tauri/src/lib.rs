@@ -106,6 +106,33 @@ async fn allow_firewall() -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Opens an http(s) link in the user's default browser (the WebView must never navigate away
+/// from the app, and a `target=_blank` popup inside WebView2 is not a browser). Anything that is
+/// not a plain web URL is refused.
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim().to_string();
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://"))
+        || trimmed.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err("only http(s) links can be opened".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &trimmed])
+            .spawn();
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open").arg(&trimmed).spawn();
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        let result = std::process::Command::new("xdg-open").arg(&trimmed).spawn();
+        result.map(|_| ()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let background = std::env::args().any(|a| a == "--background");
@@ -128,7 +155,8 @@ pub fn run() {
             embedded_server_log,
             discover_servers,
             firewall_status,
-            allow_firewall
+            allow_firewall,
+            open_url
         ])
         .setup(move |app| {
             let has_runtime = locate_runtime().is_some();

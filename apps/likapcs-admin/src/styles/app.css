@@ -6373,3 +6373,22 @@ button.ads-album .ads-album__meta {
 .wm-fit > .wm {
   transform-origin: top left;
 }
+
+/* ─── website link next to the version (0.14.0) ─────────────────────────────── */
+.sidebar__site,
+.auth__version a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+.sidebar__site:hover,
+.auth__version a:hover {
+  color: var(--accent);
+}
+.auth__version {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  margin-left: auto;
+  margin-right: 10px;
+  white-space: nowrap;
+}

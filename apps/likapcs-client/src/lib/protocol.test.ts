@@ -433,6 +433,7 @@ describe('reduce()', () => {
         pauseMaxMinutes: 15,
         orders: true,
         ordersNote: false,
+        ordersLocked: true,
         wallet: true,
         ads: {
           enabled: true,

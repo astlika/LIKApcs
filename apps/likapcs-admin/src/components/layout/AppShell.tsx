@@ -52,9 +52,10 @@ import { toggleFullscreen, useFullscreen } from '../../lib/fullscreen';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useUpdates } from '../../state/updates';
-import { Badge, Button, Kbd, Segmented } from '../ui/primitives';
+import { Badge, Button, Kbd, Segmented, WebLink } from '../ui/primitives';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
+import { LIKA_WEBSITE_URL } from '../../lib/desktop';
 import { RequestsBell } from '../requests/requests';
 import { usePendingOrders } from '../orders/orders';
 
@@ -377,7 +378,12 @@ export function AppShell() {
           })}
         </nav>
         <div className="sidebar__footer">
-          <span className="sidebar__footer-text">v{ADMIN_VERSION}</span>
+          <span className="sidebar__footer-text">
+            v{ADMIN_VERSION} ·{' '}
+            <WebLink href={LIKA_WEBSITE_URL} className="sidebar__site">
+              likaapps.com
+            </WebLink>
+          </span>
           <Button
             variant="ghost"
             icon

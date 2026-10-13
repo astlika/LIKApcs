@@ -24,7 +24,7 @@ import { baseWindowModeOf, candidateServerUrls } from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
 import { PausedScreen } from './PausedScreen';
 import { Overlay, effectiveWidgetStyle } from './Overlay';
-import { OrderPanel } from './OrderPanel';
+import { OrderPanel, ORDER_STATUS_KEY } from './OrderPanel';
 import { AdsSlideshow } from './AdsSlideshow';
 
 function useAgent(): AgentSnapshot {
@@ -107,7 +107,8 @@ export function App() {
     setUnlockOpen(false);
     setSettingsOpen(false);
     setCustomerOpen(false);
-    if (!(await agent.openPanel())) return;
+    // Lock screen (0.14.0): the window is fullscreen already — the panel opens inline.
+    if (agent.getSnapshot().state.mode !== 'locked' && !(await agent.openPanel())) return;
     setOrderOpen(true);
   }, []);
   const toggleSettings = useCallback(() => {
@@ -280,13 +281,24 @@ export function App() {
     !unlockOpen &&
     !customerOpen;
 
-  // A left click anywhere on the locked screen opens the staff login (same as Ctrl+Alt+A), so
-  // staff never need the shortcut. Clicks inside dialogs / controls are left alone.
-  const onLockClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !snap.paired || settingsOpen || unlockOpen || customerOpen) return;
+  // A click anywhere on the locked screen — left or right button (0.14.0) — opens the customer
+  // login; without customer login, the menu. Staff use the faint "admin" word or Ctrl+Alt+A.
+  // Clicks inside dialogs / controls are left alone.
+  const ordersLocked = Boolean(display?.orders && display?.ordersLocked);
+  const onLockActivate = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!snap.paired || settingsOpen || unlockOpen || customerOpen || orderOpen) return;
     const target = e.target as HTMLElement;
-    if (target.closest('button, input, a, textarea, select, .panel')) return;
-    setUnlockOpen(true);
+    if (target.closest('button, input, a, textarea, select, .panel, .lock__modal')) return;
+    if (customerLogin) void openCustomer();
+    else if (ordersLocked) void openOrder();
+  };
+  const onLockClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    onLockActivate(e);
+  };
+  const onLockContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    onLockActivate(e);
   };
 
   // With the slideshow on, every piece of chrome is the owner's choice (Settings › Client
@@ -321,6 +333,7 @@ export function App() {
     <div
       className={lockClass}
       onClick={onLockClick}
+      onContextMenu={onLockContextMenu}
       data-testid="lock-screen"
       data-fullscreen={fullscreen ? 'true' : undefined}
     >
@@ -372,17 +385,51 @@ export function App() {
         )}
       </footer>
 
-      {/* Customer login — deliberately quiet: a faint word in the corner that only brightens on
-          hover. Customers who know about it find it; it never competes with the screen. */}
-      {customerLogin && !customerOpen && !settingsOpen && !unlockOpen && (
-        <button
-          type="button"
-          className="customer-link"
-          onClick={() => void openCustomer()}
-          data-testid="customer-button"
-        >
-          {t('customerButton')}
-        </button>
+      {/* Corner words, deliberately quiet (they brighten on hover): "Client" and "Menu" on the
+          right — a click anywhere does the same as "Client" — and the staff's "admin" on the
+          left. Nothing on the screen says "administrator". */}
+      {snap.paired && !customerOpen && !settingsOpen && !unlockOpen && !orderOpen && (
+        <div className="lock__links">
+          <button
+            type="button"
+            className="customer-link customer-link--staff"
+            onClick={() => setUnlockOpen(true)}
+            data-testid="staff-link"
+            aria-label={t('staffLink')}
+          >
+            {t('staffLink')}
+          </button>
+          <span className="lock__links-spacer" />
+          {ordersLocked && (
+            <button
+              type="button"
+              className="customer-link customer-link--menu"
+              onClick={() => void openOrder()}
+              data-testid="menu-button"
+            >
+              {t('menuButton')}
+            </button>
+          )}
+          {customerLogin && (
+            <button
+              type="button"
+              className="customer-link"
+              onClick={() => void openCustomer()}
+              data-testid="customer-button"
+            >
+              {t('customerButton')}
+            </button>
+          )}
+        </div>
+      )}
+      {snap.orderFlash && !orderOpen && (
+        <div className="toast toast--order" role="status" data-testid="lock-order-flash">
+          {t('orderNumber', { n: snap.orderFlash.order.number })} ·{' '}
+          {snap.orderFlash.order.preparedAt &&
+          (snap.orderFlash.order.status === 'accepted' || snap.orderFlash.order.status === 'paid')
+            ? t('orderStatusPrepared')
+            : t(ORDER_STATUS_KEY[snap.orderFlash.order.status])}
+        </div>
       )}
 
       {settingsOpen && <SettingsPanel snap={snap} t={t} onClose={closeSettings} />}
@@ -390,6 +437,17 @@ export function App() {
         <StaffUnlockDialog snap={snap} t={t} onClose={() => setUnlockOpen(false)} />
       )}
       {customerOpen && snap.paired && <CustomerDialog snap={snap} t={t} onClose={closeCustomer} />}
+      {orderOpen && snap.paired && (
+        <div
+          className="lock__modal"
+          data-testid="lock-order-modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeOrder();
+          }}
+        >
+          <OrderPanel snap={snap} onClose={closeOrder} />
+        </div>
+      )}
     </div>
   );
 }

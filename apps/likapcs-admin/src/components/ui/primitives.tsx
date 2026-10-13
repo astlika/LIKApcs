@@ -9,8 +9,10 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
+  type AnchorHTMLAttributes,
 } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { openExternal } from '../../lib/desktop';
 import { useI18n } from '../../i18n';
 
 // ─── Buttons ───────────────────────────────────────────────────────────────────
@@ -582,5 +584,32 @@ export function Pagination({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A web link that opens in the user's default browser (never inside the app window). Renders as
+ * a real anchor so it can be focused / copied; the click is routed through the native shell.
+ */
+export function WebLink({
+  href,
+  className,
+  children,
+  ...rest
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
+  return (
+    <a
+      href={href}
+      className={className}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => {
+        e.preventDefault();
+        void openExternal(href);
+      }}
+      {...rest}
+    >
+      {children}
+    </a>
   );
 }

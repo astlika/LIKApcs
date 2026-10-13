@@ -1010,6 +1010,9 @@ export const en = {
       scanCheck: 'Scan check after accepting',
       scanCheckHint:
         'After Accept, a preparation step asks to scan every item with the barcode scanner (exact quantity, right product). Any line can still be confirmed by hand; the PC is told when the order is on its way.',
+      lockedScreen: 'Menu on the locked screen',
+      lockedScreenHint:
+        'A “Menu” word on the locked PC lets people order before a session starts (a click anywhere opens it when customer login is off). Those orders arrive here tagged “PC locked”; they are paid at the desk — or put on the bill once a session is running on that PC.',
     },
     requests: {
       title: 'Customer requests',
@@ -2162,6 +2165,9 @@ export const en = {
     onBill: 'On the bill',
     onBillHint: 'Settled together with the time when the session ends.',
     onBillPrepaidHint: 'Prepaid session: billed on its own receipt when the session ends.',
+    lockedBadge: 'PC locked',
+    onBillLockedHint:
+      'Ordered from the locked screen: works only if a session is running on this PC right now.',
     accepted: 'Order accepted — on the bill.',
     acceptedPaid: 'Order paid · {receipt}',
     reject: 'Reject',

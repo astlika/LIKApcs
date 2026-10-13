@@ -46,7 +46,7 @@ const en = {
   maintenanceBy: 'Unlocked by',
   locksIn: 'Locks in',
   lockNow: 'Lock',
-  staffUnlockTitle: 'Staff unlock',
+  staffUnlockTitle: 'Admin',
   staffUnlockHint:
     'Unlock this PC for maintenance with your own LIKApcs username and password. No session is started and nothing is billed; the PC locks again automatically.',
   username: 'Username',
@@ -129,6 +129,8 @@ const en = {
   hourShort: 'h',
   // Customer login + session requests (0.9.0)
   customerButton: 'Client',
+  menuButton: 'Menu',
+  staffLink: 'admin',
   customerTitle: 'Client login',
   customerHint: 'Sign in with the username and PIN the staff gave you.',
   customerPin: 'PIN',
@@ -213,6 +215,9 @@ const en = {
   orderSending: 'Sending…',
   orderSent: 'Order sent — the staff will bring it to you.',
   orderPayNote: 'You pay at the desk, or it goes on your bill when the session ends.',
+  orderHintLocked: 'Pick what you like — the staff bring it to this PC, no session needed.',
+  orderPayNoteLocked:
+    'You pay at the desk when it arrives — or it goes on your bill once your session starts.',
   orderMine: 'Your orders',
   orderNumber: 'Order #{n}',
   orderStatusPending: 'Waiting for the staff…',
@@ -278,7 +283,7 @@ const sq: typeof en = {
   maintenanceBy: 'Zhbllokuar nga',
   locksIn: 'Kyçet pas',
   lockNow: 'Kyçe',
-  staffUnlockTitle: 'Zhbllokim nga stafi',
+  staffUnlockTitle: 'Admin',
   staffUnlockHint:
     'Zhbllokoni këtë PC për mirëmbajtje me emrin tuaj të përdoruesit dhe fjalëkalimin e LIKApcs. Nuk niset asnjë seancë dhe nuk faturohet asgjë; PC-ja kyçet përsëri automatikisht.',
   username: 'Emri i përdoruesit',
@@ -361,6 +366,8 @@ const sq: typeof en = {
   hourShort: 'h',
   // Customer login + session requests (0.9.0)
   customerButton: 'Klient',
+  menuButton: 'Menu',
+  staffLink: 'admin',
   customerTitle: 'Hyrja e klientit',
   customerHint: 'Hyni me emrin e përdoruesit dhe PIN-in që ju dha stafi.',
   customerPin: 'PIN',
@@ -445,6 +452,9 @@ const sq: typeof en = {
   orderSending: 'Duke dërguar…',
   orderSent: 'Porosia u dërgua — stafi do t’jua sjellë.',
   orderPayNote: 'Paguani te arka, ose shtohet në faturën tuaj kur mbaron seanca.',
+  orderHintLocked: 'Zgjidhni çfarë dëshironi — stafi e sjell te ky PC, pa pasur nevojë për seancë.',
+  orderPayNoteLocked:
+    'Paguani te arka kur të vijë — ose shtohet në faturën tuaj sapo të fillojë seanca.',
   orderMine: 'Porositë tuaja',
   orderNumber: 'Porosia #{n}',
   orderStatusPending: 'Në pritje të stafit…',

@@ -111,8 +111,11 @@ export function AcceptOrderDialog({
   const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
+  // Lock-screen orders (0.14.0) have no session to bill: "pay now" is the sensible default and
+  // "on the bill" works only if a session is running on that PC by the time staff accept.
+  const noSession = order.sessionId === null;
   const [settlement, setSettlement] = useState<'pay_now' | 'on_bill'>(
-    mode === 'pay' || defaultSettlement === 'pay_now'
+    mode === 'pay' || defaultSettlement === 'pay_now' || noSession
       ? 'pay_now'
       : defaultSettlement === 'on_bill'
         ? 'on_bill'
@@ -268,7 +271,11 @@ export function AcceptOrderDialog({
               <span>
                 <strong>{t('orders.onBill')}</strong>
                 <small>
-                  {prepaidSession ? t('orders.onBillPrepaidHint') : t('orders.onBillHint')}
+                  {noSession
+                    ? t('orders.onBillLockedHint')
+                    : prepaidSession
+                      ? t('orders.onBillPrepaidHint')
+                      : t('orders.onBillHint')}
                 </small>
               </span>
             </button>

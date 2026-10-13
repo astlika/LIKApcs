@@ -255,11 +255,18 @@ describe('orders from the PC + customer pause / resume', () => {
     expect(products.body.items.map((p) => p.id).sort()).toEqual([chips.id, cola.id].sort());
   });
 
-  it('the PC sees the menu only while a session runs; prices are promo-aware; stock-outs stay visible', async () => {
+  it('the PC sees the menu on the locked screen (0.14.0) or, with the switch off, only while a session runs; prices are promo-aware; stock-outs stay visible', async () => {
+    // Default: the locked screen may order — the menu is open, tagged "locked".
+    const lockedOpen = await menu();
+    expect(lockedOpen.status).toBe(200);
+    expect(lockedOpen.body).toMatchObject({ enabled: true, reason: 'ok', context: 'locked' });
+    expect(lockedOpen.body.items.length).toBeGreaterThan(0);
+    // Switch off: browsing stays possible (items present), sending is refused.
+    await call(owner.token, 'PATCH', '/settings', { 'orders.locked_screen': false });
     const locked = await menu();
     expect(locked.status).toBe(200);
-    expect(locked.body.reason).toBe('no_session');
-    expect(locked.body.items).toEqual([]);
+    expect(locked.body).toMatchObject({ enabled: false, reason: 'no_session', context: 'locked' });
+    expect(locked.body.items.length).toBeGreaterThan(0);
     const denied = await order({ items: [{ productId: cola.id, quantity: 1 }] });
     expect(denied.status).toBe(409);
     expect(denied.body.error?.code).toBe('no_session');
@@ -290,6 +297,8 @@ describe('orders from the PC + customer pause / resume', () => {
       oldPriceCents: null,
     });
     expect(open.body.items.some((i) => i.productId === water.id)).toBe(false);
+    expect(open.body.context).toBe('session');
+    await call(owner.token, 'PATCH', '/settings', { 'orders.locked_screen': true });
   });
 
   // ─── Order → reject ───────────────────────────────────────────────────────────
@@ -594,6 +603,83 @@ describe('orders from the PC + customer pause / resume', () => {
       { payments: [{ method: 'cash', amountCents: 500 }] },
     );
     expect(ended.status).toBe(200);
+  });
+
+  // ─── Lock-screen orders (0.14.0) ──────────────────────────────────────────────
+
+  it('a locked PC orders without a session: paid at the desk, or put on the bill once a session runs', async () => {
+    expect((await stationNow()).activeSession).toBeNull();
+    // No session: the order is created with session_id null, visible to the Admin and the PC.
+    const sent = await order({ items: [{ productId: cola.id, quantity: 1 }] });
+    expect(sent.status).toBe(201);
+    expect(sent.body.sessionId).toBeNull();
+    expect(sent.body.stationId).toBe(station.id);
+    await expectMessage(
+      admin,
+      'server.event',
+      (m) => m.event === 'order.changed' && (m.payload as { id: string }).id === sent.body.id,
+    );
+    const mine = await call<{ items: StationOrder[] }>(deviceToken, 'GET', '/client/orders');
+    expect(mine.body.items.map((o) => o.id)).toContain(sent.body.id);
+    // "On the bill" without a session is refused with a clear reason.
+    const parked = await call<StationOrder & Err>(
+      owner.token,
+      'POST',
+      `/orders/${sent.body.id}/accept`,
+      {
+        settlement: 'on_bill',
+      },
+    );
+    expect(parked.status).toBe(409);
+    expect((parked.body.error as { details?: { code?: string } } | undefined)?.details?.code).toBe(
+      'session_ended',
+    );
+    // "Pay now" works like any desk sale.
+    const paid = await call<StationOrder>(owner.token, 'POST', `/orders/${sent.body.id}/accept`, {
+      settlement: 'pay_now',
+      payments: [{ method: 'cash', amountCents: 150 }],
+    });
+    expect(paid.status).toBe(200);
+    expect(paid.body.status).toBe('paid');
+    expect(paid.body.saleId).toBeTruthy();
+    await expectOrderPush('paid', sent.body.id);
+
+    // A second lock-screen order; a session starts in the meantime → "on the bill" attaches it.
+    const second = await order({ items: [{ productId: cola.id, quantity: 1 }] });
+    expect(second.status).toBe(201);
+    expect(second.body.sessionId).toBeNull();
+    const started = await call<SessionMutationResponse>(owner.token, 'POST', '/sessions', {
+      stationId: station.id,
+      billingMode: 'postpaid',
+    });
+    expect(started.status).toBe(201);
+    await expectCommand('session.start');
+    const attached = await call<StationOrder>(
+      owner.token,
+      'POST',
+      `/orders/${second.body.id}/accept`,
+      {
+        settlement: 'on_bill',
+      },
+    );
+    expect(attached.status).toBe(200);
+    expect(attached.body.sessionId).toBe(started.body.session.id);
+    expect((await stationNow()).orders.openCount).toBe(1);
+    // The PC's list in session mode shows the attached order too.
+    const inSession = await call<{ items: StationOrder[] }>(deviceToken, 'GET', '/client/orders');
+    expect(inSession.body.items.map((o) => o.id)).toContain(second.body.id);
+    // Ending the session settles the time and the attached order on one receipt.
+    const ended = await call<SessionMutationResponse & Err>(
+      owner.token,
+      'POST',
+      `/sessions/${started.body.session.id}/end`,
+      { payments: [{ method: 'cash', amountCents: 10_000 }] },
+    );
+    expect(ended.status).toBe(200);
+    await expectCommand('session.end');
+    expect((await stationNow()).orders.openCount).toBe(0);
+    const closed = await call<StationOrder>(owner.token, 'GET', `/orders/${second.body.id}`);
+    expect(closed.body.status).toBe('billed');
   });
 
   // ─── Pause / resume from the PC ───────────────────────────────────────────────

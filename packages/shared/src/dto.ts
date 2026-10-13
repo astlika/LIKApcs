@@ -1621,9 +1621,15 @@ export interface StationOrder {
 
 /** `GET /client/menu` (device token): what the customer at this PC can order right now. */
 export interface ClientMenu {
+  /** Ordering is possible right now (a running session, or the lock screen with `orders.locked_screen`). */
   enabled: boolean;
-  /** `none` = no running session on this PC (or orders switched off) — nothing can be ordered. */
+  /**
+   * Why not, otherwise. `no_session` still carries the items (0.14.0): the menu can be browsed
+   * from the lock screen even when ordering must wait for a session.
+   */
   reason: 'ok' | 'disabled' | 'no_session' | 'empty';
+  /** Where the order would go: on the running session's bill, or from the locked PC (desk settles). */
+  context: 'session' | 'locked';
   allowNote: boolean;
   currency: string;
   categories: { id: string | null; name: string; color: string | null }[];

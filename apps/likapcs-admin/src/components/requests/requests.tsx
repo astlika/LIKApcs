@@ -15,6 +15,7 @@ import {
   BellOff,
   Check,
   Clock,
+  Lock,
   Monitor,
   ShoppingBag,
   Volume2,
@@ -362,6 +363,11 @@ export function RequestsBell() {
                       <Badge tone="accent">
                         <Monitor size={11} /> {o.stationCode}
                       </Badge>
+                      {o.sessionId === null && (
+                        <Badge tone="warning">
+                          <Lock size={11} /> {t('orders.lockedBadge')}
+                        </Badge>
+                      )}
                       <strong className="num">{fmt.money(o.totalCents)}</strong>
                       <span className="muted">
                         <Clock size={11} />{' '}

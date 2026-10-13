@@ -129,6 +129,8 @@ export const SETTING_SCHEMAS = {
   'orders.settlement': z.enum(['ask', 'pay_now', 'on_bill']),
   /** After accepting an order the desk scans / confirms every line (0.13.0). */
   'orders.scan_check': z.boolean(),
+  /** Orders may be sent from the lock screen, before a session (0.14.0); the menu can always be browsed. */
+  'orders.locked_screen': z.boolean(),
   /** Customer wallet (0.11.0): money paid in advance, spent on time, drinks and debts. */
   'wallet.enabled': z.boolean(),
 
@@ -263,6 +265,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'orders.allow_note': true,
   'orders.settlement': 'ask',
   'orders.scan_check': true,
+  'orders.locked_screen': true,
   'wallet.enabled': true,
 
   'client.widget_size': 'normal',
@@ -333,6 +336,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'orders.enabled',
   'orders.settlement',
   'orders.scan_check',
+  'orders.locked_screen',
   // The balance tender shows up in every payment dialog.
   'wallet.enabled',
   // Client screen: the Admin previews them; the client receives them through its own channel.
@@ -399,6 +403,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'sessions.pause_max_minutes',
   'orders.enabled',
   'orders.allow_note',
+  'orders.locked_screen',
   'wallet.enabled',
   'client.ads_style',
   'client.ads_shuffle',
@@ -449,6 +454,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     pauseMaxMinutes: settings['sessions.pause_max_minutes'],
     orders: settings['orders.enabled'],
     ordersNote: settings['orders.allow_note'],
+    ordersLocked: settings['orders.enabled'] && settings['orders.locked_screen'],
     wallet: settings['wallet.enabled'],
     ads: {
       enabled: settings['client.ads_enabled'],

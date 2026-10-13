@@ -22,7 +22,7 @@ const ORDER_ERRORS: Partial<Record<CustomerActionError, Key>> = {
   validation_error: 'errGeneric',
 };
 
-const STATUS_KEY: Record<OrderView['status'], Key> = {
+export const ORDER_STATUS_KEY: Record<OrderView['status'], Key> = {
   pending: 'orderStatusPending',
   accepted: 'orderStatusAccepted',
   paid: 'orderStatusPaid',
@@ -128,15 +128,21 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
 
   const open = snap.orders.filter((o) => o.status === 'pending' || o.status === 'accepted');
   const done = snap.orders.filter((o) => o.status !== 'pending' && o.status !== 'accepted');
+  // Browse-only (0.14.0): the lock screen shows the menu even when sending must wait for a
+  // session — the products are still worth looking at.
+  const browseOnly = Boolean(
+    menu && !menu.enabled && menu.reason === 'no_session' && menu.items.length,
+  );
   const blocked: Key | null =
     menuError ??
-    (menu && !menu.enabled
+    (menu && !menu.enabled && !browseOnly
       ? menu.reason === 'no_session'
         ? 'orderNoSession'
         : menu.reason === 'disabled'
           ? 'orderDisabled'
           : 'orderMenuEmpty'
       : null);
+  const lockedContext = menu?.context === 'locked';
 
   return (
     <div
@@ -144,7 +150,18 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
       role="dialog"
       aria-labelledby="order-title"
       data-testid="order-panel"
-      data-state={menu ? (menu.enabled ? 'ready' : menu.reason) : menuError ? 'error' : 'loading'}
+      data-state={
+        menu
+          ? menu.enabled
+            ? 'ready'
+            : browseOnly
+              ? 'browse'
+              : menu.reason
+          : menuError
+            ? 'error'
+            : 'loading'
+      }
+      data-context={menu?.context}
     >
       <div className="panel__head">
         <strong id="order-title">{t('orderTitle')}</strong>
@@ -177,7 +194,13 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
         </div>
       ) : (
         <>
-          <p className="muted small order__hint">{t('orderHint')}</p>
+          <p className="muted small order__hint">
+            {browseOnly
+              ? t('orderNoSession')
+              : lockedContext
+                ? t('orderHintLocked')
+                : t('orderHint')}
+          </p>
           {!menu.staffOnline && (
             <p className="order__offline" role="status">
               {t('orderStaffOffline')}
@@ -224,7 +247,7 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
                     type="button"
                     className="order__pick"
                     onClick={() => add(item, 1)}
-                    disabled={!item.available}
+                    disabled={!item.available || browseOnly}
                     aria-label={item.name}
                   >
                     {item.imageUrl ? (
@@ -263,65 +286,69 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
             })}
           </div>
 
-          <div className="order__cart" data-testid="order-cart" data-count={count}>
-            <div className="order__cart-head">
-              <strong>{t('orderCart')}</strong>
-              {lines.length > 0 && (
-                <button type="button" className="link" onClick={() => setCart({})}>
-                  {t('orderClear')}
-                </button>
+          {!browseOnly && (
+            <div className="order__cart" data-testid="order-cart" data-count={count}>
+              <div className="order__cart-head">
+                <strong>{t('orderCart')}</strong>
+                {lines.length > 0 && (
+                  <button type="button" className="link" onClick={() => setCart({})}>
+                    {t('orderClear')}
+                  </button>
+                )}
+              </div>
+              {lines.length === 0 ? (
+                <p className="muted small">
+                  {sentNumber !== null ? t('orderSent') : t('orderCartEmpty')}
+                </p>
+              ) : (
+                <>
+                  <ul className="order__lines">
+                    {lines.map((l) => (
+                      <li key={l.item.productId}>
+                        <span>
+                          {l.qty} × {l.item.name}
+                        </span>
+                        <span>{money(l.item.priceCents * l.qty)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {menu.allowNote && (
+                    <label className="field">
+                      <span>{t('orderNote')}</span>
+                      <input
+                        value={note}
+                        maxLength={200}
+                        placeholder={t('orderNotePlaceholder')}
+                        onChange={(e) => setNote(e.target.value)}
+                        data-testid="order-note"
+                      />
+                    </label>
+                  )}
+                  <div className="order__total">
+                    <span>{t('orderTotal')}</span>
+                    <strong data-testid="order-total">{money(total)}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--primary order__send"
+                    onClick={() => void send()}
+                    disabled={busy}
+                    data-testid="order-send"
+                  >
+                    {busy ? t('orderSending') : t('orderSend')}
+                  </button>
+                  <p className="muted small">
+                    {lockedContext ? t('orderPayNoteLocked') : t('orderPayNote')}
+                  </p>
+                </>
+              )}
+              {error && (
+                <p className="card__error" role="alert">
+                  {t(error)}
+                </p>
               )}
             </div>
-            {lines.length === 0 ? (
-              <p className="muted small">
-                {sentNumber !== null ? t('orderSent') : t('orderCartEmpty')}
-              </p>
-            ) : (
-              <>
-                <ul className="order__lines">
-                  {lines.map((l) => (
-                    <li key={l.item.productId}>
-                      <span>
-                        {l.qty} × {l.item.name}
-                      </span>
-                      <span>{money(l.item.priceCents * l.qty)}</span>
-                    </li>
-                  ))}
-                </ul>
-                {menu.allowNote && (
-                  <label className="field">
-                    <span>{t('orderNote')}</span>
-                    <input
-                      value={note}
-                      maxLength={200}
-                      placeholder={t('orderNotePlaceholder')}
-                      onChange={(e) => setNote(e.target.value)}
-                      data-testid="order-note"
-                    />
-                  </label>
-                )}
-                <div className="order__total">
-                  <span>{t('orderTotal')}</span>
-                  <strong data-testid="order-total">{money(total)}</strong>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn--primary order__send"
-                  onClick={() => void send()}
-                  disabled={busy}
-                  data-testid="order-send"
-                >
-                  {busy ? t('orderSending') : t('orderSend')}
-                </button>
-                <p className="muted small">{t('orderPayNote')}</p>
-              </>
-            )}
-            {error && (
-              <p className="card__error" role="alert">
-                {t(error)}
-              </p>
-            )}
-          </div>
+          )}
         </>
       )}
 
@@ -336,7 +363,7 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
                   <span className={`order__status order__status--${o.status}`}>
                     {o.preparedAt && (o.status === 'accepted' || o.status === 'paid')
                       ? t('orderStatusPrepared')
-                      : t(STATUS_KEY[o.status])}
+                      : t(ORDER_STATUS_KEY[o.status])}
                   </span>
                 </span>
                 <span className="order__mine-body">

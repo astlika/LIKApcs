@@ -263,6 +263,8 @@ export interface ClientDisplayConfig {
   /** 0.10.0: orders from the seat (the "Order" button in the widget) and whether a note may be added. */
   orders: boolean;
   ordersNote: boolean;
+  /** 0.14.0: the menu button on the lock screen — orders may be sent before a session starts. */
+  ordersLocked: boolean;
   /** 0.11.0: the prepaid balance is in use — the PC shows the customer's balance (even 0.00). */
   wallet: boolean;
   ads: {

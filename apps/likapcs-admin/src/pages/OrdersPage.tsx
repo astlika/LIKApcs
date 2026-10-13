@@ -13,6 +13,7 @@ import {
   ArrowUp,
   Banknote,
   Check,
+  Lock,
   Monitor,
   PackageCheck,
   ReceiptText,
@@ -193,6 +194,13 @@ function OrdersList({
                   <Badge tone="accent">
                     <Monitor size={11} /> {o.stationCode}
                   </Badge>
+                  {o.sessionId === null && (
+                    <span data-testid="order-locked-badge">
+                      <Badge tone="warning">
+                        <Lock size={11} /> {t('orders.lockedBadge')}
+                      </Badge>
+                    </span>
+                  )}
                   <OrderStatusBadge order={o} />
                   {o.preparedAt && (
                     <Badge tone="success" dot>

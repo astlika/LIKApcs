@@ -2492,6 +2492,72 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
   background: rgba(2, 6, 23, 0.5);
   outline: none;
 }
+/* 0.14.0: one quiet row along the bottom — "admin" left, "Menu" + "Client" right. The words are
+   static inside the row (the old fixed corner position moves to the row itself). */
+.lock__links {
+  position: fixed;
+  left: 18px;
+  right: 18px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.lock__links > * {
+  pointer-events: auto;
+}
+.lock__links-spacer {
+  flex: 1;
+  pointer-events: none;
+}
+.lock__links .customer-link {
+  position: static;
+}
+.customer-link--staff {
+  opacity: 0.16;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+}
+.customer-link--menu {
+  opacity: 0.6;
+  border-color: var(--border);
+  background: rgba(2, 6, 23, 0.45);
+}
+/* The order panel on the lock screen: centred over a dimmed backdrop (click outside closes). */
+.lock__modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.lock__modal .panel--order {
+  position: static;
+  transform: none;
+  margin: 0;
+  width: 640px;
+  max-height: calc(100vh - 48px);
+}
+/* In the modal the panel itself scrolls, so the tile grid keeps at least one full row visible
+   instead of being squeezed by the cart and the order history. */
+.lock__modal .order__menu {
+  flex: 0 0 auto;
+  min-height: 150px;
+}
+.toast--order {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 6;
+}
 .panel--customer {
   width: 440px;
   max-width: calc(100vw - 32px);

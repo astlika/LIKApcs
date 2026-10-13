@@ -139,6 +139,8 @@ describe('0.10.0 — pause, orders and ads v2 settings', () => {
       pauseMaxMinutes: 0,
       orders: false,
       ordersNote: true,
+      // off as a whole → no lock-screen menu either, whatever the switch says
+      ordersLocked: false,
     });
     expect(display.ads).toMatchObject({ style: 'split', shuffle: true, promoCountdown: true });
   });

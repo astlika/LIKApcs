@@ -27,6 +27,7 @@ import { api, ApiError } from '../lib/api';
 import { themeStyle } from '../lib/ad-themes';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
+import { LIKA_WEBSITE_URL } from '../lib/desktop';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import {
@@ -41,6 +42,7 @@ import {
   Switch,
   Tabs,
   Textarea,
+  WebLink,
 } from '../components/ui/primitives';
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
@@ -487,6 +489,13 @@ export function SettingsPage() {
                 'orders.scan_check',
                 t('settings.orders.scanCheck'),
                 t('settings.orders.scanCheckHint'),
+              )}
+            </div>
+            <div className="span-2" data-testid="settings-orders-locked">
+              {bool(
+                'orders.locked_screen',
+                t('settings.orders.lockedScreen'),
+                t('settings.orders.lockedScreenHint'),
               )}
             </div>
             <Field
@@ -1093,7 +1102,12 @@ function AboutPanel({ info, loading }: { info: SystemInfoResponse | undefined; l
   return (
     <div className="grid grid--2">
       <Card title={t('common.version')}>
-        {row(t('settings.about.admin'), ADMIN_VERSION)}
+        {row(
+          t('settings.about.admin'),
+          <>
+            {ADMIN_VERSION} · <WebLink href={LIKA_WEBSITE_URL}>likaapps.com</WebLink>
+          </>,
+        )}
         {row(t('settings.about.server'), info.serverVersion)}
         {row(t('settings.about.schema'), `v${info.schemaVersion}`)}
         {row(t('settings.about.protocol'), `v${info.protocolVersion} (admin v${PROTOCOL_VERSION})`)}

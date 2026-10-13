@@ -1018,6 +1018,9 @@ export const sq: Dictionary = {
       scanCheck: 'Kontroll me skaner pas pranimit',
       scanCheckHint:
         'Pas Prano-s hapet hapi i përgatitjes: çdo artikull skanohet me skanerin e barkodit (sasia e saktë, produkti i duhur). Çdo rresht mund të konfirmohet edhe me dorë; PC-ja njoftohet kur porosia po vjen.',
+      lockedScreen: 'Menu në ekranin e kyçur',
+      lockedScreenHint:
+        'Fjala “Menu” në PC-në e kyçur u lejon njerëzve të porosisin para se të fillojë seanca (një klik kudo e hap kur hyrja e klientit është e fikur). Ato porosi vijnë këtu me shenjën “PC i kyçur”; paguhen te arka — ose shtohen në faturë sapo të ketë një seancë aktive në atë PC.',
     },
     requests: {
       title: 'Kërkesat e klientëve',
@@ -2171,6 +2174,9 @@ export const sq: Dictionary = {
     onBill: 'Në llogari',
     onBillHint: 'Paguhet bashkë me kohën kur mbaron sesioni.',
     onBillPrepaidHint: 'Sesion i parapaguar: faturohet veçmas kur mbaron sesioni.',
+    lockedBadge: 'PC i kyçur',
+    onBillLockedHint:
+      'Porositur nga ekrani i kyçur: funksionon vetëm nëse në këtë PC po ecën një seancë tani.',
     accepted: 'Porosia u pranua — në llogari.',
     acceptedPaid: 'Porosia u pagua · {receipt}',
     reject: 'Refuzo',

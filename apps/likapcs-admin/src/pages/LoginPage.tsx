@@ -14,9 +14,20 @@ import {
   type EmbeddedServerInfo,
 } from '../lib/desktop';
 import { useI18n } from '../i18n';
+import { LIKA_WEBSITE_URL } from '../lib/desktop';
 import { useAuth } from '../state/auth';
 import { useAppSettings } from '../state/app-settings';
-import { Alert, Button, Checkbox, Field, Input, Segmented } from '../components/ui/primitives';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Field,
+  Input,
+  Segmented,
+  WebLink,
+} from '../components/ui/primitives';
+
+const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
 
 export function LoginPage() {
   const { t, language, setLanguage } = useI18n();
@@ -316,6 +327,9 @@ export function LoginPage() {
           >
             <Server size={14} /> {t('auth.serverAddress')}
           </button>
+          <span className="auth__version">
+            v{ADMIN_VERSION} · <WebLink href={LIKA_WEBSITE_URL}>likaapps.com</WebLink>
+          </span>
           <Segmented
             value={language}
             onChange={setLanguage}

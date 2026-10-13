@@ -199,6 +199,7 @@ export class OrdersService implements SessionOrdersHook {
     const base: ClientMenu = {
       enabled,
       reason: 'ok',
+      context: 'session',
       allowNote,
       currency,
       categories: [],
@@ -207,12 +208,21 @@ export class OrdersService implements SessionOrdersHook {
     };
     if (!enabled) return { ...base, reason: 'disabled' };
     const station = await this.stations.getById(device.station.id);
-    if (!station.activeSession || !station.isEnabled) return { ...base, reason: 'no_session' };
+    if (!station.isEnabled) return { ...base, enabled: false, reason: 'no_session' };
+    // Lock screen (0.14.0): the menu is always there to look at; sending needs the switch.
+    const lockedOrders = await this.settings.get('orders.locked_screen');
+    const context: ClientMenu['context'] = station.activeSession ? 'session' : 'locked';
+    const canOrder = context === 'session' || lockedOrders;
     const rows = await this.pool.query<MenuProductRow>(
       `${MENU_SELECT} WHERE p.client_menu AND p.is_active
         ORDER BY c.sort_order NULLS LAST, c.name NULLS LAST, p.client_menu_order, lower(p.name)`,
     );
-    if (!rows.rows.length) return { ...base, reason: 'empty' };
+    if (!rows.rows.length) return { ...base, context, enabled: false, reason: 'empty' };
+    base.context = context;
+    if (!canOrder) {
+      base.enabled = false;
+      base.reason = 'no_session';
+    }
     const categories = new Map<string, ClientMenu['categories'][number]>();
     const items: ClientMenuItem[] = rows.rows.map((p) => {
       const key = p.category_id ?? '';
@@ -247,8 +257,11 @@ export class OrdersService implements SessionOrdersHook {
       throw new AppError(403, 'orders_disabled', 'Orders from the PC are switched off');
     const station = await this.stations.getById(device.station.id);
     if (!station.isEnabled) throw conflict('Station is disabled');
+    // No session: allowed from the lock screen when the owner switched it on (0.14.0) — the
+    // order then carries no session and is settled at the desk (or put on the bill later).
     const live = station.activeSession;
-    if (!live) throw new AppError(409, 'no_session', 'There is no running session on this PC');
+    if (!live && !(await this.settings.get('orders.locked_screen')))
+      throw new AppError(409, 'no_session', 'There is no running session on this PC');
     const allowNote = await this.settings.get('orders.allow_note');
     const note = allowNote && input.note?.trim() ? input.note.trim() : null;
 
@@ -288,7 +301,7 @@ export class OrdersService implements SessionOrdersHook {
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, note, total_cents)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [station.id, device.id, live.id, customerId, note, total],
+        [station.id, device.id, live?.id ?? null, customerId, note, total],
       );
       const orderId = inserted.rows[0]!.id;
       for (const l of priced) {
@@ -307,7 +320,8 @@ export class OrdersService implements SessionOrdersHook {
           entityId: orderId,
           details: {
             stationId: station.id,
-            sessionId: live.id,
+            sessionId: live?.id ?? null,
+            lockedScreen: !live,
             lines: priced.length,
             totalCents: total,
           },
@@ -320,13 +334,26 @@ export class OrdersService implements SessionOrdersHook {
     return order;
   }
 
-  /** The open orders of the session running on this PC (newest first) — what the PC lists. */
+  /**
+   * What the PC lists (newest first): the orders of the running session plus the recent ones
+   * sent from its lock screen (no session, last 12 hours — 0.14.0), so an answer is never lost.
+   */
+  /**
+   * The PC's own orders: the running session's, plus — on the lock screen (0.14.0) — the
+   * station's session-less orders. Of those, open ones (pending / accepted) stay for 12 h; closed
+   * ones only for a short while, long enough for "Paid" / "Rejected" to be seen by the person who
+   * ordered, short enough that the next guest at the PC does not read the previous one's history.
+   */
   async listForDevice(device: AuthenticatedDevice): Promise<StationOrder[]> {
     const station = await this.stations.getById(device.station.id);
-    if (!station.activeSession) return [];
     const r = await this.pool.query<OrderRow>(
-      `${ORDER_SELECT} WHERE o.session_id = $1 ORDER BY o.requested_at DESC LIMIT 30`,
-      [station.activeSession.id],
+      `${ORDER_SELECT}
+        WHERE ($1::uuid IS NOT NULL AND o.session_id = $1)
+           OR (o.station_id = $2 AND o.session_id IS NULL
+               AND ((o.status IN ('pending', 'accepted') AND o.requested_at > now() - interval '12 hours')
+                 OR COALESCE(o.decided_at, o.requested_at) > now() - interval '15 minutes'))
+        ORDER BY o.requested_at DESC LIMIT 30`,
+      [station.activeSession?.id ?? null, station.id],
     );
     return r.rows.map(mapRow);
   }
@@ -408,20 +435,30 @@ export class OrdersService implements SessionOrdersHook {
       if (row.status !== 'pending') throw conflict(`Order is already ${row.status}`);
       const customerId = input.customerId === undefined ? row.customer_id : input.customerId;
       if (input.settlement === 'on_bill') {
+        // The order's own session — or, for an order sent from the lock screen, the session that
+        // has started on that PC since (the order is attached to it, 0.14.0).
         const live = row.session_id
-          ? await client.query<{ status: string }>(
-              `SELECT status FROM gaming_sessions WHERE id = $1 AND status IN ('active', 'paused')`,
+          ? await client.query<{ id: string }>(
+              `SELECT id FROM gaming_sessions WHERE id = $1 AND status IN ('active', 'paused')`,
               [row.session_id],
             )
-          : null;
-        if (!live?.rows[0])
-          throw conflict('The session has ended — take the payment now instead', {
-            code: 'session_ended',
-          });
+          : await client.query<{ id: string }>(
+              `SELECT id FROM gaming_sessions WHERE station_id = $1 AND status IN ('active', 'paused')
+                ORDER BY started_at DESC LIMIT 1`,
+              [row.station_id],
+            );
+        const sessionId = live.rows[0]?.id;
+        if (!sessionId)
+          throw conflict(
+            row.session_id
+              ? 'The session has ended — take the payment now instead'
+              : 'No session is running on this PC yet — take the payment now instead',
+            { code: 'session_ended' },
+          );
         await client.query(
           `UPDATE station_orders SET status = 'accepted', settlement = 'on_bill', customer_id = $2,
-                  decided_at = now(), decided_by = $3 WHERE id = $1`,
-          [id, customerId, actor.userId],
+                  session_id = $4, decided_at = now(), decided_by = $3 WHERE id = $1`,
+          [id, customerId, actor.userId, sessionId],
         );
         await recordAudit(client, actor, {
           action: 'order.accept',

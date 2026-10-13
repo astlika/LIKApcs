@@ -124,3 +124,22 @@ export async function setAutostart(enabled: boolean): Promise<void> {
   if (enabled) await mod.enable();
   else await mod.disable();
 }
+
+/** The LIKA website, shown next to the version number. */
+export const LIKA_WEBSITE_URL = 'https://likaapps.com';
+
+/**
+ * Opens a web link in the user's default browser: through the native shell in the desktop app
+ * (the WebView never navigates away), a plain new tab in the browser build.
+ */
+export async function openExternal(url: string): Promise<void> {
+  if (isDesktopApp()) {
+    try {
+      await invoke<void>('open_url', { url });
+      return;
+    } catch {
+      /* older shell without the command: fall through to the browser way */
+    }
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
