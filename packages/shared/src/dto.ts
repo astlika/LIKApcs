@@ -2014,7 +2014,13 @@ export interface PurchaseListResponse extends Paginated<PurchaseSummary> {
 // Phase 7: backups & restore
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const BACKUP_KINDS = ['manual', 'scheduled', 'pre_migration', 'pre_restore'] as const;
+export const BACKUP_KINDS = [
+  'manual',
+  'scheduled',
+  'pre_migration',
+  'pre_restore',
+  'pre_import',
+] as const;
 export type BackupKind = (typeof BACKUP_KINDS)[number];
 export const BACKUP_STATUSES = ['running', 'succeeded', 'failed', 'deleted'] as const;
 export type BackupStatus = (typeof BACKUP_STATUSES)[number];
@@ -2871,4 +2877,75 @@ export interface SearchResponse {
   exact: SearchHit | null;
   /** Grouped, each group capped at `limit`, only the kinds the user may see. */
   hits: SearchHit[];
+}
+
+// ─── Import from another program (0.15.0) ───────────────────────────────────────
+export const IMPORT_SOURCES = ['likapos_pro'] as const;
+export type ImportSource = (typeof IMPORT_SOURCES)[number];
+export const IMPORT_ENTITIES = ['products', 'customers', 'debts', 'sales', 'expenses'] as const;
+export type ImportEntity = (typeof IMPORT_ENTITIES)[number];
+
+/** What the file contains, per entity — shown on the wizard's preview step. */
+export interface ImportEntityPreview {
+  /** Rows in the file that can be imported. */
+  total: number;
+  /** Rows already linked to a LIKApcs record by an earlier run (will be skipped). */
+  alreadyImported: number;
+  /** Money involved, where it means something (debts open amount, sales total, expenses total). */
+  amountCents: number | null;
+  /** A few names / numbers so the operator recognises the data. */
+  sample: string[];
+  /** Earliest / latest date in the rows, when dated. */
+  from: string | null;
+  to: string | null;
+}
+
+export interface ImportAnalysis {
+  source: ImportSource;
+  /** Store name / export date as recorded in the file, when present. */
+  storeName: string | null;
+  exportedAt: string | null;
+  entities: Record<ImportEntity, ImportEntityPreview>;
+  /** Things the operator should know before importing (variants flattened, invalid barcodes, …). */
+  warnings: string[];
+  /** Parts of the file that are never imported, with their row counts. */
+  notImported: { key: string; count: number }[];
+}
+
+export const importRunOptionsSchema = z.object({
+  entities: z.array(z.enum(IMPORT_ENTITIES)).min(1),
+  dryRun: z.boolean().default(false),
+  fileName: z.string().trim().max(200).optional(),
+});
+export type ImportRunOptions = z.infer<typeof importRunOptionsSchema>;
+
+export interface ImportEntityResult {
+  created: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface ImportReport {
+  dryRun: boolean;
+  runId: string | null;
+  backupId: string | null;
+  results: Record<ImportEntity, ImportEntityResult>;
+  /** Pictures queued for download after the import (links in the file). */
+  imagesQueued: number;
+  warnings: string[];
+  durationMs: number;
+}
+
+export interface ImportStatus {
+  /** Background picture downloads started by the last import on this server process. */
+  images: { pending: number; done: number; failed: number };
+  lastRun: {
+    id: string;
+    source: ImportSource;
+    fileName: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+    status: 'running' | 'succeeded' | 'failed';
+    report: ImportReport | null;
+  } | null;
 }

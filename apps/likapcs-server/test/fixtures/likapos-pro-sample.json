@@ -1,0 +1,488 @@
+{
+ "products": [
+  {
+   "id": 1001,
+   "name": "Fanta 250ml",
+   "description": "",
+   "barcode": "5000112637922",
+   "category": "pije",
+   "unit": "cope",
+   "productType": "physical",
+   "trackStock": true,
+   "allowDecimals": false,
+   "price": 0.6,
+   "cost": 0.3,
+   "stock": 24,
+   "minStock": 6,
+   "image": "https://example.invalid/fanta.jpg",
+   "discountPct": 0,
+   "createdAt": "2026-06-01T10:00:00.000Z",
+   "supplyHistory": [],
+   "duration": null,
+   "hasVariants": false,
+   "variantGroups": []
+  },
+  {
+   "id": 1002,
+   "name": "Chipsy Paprika",
+   "description": "",
+   "barcode": "s2",
+   "category": "CHIPS",
+   "unit": "cope",
+   "productType": "physical",
+   "trackStock": true,
+   "allowDecimals": false,
+   "price": 0.5,
+   "cost": 0.3,
+   "stock": 10,
+   "minStock": 2,
+   "image": "",
+   "hasVariants": false,
+   "variantGroups": []
+  },
+  {
+   "id": 1003,
+   "name": "Sandwich",
+   "description": "",
+   "barcode": "SW-001",
+   "category": "buk",
+   "unit": "cope",
+   "productType": "noStock",
+   "trackStock": false,
+   "allowDecimals": true,
+   "price": 2.5,
+   "cost": 1.5,
+   "stock": 0,
+   "minStock": 0,
+   "image": "",
+   "hasVariants": true,
+   "variantGroups": [
+    {
+     "id": "g1",
+     "name": "Sandwich",
+     "required": true,
+     "multi": false,
+     "trackStock": false,
+     "options": [
+      {
+       "id": "o1",
+       "label": "Pule",
+       "priceMode": "fixed",
+       "price": 2.5,
+       "cost": 1,
+       "stock": 0
+      },
+      {
+       "id": "o2",
+       "label": "Proshute",
+       "priceMode": "fixed",
+       "price": 2.5,
+       "cost": 1,
+       "stock": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": 1004,
+   "name": "PC 1 ore",
+   "description": "",
+   "barcode": "PCH1",
+   "category": "PC",
+   "unit": "cope",
+   "productType": "service",
+   "trackStock": false,
+   "price": 1.0,
+   "cost": 0,
+   "stock": 0,
+   "minStock": 0,
+   "image": "",
+   "duration": 60,
+   "hasVariants": false,
+   "variantGroups": []
+  },
+  {
+   "id": 1005,
+   "name": "Red Bull 250ml",
+   "description": "Energy",
+   "barcode": "9002490100070",
+   "category": "pije",
+   "unit": "cope",
+   "productType": "physical",
+   "trackStock": true,
+   "price": 1.5,
+   "cost": 0.9,
+   "stock": 0,
+   "minStock": 4,
+   "image": "not-a-link",
+   "hasVariants": false,
+   "variantGroups": []
+  },
+  {
+   "id": 1006,
+   "name": "",
+   "barcode": "0000000000001",
+   "category": "pije",
+   "productType": "physical",
+   "price": 1,
+   "cost": 0,
+   "stock": 1
+  }
+ ],
+ "customers": [
+  {
+   "first": "Arta",
+   "last": "Testi",
+   "phone": "049111222",
+   "email": "arta@example.invalid",
+   "address": "Rr. Testi 1",
+   "clientUsername": "arta.testi",
+   "clientPin": "4321",
+   "id": 2001,
+   "debts": [
+    {
+     "id": 3001,
+     "amount": 2,
+     "dueDate": "2026-06-29",
+     "note": "",
+     "paid": true,
+     "saleId": 4002,
+     "paidDate": "2026-06-29T19:04:37.088Z"
+    },
+    {
+     "id": 3002,
+     "amount": 0.25,
+     "dueDate": "2026-07-01",
+     "note": "mbetja",
+     "paid": false,
+     "saleId": 4002
+    },
+    {
+     "id": 3003,
+     "amount": 11.5,
+     "originalAmount": 15,
+     "dueDate": "2026-09-27",
+     "note": "per mikrofon",
+     "type": "Tjetër",
+     "manualDebt": true,
+     "source": "manual-money",
+     "createdAt": "2026-07-27T14:47:48.387Z",
+     "createdBy": "lika",
+     "paid": false,
+     "payments": [
+      {
+       "date": "2026-09-29T15:23:02.835Z",
+       "amount": 3.5,
+       "by": "lika"
+      }
+     ]
+    }
+   ],
+   "points": 0,
+   "totalSpent": 44.06,
+   "barcode": "LKC00000001",
+   "debtLimit": 1500
+  },
+  {
+   "first": "Besnik",
+   "last": "Shembull",
+   "phone": "",
+   "email": "",
+   "address": "",
+   "clientUsername": "besnik",
+   "clientPin": "12",
+   "id": 2002,
+   "debts": [],
+   "barcode": "LKC00000002"
+  },
+  {
+   "first": "Cani",
+   "last": "",
+   "phone": "044333444",
+   "email": "",
+   "address": "",
+   "clientUsername": "",
+   "clientPin": "",
+   "id": 2003,
+   "debts": [
+    {
+     "id": 3004,
+     "amount": 5,
+     "dueDate": "bad-date",
+     "note": "",
+     "paid": false
+    }
+   ],
+   "barcode": "LKC00000003"
+  },
+  {
+   "first": "Dua",
+   "last": "Dyfish",
+   "phone": "",
+   "clientUsername": "dua",
+   "clientPin": "1111",
+   "id": 2004,
+   "debts": [],
+   "barcode": "x"
+  },
+  {
+   "first": "Dua",
+   "last": "Dyfish 2",
+   "phone": "",
+   "clientUsername": "DUA",
+   "clientPin": "2222",
+   "id": 2005,
+   "debts": [],
+   "barcode": ""
+  }
+ ],
+ "sales": [
+  {
+   "id": 4001,
+   "txn": "TXN-000001",
+   "date": "2026-06-23T21:30:31.162Z",
+   "staff": "lika",
+   "items": [
+    {
+     "id": 1001,
+     "name": "Fanta 250ml",
+     "price": 0.6,
+     "cost": 0.3,
+     "qty": 2,
+     "refundedQty": 0
+    }
+   ],
+   "rawTotal": 1.2,
+   "total": 1.2,
+   "paymentType": "Cash",
+   "customerId": null,
+   "refunded": false,
+   "discount": null,
+   "note": ""
+  },
+  {
+   "id": 4002,
+   "txn": "TXN-000002",
+   "date": "2026-06-25T12:33:34.837Z",
+   "staff": "lika",
+   "items": [
+    {
+     "id": 1004,
+     "name": "PC 1 ore",
+     "price": 1.0,
+     "cost": 0,
+     "qty": 2,
+     "refundedQty": 0
+    },
+    {
+     "id": 1002,
+     "name": "Chipsy Paprika",
+     "price": 0.5,
+     "cost": 0.3,
+     "qty": 1,
+     "refundedQty": 0
+    }
+   ],
+   "rawTotal": 2.5,
+   "total": 2.25,
+   "paymentType": "Credit",
+   "customerId": "2001",
+   "refunded": false,
+   "discount": {
+    "type": "val",
+    "val": 0.25,
+    "amt": 0.25
+   },
+   "note": "",
+   "cashPaid": 2,
+   "debtAmount": 0.25
+  },
+  {
+   "id": 4003,
+   "txn": "STF-000003",
+   "date": "2026-06-26T20:13:23.880Z",
+   "staff": "lika",
+   "items": [
+    {
+     "id": 1005,
+     "name": "Red Bull 250ml",
+     "price": 1.5,
+     "cost": 0.9,
+     "qty": 1,
+     "refundedQty": 1
+    }
+   ],
+   "rawTotal": 1.5,
+   "total": 1.5,
+   "paymentType": "Staff",
+   "customerId": null,
+   "refunded": true,
+   "staffPurchase": true,
+   "note": "Blerje personale"
+  },
+  {
+   "id": 4004,
+   "txn": "EXT-000004",
+   "date": "2026-07-20T01:09:26.000Z",
+   "items": [
+    {
+     "id": "ext_1",
+     "name": "Telefon",
+     "qty": 1,
+     "price": 80,
+     "cost": 0
+    }
+   ],
+   "rawTotal": 80,
+   "total": 80,
+   "paymentType": "Installment",
+   "staff": "lika",
+   "customerId": "2003",
+   "discount": null,
+   "externalSale": true,
+   "note": "[Shitje Jashtë POS]",
+   "refunded": false,
+   "installmentPlan": {
+    "totalAmount": 80
+   }
+  },
+  {
+   "id": 4005,
+   "txn": "TXN-000005",
+   "date": "2026-08-01T10:00:00.000Z",
+   "staff": "korab",
+   "items": [
+    {
+     "id": 1003,
+     "name": "Sandwich",
+     "price": 2.5,
+     "cost": 1,
+     "qty": 2,
+     "refundedQty": 1,
+     "variants": [
+      {
+       "groupName": "Sandwich",
+       "label": "Pule"
+      }
+     ],
+     "variantLabel": "Pule"
+    }
+   ],
+   "rawTotal": 5,
+   "total": 5,
+   "paymentType": "Cash",
+   "customerId": "9999",
+   "refunded": false,
+   "note": ""
+  }
+ ],
+ "expenses": [
+  {
+   "id": 5001,
+   "date": "2026-06-24T15:30:11.371Z",
+   "category": "Furnizim (Mall)",
+   "amount": 1.5,
+   "note": "Auto-Furnizim: Fanta x6",
+   "staff": "lika",
+   "auto": true
+  },
+  {
+   "id": 5002,
+   "date": "2026-07-01T09:00:00.000Z",
+   "category": "Qera / Fatura",
+   "amount": 150,
+   "note": "Qera korrik",
+   "staff": "lika"
+  },
+  {
+   "id": 5003,
+   "date": "2026-07-02T09:00:00.000Z",
+   "category": "Furnizim (Mall)",
+   "amount": 12.4,
+   "note": "",
+   "staff": "korab"
+  },
+  {
+   "id": 5004,
+   "date": "2026-07-03T09:00:00.000Z",
+   "category": "Të Tjera",
+   "amount": 0,
+   "note": "zero",
+   "staff": "lika"
+  }
+ ],
+ "incomes": [
+  {
+   "id": 6001,
+   "date": "2026-08-10T19:50:25.739Z",
+   "category": "Të Tjera",
+   "amount": 190,
+   "note": "Banka",
+   "source": "arka",
+   "staff": "CEO"
+  }
+ ],
+ "orders": [
+  {
+   "id": 7001,
+   "productId": 1001,
+   "productName": "Fanta 250ml",
+   "qty": 30,
+   "cost": 0.3,
+   "status": "done"
+  }
+ ],
+ "staff": [
+  {
+   "id": 1,
+   "name": "Super Admin",
+   "user": "lika",
+   "pass": "0000",
+   "role": "admin"
+  },
+  {
+   "id": 2,
+   "name": "Cashier",
+   "user": "korab",
+   "pass": "0000",
+   "role": "custom"
+  }
+ ],
+ "cashDrawer": {
+  "isOpen": true,
+  "openedAt": "2026-09-29T15:16:03.139Z",
+  "log": [
+   {
+    "date": "2026-06-25T18:07:03.553Z",
+    "type": "open",
+    "amount": 13.75
+   }
+  ]
+ },
+ "auditLogs": [
+  {
+   "id": 1,
+   "action": "login"
+  }
+ ],
+ "sessions": [
+  {
+   "id": 1,
+   "userId": 1,
+   "loginAt": "2026-06-23T21:21:49.766Z"
+  }
+ ],
+ "pointSales": [],
+ "heldCarts": [],
+ "investments": [],
+ "portalLogs": [],
+ "mobileSessions": [],
+ "settings": {
+  "storeName": "Demo Shop",
+  "currency": "€",
+  "taxRate": 18
+ },
+ "_cloudSavedAt": "2026-10-13T04:25:51.226Z",
+ "_cloudDevice": "test"
+}

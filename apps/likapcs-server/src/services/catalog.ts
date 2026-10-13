@@ -797,7 +797,7 @@ export class CatalogService {
 }
 
 /** Generated SKUs: `SKU-000001`, continuous (no yearly reset). */
-async function nextSku(client: DbClient): Promise<string> {
+export async function nextSku(client: DbClient): Promise<string> {
   const r = await client.query<{ next_value: string }>(
     `INSERT INTO document_sequences (kind, period, prefix, next_value) VALUES ('sku', '', 'SKU', 2)
      ON CONFLICT (kind, period) DO UPDATE SET next_value = document_sequences.next_value + 1

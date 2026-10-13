@@ -60,6 +60,7 @@ import { adminSocketRoutes } from './realtime/admin-socket.js';
 import { clientSocketRoutes } from './realtime/client-socket.js';
 import { auditRoutes } from './routes/audit.js';
 import { searchRoutes } from './routes/search.js';
+import { importRoutes } from './routes/imports.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
@@ -67,6 +68,7 @@ import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
 import { AuditQueryService } from './services/audit-query.js';
 import { SearchService } from './services/search.js';
+import { ImportService } from './services/imports.js';
 import { AuthService } from './services/auth.js';
 import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
@@ -99,6 +101,7 @@ export interface Services {
   devices: DevicesService;
   audit: AuditQueryService;
   search: SearchService;
+  imports: ImportService;
   dashboard: DashboardService;
   commands: CommandsService;
   wake: WakeService;
@@ -222,6 +225,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     log: app.log,
   });
   const invoices = new InvoiceService(pool, sales, settings);
+  const imports = new ImportService(pool, backups, productImages);
   const updates = new UpdatesService(pool, settings, {
     schemaVersion: () => app.schemaVersion,
     startedAt: () => app.startedAt,
@@ -244,6 +248,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     devices,
     audit,
     search,
+    imports,
     dashboard,
     commands,
     wake,
@@ -320,6 +325,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(invoiceRoutes);
       await api.register(auditRoutes);
       await api.register(searchRoutes);
+      await api.register(importRoutes);
     },
     { prefix: '/api/v1' },
   );

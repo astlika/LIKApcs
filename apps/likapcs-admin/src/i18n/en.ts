@@ -1685,6 +1685,52 @@ export const en = {
       page: 'Page',
     },
   },
+  imports: {
+    title: 'Import from another program',
+    subtitle:
+      'Bring products, customers, open debts, the sales history and expenses over from LIKApos Pro. Nothing is written until you confirm.',
+    open: 'Import from another program',
+    step: { file: 'File', choose: 'What to import', done: 'Result' },
+    dropHere: 'Drop the backup file here',
+    supported:
+      'Supported: LIKApos Pro backup (.json) — the file exported from its Cloud / Backup page.',
+    chooseFile: 'Choose file…',
+    analyzing: 'Reading the file…',
+    notRecognised: 'This file is not a LIKApos Pro backup.',
+    notJson: 'The file could not be read as JSON.',
+    tooLarge: 'The file is larger than 200 MB.',
+    howTo:
+      'In LIKApos Pro open Settings → Backup / Cloud and download the backup (.json). Staff accounts, the cash drawer log and audit logs are never imported.',
+    recognised: 'LIKApos Pro backup',
+    exportedAt: 'exported {when}',
+    entity: {
+      products: 'Products & categories',
+      customers: 'Customers (with PC login)',
+      debts: 'Open debts',
+      sales: 'Sales history',
+      expenses: 'Expenses',
+    },
+    alreadyImported: '{count} already imported',
+    nothingNew: 'nothing new',
+    notImported: 'Not imported:',
+    warnings: '{count} notes',
+    dryRun: 'Test run (no changes)',
+    dryRunFirst:
+      'Run the test first: it does the whole import and rolls it back, so you see the exact result for {count} records before anything is written.',
+    dryRunResult: 'Test run finished — nothing was written.',
+    dryRunHint: 'If this looks right, press Import now.',
+    importNow: 'Import now',
+    backupNote:
+      'A backup is taken automatically right before the import; everything runs in one transaction — on any error nothing is written. Running the same file again only adds what is new.',
+    what: 'What',
+    created: 'Created',
+    skipped: 'Skipped',
+    failed: 'Failed',
+    done: 'Import finished.',
+    doneHint: 'Took {ms} s. A backup from right before the import is in the list below.',
+    doneToast: 'Import finished',
+    images: 'Product pictures: {done} of {total} downloaded ({failed} failed)',
+  },
   backups: {
     title: 'Backups',
     subtitle:
@@ -1716,6 +1762,7 @@ export const en = {
       scheduled: 'Scheduled',
       pre_migration: 'Before update',
       pre_restore: 'Before restore',
+      pre_import: 'Before import',
     },
     status: {
       running: 'Running',

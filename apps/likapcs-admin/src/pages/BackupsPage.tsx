@@ -11,6 +11,7 @@ import {
   Download,
   FolderOpen,
   HardDriveDownload,
+  Import,
   RotateCcw,
   Trash2,
   Upload,
@@ -26,6 +27,7 @@ import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+import { ImportWizard } from '../components/backups/ImportWizard';
 import {
   Alert,
   Badge,
@@ -64,6 +66,7 @@ export function BackupsPage() {
   const [restoring, setRestoring] = useState<BackupSummary | null>(null);
   const [deleting, setDeleting] = useState<BackupSummary | null>(null);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [importing, setImporting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const list = useQuery({
@@ -141,6 +144,9 @@ export function BackupsPage() {
                   e.target.value = '';
                 }}
               />
+              <Button onClick={() => setImporting(true)} data-testid="backups-import">
+                <Import size={14} /> {t('imports.open')}
+              </Button>
               <Button onClick={() => fileInput.current?.click()} loading={upload.isPending}>
                 <Upload size={14} /> {t('backups.upload')}
               </Button>
@@ -327,6 +333,7 @@ export function BackupsPage() {
           onClose={() => setDeleting(null)}
         />
       )}
+      {canManage && <ImportWizard open={importing} onClose={() => setImporting(false)} />}
     </>
   );
 }

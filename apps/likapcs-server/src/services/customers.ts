@@ -145,7 +145,7 @@ async function applyLogin(
   }
 }
 
-async function nextCustomerCode(client: DbClient): Promise<string> {
+export async function nextCustomerCode(client: DbClient): Promise<string> {
   const r = await client.query<{ next_value: string; prefix: string }>(
     `INSERT INTO document_sequences (kind, period, prefix, next_value) VALUES ('customer', '', 'C', 2)
      ON CONFLICT (kind, period) DO UPDATE SET next_value = document_sequences.next_value + 1

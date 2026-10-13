@@ -17,6 +17,21 @@ All notable changes to LIKApcs are documented here. The format follows
   record on its page (sale detail, refund → its sale, invoice document, purchase, customer,
   product editor, PC). Every kind is filtered server-side by the user's permissions. New endpoint
   `GET /search` (shared `SearchHit` / `SearchResponse`); pages accept `?open=<id>` deep links.
+- **Import from another program (LIKApos Pro).** Backups → _Import from another program_: pick
+  the LIKApos Pro backup (.json); the wizard recognises it, previews what it contains (products &
+  categories, customers with their PC login, open debts, sales history, expenses — with counts,
+  amounts, date ranges and notes about what cannot be mapped 1:1), lets you choose what to bring
+  over, runs a **test run** that does the whole import and rolls it back, and only then imports —
+  after an automatic `pre_import` backup, in one transaction. Mapping: float euros → cents, stock →
+  opening-stock movements, product pictures downloaded from the links in the background, card
+  barcodes → customer codes, PINs (≥ 4) → PC login, debts → open receivables (linked to the
+  imported sale when present), sales → completed receipts with cash/credit payments and refund
+  status (no R-numbers, no stock changes, TXN kept in notes), expenses → new categories named
+  like the old ones. Every record is linked to its external id (`import_links`), so running the
+  same file twice only adds what is new. Staff accounts, cash-drawer log, audit/portal logs,
+  loyalty points, supplier orders and settings are never imported. Migration 0026
+  (`import_runs`, `import_links`, backup kind `pre_import`); endpoints `POST /imports/analyze`,
+  `POST /imports/run`, `GET /imports/status`.
 
 ## [0.14.0] - 2026-10-13
 

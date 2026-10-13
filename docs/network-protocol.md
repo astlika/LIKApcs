@@ -635,6 +635,23 @@ as `exact` and placed first in `hits`. A bare number (`123`) lists matching docu
 product | station`) and carry only what the palette shows (number, name, total, status, …) plus
 the id to open; a refund hit also carries its `saleId`.
 
+### Import from another program (`backups.manage`; 0.15.0, migration 0026)
+
+`POST /imports/analyze { data }` → `ImportAnalysis` — recognises a LIKApos Pro backup (JSON) and
+previews it: per entity (`products`, `customers`, `debts`, `sales`, `expenses`) the row count,
+how many are already linked from an earlier run, the money involved, date range and a sample;
+plus notes (variants flattened, invalid barcodes, PINs shorter than 4, …) and the parts that are
+never imported (staff, cash drawer, audit/portal logs, loyalty points, supplier orders, settings).
+Nothing is written. `POST /imports/run { data, entities[], dryRun?, fileName? }` → `ImportReport`
+— `dryRun: true` performs the whole import inside a transaction and rolls it back (exact
+created / skipped / failed counts, no side effects, no backup); a real run first takes a
+`pre_import` backup, then imports in ONE transaction, records `import_runs` + `import_links`
+(external id → internal id, which makes a second run of the same file skip everything already
+imported) and an `import.completed` audit entry, and finally downloads product pictures from the
+links in the file in the background (progress via `GET /imports/status`). Both POST routes
+accept bodies up to 256 MB. Imported sales get no receipt number and do not move stock; the old
+TXN number is kept in the notes.
+
 ### Audit (`audit.view`)
 
 `GET /audit-logs?page&pageSize&action&actorUserId&entityType&from&to&search`,

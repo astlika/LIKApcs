@@ -1691,6 +1691,52 @@ export const sq: Dictionary = {
       page: 'Faqja',
     },
   },
+  imports: {
+    title: 'Importo nga program tjetër',
+    subtitle:
+      'Sill produktet, klientët, borxhet e hapura, historikun e shitjeve dhe shpenzimet nga LIKApos Pro. Asgjë nuk shkruhet derisa të konfirmosh.',
+    open: 'Importo nga program tjetër',
+    step: { file: 'Skedari', choose: 'Çfarë importohet', done: 'Rezultati' },
+    dropHere: 'Lësho skedarin e backup-it këtu',
+    supported:
+      'Mbështetet: backup i LIKApos Pro (.json) — skedari i eksportuar nga faqja Cloud / Backup.',
+    chooseFile: 'Zgjidh skedarin…',
+    analyzing: 'Po lexohet skedari…',
+    notRecognised: 'Ky skedar nuk është backup i LIKApos Pro.',
+    notJson: 'Skedari nuk u lexua si JSON.',
+    tooLarge: 'Skedari është më i madh se 200 MB.',
+    howTo:
+      'Në LIKApos Pro hap Settings → Backup / Cloud dhe shkarko backup-in (.json). Llogaritë e stafit, historiku i arkës dhe audit log-u nuk importohen kurrë.',
+    recognised: 'Backup i LIKApos Pro',
+    exportedAt: 'eksportuar {when}',
+    entity: {
+      products: 'Produktet & kategoritë',
+      customers: 'Klientët (me login në PC)',
+      debts: 'Borxhet e hapura',
+      sales: 'Historiku i shitjeve',
+      expenses: 'Shpenzimet',
+    },
+    alreadyImported: '{count} të importuara më parë',
+    nothingNew: 'asgjë e re',
+    notImported: 'Nuk importohen:',
+    warnings: '{count} shënime',
+    dryRun: 'Provo (pa ndryshime)',
+    dryRunFirst:
+      'Bëj provën së pari: kryen gjithë importin dhe e anulon, që ta shohësh rezultatin e saktë për {count} regjistra para se të shkruhet diçka.',
+    dryRunResult: 'Prova përfundoi — asgjë nuk u shkrua.',
+    dryRunHint: 'Nëse duket në rregull, shtyp Importo tani.',
+    importNow: 'Importo tani',
+    backupNote:
+      'Para importit merret automatikisht një kopje rezervë; gjithçka kryhet në një transaksion — në çdo gabim nuk shkruhet asgjë. Po të ngarkosh të njëjtin skedar sërish, shtohen vetëm të rejat.',
+    what: 'Çfarë',
+    created: 'U krijuan',
+    skipped: 'U kapërcyen',
+    failed: 'Dështuan',
+    done: 'Importi përfundoi.',
+    doneHint: 'Zgjati {ms} s. Kopja rezervë e marrë para importit është në listën më poshtë.',
+    doneToast: 'Importi përfundoi',
+    images: 'Fotot e produkteve: {done} nga {total} u shkarkuan ({failed} dështuan)',
+  },
   backups: {
     title: 'Kopjet rezervë',
     subtitle:
@@ -1722,6 +1768,7 @@ export const sq: Dictionary = {
       scheduled: 'E planifikuar',
       pre_migration: 'Para përditësimit',
       pre_restore: 'Para rikthimit',
+      pre_import: 'Para importit',
     },
     status: {
       running: 'Në proces',

@@ -25,9 +25,12 @@ apps/likapcs-client/src-tauri/gen/
 likapcs-updater.key
 secrets/
 
-# local data
-backups/
-uploads/
+# local data (never source folders — components/backups/ is code)
+/backups/
+/apps/*/backups/
+/apps/*/data/backups/
+/uploads/
+/apps/*/uploads/
 *.log
 logs/
 data/
