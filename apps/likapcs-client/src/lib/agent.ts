@@ -213,6 +213,7 @@ function orderViewOf(order: StationOrder | ServerOrderUpdate['order']): OrderVie
     })),
     requestedAt: order.requestedAt,
     decidedAt: order.decidedAt,
+    preparedAt: 'preparedAt' in order ? (order.preparedAt ?? null) : null,
   };
 }
 
@@ -1376,7 +1377,9 @@ export class Agent {
   private onOrderPush(order: OrderView): void {
     const before = this.snapshot.orders.find((o) => o.id === order.id);
     this.upsertOrder(order);
-    if (before?.status !== order.status && order.status !== 'pending')
+    // A status change or the desk finishing the preparation ("on its way", 0.13.0) flashes.
+    const prepared = Boolean(order.preparedAt) && !before?.preparedAt;
+    if ((before?.status !== order.status && order.status !== 'pending') || prepared)
       this.set({ orderFlash: { order, untilMs: this.clock.now() + ORDER_FLASH_MS } });
   }
 

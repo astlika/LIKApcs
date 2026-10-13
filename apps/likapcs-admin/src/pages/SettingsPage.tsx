@@ -14,11 +14,11 @@ import {
   adsGridSize,
   CLIENT_WIDGET_POSITIONS,
   CLIENT_WIDGET_SIZES,
-  CLIENT_WIDGET_STYLES,
   PERMISSIONS,
   PROTOCOL_VERSION,
   SETTING_SCHEMAS,
   clientDisplayFromSettings,
+  formatMoney,
   type SettingKey,
   type SettingsMap,
   type SystemInfoResponse,
@@ -43,6 +43,7 @@ import {
   Textarea,
 } from '../components/ui/primitives';
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
+import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
 
@@ -82,7 +83,7 @@ const TIMEZONES = [
 const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'ALL', 'MKD', 'RSD', 'BAM', 'TRY'];
 
 export function SettingsPage() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { can } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -481,6 +482,13 @@ export function SettingsPage() {
                 t('settings.orders.allowNoteHint'),
               )}
             </div>
+            <div className="span-2" data-testid="settings-orders-scan">
+              {bool(
+                'orders.scan_check',
+                t('settings.orders.scanCheck'),
+                t('settings.orders.scanCheckHint'),
+              )}
+            </div>
             <Field
               label={t('settings.orders.settlement')}
               hint={t('settings.orders.settlementHint')}
@@ -552,18 +560,6 @@ export function SettingsPage() {
               subtitle={t('settings.client.widgetHint')}
             >
               <div className="form-grid">
-                <Field label={t('settings.client.widgetStyle')}>
-                  {() => (
-                    <Segmented
-                      value={current['client.widget_style']}
-                      options={CLIENT_WIDGET_STYLES.map((v) => ({
-                        value: v,
-                        label: t(`settings.client.style.${v}`),
-                      }))}
-                      onChange={(v) => !ro && set('client.widget_style', v)}
-                    />
-                  )}
-                </Field>
                 <Field label={t('settings.client.widgetSize')}>
                   {() => (
                     <Segmented
@@ -595,6 +591,26 @@ export function SettingsPage() {
                     t('settings.client.showPaymentHint'),
                   )}
                 </div>
+                <Field
+                  label={t('settings.client.widgetStyle')}
+                  hint={t('settings.client.widgetStyleHint')}
+                  className="span-2"
+                >
+                  {() => (
+                    <WidgetDesignPicker
+                      value={current['client.widget_style']}
+                      size={current['client.widget_size']}
+                      showPayment={current['client.widget_show_payment']}
+                      code="PC 01"
+                      money={formatMoney(150, {
+                        currency: current['locale.currency'],
+                        locale: language,
+                      })}
+                      disabled={ro}
+                      onChange={(v) => set('client.widget_style', v)}
+                    />
+                  )}
+                </Field>
               </div>
             </Card>
             <Card

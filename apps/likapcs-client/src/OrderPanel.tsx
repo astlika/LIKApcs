@@ -228,7 +228,13 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
                     aria-label={item.name}
                   >
                     {item.imageUrl ? (
-                      <img src={item.imageUrl} alt="" draggable={false} />
+                      <img
+                        src={item.imageUrl}
+                        alt=""
+                        draggable={false}
+                        loading="lazy"
+                        decoding="async"
+                      />
                     ) : (
                       <span className="order__thumb" aria-hidden>
                         {item.name.slice(0, 1).toUpperCase()}
@@ -328,7 +334,9 @@ export function OrderPanel({ snap, onClose }: { snap: AgentSnapshot; onClose: ()
                 <span className="order__mine-head">
                   <b>{t('orderNumber', { n: o.number })}</b>
                   <span className={`order__status order__status--${o.status}`}>
-                    {t(STATUS_KEY[o.status])}
+                    {o.preparedAt && (o.status === 'accepted' || o.status === 'paid')
+                      ? t('orderStatusPrepared')
+                      : t(STATUS_KEY[o.status])}
                   </span>
                 </span>
                 <span className="order__mine-body">

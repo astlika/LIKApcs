@@ -290,6 +290,22 @@ export const en = {
     noFreeStations:
       'All stations already have a device. Create a new station or revoke an existing device.',
     connectionLog: 'Connection log',
+    showMore: 'Show more',
+    deviceDetails: 'Details',
+    deviceLess: 'Hide details',
+    logDetail: {
+      client: 'client {version}',
+      closeNormal: 'the PC closed the connection',
+      closeLost: 'connection lost',
+      closeShutdown: 'server stopped',
+      closeUnauthorized: 'token rejected',
+      closeProtocol: 'protocol error',
+      closeIncompatible: 'incompatible client version',
+      closeReplaced: 'replaced by a new connection',
+      closeRevoked: 'device revoked',
+      machineMismatch: 'machine ID mismatch',
+      timeout: 'no heartbeat received in time',
+    },
     noConnectionLog: 'No connections recorded yet.',
     sessionControls: 'Session',
     commandsHint: 'Commands are acknowledged by the client PC within seconds.',
@@ -991,6 +1007,9 @@ export const en = {
       settlementHint:
         'Ask: choose each time. Pay now: a POS sale at once. On the bill: settled when the session ends.',
       settlements: { ask: 'Ask', pay_now: 'Pay now', on_bill: 'On the bill' },
+      scanCheck: 'Scan check after accepting',
+      scanCheckHint:
+        'After Accept, a preparation step asks to scan every item with the barcode scanner (exact quantity, right product). Any line can still be confirmed by hand; the PC is told when the order is on its way.',
     },
     requests: {
       title: 'Customer requests',
@@ -1006,12 +1025,68 @@ export const en = {
     client: {
       widgetTitle: 'Countdown widget',
       widgetHint: 'The small always-on-top window the customer sees during a session.',
-      widgetStyle: 'Style',
+      widgetStyle: 'Design',
+      widgetStyleHint:
+        'Thirteen looks, from a full card to a single dot. The pause / order / "+ time" buttons stay hidden on every design until the mouse moves over the widget, then slide in and fade out again 1.5 s after it leaves.',
+      widgetTransparent: 'See-through',
       widgetSize: 'Size',
       widgetPosition: 'Corner of the screen',
       showPayment: 'Show the amount',
       showPaymentHint: 'Prepaid: what was paid. Open time: the running amount to pay.',
-      style: { minimal: 'Minimal (one line)', detailed: 'Detailed' },
+      design: {
+        detailed: {
+          name: 'Classic card',
+          desc: 'PC code, status, big HH:MM:SS, the amount and a progress bar. Staff messages show inside it.',
+        },
+        minimal: {
+          name: 'One line',
+          desc: '"PC 01 · 23 min · 1.50 €" on a single calm line with a hair-thin progress bar.',
+        },
+        minutes: {
+          name: 'Minutes only',
+          desc: 'Just the minutes left ("23 min") — nothing else. The smallest opaque look.',
+        },
+        'minutes-money': {
+          name: 'Minutes + amount',
+          desc: 'Minutes left next to the paid / running amount, nothing more.',
+        },
+        compact: {
+          name: 'Compact card',
+          desc: 'A smaller card: PC code and status above, HH:MM:SS and the amount below.',
+        },
+        pill: {
+          name: 'Pill',
+          desc: 'A floating capsule over the desktop: status light, minutes and the amount.',
+        },
+        ring: {
+          name: 'Ring',
+          desc: 'A round progress ring that empties with the time; the minutes sit in the middle.',
+        },
+        dot: {
+          name: 'Dot',
+          desc: 'A single coloured dot with the minutes inside — green, amber at 5 min, red at 1 min.',
+        },
+        strip: {
+          name: 'Strip',
+          desc: 'A thin bar along the edge that shortens with the time; minutes and amount at its end.',
+        },
+        digital: {
+          name: 'Digital clock',
+          desc: 'LED-style HH:MM:SS on black, like a desk clock. PC code and amount in small print.',
+        },
+        glass: {
+          name: 'Glass',
+          desc: 'The classic card in frosted glass — translucent over the wallpaper.',
+        },
+        neon: {
+          name: 'Neon',
+          desc: 'Dark card with a glowing cyan edge and glowing digits — turns amber, then red.',
+        },
+        ticket: {
+          name: 'Ticket',
+          desc: 'A light paper receipt: PC code, time and the amount under a dashed cut line.',
+        },
+      },
       size: { small: 'Small', normal: 'Normal', large: 'Large' },
       position: {
         'top-left': 'Top left',
@@ -1089,6 +1164,7 @@ export const en = {
       previewLocked: 'This PC is locked · ask the staff to start your session',
       previewRemaining: 'Time left',
       previewPaid: 'Paid',
+      previewMin: 'min',
       previewNote:
         'Changes reach every connected PC the moment you save — no restart needed on the gaming PCs.',
     },
@@ -2108,6 +2184,24 @@ export const en = {
     voidBody: 'Nothing is sold and nothing is charged — the order is closed as void.',
     voidReason: 'Reason',
     voided: 'Order written off.',
+    prepare: {
+      title: 'Prepare order #{number} · {station}',
+      hint: 'Scan every item with the barcode scanner — the right product, the exact quantity. Any line can be confirmed by hand instead.',
+      scanHint: 'Scan the items now — one scan per unit.',
+      scanned: 'scanned',
+      confirmManual: 'Confirm without scanning',
+      confirmedManually: 'Confirmed by hand',
+      again: 'Again',
+      skip: 'Skip',
+      finish: 'Prepared — on its way',
+      progress: '{done} of {total} lines ready',
+      done: 'Order #{number} prepared — the PC was told it is on its way.',
+      notInOrder: '{name} is not in this order.',
+      alreadyComplete: '{name}: all units already scanned.',
+      unknownCode: 'No product with barcode {code}.',
+      prepared: 'Prepared',
+      button: 'Prepare',
+    },
     status: {
       pending: 'Waiting',
       accepted: 'On the bill',

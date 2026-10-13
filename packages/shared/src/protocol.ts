@@ -223,6 +223,8 @@ export interface ServerOrderUpdate {
     items: { name: string; quantity: number; lineTotalCents: number }[];
     requestedAt: string;
     decidedAt: string | null;
+    /** Set when the desk finished preparing it — "on its way" (0.13.0). */
+    preparedAt: string | null;
   };
 }
 

@@ -65,10 +65,18 @@ enum WidgetPosition {
 struct WidgetLayout {
     size: WidgetSize,
     position: WidgetPosition,
+    /// Exact footprint (logical px) of the chosen design, computed by the frontend from the shared
+    /// design table (0.13.0). `None` = the classic card sizes below.
+    footprint: Option<(f64, f64)>,
 }
 
 impl WidgetLayout {
     fn dimensions(self) -> (f64, f64) {
+        if let Some((w, h)) = self.footprint {
+            if w.is_finite() && h.is_finite() && w >= 32.0 && h >= 16.0 {
+                return (w.min(1200.0), h.min(600.0));
+            }
+        }
         match self.size {
             WidgetSize::Small => (264.0, 60.0),
             WidgetSize::Normal => (300.0, 96.0),
@@ -349,14 +357,17 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
     let _ = window.show();
 }
 
-/// Owner changed the widget size / corner (pushed by the server): remember it and, when the
-/// widget is showing right now, move it immediately.
+/// Owner changed the widget design / size / corner (pushed by the server): remember it and, when
+/// the widget is showing right now, resize and move it immediately. `width`/`height` are the
+/// design's footprint in logical pixels (omitted by older frontends → classic card sizes).
 #[tauri::command]
 async fn set_widget_layout(
     app: AppHandle,
     state: tauri::State<'_, WidgetState>,
     size: String,
     position: String,
+    width: Option<f64>,
+    height: Option<f64>,
 ) -> Result<(), String> {
     let size = match size.as_str() {
         "small" => WidgetSize::Small,
@@ -371,7 +382,15 @@ async fn set_widget_layout(
         "bottom-right" => WidgetPosition::BottomRight,
         other => return Err(format!("unknown widget position {other}")),
     };
-    let layout = WidgetLayout { size, position };
+    let footprint = match (width, height) {
+        (Some(w), Some(h)) => Some((w, h)),
+        _ => None,
+    };
+    let layout = WidgetLayout {
+        size,
+        position,
+        footprint,
+    };
     *state.layout.lock().map_err(|_| "widget state poisoned")? = layout;
     if state.overlay.load(Ordering::SeqCst) {
         if let Some(window) = app.get_webview_window("main") {
@@ -712,6 +731,7 @@ pub fn run() {
             layout: Mutex::new(WidgetLayout {
                 size: WidgetSize::Normal,
                 position: WidgetPosition::TopRight,
+                footprint: None,
             }),
             overlay: AtomicBool::new(false),
         })

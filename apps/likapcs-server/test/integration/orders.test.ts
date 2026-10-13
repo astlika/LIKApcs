@@ -432,6 +432,61 @@ describe('orders from the PC + customer pause / resume', () => {
     ]);
   });
 
+  it('the preparation check (0.13.0): scanned / manual lines are stored, the PC hears "on its way"', async () => {
+    const line = onBill.items[0]!;
+    expect(line.verifiedMilli).toBe(0);
+    expect(line.verification).toBeNull();
+    expect(onBill.preparedAt).toBeNull();
+    // Only accepted orders are prepared.
+    const mine = await call<{ items: StationOrder[] }>(deviceToken, 'GET', '/client/orders');
+    const rejected = mine.body.items.find((o) => o.status === 'rejected')!;
+    const no = await call<Err>(owner.token, 'POST', `/orders/${rejected.id}/prepare`, {
+      items: [{ itemId: rejected.items[0]!.id, verifiedMilli: 1000, verification: 'manual' }],
+    });
+    expect(no.status).toBe(409);
+    expect((no.body.error as { details?: { code?: string } } | undefined)?.details?.code).toBe(
+      'not_accepted',
+    );
+    // A line of another order is refused.
+    const wrong = await call<Err>(owner.token, 'POST', `/orders/${onBill.id}/prepare`, {
+      items: [{ itemId: rejected.items[0]!.id, verifiedMilli: 1000, verification: 'scan' }],
+    });
+    expect(wrong.status).toBe(404);
+    // Scanned twice → the exact quantity verified by scanner.
+    const prepared = await call<StationOrder>(owner.token, 'POST', `/orders/${onBill.id}/prepare`, {
+      items: [{ itemId: line.id, verifiedMilli: 2000, verification: 'scan' }],
+    });
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.preparedAt).not.toBeNull();
+    expect(prepared.body.items[0]).toMatchObject({ verifiedMilli: 2000, verification: 'scan' });
+    expect(prepared.body.status).toBe('accepted');
+    const push = await expectMessage(client, 'server.order', (m) => {
+      const o = m.order as { id: string; preparedAt: string | null };
+      return o.id === onBill.id && o.preparedAt !== null;
+    });
+    expect((push.order as { status: string }).status).toBe('accepted');
+    const audit = await call<{ items: { action: string; details: Record<string, unknown> }[] }>(
+      owner.token,
+      'GET',
+      '/audit-logs?pageSize=20&action=order.prepare',
+    );
+    expect(audit.body.items[0]?.details).toMatchObject({
+      lines: 1,
+      scanned: 1,
+      manual: 0,
+      short: 0,
+    });
+    // Exactly once: a second pass is refused and the stored record stays.
+    const again = await call<Err>(owner.token, 'POST', `/orders/${onBill.id}/prepare`, {
+      items: [{ itemId: line.id, verifiedMilli: 2000, verification: 'manual' }],
+    });
+    expect(again.status).toBe(409);
+    expect((again.body.error as { details?: { code?: string } } | undefined)?.details?.code).toBe(
+      'already_prepared',
+    );
+    onBill = prepared.body;
+  });
+
   it('ending a postpaid session settles the time and the open orders on one receipt', async () => {
     const s = await stationNow();
     const sessionId = s.activeSession!.id;

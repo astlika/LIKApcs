@@ -4,6 +4,7 @@
  * exercised against a real server without the native app.
  */
 import type { ClientMetrics, HardwareInfo, HealthResponse } from '@likapcs/shared';
+import { widgetDesign, widgetFootprint } from '@likapcs/shared';
 
 export interface DeviceIdentity {
   /** Stable per-machine identifier (Windows MachineGuid); null when it cannot be read. */
@@ -81,13 +82,28 @@ export async function discoverServers(timeoutMs = 2500): Promise<DiscoveredServe
   return invoke<DiscoveredServer[]>('discover_servers', { timeoutMs });
 }
 
-/** Countdown widget footprint + corner (owner setting). Browser dev mode mirrors it via CSS. */
-export async function setWidgetLayout(size: string, position: string): Promise<void> {
-  document.documentElement.dataset.widgetSize = size;
-  document.documentElement.dataset.widgetPos = position;
+/**
+ * Countdown widget design + footprint + corner (owner settings, 0.13.0 designs). The window size
+ * comes from the shared design table so the native shell needs no knowledge of the designs; the
+ * see-through designs make the window background transparent. Browser dev mode mirrors it via CSS.
+ */
+export async function setWidgetLayout(
+  size: string,
+  position: string,
+  style: string,
+): Promise<void> {
+  const design = widgetDesign(style);
+  const { width, height } = widgetFootprint(design.id, size);
+  const root = document.documentElement;
+  root.dataset.widgetSize = size;
+  root.dataset.widgetPos = position;
+  root.dataset.widgetDesign = design.id;
+  root.dataset.widgetTransparent = design.transparent ? '1' : '0';
+  root.style.setProperty('--ov-w', `${width}px`);
+  root.style.setProperty('--ov-h', `${height}px`);
   if (!isDesktopApp()) return;
   try {
-    await invoke<void>('set_widget_layout', { size, position });
+    await invoke<void>('set_widget_layout', { size, position, width, height });
   } catch {
     /* an older native shell without the command keeps the default corner */
   }

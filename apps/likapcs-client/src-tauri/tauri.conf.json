@@ -23,7 +23,8 @@
         "resizable": false,
         "closable": false,
         "minimizable": false,
-        "transparent": false,
+        "transparent": true,
+        "shadow": false,
         "visible": true,
         "focus": true,
         "dragDropEnabled": false

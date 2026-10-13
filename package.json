@@ -12,7 +12,7 @@
   "scripts": {
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
-    "lint": "eslint .",
+    "lint": "eslint . && node apps/likapcs-admin/scripts/sync-widget-css.mjs --check",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r run test",

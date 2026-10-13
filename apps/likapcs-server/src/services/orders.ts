@@ -24,6 +24,7 @@ import {
   type OrderCreate,
   type OrderListQuery,
   type OrderPay,
+  type OrderPrepare,
   type StationOrder,
   type OrderItemSummary,
   ORDER_MAX_QUANTITY,
@@ -62,6 +63,7 @@ interface OrderRow {
   decided_at: Date | null;
   decided_by_name: string | null;
   settled_at: Date | null;
+  prepared_at: Date | null;
   items: {
     id: number;
     product_id: string;
@@ -70,6 +72,8 @@ interface OrderRow {
     unit_price_cents: string | number;
     line_total_cents: string | number;
     image_path: string | null;
+    verified_milli: string | number;
+    verification: 'scan' | 'manual' | null;
   }[];
 }
 
@@ -77,9 +81,11 @@ const ORDER_SELECT = `
   SELECT o.id, o.number, o.station_id, s.code AS station_code, s.name AS station_name, o.session_id,
          o.customer_id, c.name AS customer_name, o.status, o.settlement, o.note, o.total_cents, o.reason,
          o.sale_id, sa.receipt_no, o.requested_at, o.decided_at, u.full_name AS decided_by_name, o.settled_at,
+         o.prepared_at,
          COALESCE((SELECT json_agg(json_build_object('id', i.id, 'product_id', i.product_id, 'name', i.name,
                             'quantity_milli', i.quantity_milli, 'unit_price_cents', i.unit_price_cents,
-                            'line_total_cents', i.line_total_cents, 'image_path', p.image_path) ORDER BY i.id)
+                            'line_total_cents', i.line_total_cents, 'image_path', p.image_path,
+                            'verified_milli', i.verified_milli, 'verification', i.verification) ORDER BY i.id)
                      FROM station_order_items i LEFT JOIN products p ON p.id = i.product_id
                     WHERE i.order_id = o.id), '[]'::json) AS items
     FROM station_orders o
@@ -97,6 +103,8 @@ function mapRow(row: OrderRow): StationOrder {
     unitPriceCents: Number(i.unit_price_cents),
     lineTotalCents: Number(i.line_total_cents),
     imageUrl: ProductImageStore.urlFor(i.image_path),
+    verifiedMilli: Number(i.verified_milli ?? 0),
+    verification: i.verification ?? null,
   }));
   return {
     id: row.id,
@@ -119,6 +127,7 @@ function mapRow(row: OrderRow): StationOrder {
     decidedAt: row.decided_at?.toISOString() ?? null,
     decidedByName: row.decided_by_name,
     settledAt: row.settled_at?.toISOString() ?? null,
+    preparedAt: row.prepared_at?.toISOString() ?? null,
   };
 }
 
@@ -138,6 +147,7 @@ export function toPush(order: StationOrder): ServerOrderUpdate['order'] {
     })),
     requestedAt: order.requestedAt,
     decidedAt: order.decidedAt,
+    preparedAt: order.preparedAt,
   };
 }
 
@@ -435,6 +445,58 @@ export class OrdersService implements SessionOrdersHook {
       if (row.status !== 'accepted') throw conflict(`Order is ${row.status}, not on the bill`);
       const customerId = input.customerId === undefined ? row.customer_id : input.customerId;
       await this.sellInTransaction(client, row, input.payments, customerId, actor, 'pay');
+    });
+    const order = await this.getById(id);
+    await this.announceOne(order);
+    return order;
+  }
+
+  /**
+   * The preparation check (0.13.0): after accepting, the desk scans every line (exact quantity,
+   * right product) or confirms it by hand. Stored per line for the audit trail; the PC is told the
+   * order is on its way. Repeating it overwrites the previous check (a second pass after a fix).
+   */
+  async prepare(id: string, input: OrderPrepare, actor: AuditActor): Promise<StationOrder> {
+    await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      if (!['accepted', 'paid', 'billed'].includes(row.status))
+        throw conflict(`Order is ${row.status} — only accepted orders are prepared`, {
+          code: 'not_accepted',
+        });
+      // Exactly once: the verification record and the "on its way" push are not repeatable.
+      if (row.prepared_at)
+        throw conflict('Order was already prepared', { code: 'already_prepared' });
+      const known = new Map(row.items.map((i) => [i.id, i]));
+      for (const line of input.items) {
+        if (!known.has(line.itemId)) throw notFound('Order line');
+      }
+      const seen = new Set<number>();
+      for (const line of input.items) {
+        if (seen.has(line.itemId)) throw badRequest('Duplicate order line', { code: 'DUPLICATE' });
+        seen.add(line.itemId);
+        await client.query(
+          `UPDATE station_order_items SET verified_milli = $2, verification = $3 WHERE id = $1 AND order_id = $4`,
+          [line.itemId, line.verifiedMilli, line.verification, id],
+        );
+      }
+      await client.query(
+        `UPDATE station_orders SET prepared_at = now(), prepared_by = $2 WHERE id = $1`,
+        [id, actor.userId ?? null],
+      );
+      const scanned = input.items.filter((i) => i.verification === 'scan').length;
+      await recordAudit(client, actor, {
+        action: 'order.prepare',
+        entityType: 'station_order',
+        entityId: id,
+        details: {
+          lines: input.items.length,
+          scanned,
+          manual: input.items.length - scanned,
+          short: input.items.filter(
+            (i) => i.verifiedMilli < Number(known.get(i.itemId)?.quantity_milli ?? 0),
+          ).length,
+        },
+      });
     });
     const order = await this.getById(id);
     await this.announceOne(order);

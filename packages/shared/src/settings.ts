@@ -13,7 +13,26 @@ export const CLIENT_WIDGET_POSITIONS = [
   'bottom-left',
   'bottom-right',
 ] as const;
-export const CLIENT_WIDGET_STYLES = ['minimal', 'detailed'] as const;
+/**
+ * Countdown widget designs (0.13.0: 13 looks). `detailed` (classic card) and `minimal` (one line)
+ * are the two original values and keep their ids so stored settings stay valid. Footprints and
+ * per-design traits live in `widget-designs.ts`.
+ */
+export const CLIENT_WIDGET_STYLES = [
+  'detailed',
+  'minimal',
+  'minutes',
+  'minutes-money',
+  'compact',
+  'pill',
+  'ring',
+  'dot',
+  'strip',
+  'digital',
+  'glass',
+  'neon',
+  'ticket',
+] as const;
 export const CLIENT_LOCK_TITLES = ['brand', 'station'] as const;
 /** `menu` (0.10.0) = menu board: many products per page as name · dotted line · price. */
 export const CLIENT_ADS_LAYOUTS = ['card', 'full', 'grid', 'menu'] as const;
@@ -108,6 +127,8 @@ export const SETTING_SCHEMAS = {
   'orders.allow_note': z.boolean(),
   /** What accepting an order does by default: ask each time, record a sale now, or put it on the bill. */
   'orders.settlement': z.enum(['ask', 'pay_now', 'on_bill']),
+  /** After accepting an order the desk scans / confirms every line (0.13.0). */
+  'orders.scan_check': z.boolean(),
   /** Customer wallet (0.11.0): money paid in advance, spent on time, drinks and debts. */
   'wallet.enabled': z.boolean(),
 
@@ -241,6 +262,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'orders.enabled': true,
   'orders.allow_note': true,
   'orders.settlement': 'ask',
+  'orders.scan_check': true,
   'wallet.enabled': true,
 
   'client.widget_size': 'normal',
@@ -310,6 +332,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   // Orders from the PCs: the bell pre-selects the settlement; every station operator needs it.
   'orders.enabled',
   'orders.settlement',
+  'orders.scan_check',
   // The balance tender shows up in every payment dialog.
   'wallet.enabled',
   // Client screen: the Admin previews them; the client receives them through its own channel.

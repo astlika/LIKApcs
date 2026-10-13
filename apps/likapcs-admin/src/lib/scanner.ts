@@ -26,7 +26,15 @@ export interface BarcodeScannerOptions {
   /** Max gap between two scanner keys; the average must stay below it (default 75 ms). */
   maxGapMs?: number;
   minLength?: number;
+  /**
+   * A dialog that wants every scan for itself (the order preparation check): while mounted, the
+   * page's own scanner hook stays quiet. The most recently mounted exclusive hook wins.
+   */
+  exclusive?: boolean;
 }
+
+/** Mounted exclusive scanner hooks, most recent last. */
+const claims: symbol[] = [];
 
 export function isEditableElement(el: Element | null): el is HTMLElement {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -64,15 +72,20 @@ export function useBarcodeScanner({
   enabled = true,
   maxGapMs = 75,
   minLength = 4,
+  exclusive = false,
 }: BarcodeScannerOptions): void {
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
 
   useEffect(() => {
     if (!enabled) return;
+    const me = Symbol('scanner');
+    if (exclusive) claims.push(me);
     const buffer = new ScanBuffer(maxGapMs, minLength);
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing || e.repeat) return;
+      // Another (exclusive) hook owns the scanner right now.
+      if (claims.length && claims[claims.length - 1] !== me) return;
       const target = e.target instanceof Element ? e.target : null;
       const editable = isEditableElement(target);
       if (e.key.length === 1) {
@@ -100,6 +113,10 @@ export function useBarcodeScanner({
       onScanRef.current(code);
     };
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [enabled, focusTarget, maxGapMs, minLength]);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      const at = claims.indexOf(me);
+      if (at >= 0) claims.splice(at, 1);
+    };
+  }, [enabled, focusTarget, maxGapMs, minLength, exclusive]);
 }

@@ -9,14 +9,22 @@
  *   reject             → the PC is told at once, with the reason.
  * Money never moves here except through those sale endpoints — the server is the authority.
  */
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Check, ReceiptText, X } from 'lucide-react';
-import type { CustomerSummary, ReceiptData, StationOrder } from '@likapcs/shared';
+import { Banknote, Check, CheckCheck, PackageCheck, ReceiptText, ScanLine, X } from 'lucide-react';
+import type {
+  CustomerSummary,
+  OrderPrepare,
+  ProductLookupResponse,
+  ReceiptData,
+  StationOrder,
+} from '@likapcs/shared';
 import { ApiError, api } from '../../lib/api';
 import { useFormat } from '../../lib/format';
+import { useBarcodeScanner } from '../../lib/scanner';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../state/toast';
+import { ProductThumb } from '../catalog/ProductImageField';
 import { SaleDoneDialog } from '../pos/SaleDoneDialog';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Alert, Badge, Button, Dialog, Field, Input, Kbd, Loading } from '../ui/primitives';
@@ -85,6 +93,7 @@ export function AcceptOrderDialog({
   mode = 'accept',
   defaultSettlement = 'ask',
   prepaidSession = false,
+  scanCheck = false,
   onClose,
   onDone,
 }: {
@@ -93,6 +102,8 @@ export function AcceptOrderDialog({
   /** `orders.settlement`: pre-selects (and skips the question) unless `ask`. */
   defaultSettlement?: 'ask' | 'pay_now' | 'on_bill';
   prepaidSession?: boolean;
+  /** `orders.scan_check` (0.13.0): after accepting, the preparation step (scan / confirm lines). */
+  scanCheck?: boolean;
   onClose: () => void;
   onDone?: (order: StationOrder) => void;
 }) {
@@ -121,6 +132,8 @@ export function AcceptOrderDialog({
       setCustomer(linked.data);
   }, [linked.data]);
   const [done, setDone] = useState<StationOrder | null>(null);
+  // Accepted and waiting for the preparation check (scan / confirm every line).
+  const [prepare, setPrepare] = useState<StationOrder | null>(null);
   const tender = useTender({ totalCents: order.totalCents, customer });
   const payNow = settlement === 'pay_now';
   const ready = !payNow || tender.covered;
@@ -146,12 +159,10 @@ export function AcceptOrderDialog({
             receipt: result.receiptNo ?? '',
           }),
         );
-        setDone(result);
-      } else {
-        toast.success(t('orders.accepted'));
-        onDone?.(result);
-        onClose();
-      }
+      } else toast.success(t('orders.accepted'));
+      // Accepting opens the preparation check first (unless switched off); the receipt follows.
+      if (mode === 'accept' && scanCheck && result.items.length) setPrepare(result);
+      else finish(result);
     },
     onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
@@ -164,6 +175,26 @@ export function AcceptOrderDialog({
   const submit = () => {
     if (ready && !act.isPending) act.mutate();
   };
+  const finish = (result: StationOrder) => {
+    if (result.saleId) setDone(result);
+    else {
+      onDone?.(result);
+      onClose();
+    }
+  };
+
+  if (prepare) {
+    return (
+      <PrepareOrderDialog
+        order={prepare}
+        onClose={(prepared) => {
+          const result = prepared ?? prepare;
+          setPrepare(null);
+          finish(result);
+        }}
+      />
+    );
+  }
 
   if (done) {
     return (
@@ -261,6 +292,207 @@ export function AcceptOrderDialog({
               <span>{t('orders.total')}</span>
               <strong className="num">{fmt.money(order.totalCents)}</strong>
             </div>
+          </div>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+// ─── Preparation check (0.13.0) ─────────────────────────────────────────────────
+interface PrepareLine {
+  scanned: number;
+  manual: boolean;
+}
+
+/**
+ * After an order is accepted the desk prepares it: every line is scanned with the barcode scanner
+ * (one scan per unit — the right product, the exact quantity) or confirmed by hand. The check is
+ * optional per line ("Confirm without scanning") and as a whole ("Skip"); when it is finished
+ * the server stores what was verified and the PC is told the order is on its way.
+ */
+export function PrepareOrderDialog({
+  order,
+  onClose,
+}: {
+  order: StationOrder;
+  /** `prepared` = the order as stored by the server; null = skipped. */
+  onClose: (prepared: StationOrder | null) => void;
+}) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const units = (milli: number) => Math.max(1, Math.round(milli / 1000));
+  const [lines, setLines] = useState<Record<number, PrepareLine>>(() =>
+    Object.fromEntries(order.items.map((i) => [i.id, { scanned: 0, manual: false }])),
+  );
+  const [lastHit, setLastHit] = useState<number | null>(null);
+  const lineOf = (id: number): PrepareLine => lines[id] ?? { scanned: 0, manual: false };
+  const complete = (i: StationOrder['items'][number]) => {
+    const l = lineOf(i.id);
+    return l.manual || l.scanned >= units(i.quantityMilli);
+  };
+  const allDone = order.items.every(complete);
+  const doneCount = order.items.filter(complete).length;
+
+  const lookup = useMutation({
+    mutationFn: (code: string) =>
+      api<ProductLookupResponse>('/products/lookup', { query: { code } }),
+    onSuccess: (r) => {
+      const perScan = units(r.quantityMilli);
+      // The first line of that product that still needs units; otherwise the first line of it.
+      const candidates = order.items.filter((i) => i.productId === r.product.id);
+      if (!candidates.length) {
+        toast.error(t('orders.prepare.notInOrder', { name: r.product.name }));
+        return;
+      }
+      const open = candidates.find((i) => !complete(i));
+      if (!open) {
+        toast.toast('warning', t('orders.prepare.alreadyComplete', { name: r.product.name }));
+        return;
+      }
+      setLines((prev) => {
+        const cur = prev[open.id] ?? { scanned: 0, manual: false };
+        return { ...prev, [open.id]: { ...cur, scanned: cur.scanned + perScan } };
+      });
+      setLastHit(open.id);
+    },
+    onError: (err, code) =>
+      toast.error(
+        err instanceof ApiError && err.status === 404
+          ? t('orders.prepare.unknownCode', { code })
+          : err instanceof ApiError
+            ? err.message
+            : t('common.errorGeneric'),
+      ),
+  });
+  const onScan = useCallback((code: string) => lookup.mutate(code), [lookup]);
+  useBarcodeScanner({ onScan, exclusive: true });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: OrderPrepare = {
+        items: order.items.map((i) => {
+          const l = lineOf(i.id);
+          const scanned = Math.min(l.scanned, units(i.quantityMilli));
+          return {
+            itemId: i.id,
+            verifiedMilli: l.manual ? i.quantityMilli : scanned * 1000,
+            verification: l.manual || scanned === 0 ? 'manual' : 'scan',
+          };
+        }),
+      };
+      return api<StationOrder>(`/orders/${order.id}/prepare`, { method: 'POST', body });
+    },
+    onSuccess: (result) => {
+      invalidateOrders(queryClient);
+      toast.success(t('orders.prepare.done', { number: order.number }));
+      onClose(result);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  const confirmLine = (id: number) =>
+    setLines((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { scanned: 0, manual: false }), manual: true },
+    }));
+  const resetLine = (id: number) =>
+    setLines((prev) => ({ ...prev, [id]: { scanned: 0, manual: false } }));
+
+  return (
+    <Dialog
+      open
+      onClose={() => onClose(null)}
+      size="md"
+      title={t('orders.prepare.title', { number: order.number, station: order.stationCode })}
+      description={t('orders.prepare.hint')}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onClose(null)} data-testid="order-prepare-skip">
+            {t('orders.prepare.skip')} <Kbd>Esc</Kbd>
+          </Button>
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            {t('orders.prepare.progress', { done: doneCount, total: order.items.length })}
+          </span>
+          <span style={{ flex: 1 }} />
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={!allDone}
+            loading={save.isPending}
+            onClick={() => save.mutate()}
+            data-testid="order-prepare-done"
+          >
+            <PackageCheck size={16} /> {t('orders.prepare.finish')}
+          </Button>
+        </>
+      }
+    >
+      <div className="prep" data-testid="order-prepare">
+        <div className="prep__scanhint">
+          <ScanLine size={16} />
+          <span>{t('orders.prepare.scanHint')}</span>
+        </div>
+        <ul className="prep__lines">
+          {order.items.map((i) => {
+            const need = units(i.quantityMilli);
+            const l = lineOf(i.id);
+            const got = Math.min(l.scanned, need);
+            const isDone = complete(i);
+            return (
+              <li
+                key={i.id}
+                className={`prep__line ${isDone ? 'is-done' : ''} ${lastHit === i.id ? 'is-hit' : ''}`}
+                data-testid="order-prepare-line"
+                data-done={isDone}
+                data-scanned={got}
+              >
+                <ProductThumb url={i.imageUrl} size={44} name={i.name} />
+                <div className="prep__main">
+                  <div className="prep__name">{i.name}</div>
+                  <div className="prep__count num" data-testid="order-prepare-count">
+                    {l.manual ? (
+                      <span className="prep__manual">
+                        <CheckCheck size={13} /> {t('orders.prepare.confirmedManually')}
+                      </span>
+                    ) : (
+                      <>
+                        <b>{got}</b> / {need} {t('orders.prepare.scanned')}
+                      </>
+                    )}
+                  </div>
+                  <div className="prep__bar" aria-hidden>
+                    <i style={{ width: `${l.manual ? 100 : Math.round((got / need) * 100)}%` }} />
+                  </div>
+                </div>
+                <div className="prep__actions">
+                  {isDone ? (
+                    <>
+                      <span className="prep__ok" data-testid="order-prepare-ok">
+                        <Check size={16} />
+                      </span>
+                      <Button size="sm" variant="ghost" onClick={() => resetLine(i.id)}>
+                        {t('orders.prepare.again')}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => confirmLine(i.id)}
+                      data-testid="order-prepare-manual"
+                    >
+                      <Check size={14} /> {t('orders.prepare.confirmManual')}
+                    </Button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {order.note && (
+          <div className="order-lines__note">
+            <span className="muted">{t('orders.note')}:</span> {order.note}
           </div>
         )}
       </div>

@@ -14,7 +14,9 @@ import {
   Banknote,
   Check,
   Monitor,
+  PackageCheck,
   ReceiptText,
+  ScanLine,
   Search,
   ShoppingBag,
   UtensilsCrossed,
@@ -32,6 +34,7 @@ import {
   AcceptOrderDialog,
   OrderReceiptDialog,
   OrderStatusBadge,
+  PrepareOrderDialog,
   RejectOrderDialog,
   orderItemsText,
 } from '../components/orders/orders';
@@ -102,12 +105,17 @@ export function OrdersPage() {
         }))}
       />
       {tab === 'open' && (
-        <OrdersList open defaultSettlement={publicSettings.data?.['orders.settlement'] ?? 'ask'} />
+        <OrdersList
+          open
+          defaultSettlement={publicSettings.data?.['orders.settlement'] ?? 'ask'}
+          scanCheck={publicSettings.data?.['orders.scan_check'] ?? true}
+        />
       )}
       {tab === 'history' && (
         <OrdersList
           open={false}
           defaultSettlement={publicSettings.data?.['orders.settlement'] ?? 'ask'}
+          scanCheck={publicSettings.data?.['orders.scan_check'] ?? true}
         />
       )}
       {tab === 'menu' && canMenu && <MenuEditor />}
@@ -119,9 +127,11 @@ export function OrdersPage() {
 function OrdersList({
   open,
   defaultSettlement,
+  scanCheck,
 }: {
   open: boolean;
   defaultSettlement: 'ask' | 'pay_now' | 'on_bill';
+  scanCheck: boolean;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
@@ -139,7 +149,7 @@ function OrdersList({
   });
   const [action, setAction] = useState<{
     order: StationOrder;
-    kind: 'accept' | 'pay' | 'reject' | 'void' | 'receipt';
+    kind: 'accept' | 'pay' | 'reject' | 'void' | 'receipt' | 'prepare';
   } | null>(null);
   const items = query.data?.items ?? [];
 
@@ -184,6 +194,11 @@ function OrdersList({
                     <Monitor size={11} /> {o.stationCode}
                   </Badge>
                   <OrderStatusBadge order={o} />
+                  {o.preparedAt && (
+                    <Badge tone="success" dot>
+                      <PackageCheck size={11} /> {t('orders.prepare.prepared')}
+                    </Badge>
+                  )}
                   <span className="muted">{fmt.dateTime(o.requestedAt)}</span>
                   {o.customerName && <span className="muted">· {o.customerName}</span>}
                   <span style={{ flex: 1 }} />
@@ -229,6 +244,18 @@ function OrdersList({
                       </Button>
                     </>
                   )}
+                  {(o.status === 'accepted' || o.status === 'paid') &&
+                    !o.preparedAt &&
+                    canControl && (
+                      <Button
+                        size="sm"
+                        variant={o.status === 'paid' ? 'primary' : 'default'}
+                        onClick={() => setAction({ order: o, kind: 'prepare' })}
+                        data-testid="orders-prepare"
+                      >
+                        <ScanLine size={14} /> {t('orders.prepare.button')}
+                      </Button>
+                    )}
                   {o.status === 'accepted' && (
                     <>
                       {canSell && (
@@ -280,8 +307,12 @@ function OrdersList({
         <AcceptOrderDialog
           order={action.order}
           defaultSettlement={defaultSettlement}
+          scanCheck={scanCheck}
           onClose={() => setAction(null)}
         />
+      )}
+      {action?.kind === 'prepare' && (
+        <PrepareOrderDialog order={action.order} onClose={() => setAction(null)} />
       )}
       {action?.kind === 'pay' && (
         <AcceptOrderDialog order={action.order} mode="pay" onClose={() => setAction(null)} />

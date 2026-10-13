@@ -299,6 +299,22 @@ export const sq: Dictionary = {
     noFreeStations:
       'Të gjitha stacionet kanë tashmë një pajisje. Krijoni një stacion të ri ose revokoni një pajisje.',
     connectionLog: 'Regjistri i lidhjeve',
+    showMore: 'Shiko më shumë',
+    deviceDetails: 'Detaje',
+    deviceLess: 'Fshih detajet',
+    logDetail: {
+      client: 'klienti {version}',
+      closeNormal: 'PC-ja e mbylli lidhjen',
+      closeLost: 'lidhja u humb',
+      closeShutdown: 'serveri u ndal',
+      closeUnauthorized: 'token-i u refuzua',
+      closeProtocol: 'gabim protokolli',
+      closeIncompatible: 'version i papajtueshëm i klientit',
+      closeReplaced: 'u zëvendësua nga një lidhje e re',
+      closeRevoked: 'pajisja u revokua',
+      machineMismatch: 'Machine ID nuk përputhet',
+      timeout: 'nuk erdhi heartbeat në kohë',
+    },
     noConnectionLog: 'Ende nuk ka lidhje të regjistruara.',
     sessionControls: 'Seanca',
     commandsHint: 'Komandat konfirmohen nga PC-ja e klientit brenda sekondash.',
@@ -999,6 +1015,9 @@ export const sq: Dictionary = {
       settlementHint:
         'Pyet: zgjidh çdo herë. Paguaj tani: shitje POS menjëherë. Në llogari: paguhet kur mbaron sesioni.',
       settlements: { ask: 'Pyet', pay_now: 'Paguaj tani', on_bill: 'Në llogari' },
+      scanCheck: 'Kontroll me skaner pas pranimit',
+      scanCheckHint:
+        'Pas Prano-s hapet hapi i përgatitjes: çdo artikull skanohet me skanerin e barkodit (sasia e saktë, produkti i duhur). Çdo rresht mund të konfirmohet edhe me dorë; PC-ja njoftohet kur porosia po vjen.',
     },
     requests: {
       title: 'Kërkesat e klientëve',
@@ -1014,12 +1033,68 @@ export const sq: Dictionary = {
     client: {
       widgetTitle: 'Widget-i i numërimit',
       widgetHint: 'Dritarja e vogël gjithmonë sipër që klienti e sheh gjatë seancës.',
-      widgetStyle: 'Stili',
+      widgetStyle: 'Dizajni',
+      widgetStyleHint:
+        'Trembëdhjetë pamje, nga karta e plotë deri te një pikë e vetme. Butonat pauzë / porosi / "+ kohë" qëndrojnë të fshehur në çdo dizajn derisa miu kalon mbi widget, pastaj shfaqen me animacion dhe zhduken sërish 1,5 s pasi miu largohet.',
+      widgetTransparent: 'I tejdukshëm',
       widgetSize: 'Madhësia',
       widgetPosition: 'Këndi i ekranit',
       showPayment: 'Shfaq shumën',
       showPaymentHint: 'Parapagim: sa u pagua. Kohë e hapur: shuma që po rritet për pagesë.',
-      style: { minimal: 'Minimal (një rresht)', detailed: 'I detajuar' },
+      design: {
+        detailed: {
+          name: 'Karta klasike',
+          desc: 'Kodi i PC-së, statusi, HH:MM:SS i madh, shuma dhe një shirit progresi. Mesazhet e stafit shfaqen brenda saj.',
+        },
+        minimal: {
+          name: 'Një rresht',
+          desc: '"PC 01 · 23 min · 1.50 €" në një rresht të qetë me një vijë shumë të hollë progresi.',
+        },
+        minutes: {
+          name: 'Vetëm minutat',
+          desc: 'Vetëm minutat që mbeten ("23 min") — asgjë tjetër. Pamja më e vogël jo e tejdukshme.',
+        },
+        'minutes-money': {
+          name: 'Minuta + shuma',
+          desc: 'Minutat që mbeten pranë shumës së paguar / në rritje, asgjë më shumë.',
+        },
+        compact: {
+          name: 'Karta kompakte',
+          desc: 'Një kartë më e vogël: kodi i PC-së dhe statusi sipër, HH:MM:SS dhe shuma poshtë.',
+        },
+        pill: {
+          name: 'Kapsulë',
+          desc: 'Një kapsulë që noton mbi desktop: drita e statusit, minutat dhe shuma.',
+        },
+        ring: {
+          name: 'Unazë',
+          desc: 'Një unazë e rrumbullakët progresi që zbrazet me kohën; minutat qëndrojnë në mes.',
+        },
+        dot: {
+          name: 'Pikë',
+          desc: 'Një pikë e vetme me ngjyrë me minutat brenda — jeshile, portokalli në 5 min, e kuqe në 1 min.',
+        },
+        strip: {
+          name: 'Shirit',
+          desc: 'Një shirit i hollë përgjatë skajit që shkurtohet me kohën; minutat dhe shuma në fund të tij.',
+        },
+        digital: {
+          name: 'Orë dixhitale',
+          desc: 'HH:MM:SS në stil LED mbi të zezë, si një orë tavoline. Kodi i PC-së dhe shuma me shkronja të vogla.',
+        },
+        glass: {
+          name: 'Xham',
+          desc: 'Karta klasike në xham të mjegullt — gjysmë e tejdukshme mbi sfondin e desktopit.',
+        },
+        neon: {
+          name: 'Neon',
+          desc: 'Kartë e errët me skaj cian që shkëlqen dhe shifra që ndriçojnë — bëhet portokalli, pastaj e kuqe.',
+        },
+        ticket: {
+          name: 'Kupon',
+          desc: 'Një faturë letre e çelët: kodi i PC-së, koha dhe shuma nën një vijë të ndërprerë prerjeje.',
+        },
+      },
       size: { small: 'I vogël', normal: 'Normal', large: 'I madh' },
       position: {
         'top-left': 'Lart majtas',
@@ -1097,6 +1172,7 @@ export const sq: Dictionary = {
       previewLocked: 'Ky PC është i kyçur · kërkoni stafit të nisë seancën tuaj',
       previewRemaining: 'Koha e mbetur',
       previewPaid: 'Paguar',
+      previewMin: 'min',
       previewNote:
         'Ndryshimet arrijnë në çdo PC të lidhur sapo i ruani — pa rinisje në PC-të e lojërave.',
     },
@@ -2117,6 +2193,24 @@ export const sq: Dictionary = {
     voidBody: 'Asgjë nuk shitet dhe asgjë nuk faturohet — porosia mbyllet si e anuluar.',
     voidReason: 'Arsyeja',
     voided: 'Porosia u anulua.',
+    prepare: {
+      title: 'Përgatit porosinë #{number} · {station}',
+      hint: 'Skano çdo artikull me skanerin e barkodit — produkti i duhur, sasia e saktë. Çdo rresht mund të konfirmohet edhe me dorë.',
+      scanHint: 'Skano artikujt tani — një skanim për njësi.',
+      scanned: 'të skanuara',
+      confirmManual: 'Konfirmo pa skanim',
+      confirmedManually: 'Konfirmuar me dorë',
+      again: 'Sërish',
+      skip: 'Kalo',
+      finish: 'U përgatit — po niset',
+      progress: '{done} nga {total} rreshta gati',
+      done: 'Porosia #{number} u përgatit — PC-ja u njoftua se po vjen.',
+      notInOrder: '{name} nuk është në këtë porosi.',
+      alreadyComplete: '{name}: të gjitha njësitë u skanuan tashmë.',
+      unknownCode: 'Asnjë produkt me barkod {code}.',
+      prepared: 'E përgatitur',
+      button: 'Përgatit',
+    },
     status: {
       pending: 'Në pritje',
       accepted: 'Në llogari',

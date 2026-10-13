@@ -74,23 +74,23 @@ gaming PC (see §4).
 
 ### Stations & devices (`stations.view` / `stations.manage` / `devices.manage`)
 
-| Method | Path                            | Notes                                                                                       |
-| ------ | ------------------------------- | ------------------------------------------------------------------------------------------- |
-| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                                  |
-| GET    | `/stations/:id`                 |                                                                                             |
-| GET    | `/stations/:id/connection-logs` | last 100 connect/disconnect events                                                          |
-| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                                  |
-| PATCH  | `/stations/:id`                 | partial                                                                                     |
-| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead         |
-| GET    | `/devices?status=pending`       | registrations                                                                               |
-| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                             |
-| POST   | `/devices/:id/reject`           |                                                                                             |
-| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                            |
-| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret           |
-| POST   | `/stations/:id/command`         | staff command to the connected client PC — see _Staff commands_ below                       |
-| POST   | `/devices/update-outdated`      | `devices.manage` — sends `update.apply` to every online client older than the server        |
-| POST   | `/stations/:id/wake`            | `stations.power` — Wake-on-LAN magic packet for an **offline** PC — see _Wake-on-LAN_ below |
-| POST   | `/stations/wake-all`            | `stations.power` — same for every enabled, offline PC with a MAC on record                  |
+| Method | Path                            | Notes                                                                                                                           |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                                                                      |
+| GET    | `/stations/:id`                 |                                                                                                                                 |
+| GET    | `/stations/:id/connection-logs` | connect/disconnect events, newest first; `?limit=1–500` (default 100; the station dialog asks for 8 and "shows more" on demand) |
+| POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                                                                      |
+| PATCH  | `/stations/:id`                 | partial                                                                                                                         |
+| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead                                             |
+| GET    | `/devices?status=pending`       | registrations                                                                                                                   |
+| POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                                                                 |
+| POST   | `/devices/:id/reject`           |                                                                                                                                 |
+| POST   | `/devices/:id/revoke`           | token invalidated, live socket closed with `4005 DEVICE_REVOKED`                                                                |
+| POST   | `/devices/:id/reissue-token`    | for a reinstalled client that lost its token; the client re-polls with its secret                                               |
+| POST   | `/stations/:id/command`         | staff command to the connected client PC — see _Staff commands_ below                                                           |
+| POST   | `/devices/update-outdated`      | `devices.manage` — sends `update.apply` to every online client older than the server                                            |
+| POST   | `/stations/:id/wake`            | `stations.power` — Wake-on-LAN magic packet for an **offline** PC — see _Wake-on-LAN_ below                                     |
+| POST   | `/stations/wake-all`            | `stations.power` — same for every enabled, offline PC with a MAC on record                                                      |
 
 #### Staff commands (`POST /stations/:id/command`)
 
@@ -467,6 +467,20 @@ and `PUT /catalog/menu {productIds[]}` (`products.manage`, replaces the whole me
 change is announced as the admin event `order.changed` (payload `StationOrder`) and to the PC as
 `server.order` (display facts only — nothing the PC must act on).
 
+**Preparation check (0.13.0, migration 0023).** After _Accept_ the desk prepares the order:
+`POST /orders/:id/prepare {items: [{itemId, verifiedMilli, verification: 'scan' | 'manual'}]}`
+(`stations.control`) stores, per line, how much was verified and how (`verifiedMilli`,
+`verification` on `StationOrder.items`; `preparedAt` / `preparedBy` on the order) and pushes
+`server.order` so the PC shows _"Prepared — coming to you now"_. Only `accepted` / `paid` /
+`billed` orders can be prepared (`409 not_accepted`), **exactly once** (`409 already_prepared`);
+lines of another order → `404`, a duplicate line → `400 DUPLICATE`. The Admin dialog scans each
+unit with the barcode scanner (`GET /products/lookup?code=` per scan — the right product, the
+exact quantity; a product outside the order or an unknown code is refused on the spot) and every
+line can be **confirmed by hand** instead; the whole check can be skipped (`Esc`) and done later
+from the Orders page. The setting `orders.scan_check` (default on) decides whether the dialog
+follows _Accept_ automatically; the audit entry `order.prepare` records `{lines, scanned, manual,
+short}`.
+
 ### Debts — "pay later" (`debts.give` to sell on credit; `customers.view` to read; `pos.sell` to collect; `customers.manage` to reschedule; `debts.write_off` to forgive)
 
 Permission-gated: a `credit` tender is accepted only from a user whose role has `debts.give`
@@ -628,7 +642,7 @@ Server → Client  { "type": "server.welcome", "protocolVersion": 1, "serverVers
                    "session": null | { "id", "status", "startedAt", "endsAt", "pausedAt", "remainingSeconds",
                                        "billing"?: { "billingMode", "paidCents", "terms", "billableSeconds", "asOf" } },
                    "maintenance": null | { "until": "…", "byName": "…" },
-                   "display": { "widgetSize", "widgetPosition", "widgetStyle", "widgetShowPayment", "lockTitle",
+                   "display": { "widgetSize", "widgetPosition", "widgetStyle" /* one of 13 designs, 0.13.0 */, "widgetShowPayment", "lockTitle",
                                 "currency", "staffLoginUsername", "customerLogin",
                                 "ads": { "enabled", "layout", "transition", "intervalSeconds", "showPrice",
                                          "grid", "fullscreen", "showClock", "showBrand", "showStation", "showStatus",
@@ -667,6 +681,14 @@ Older clients ignore the fields they do not know; defaults reproduce the 0.7.x l
 `display.wallet` (0.11.0) mirrors `wallet.enabled`: with it on, the customer dialog on the PC shows
 "Your balance" even when it is 0.00; the countdown widget shows a balance pill only while there is
 money on the account.
+`display.widgetStyle` (0.13.0) is one of thirteen widget designs — `detailed`, `minimal`,
+`minutes`, `minutes-money`, `compact`, `pill`, `ring`, `dot`, `strip`, `digital`, `glass`, `neon`,
+`ticket` (`packages/shared/src/widget-designs.ts` describes each one: transparent or not, how much
+money it shows, its footprint per size). The PC sizes its always-on-top window to the design's
+footprint, makes the window transparent for the see-through designs and shows the actions (more
+time / pause / order) only while the pointer is over the widget. Designs without text fall back to
+`detailed` while something must be read (a notice, a flash, offline). An unknown id (a newer Admin)
+falls back to `detailed`.
 
 Failure codes (`server.error` is sent first, then the socket closes):
 

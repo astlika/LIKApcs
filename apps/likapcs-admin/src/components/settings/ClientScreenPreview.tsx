@@ -5,10 +5,11 @@
  * size, full screen, every overlay toggle, caption, picture fit, backdrop, ticker) and the
  * countdown widget (size, corner, style, paid / owed line).
  */
-import type { CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ClientDisplayConfig } from '@likapcs/shared';
 import { adsGridSize, formatMoney } from '@likapcs/shared';
 import { useI18n } from '../../i18n';
+import { WidgetMock } from './WidgetMock';
 import { THEME_COLORS, THEME_GLOWS } from '../../lib/ad-themes';
 
 const SAMPLE = [
@@ -58,6 +59,19 @@ export function ClientScreenPreview({
     formatMoney(cents, { currency: display.currency, locale: language });
   const title = display.lockTitle === 'station' ? stationCode : businessName || 'LIKApcs';
   const first = SAMPLE[0]!;
+  // Width of the preview desktop (responsive) → scale of the widget mock in session mode.
+  const desktopRef = useRef<HTMLDivElement>(null);
+  const [previewWidth, setPreviewWidth] = useState(420);
+  useLayoutEffect(() => {
+    const el = desktopRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setPreviewWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode]);
 
   if (mode === 'locked') {
     const ads = display.ads;
@@ -177,53 +191,35 @@ export function ClientScreenPreview({
     );
   }
 
-  const w = display.widgetSize;
-  const cls = [
-    'csp__widget',
-    `csp__widget--${w}`,
-    `csp__widget--${display.widgetPosition}`,
-    display.widgetStyle === 'minimal' ? 'csp__widget--minimal' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  // The widget at the owner's chosen design / size / corner. The preview desktop stands for an
+  // 800 px wide screen, so the real footprint (shared widget-designs.ts) is scaled by width / 800
+  // — large enough to read, true to the proportions.
+  const corner = display.widgetPosition;
+  const align = corner.endsWith('left') ? 'left' : 'right';
+  const cornerStyle: CSSProperties = {
+    position: 'absolute',
+    ...(corner.startsWith('top') ? { top: '4%' } : { bottom: '6%' }),
+    ...(align === 'left' ? { left: '3%' } : { right: '3%' }),
+  };
   return (
-    <div className="csp csp--desktop" data-testid="csp-session">
+    <div
+      className="csp csp--desktop"
+      data-testid="csp-session"
+      data-design={display.widgetStyle}
+      data-pos={corner}
+      ref={desktopRef}
+    >
       <div className="csp__wallpaper" />
-      <div className={cls}>
-        {display.widgetStyle === 'minimal' ? (
-          <span className="csp__line">
-            <i>L</i>
-            <b>{stationCode}</b>
-            <span>·</span>
-            <strong>23 min</strong>
-            {display.widgetShowPayment && (
-              <>
-                <span>·</span>
-                <em>{money(150)}</em>
-              </>
-            )}
-          </span>
-        ) : (
-          <>
-            <span className="csp__wtop">
-              <i>L</i>
-              <b>{stationCode}</b>
-              <small>{t('settings.client.previewRemaining')}</small>
-            </span>
-            <span className="csp__wmain">
-              <strong>00:23:41</strong>
-              {display.widgetShowPayment && (
-                <em>
-                  <small>{t('settings.client.previewPaid')}</small>
-                  {money(150)}
-                </em>
-              )}
-            </span>
-            <span className="csp__wbar">
-              <i style={{ width: '40%' }} />
-            </span>
-          </>
-        )}
+      <div style={cornerStyle}>
+        <WidgetMock
+          design={display.widgetStyle}
+          size={display.widgetSize}
+          showPayment={display.widgetShowPayment}
+          code={stationCode}
+          money={money(150)}
+          scale={previewWidth / 800}
+          align={align}
+        />
       </div>
     </div>
   );

@@ -6,11 +6,13 @@ import {
   useState,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
+  ChevronDown,
   CircleHelp,
   Cpu,
   DownloadCloud,
@@ -1185,6 +1187,50 @@ function StationFormDialog({
 }
 
 // ─── Detail dialog ─────────────────────────────────────────────────────────────
+const LOG_PAGE = 5;
+const LOG_STEP = 20;
+
+/** The connection log line in words — the raw `details` JSON is for the server log, not people. */
+function describeLog(entry: ConnectionLogEntry, t: ReturnType<typeof useI18n>['t']): string {
+  const d = entry.details ?? {};
+  const str = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '');
+  if (entry.event === 'connected') {
+    return [
+      str('ip'),
+      str('appVersion') && t('stations.logDetail.client', { version: str('appVersion') }),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  if (entry.event === 'disconnected' || entry.event === 'replaced') {
+    const code = typeof d.code === 'number' ? d.code : null;
+    const reason = str('reason');
+    const known: Record<number, string> = {
+      1000: t('stations.logDetail.closeNormal'),
+      1001: t('stations.logDetail.closeNormal'),
+      1005: t('stations.logDetail.closeNormal'),
+      1006: t('stations.logDetail.closeLost'),
+      1012: t('stations.logDetail.closeShutdown'),
+      4001: t('stations.logDetail.closeUnauthorized'),
+      4002: t('stations.logDetail.closeProtocol'),
+      4003: t('stations.logDetail.closeIncompatible'),
+      4004: t('stations.logDetail.closeReplaced'),
+      4005: t('stations.logDetail.closeRevoked'),
+      4010: t('stations.logDetail.closeShutdown'),
+    };
+    if (code !== null && known[code]) return known[code];
+    return [reason, code !== null ? `(${code})` : ''].filter(Boolean).join(' ');
+  }
+  if (entry.event === 'rejected') {
+    const reason = str('reason');
+    return reason === 'machine id mismatch' ? t('stations.logDetail.machineMismatch') : reason;
+  }
+  if (entry.event === 'timeout') return t('stations.logDetail.timeout');
+  const message = str('message') || str('reason') || str('error');
+  if (message) return message;
+  return Object.keys(d).length ? JSON.stringify(d) : '';
+}
+
 function StationDetailDialog({
   station,
   onClose,
@@ -1208,10 +1254,20 @@ function StationDetailDialog({
   const status = station.isEnabled ? station.status : 'disabled';
   const device = station.device;
 
+  // Device details (machine id, hardware, Wake-on-LAN, token actions) stay folded: the dialog is
+  // for starting sessions first. The log shows the last few lines and loads more on demand.
+  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [logLimit, setLogLimit] = useState(LOG_PAGE);
   const logs = useQuery({
-    queryKey: ['stations', station.id, 'connection-logs'],
-    queryFn: () => api<ConnectionLogEntry[]>(`/stations/${station.id}/connection-logs`),
+    queryKey: ['stations', station.id, 'connection-logs', logLimit],
+    queryFn: () =>
+      api<ConnectionLogEntry[]>(`/stations/${station.id}/connection-logs`, {
+        query: { limit: logLimit + 1 },
+      }),
+    placeholderData: (prev) => prev,
   });
+  const logRows = (logs.data ?? []).slice(0, logLimit);
+  const logHasMore = (logs.data?.length ?? 0) > logLimit;
 
   const run = async (action: () => Promise<void>, message: string) => {
     setBusy(true);
@@ -1258,29 +1314,18 @@ function StationDetailDialog({
           </>
         }
       >
-        <div className="grid grid--2">
-          <Card title={t('common.status')}>
-            <div className="stack">
-              <div className="row row--between">
-                <span className="muted">{t('common.status')}</span>
-                <Badge tone={STATUS_TONE[status]}>{td(`stations.status.${status}`, status)}</Badge>
-              </div>
-              <div className="row row--between">
-                <span className="muted">{t('stations.enabled')}</span>
-                <span>{station.isEnabled ? t('common.yes') : t('common.no')}</span>
-              </div>
-              <div className="row row--between">
-                <span className="muted">{t('common.created')}</span>
-                <span>{fmt.dateTime(station.createdAt)}</span>
-              </div>
-              {station.notes && (
-                <div>
-                  <div className="muted">{t('common.notes')}</div>
-                  <div>{station.notes}</div>
-                </div>
-              )}
-            </div>
-          </Card>
+        <div className="st-status" data-testid="station-status">
+          <Badge tone={STATUS_TONE[status]}>{td(`stations.status.${status}`, status)}</Badge>
+          <span>
+            {t('stations.enabled')}: <b>{station.isEnabled ? t('common.yes') : t('common.no')}</b>
+          </span>
+          <span>
+            {t('common.created')}: <b>{fmt.dateTime(station.createdAt)}</b>
+          </span>
+          {station.notes && <span className="st-status__notes">{station.notes}</span>}
+        </div>
+
+        <div className="grid grid--2 st-grid">
           <Card title={t('sessions.title')}>
             <SessionPanel
               station={station}
@@ -1288,100 +1333,114 @@ function StationDetailDialog({
               approveRequestId={approveRequestId}
             />
           </Card>
-          <Card title={t('stations.device')}>
-            {device ? (
-              <div className="stack">
-                <div className="row row--between">
-                  <span className="muted">{t('stations.hostname')}</span>
-                  <strong>{device.hostname ?? '—'}</strong>
-                </div>
-                <div className="row row--between">
-                  <span className="muted">{t('common.status')}</span>
-                  <Badge tone={device.online ? 'success' : 'default'} dot={device.online}>
-                    {device.online ? t('stations.online') : t('stations.offline')}
-                  </Badge>
-                </div>
-                <div className="row row--between">
-                  <span className="muted">{t('stations.clientVersion')}</span>
-                  <span>{device.appVersion ?? '—'}</span>
-                </div>
-                <div className="row row--between">
-                  <span className="muted">{t('stations.ipAddress')}</span>
-                  <span className="mono">{device.lastIp ?? '—'}</span>
-                </div>
-                <div className="row row--between">
-                  <span className="muted">{t('stations.lastSeen')}</span>
-                  <span>
-                    {device.lastSeenAt ? fmt.dateTime(device.lastSeenAt) : t('common.never')}
-                  </span>
-                </div>
-                <div className="row row--between">
-                  <span className="muted">{t('stations.approved')}</span>
-                  <span>{fmt.dateTime(device.approvedAt)}</span>
-                </div>
-                <div>
-                  <div className="muted">{t('stations.machineId')}</div>
-                  <div className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>
-                    {device.machineId}
+          <div className="stack">
+            <Card
+              title={t('stations.device')}
+              testId="station-device"
+              actions={
+                device ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setDeviceOpen((v) => !v)}
+                    aria-expanded={deviceOpen}
+                    data-testid="station-device-toggle"
+                  >
+                    {deviceOpen ? t('stations.deviceLess') : t('stations.deviceDetails')}
+                    <ChevronDown
+                      size={14}
+                      style={{
+                        transform: deviceOpen ? 'rotate(180deg)' : undefined,
+                        transition: 'transform 0.15s',
+                      }}
+                    />
+                  </Button>
+                ) : null
+              }
+            >
+              {device ? (
+                <div className="st-device">
+                  <div className="st-device__row" data-testid="station-device-row">
+                    <span className="st-device__name">
+                      <Monitor size={14} /> {device.hostname ?? '—'}
+                    </span>
+                    <Badge tone={device.online ? 'success' : 'default'} dot={device.online}>
+                      {device.online ? t('stations.online') : t('stations.offline')}
+                    </Badge>
+                    {device.appVersion && (
+                      <span className="st-device__meta" title={t('stations.clientVersion')}>
+                        v{device.appVersion}
+                      </span>
+                    )}
+                    {device.lastIp && (
+                      <span className="st-device__meta mono" title={t('stations.ipAddress')}>
+                        {device.lastIp}
+                      </span>
+                    )}
+                    <span className="st-device__meta" title={t('stations.lastSeen')}>
+                      {t('stations.lastSeen')}:{' '}
+                      {device.lastSeenAt ? fmt.dateTime(device.lastSeenAt) : t('common.never')}
+                    </span>
                   </div>
-                </div>
-                <div>
-                  <div className="muted" style={{ marginBottom: 6 }}>
-                    {t('stations.hw.title')}
-                  </div>
-                  <HardwareDetails device={device} />
-                  {!device.hardware?.os && device.osInfo && (
-                    <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
-                      {device.osInfo}
+                  {device.status === 'approved' && (
+                    <DeviceCommands station={station} online={device.online} onDone={onChanged} />
+                  )}
+                  {deviceOpen && (
+                    <div className="st-device__more" data-testid="station-device-more">
+                      <div className="st-device__facts">
+                        <span className="muted">{t('stations.approved')}</span>
+                        <span>{fmt.dateTime(device.approvedAt)}</span>
+                        <span className="muted">{t('stations.machineId')}</span>
+                        <span className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all' }}>
+                          {device.machineId}
+                        </span>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ marginBottom: 6 }}>
+                          {t('stations.hw.title')}
+                        </div>
+                        <HardwareDetails device={device} />
+                        {!device.hardware?.os && device.osInfo && (
+                          <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+                            {device.osInfo}
+                          </div>
+                        )}
+                      </div>
+                      {device.status === 'approved' && (
+                        <WakePanel station={station} onChanged={onChanged} />
+                      )}
+                      {canDevices && (
+                        <div className="row row--wrap">
+                          <Button size="sm" onClick={() => setConfirm('reissue')}>
+                            <KeyRound size={14} /> {t('stations.reissueToken')}
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => setConfirm('revoke')}>
+                            <ShieldOff size={14} /> {t('stations.revokeDevice')}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-                {device.status === 'approved' && (
-                  <WakePanel station={station} onChanged={onChanged} />
-                )}
-                {device.status === 'approved' && (
-                  <DeviceCommands station={station} online={device.online} onDone={onChanged} />
-                )}
-                {canDevices && (
-                  <div className="row row--wrap">
-                    <Button size="sm" onClick={() => setConfirm('reissue')}>
-                      <KeyRound size={14} /> {t('stations.reissueToken')}
-                    </Button>
-                    <Button size="sm" variant="danger" onClick={() => setConfirm('revoke')}>
-                      <ShieldOff size={14} /> {t('stations.revokeDevice')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <EmptyState
-                icon={<Cpu size={22} />}
-                title={t('stations.noDevice')}
-                hint={t('stations.pendingHint')}
-              />
-            )}
-          </Card>
-        </div>
+              ) : (
+                <EmptyState
+                  icon={<Cpu size={22} />}
+                  title={t('stations.noDevice')}
+                  hint={t('stations.pendingHint')}
+                />
+              )}
+            </Card>
 
-        <Card title={t('stations.connectionLog')} flush className="mt">
-          {logs.isLoading && <Loading />}
-          {logs.data && logs.data.length === 0 && (
-            <div className="empty">{t('stations.noConnectionLog')}</div>
-          )}
-          {logs.data && logs.data.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t('common.time')}</th>
-                  <th>{t('common.status')}</th>
-                  <th>{t('common.details')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.data.slice(0, 25).map((entry) => (
-                  <tr key={entry.id}>
-                    <td className="num">{fmt.dateTime(entry.occurredAt)}</td>
-                    <td>
+            <Card title={t('stations.connectionLog')} flush testId="station-log">
+              {logs.isLoading && <Loading />}
+              {logs.data && logs.data.length === 0 && (
+                <div className="empty">{t('stations.noConnectionLog')}</div>
+              )}
+              {logRows.length > 0 && (
+                <ul className="st-log">
+                  {logRows.map((entry) => (
+                    <li key={entry.id} className="st-log__row" data-testid="station-log-row">
+                      <span className="st-log__time num">{fmt.dateTime(entry.occurredAt)}</span>
                       <Badge
                         tone={
                           entry.event === 'connected'
@@ -1393,16 +1452,27 @@ function StationDetailDialog({
                       >
                         {td(`stations.events.${entry.event}`, entry.event)}
                       </Badge>
-                    </td>
-                    <td className="mono faint" style={{ fontSize: 12 }}>
-                      {Object.keys(entry.details).length ? JSON.stringify(entry.details) : ''}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
+                      <span className="st-log__detail faint">{describeLog(entry, t)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {logHasMore && (
+                <div className="st-log__more">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={logs.isFetching}
+                    onClick={() => setLogLimit((n) => n + LOG_STEP)}
+                    data-testid="station-log-more"
+                  >
+                    {t('stations.showMore')}
+                  </Button>
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
       </Dialog>
 
       <StationFormDialog
@@ -1517,41 +1587,51 @@ function DeviceCommands({
 
   if (!canControl) return null;
   const disabled = !online || send.isPending;
+  // One compact row: icon buttons with the command name as tooltip (the dialog is for sessions
+  // first — the device block must stay small).
+  const cmd = (label: string, icon: ReactNode, onClick: () => void, testId?: string) => (
+    <Button
+      size="sm"
+      icon
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+    >
+      {icon}
+    </Button>
+  );
   return (
-    <div className="stack" style={{ gap: 8 }}>
-      <div className="muted" style={{ fontSize: 12.5 }}>
-        {online ? t('stations.commandsHint') : t('stations.commandsOffline')}
-      </div>
-      <div className="row row--wrap">
-        <Button size="sm" disabled={disabled} onClick={() => send.mutate({ command: 'lock' })}>
-          <Lock size={14} /> {t('stations.commands.lock')}
-        </Button>
-        <Button size="sm" disabled={disabled} onClick={() => send.mutate({ command: 'unlock' })}>
-          <LockOpen size={14} /> {t('stations.commands.unlock')}
-        </Button>
-        <Button size="sm" disabled={disabled} onClick={() => setMessageOpen(true)}>
-          <MessageSquare size={14} /> {t(COMMAND_LABEL['message.show'])}
-        </Button>
-        {canPower && (
-          <>
-            <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.restart')}>
-              <RotateCcw size={14} /> {t(COMMAND_LABEL['power.restart'])}
-            </Button>
-            <Button size="sm" disabled={disabled} onClick={() => setConfirmPower('power.shutdown')}>
-              <Power size={14} /> {t(COMMAND_LABEL['power.shutdown'])}
-            </Button>
-          </>
+    <div className="st-commands" title={online ? undefined : t('stations.commandsOffline')}>
+      {cmd(
+        t('stations.commands.lock'),
+        <Lock size={15} />,
+        () => send.mutate({ command: 'lock' }),
+        'device-cmd-lock',
+      )}
+      {cmd(
+        t('stations.commands.unlock'),
+        <LockOpen size={15} />,
+        () => send.mutate({ command: 'unlock' }),
+        'device-cmd-unlock',
+      )}
+      {cmd(t(COMMAND_LABEL['message.show']), <MessageSquare size={15} />, () =>
+        setMessageOpen(true),
+      )}
+      {canPower &&
+        cmd(t(COMMAND_LABEL['power.restart']), <RotateCcw size={15} />, () =>
+          setConfirmPower('power.restart'),
         )}
-        {canDevices && (
-          <Button
-            size="sm"
-            disabled={disabled}
-            onClick={() => send.mutate({ command: 'update.apply' })}
-          >
-            <DownloadCloud size={14} /> {t(COMMAND_LABEL['update.apply'])}
-          </Button>
+      {canPower &&
+        cmd(t(COMMAND_LABEL['power.shutdown']), <Power size={15} />, () =>
+          setConfirmPower('power.shutdown'),
         )}
-      </div>
+      {canDevices &&
+        cmd(t(COMMAND_LABEL['update.apply']), <DownloadCloud size={15} />, () =>
+          send.mutate({ command: 'update.apply' }),
+        )}
+      {!online && <span className="st-commands__offline">{t('stations.commandsOffline')}</span>}
       <Dialog
         open={messageOpen}
         onClose={() => setMessageOpen(false)}

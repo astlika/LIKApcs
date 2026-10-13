@@ -40,8 +40,12 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     { preHandler: app.requirePermission(PERMISSIONS.STATIONS_VIEW) },
     async (request) => {
       const { id } = idParams.parse(request.params);
+      // `limit` (default 100, max 500): the Admin shows the last few and asks for more on demand.
+      const { limit } = z
+        .object({ limit: z.coerce.number().int().min(1).max(500).default(100) })
+        .parse(request.query ?? {});
       await services.stations.getById(id);
-      return services.devices.connectionLogs(id, 100);
+      return services.devices.connectionLogs(id, limit);
     },
   );
 

@@ -104,28 +104,38 @@ export const Textarea = forwardRef<
   return <textarea ref={ref} className={`textarea ${className}`} {...rest} />;
 });
 
+/**
+ * On/off switch. A real `<button role="switch">` — deliberately **no hidden checkbox**: a focused
+ * off-screen input is what browsers scroll into view, which once made the Settings page jump to
+ * the top on every click (0.11.0). A button has nothing to scroll to; Space/Enter toggle it.
+ */
 export function Switch({
   checked,
   onChange,
   label,
   disabled,
+  testId,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: ReactNode;
   disabled?: boolean;
+  testId?: string;
 }) {
   return (
-    <label className="switch" data-checked={checked} aria-disabled={disabled}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className="switch"
+      data-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      data-testid={testId}
+    >
       <span className="switch__track" aria-hidden />
-      {label && <span>{label}</span>}
-    </label>
+      {label && <span className="switch__label">{label}</span>}
+    </button>
   );
 }
 

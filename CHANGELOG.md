@@ -4,6 +4,57 @@ All notable changes to LIKApcs are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
 
+## [0.13.0] - 2026-10-13
+
+Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0023 — `station_orders.prepared_at / prepared_by`,
+`station_order_items.verified_milli / verification`, setting `orders.scan_check`), then the gaming
+PCs. Older 0.12.x clients keep working: they ignore `preparedAt` and show the designs they do not
+know as _Detailed_. Covered by tests (shared 61, server 199, admin 35, client 35) and the browser
+smoke `prepare` (38 checks: scan per unit, wrong product / unknown code refused, manual confirm,
+skip + prepare later, exactly once, setting off, PC flash, 1:1 tiles, live design switch, hover
+tray).
+
+### Added
+
+- **Thirteen widget designs — "Dizajni".** Settings › Client screen shows a gallery of all designs
+  with a description, drawn exactly as the PC draws them (one shared stylesheet, mirrored by
+  `apps/likapcs-admin/scripts/sync-widget-css.mjs`, checked by `pnpm lint`): _Detailed_ (as
+  before), _Minimal_, **Minutes only**, **Minutes + money**, _Compact_, _Pill_, _Ring_, _Dot_,
+  _Strip_, _Digital_, _Glass_, _Neon_ and _Ticket_. Seven of them are see-through (the widget
+  window itself is transparent — only the pill / ring / dot floats over the game), the small ones
+  show just the whole minutes left ("23 min", seconds under a minute). The PC sizes its window to
+  the design's footprint (×3 sizes, window `transparent`, no system border / shadow) and the
+  desktop preview follows the picked design and corner.
+  Shared: `widget-designs.ts` (traits + footprints) with tests.
+- **Hover-revealed actions on the widget.** _More time_, _Pause_ and _Order_ are no longer pills
+  permanently on the widget: they slide out on an opaque tray when the pointer enters the widget
+  and hide 1.5 s after it leaves — nothing can be pressed by accident (the hidden tray does not
+  take clicks), the widget stays as small as its design. Designs without text switch to _Detailed_
+  for as long as something must be read (a notice, an order flash, offline).
+- **Order panel with small 1:1 photos.** The PC's order menu is a grid of small square product
+  tiles (photo, name, price, quantity stepper on the tile) that scrolls on its own; pictures load
+  lazily.
+- **Preparation check after Accept (barcode).** With `Settings › Stations › Scan check after accepting` on
+  (default), accepting an order opens _Prepare order #n · PC_: every line is scanned with the
+  barcode scanner **one scan per unit** — the right product and the exact quantity are enforced
+  (a product outside the order, an unknown code or an extra scan of a complete line is refused
+  on the spot) — and every line can be **confirmed without scanning** instead; the whole check
+  can be skipped (`Esc`) and done later with **Prepare** on the Orders page. When it is finished
+  the server stores what was verified and how (`POST /orders/:id/prepare`, exactly once, audit
+  `order.prepare`), the Orders page shows _Prepared_ and the PC flashes _"Prepared — coming to
+  you now"_.
+- **Stations › PC detail, compact.** The client-device section is a small strip (status, version,
+  IP, last seen) without empty space; the connection log shows the last 8 events with **Show
+  more** (`GET /stations/:id/connection-logs?limit=`).
+
+### Fixed
+
+- **Settings switches moved the page (really fixed).** The 0.12.0 fix did not cover every path: a
+  switch was still a hidden checkbox and the browser scrolled it into view when it took the focus,
+  so the preview on _Client screen_ jumped up. `Switch` is now a real `<button role="switch">` —
+  nothing hidden to scroll to; verified in the browser (13 switches, 0 jumps). Please confirm in
+  the app on Windows.
+
 ## [0.12.0] - 2026-10-12
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0022 — table `ad_albums`,

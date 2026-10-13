@@ -15,6 +15,7 @@
  *   GET    /orders/:id
  *   POST   /orders/:id/accept           {settlement, payments?, customerId?}   stations.control (+ pos.sell for pay now)
  *   POST   /orders/:id/pay              {payments, customerId?}                pos.sell
+ *   POST   /orders/:id/prepare          {items[{itemId, verifiedMilli, verification}]} stations.control (0.13.0)
  *   POST   /orders/:id/reject           {reason?}                              stations.control
  *   POST   /orders/:id/void             {reason}                               stations.control
  *   GET    /catalog/menu                products on the PC menu                products.view
@@ -29,6 +30,7 @@ import {
   orderCreateSchema,
   orderListQuerySchema,
   orderPaySchema,
+  orderPrepareSchema,
   orderRejectSchema,
   orderVoidSchema,
   productListQuerySchema,
@@ -154,6 +156,13 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       idParams.parse(request.params).id,
       orderPaySchema.parse(request.body),
       saleActorOf(request),
+    ),
+  );
+  app.post('/orders/:id/prepare', control, async (request) =>
+    services.orders.prepare(
+      idParams.parse(request.params).id,
+      orderPrepareSchema.parse(request.body),
+      actorOf(request),
     ),
   );
   app.post('/orders/:id/reject', control, async (request) =>

@@ -1587,6 +1587,10 @@ export interface OrderItemSummary {
   unitPriceCents: number;
   lineTotalCents: number;
   imageUrl: string | null;
+  /** Quantity verified when the order was prepared (0.13.0); 0 until then. */
+  verifiedMilli: number;
+  /** `scan` = checked with the barcode scanner, `manual` = confirmed by hand, null = not yet. */
+  verification: 'scan' | 'manual' | null;
 }
 
 export interface StationOrder {
@@ -1611,6 +1615,8 @@ export interface StationOrder {
   decidedAt: string | null;
   decidedByName: string | null;
   settledAt: string | null;
+  /** When the desk finished preparing it (scan / manual check, 0.13.0); null = not yet. */
+  preparedAt: string | null;
 }
 
 /** `GET /client/menu` (device token): what the customer at this PC can order right now. */
@@ -1666,6 +1672,24 @@ export const orderPaySchema = z.object({
   customerId: z.string().uuid().nullable().optional(),
 });
 export type OrderPay = z.infer<typeof orderPaySchema>;
+
+/**
+ * `POST /orders/:id/prepare` (0.13.0): the preparation check of an accepted order — per line the
+ * verified quantity and how it was verified. Lines left out are stored as unverified.
+ */
+export const orderPrepareSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        itemId: z.number().int().positive(),
+        verifiedMilli: z.number().int().min(0),
+        verification: z.enum(['scan', 'manual']),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+export type OrderPrepare = z.infer<typeof orderPrepareSchema>;
 
 export const orderRejectSchema = z.object({ reason: z.string().trim().max(120).optional() });
 export const orderVoidSchema = z.object({ reason: z.string().trim().min(2).max(200) });

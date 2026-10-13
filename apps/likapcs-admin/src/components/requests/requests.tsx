@@ -480,6 +480,7 @@ export function RequestsBell() {
         <AcceptOrderDialog
           order={orderAction.order}
           defaultSettlement={publicSettings.data?.['orders.settlement'] ?? 'ask'}
+          scanCheck={publicSettings.data?.['orders.scan_check'] ?? true}
           onClose={() => setOrderAction(null)}
         />
       )}
