@@ -15,7 +15,7 @@ import {
 } from '@likapcs/shared';
 import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { conflict, notFound } from '../errors.js';
+import { AppError, conflict, notFound } from '../errors.js';
 import type { RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
 
@@ -54,6 +54,9 @@ interface StationRow {
   maintenance_until: Date | null;
   maintenance_by: string | null;
   maintenance_by_name: string | null;
+  archived_at: Date | null;
+  archived_reason: string | null;
+  archived_by_name: string | null;
   request_id: string | null;
   request_kind: 'start' | 'extend' | null;
   request_customer_id: string | null;
@@ -83,6 +86,7 @@ const STATION_SELECT = `
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
          g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour,
          s.maintenance_until, s.maintenance_by, s.maintenance_by_name,
+         s.archived_at, s.archived_reason, ua.full_name AS archived_by_name,
          r.id AS request_id, r.kind AS request_kind, r.customer_id AS request_customer_id,
          rc.name AS request_customer_name, COALESCE(r.minutes, rp.duration_minutes) AS request_minutes,
          r.minutes AS request_quick_minutes, r.package_id AS request_package_id, rp.name AS request_package_name,
@@ -102,7 +106,8 @@ const STATION_SELECT = `
     LEFT JOIN customers c ON c.id = g.customer_id
     LEFT JOIN session_requests r ON r.station_id = s.id AND r.status = 'pending'
     LEFT JOIN customers rc ON rc.id = r.customer_id
-    LEFT JOIN gaming_packages rp ON rp.id = r.package_id`;
+    LEFT JOIN gaming_packages rp ON rp.id = r.package_id
+    LEFT JOIN users ua ON ua.id = s.archived_by`;
 
 /** Live session summary for the station grid (server clock; the PC only mirrors it). */
 function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
@@ -157,6 +162,16 @@ export function stationCodeFor(number: number): string {
 }
 
 export class StationsService {
+  /**
+   * Archive/delete take the PC off the station: the device must be revoked so it cannot keep a
+   * socket (and so it can be paired again as new). DevicesService owns that logic; it is injected
+   * here to keep the two services free of a circular import.
+   */
+  private revokeDevice: ((deviceId: string, actor: AuditActor) => Promise<unknown>) | null = null;
+  useRevokeDevice(hook: (deviceId: string, actor: AuditActor) => Promise<unknown>): void {
+    this.revokeDevice = hook;
+  }
+
   constructor(
     private readonly pool: DbPool,
     private readonly hub: RealtimeHub,
@@ -236,6 +251,13 @@ export class StationsService {
         count: Number(row.awaiting_count ?? 0),
         amountCents: Number(row.awaiting_cents ?? 0),
       },
+      archived: row.archived_at
+        ? {
+            at: row.archived_at.toISOString(),
+            reason: row.archived_reason,
+            byName: row.archived_by_name,
+          }
+        : null,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };
@@ -293,8 +315,12 @@ export class StationsService {
     return r.rows.map((x) => x.id);
   }
 
-  async list(db: Queryable = this.pool): Promise<StationSummary[]> {
-    const result = await db.query<StationRow>(`${STATION_SELECT} ORDER BY s.sort_order, s.number`);
+  /** Archived stations stay in the database (money history) but leave the floor by default. */
+  async list(db: Queryable = this.pool, includeArchived = false): Promise<StationSummary[]> {
+    const where = includeArchived ? '' : ' WHERE s.archived_at IS NULL';
+    const result = await db.query<StationRow>(
+      `${STATION_SELECT}${where} ORDER BY s.sort_order, s.number`,
+    );
     return result.rows.map((r) => this.mapRow(r));
   }
 
@@ -385,27 +411,88 @@ export class StationsService {
   }
 
   /** Deleting is only allowed for stations without history; otherwise disable them instead. */
-  async remove(id: string, actor: AuditActor): Promise<void> {
+  /**
+   * Archive PC (0.17.0): the station leaves the floor and its device is revoked, so the same PC
+   * can be paired again — as new, or under another name. Nothing is erased: the sessions, sales
+   * and connection log stay, and the reason is kept on the row and in the audit log.
+   */
+  async archive(id: string, reason: string, actor: AuditActor): Promise<StationSummary> {
+    const station = await withTransaction(this.pool, async (client) => {
+      const current = await this.getById(id, client);
+      if (current.activeSession)
+        throw conflict('Stop the running session on this PC before archiving it.');
+      if (current.archived) throw conflict('This station is already archived.');
+      await client.query(
+        `UPDATE stations SET archived_at = now(), archived_by = $2, archived_reason = $3
+          WHERE id = $1`,
+        [id, actor.userId ?? null, reason],
+      );
+      await recordAudit(client, actor, {
+        action: 'station.archive',
+        entityType: 'station',
+        entityId: id,
+        details: { number: current.number, name: current.name, reason },
+        severity: 'warning',
+      });
+      return this.getById(id, client);
+    });
+    await this.revokeArchivedDevice(station, actor);
+    this.hub.broadcastToAdmins('station.changed', station);
+    return station;
+  }
+
+  async unarchive(id: string, actor: AuditActor): Promise<StationSummary> {
+    const station = await withTransaction(this.pool, async (client) => {
+      const current = await this.getById(id, client);
+      if (!current.archived) throw conflict('This station is not archived.');
+      await client.query(
+        `UPDATE stations SET archived_at = NULL, archived_by = NULL, archived_reason = NULL
+          WHERE id = $1`,
+        [id],
+      );
+      await recordAudit(client, actor, {
+        action: 'station.unarchive',
+        entityType: 'station',
+        entityId: id,
+        details: { number: current.number, name: current.name },
+      });
+      return this.getById(id, client);
+    });
+    this.hub.broadcastToAdmins('station.changed', station);
+    return station;
+  }
+
+  /** A PC of an archived station must not keep its socket — and must be pairable again. */
+  private async revokeArchivedDevice(station: StationSummary, actor: AuditActor): Promise<void> {
+    if (station.device?.status !== 'approved' || !this.revokeDevice) return;
+    try {
+      await this.revokeDevice(station.device.id, actor);
+    } catch (err) {
+      // Already revoked / gone in the meantime is fine; anything else must reach the caller.
+      if (!(err instanceof AppError)) throw err;
+    }
+  }
+
+  async remove(id: string, reason: string, actor: AuditActor): Promise<void> {
+    const station = await this.getById(id);
+    if (station.device?.status === 'approved') await this.revokeArchivedDevice(station, actor);
     await withTransaction(this.pool, async (client) => {
-      const station = await this.getById(id, client);
       const sessions = await client.query(
         'SELECT 1 FROM gaming_sessions WHERE station_id = $1 LIMIT 1',
         [id],
       );
       if (sessions.rowCount) {
         throw conflict(
-          'This station has session history and cannot be deleted. Disable it instead.',
+          'This station has session history and cannot be deleted. Archive it instead — ' +
+            'the PC can then be paired again and the history stays.',
         );
-      }
-      if (station.device) {
-        throw conflict('Revoke the assigned device before deleting the station.');
       }
       await client.query('DELETE FROM stations WHERE id = $1', [id]);
       await recordAudit(client, actor, {
         action: 'station.delete',
         entityType: 'station',
         entityId: id,
-        details: { number: station.number, name: station.name },
+        details: { number: station.number, name: station.name, reason },
         severity: 'warning',
       });
       this.hub.broadcastToAdmins('station.changed', { ...station, deleted: true });

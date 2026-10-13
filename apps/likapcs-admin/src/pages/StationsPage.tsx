@@ -11,6 +11,8 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Archive,
+  ArchiveRestore,
   Check,
   ChevronDown,
   CircleHelp,
@@ -27,6 +29,7 @@ import {
   Power,
   RotateCcw,
   ShieldOff,
+  SlidersHorizontal,
   Trash2,
   Wifi,
   WifiOff,
@@ -134,9 +137,11 @@ export function StationsPage() {
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
 
+  // Archived PCs (0.17.0) leave the floor; the toggle asks the server for them as well.
+  const [showArchived, setShowArchived] = useState(false);
   const stations = useQuery({
-    queryKey: ['stations'],
-    queryFn: () => api<StationSummary[]>('/stations'),
+    queryKey: ['stations', showArchived],
+    queryFn: () => api<StationSummary[]>('/stations', { query: { includeArchived: showArchived } }),
     refetchInterval: 20_000,
   });
   const [connectOpen, setConnectOpen] = useState(false);
@@ -540,6 +545,18 @@ export function StationsPage() {
             data-testid="wake-all"
           >
             <Zap size={16} /> {t('stations.wake.actionAll', { n: wakeableCount })}
+          </Button>
+        )}
+        {canManage && (
+          <Button
+            variant="ghost"
+            aria-pressed={showArchived}
+            onClick={() => setShowArchived((v) => !v)}
+            title={showArchived ? t('stations.hideArchived') : t('stations.showArchived')}
+            data-testid="show-archived"
+          >
+            <Archive size={16} />{' '}
+            {showArchived ? t('stations.hideArchived') : t('stations.showArchived')}
           </Button>
         )}
         {canManage && (
@@ -1264,8 +1281,12 @@ function StationDetailDialog({
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
   const [editOpen, setEditOpen] = useState(false);
-  const [confirm, setConfirm] = useState<'revoke' | 'reissue' | 'delete' | null>(null);
+  const [confirm, setConfirm] = useState<
+    'revoke' | 'reissue' | 'delete' | 'archive' | 'unarchive' | null
+  >(null);
   const [busy, setBusy] = useState(false);
+  // 0.17.0: the dialog opens on a few short facts; everything else waits behind "Advanced".
+  const [view, setView] = useState<'standard' | 'advanced'>('standard');
   const status = station.isEnabled ? station.status : 'disabled';
   const device = station.device;
 
@@ -1280,6 +1301,7 @@ function StationDetailDialog({
         query: { limit: logLimit + 1 },
       }),
     placeholderData: (prev) => prev,
+    enabled: view === 'advanced',
   });
   const logRows = (logs.data ?? []).slice(0, logLimit);
   const logHasMore = (logs.data?.length ?? 0) > logLimit;
@@ -1309,70 +1331,83 @@ function StationDetailDialog({
         description={station.zone ?? undefined}
         footer={
           <>
-            {canManage && (
+            {canManage && !station.archived && (
               <Button
                 variant="danger"
                 onClick={() => setConfirm('delete')}
-                disabled={Boolean(device && device.status === 'approved')}
                 title={t('stations.deleteConfirmBody')}
+                data-testid="station-delete"
               >
                 <Trash2 size={14} /> {t('common.delete')}
+              </Button>
+            )}
+            {canManage && !station.archived && (
+              <Button onClick={() => setConfirm('archive')} data-testid="station-archive">
+                <Archive size={14} /> {t('stations.archive')}
+              </Button>
+            )}
+            {canManage && station.archived && (
+              <Button
+                variant="primary"
+                onClick={() => setConfirm('unarchive')}
+                data-testid="station-unarchive"
+              >
+                <ArchiveRestore size={14} /> {t('stations.unarchive')}
               </Button>
             )}
             <div style={{ flex: 1 }} />
             {canManage && (
               <Button onClick={() => setEditOpen(true)}>{t('stations.editStation')}</Button>
             )}
+            <Button
+              onClick={() => setView((v) => (v === 'standard' ? 'advanced' : 'standard'))}
+              aria-pressed={view === 'advanced'}
+              title={
+                view === 'standard'
+                  ? t('stations.viewAdvancedHint')
+                  : t('stations.viewStandardHint')
+              }
+              data-testid="station-view-toggle"
+            >
+              <SlidersHorizontal size={14} />{' '}
+              {view === 'standard' ? t('stations.viewAdvanced') : t('stations.viewStandard')}
+            </Button>
             <Button variant="primary" onClick={onClose}>
               {t('common.close')}
             </Button>
           </>
         }
       >
-        <div className="st-status" data-testid="station-status">
-          <Badge tone={STATUS_TONE[status]}>{td(`stations.status.${status}`, status)}</Badge>
-          <span>
-            {t('stations.enabled')}: <b>{station.isEnabled ? t('common.yes') : t('common.no')}</b>
-          </span>
-          <span>
-            {t('common.created')}: <b>{fmt.dateTime(station.createdAt)}</b>
-          </span>
-          {station.notes && <span className="st-status__notes">{station.notes}</span>}
-        </div>
-
-        <div className="grid grid--2 st-grid">
-          <Card title={t('sessions.title')}>
-            <SessionPanel
-              station={station}
-              onChanged={onChanged}
-              approveRequestId={approveRequestId}
-            />
-          </Card>
+        {station.archived && (
+          <Alert tone="warning" data-testid="station-archived-banner">
+            {t('stations.archivedAt', {
+              when: fmt.dateTime(station.archived.at),
+              who: station.archived.byName ?? '—',
+            })}
+            {station.archived.reason ? ` — ${station.archived.reason}` : ''}
+          </Alert>
+        )}
+        {view === 'standard' ? (
           <div className="stack">
-            <Card
-              title={t('stations.device')}
-              testId="station-device"
-              actions={
-                device ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setDeviceOpen((v) => !v)}
-                    aria-expanded={deviceOpen}
-                    data-testid="station-device-toggle"
-                  >
-                    {deviceOpen ? t('stations.deviceLess') : t('stations.deviceDetails')}
-                    <ChevronDown
-                      size={14}
-                      style={{
-                        transform: deviceOpen ? 'rotate(180deg)' : undefined,
-                        transition: 'transform 0.15s',
-                      }}
-                    />
-                  </Button>
-                ) : null
-              }
-            >
+            <div className="st-status" data-testid="station-status">
+              <Badge tone={STATUS_TONE[status]}>{td(`stations.status.${status}`, status)}</Badge>
+              <span>
+                {device
+                  ? device.online
+                    ? t('stations.online')
+                    : t('stations.offline')
+                  : t('stations.noDevice')}
+              </span>
+              {station.zone && <span>{station.zone}</span>}
+            </div>
+            <Card title={t('sessions.title')}>
+              <SessionPanel
+                station={station}
+                onChanged={onChanged}
+                approveRequestId={approveRequestId}
+              />
+            </Card>
+            <Card title={t('stations.device')} testId="station-device">
               {device ? (
                 <div className="st-device">
                   <div className="st-device__row" data-testid="station-device-row">
@@ -1387,54 +1422,9 @@ function StationDetailDialog({
                         v{device.appVersion}
                       </span>
                     )}
-                    {device.lastIp && (
-                      <span className="st-device__meta mono" title={t('stations.ipAddress')}>
-                        {device.lastIp}
-                      </span>
-                    )}
-                    <span className="st-device__meta" title={t('stations.lastSeen')}>
-                      {t('stations.lastSeen')}:{' '}
-                      {device.lastSeenAt ? fmt.dateTime(device.lastSeenAt) : t('common.never')}
-                    </span>
                   </div>
                   {device.status === 'approved' && (
                     <DeviceCommands station={station} online={device.online} onDone={onChanged} />
-                  )}
-                  {deviceOpen && (
-                    <div className="st-device__more" data-testid="station-device-more">
-                      <div className="st-device__facts">
-                        <span className="muted">{t('stations.approved')}</span>
-                        <span>{fmt.dateTime(device.approvedAt)}</span>
-                        <span className="muted">{t('stations.machineId')}</span>
-                        <span className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all' }}>
-                          {device.machineId}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="muted" style={{ marginBottom: 6 }}>
-                          {t('stations.hw.title')}
-                        </div>
-                        <HardwareDetails device={device} />
-                        {!device.hardware?.os && device.osInfo && (
-                          <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
-                            {device.osInfo}
-                          </div>
-                        )}
-                      </div>
-                      {device.status === 'approved' && (
-                        <WakePanel station={station} onChanged={onChanged} />
-                      )}
-                      {canDevices && (
-                        <div className="row row--wrap">
-                          <Button size="sm" onClick={() => setConfirm('reissue')}>
-                            <KeyRound size={14} /> {t('stations.reissueToken')}
-                          </Button>
-                          <Button size="sm" variant="danger" onClick={() => setConfirm('revoke')}>
-                            <ShieldOff size={14} /> {t('stations.revokeDevice')}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
                   )}
                 </div>
               ) : (
@@ -1445,49 +1435,182 @@ function StationDetailDialog({
                 />
               )}
             </Card>
-
-            <Card title={t('stations.connectionLog')} flush testId="station-log">
-              {logs.isLoading && <Loading />}
-              {logs.data && logs.data.length === 0 && (
-                <div className="empty">{t('stations.noConnectionLog')}</div>
-              )}
-              {logRows.length > 0 && (
-                <ul className="st-log">
-                  {logRows.map((entry) => (
-                    <li key={entry.id} className="st-log__row" data-testid="station-log-row">
-                      <span className="st-log__time num">{fmt.dateTime(entry.occurredAt)}</span>
-                      <Badge
-                        tone={
-                          entry.event === 'connected'
-                            ? 'success'
-                            : entry.event === 'error' || entry.event === 'rejected'
-                              ? 'danger'
-                              : 'default'
-                        }
-                      >
-                        {td(`stations.events.${entry.event}`, entry.event)}
-                      </Badge>
-                      <span className="st-log__detail faint">{describeLog(entry, t)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {logHasMore && (
-                <div className="st-log__more">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={logs.isFetching}
-                    onClick={() => setLogLimit((n) => n + LOG_STEP)}
-                    data-testid="station-log-more"
-                  >
-                    {t('stations.showMore')}
-                  </Button>
-                </div>
-              )}
-            </Card>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="st-status" data-testid="station-status">
+              <Badge tone={STATUS_TONE[status]}>{td(`stations.status.${status}`, status)}</Badge>
+              <span>
+                {t('stations.enabled')}:{' '}
+                <b>{station.isEnabled ? t('common.yes') : t('common.no')}</b>
+              </span>
+              <span>
+                {t('common.created')}: <b>{fmt.dateTime(station.createdAt)}</b>
+              </span>
+              {station.notes && <span className="st-status__notes">{station.notes}</span>}
+            </div>
+
+            <div className="grid grid--2 st-grid">
+              <Card title={t('sessions.title')}>
+                <SessionPanel
+                  station={station}
+                  onChanged={onChanged}
+                  approveRequestId={approveRequestId}
+                />
+              </Card>
+              <div className="stack">
+                <Card
+                  title={t('stations.device')}
+                  testId="station-device"
+                  actions={
+                    device ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setDeviceOpen((v) => !v)}
+                        aria-expanded={deviceOpen}
+                        data-testid="station-device-toggle"
+                      >
+                        {deviceOpen ? t('stations.deviceLess') : t('stations.deviceDetails')}
+                        <ChevronDown
+                          size={14}
+                          style={{
+                            transform: deviceOpen ? 'rotate(180deg)' : undefined,
+                            transition: 'transform 0.15s',
+                          }}
+                        />
+                      </Button>
+                    ) : null
+                  }
+                >
+                  {device ? (
+                    <div className="st-device">
+                      <div className="st-device__row" data-testid="station-device-row">
+                        <span className="st-device__name">
+                          <Monitor size={14} /> {device.hostname ?? '—'}
+                        </span>
+                        <Badge tone={device.online ? 'success' : 'default'} dot={device.online}>
+                          {device.online ? t('stations.online') : t('stations.offline')}
+                        </Badge>
+                        {device.appVersion && (
+                          <span className="st-device__meta" title={t('stations.clientVersion')}>
+                            v{device.appVersion}
+                          </span>
+                        )}
+                        {device.lastIp && (
+                          <span className="st-device__meta mono" title={t('stations.ipAddress')}>
+                            {device.lastIp}
+                          </span>
+                        )}
+                        <span className="st-device__meta" title={t('stations.lastSeen')}>
+                          {t('stations.lastSeen')}:{' '}
+                          {device.lastSeenAt ? fmt.dateTime(device.lastSeenAt) : t('common.never')}
+                        </span>
+                      </div>
+                      {device.status === 'approved' && (
+                        <DeviceCommands
+                          station={station}
+                          online={device.online}
+                          onDone={onChanged}
+                        />
+                      )}
+                      {deviceOpen && (
+                        <div className="st-device__more" data-testid="station-device-more">
+                          <div className="st-device__facts">
+                            <span className="muted">{t('stations.approved')}</span>
+                            <span>{fmt.dateTime(device.approvedAt)}</span>
+                            <span className="muted">{t('stations.machineId')}</span>
+                            <span
+                              className="mono"
+                              style={{ fontSize: 11.5, wordBreak: 'break-all' }}
+                            >
+                              {device.machineId}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="muted" style={{ marginBottom: 6 }}>
+                              {t('stations.hw.title')}
+                            </div>
+                            <HardwareDetails device={device} />
+                            {!device.hardware?.os && device.osInfo && (
+                              <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+                                {device.osInfo}
+                              </div>
+                            )}
+                          </div>
+                          {device.status === 'approved' && (
+                            <WakePanel station={station} onChanged={onChanged} />
+                          )}
+                          {canDevices && (
+                            <div className="row row--wrap">
+                              <Button size="sm" onClick={() => setConfirm('reissue')}>
+                                <KeyRound size={14} /> {t('stations.reissueToken')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => setConfirm('revoke')}
+                              >
+                                <ShieldOff size={14} /> {t('stations.revokeDevice')}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<Cpu size={22} />}
+                      title={t('stations.noDevice')}
+                      hint={t('stations.pendingHint')}
+                    />
+                  )}
+                </Card>
+
+                <Card title={t('stations.connectionLog')} flush testId="station-log">
+                  {logs.isLoading && <Loading />}
+                  {logs.data && logs.data.length === 0 && (
+                    <div className="empty">{t('stations.noConnectionLog')}</div>
+                  )}
+                  {logRows.length > 0 && (
+                    <ul className="st-log">
+                      {logRows.map((entry) => (
+                        <li key={entry.id} className="st-log__row" data-testid="station-log-row">
+                          <span className="st-log__time num">{fmt.dateTime(entry.occurredAt)}</span>
+                          <Badge
+                            tone={
+                              entry.event === 'connected'
+                                ? 'success'
+                                : entry.event === 'error' || entry.event === 'rejected'
+                                  ? 'danger'
+                                  : 'default'
+                            }
+                          >
+                            {td(`stations.events.${entry.event}`, entry.event)}
+                          </Badge>
+                          <span className="st-log__detail faint">{describeLog(entry, t)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {logHasMore && (
+                    <div className="st-log__more">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        loading={logs.isFetching}
+                        onClick={() => setLogLimit((n) => n + LOG_STEP)}
+                        data-testid="station-log-more"
+                      >
+                        {t('stations.showMore')}
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          </>
+        )}
       </Dialog>
 
       <StationFormDialog
@@ -1537,22 +1660,127 @@ function StationDetailDialog({
           )
         }
       />
-      <ConfirmDialog
+      <ReasonDialog
         open={confirm === 'delete'}
         onClose={() => setConfirm(null)}
         title={t('stations.deleteConfirmTitle', { code: station.code })}
         body={t('stations.deleteConfirmBody')}
+        confirmLabel={t('common.delete')}
         danger
         loading={busy}
-        confirmLabel={t('common.delete')}
-        onConfirm={() =>
+        onConfirm={(reason) =>
           void run(async () => {
-            await api<void>(`/stations/${station.id}`, { method: 'DELETE' });
+            await api<void>(`/stations/${station.id}`, { method: 'DELETE', body: { reason } });
             onClose();
           }, t('stations.deleted'))
         }
       />
+      <ReasonDialog
+        open={confirm === 'archive'}
+        onClose={() => setConfirm(null)}
+        title={t('stations.archiveTitle', { code: station.code })}
+        body={t('stations.archiveBody')}
+        confirmLabel={t('stations.archive')}
+        loading={busy}
+        onConfirm={(reason) =>
+          void run(async () => {
+            await api<void>(`/stations/${station.id}/archive`, {
+              method: 'POST',
+              body: { reason },
+            });
+            // The station left the floor: drop the ?open= param, so it does not reopen when
+            // archived PCs are shown again.
+            onClose();
+          }, t('stations.archivedDone'))
+        }
+      />
+      <ConfirmDialog
+        open={confirm === 'unarchive'}
+        onClose={() => setConfirm(null)}
+        title={t('stations.unarchiveTitle', { code: station.code })}
+        body={t('stations.unarchiveBody')}
+        loading={busy}
+        confirmLabel={t('stations.unarchive')}
+        onConfirm={() =>
+          void run(
+            () => api<void>(`/stations/${station.id}/unarchive`, { method: 'POST' }),
+            t('stations.unarchivedDone'),
+          )
+        }
+      />
     </>
+  );
+}
+
+/**
+ * Archive PC / delete (0.17.0): both need a written reason — it is kept on the station row and in
+ * the audit log, so months later anyone can see why a PC left the floor.
+ */
+function ReasonDialog({
+  open,
+  onClose,
+  title,
+  body,
+  confirmLabel,
+  danger,
+  loading,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  loading?: boolean;
+  onConfirm: (reason: string) => void;
+}) {
+  const { t } = useI18n();
+  const [reason, setReason] = useState('');
+  useEffect(() => {
+    if (open) setReason('');
+  }, [open]);
+  const valid = reason.trim().length >= 3;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      size="sm"
+      title={title}
+      description={body}
+      footer={
+        <>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button
+            variant={danger ? 'danger' : 'primary'}
+            disabled={!valid}
+            loading={loading}
+            data-testid="reason-confirm"
+            onClick={() => onConfirm(reason.trim())}
+          >
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <Field
+        label={t('stations.reason')}
+        hint={reason.trim().length > 0 && !valid ? t('stations.reasonShort') : undefined}
+      >
+        {(id) => (
+          <Textarea
+            id={id}
+            rows={2}
+            maxLength={300}
+            autoFocus
+            value={reason}
+            placeholder={t('stations.reasonPlaceholder')}
+            onChange={(e) => setReason(e.target.value)}
+            data-testid="reason-input"
+          />
+        )}
+      </Field>
+    </Dialog>
   );
 }
 

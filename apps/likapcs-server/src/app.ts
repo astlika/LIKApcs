@@ -167,6 +167,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
+  // Archive / delete take the PC off the station: StationsService asks DevicesService to revoke.
+  stations.useRevokeDevice((deviceId, actor) => devices.revoke(deviceId, actor));
   const audit = new AuditQueryService(pool);
   const search = new SearchService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);

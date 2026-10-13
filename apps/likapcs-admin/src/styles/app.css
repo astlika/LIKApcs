@@ -2725,6 +2725,12 @@ body:has(.pos) .toasts {
 .map-canvas[data-dragging] .pc-tile {
   pointer-events: none;
 }
+/* Archive PC (0.17.0): off the floor but still on record — quiet, dashed, greyed. */
+.pc-tile[data-archived='true'] {
+  opacity: 0.55;
+  filter: grayscale(0.7);
+  border-style: dashed;
+}
 /* Rubber-band selection box. */
 .map-marquee {
   position: absolute;

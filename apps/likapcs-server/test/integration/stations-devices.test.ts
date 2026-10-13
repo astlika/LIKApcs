@@ -581,17 +581,28 @@ describe('stations, device registration and realtime presence', () => {
     expect(approve.statusCode).toBe(200);
   });
 
-  it('stations with an approved device cannot be deleted; empty ones can', async () => {
-    const blocked = await ctx.app.inject({
+  it('delete needs a reason and revokes the approved PC; empty stations go too', async () => {
+    // 0.17.0: the reason is mandatory (it lands in the audit log) and an approved device is
+    // revoked on the way out, so the PC can be paired again. Only session history blocks delete.
+    const noReason = await ctx.app.inject({
       method: 'DELETE',
       url: `/api/v1/stations/${station2.id}`,
       headers: authHeader(owner.token),
+      payload: {},
     });
-    expect(blocked.statusCode).toBe(409);
+    expect(noReason.statusCode).toBe(400);
+    const withDevice = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/stations/${station2.id}`,
+      headers: authHeader(owner.token),
+      payload: { reason: 'test teardown' },
+    });
+    expect(withDevice.statusCode).toBe(204);
     const ok = await ctx.app.inject({
       method: 'DELETE',
       url: `/api/v1/stations/${station1.id}`,
       headers: authHeader(owner.token),
+      payload: { reason: 'test teardown' },
     });
     expect(ok.statusCode).toBe(204);
   });

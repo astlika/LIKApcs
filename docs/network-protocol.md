@@ -76,12 +76,14 @@ gaming PC (see §4).
 
 | Method | Path                            | Notes                                                                                                                           |
 | ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`                                                                      |
+| GET    | `/stations`                     | all stations with live `status`, `device`, `activeSession`; `?includeArchived=true` also returns archived ones (0.17.0)         |
 | GET    | `/stations/:id`                 |                                                                                                                                 |
 | GET    | `/stations/:id/connection-logs` | connect/disconnect events, newest first; `?limit=1–500` (default 100; the station dialog asks for 8 and "shows more" on demand) |
 | POST   | `/stations`                     | `{number, name, zone?, notes?, isEnabled}`                                                                                      |
 | PATCH  | `/stations/:id`                 | partial                                                                                                                         |
-| DELETE | `/stations/:id`                 | `409` if the station has session history or an approved device — disable it instead                                             |
+| DELETE | `/stations/:id`                 | `{reason}` mandatory (audit); `409` if the station has session history — archive it instead; revokes an approved device first   |
+| POST   | `/stations/:id/archive`         | 0.17.0 · `{reason}` mandatory; hides the station, revokes its approved device so the PC can be paired again as new              |
+| POST   | `/stations/:id/unarchive`       | 0.17.0 · puts the station back on the floor (`archived` → `null`)                                                               |
 | GET    | `/devices?status=pending`       | registrations                                                                                                                   |
 | POST   | `/devices/:id/approve`          | `{stationId}` — one approved device per station                                                                                 |
 | POST   | `/devices/:id/reject`           |                                                                                                                                 |

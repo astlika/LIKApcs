@@ -7,6 +7,7 @@ import {
   registerDeviceSchema,
   staffUnlockSchema,
   stationCommandSchema,
+  stationReasonSchema,
   updateStationSchema,
   uuidSchema,
 } from '@likapcs/shared';
@@ -22,8 +23,22 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Stations ────────────────────────────────────────────────────────────────
-  app.get('/stations', { preHandler: app.requirePermission(PERMISSIONS.STATIONS_VIEW) }, async () =>
-    services.stations.list(),
+  app.get(
+    '/stations',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_VIEW) },
+    async (request) => {
+      // Archived PCs (0.17.0) leave the floor; the Admin asks for them only with the toggle on.
+      // NOTE: z.coerce.boolean() turns the string 'false' into true — parse the flag by hand.
+      const { includeArchived } = z
+        .object({
+          includeArchived: z
+            .union([z.boolean(), z.string()])
+            .optional()
+            .transform((v) => v === true || v === 'true' || v === '1'),
+        })
+        .parse(request.query ?? {});
+      return services.stations.list(undefined, includeArchived);
+    },
   );
 
   app.get(
@@ -78,8 +93,28 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
     { preHandler: app.requirePermission(PERMISSIONS.STATIONS_MANAGE) },
     async (request, reply) => {
       const { id } = idParams.parse(request.params);
-      await services.stations.remove(id, actorOf(request));
+      const { reason } = stationReasonSchema.parse(request.body ?? {});
+      await services.stations.remove(id, reason, actorOf(request));
       return reply.status(204).send();
+    },
+  );
+
+  // Archive PC (0.17.0): off the floor, device revoked, reason kept; unarchive puts it back.
+  app.post(
+    '/stations/:id/archive',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_MANAGE) },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      const { reason } = stationReasonSchema.parse(request.body ?? {});
+      return services.stations.archive(id, reason, actorOf(request));
+    },
+  );
+  app.post(
+    '/stations/:id/unarchive',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_MANAGE) },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      return services.stations.unarchive(id, actorOf(request));
     },
   );
 

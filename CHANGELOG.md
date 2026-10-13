@@ -28,6 +28,20 @@ All notable changes to LIKApcs are documented here. The format follows
   New settings: `stations.end_tasks_exes` (max 60 names), `stations.end_tasks_auto`. New command
   `tasks.end`, new client event `tasks_ended`, new station field `device.tasksEnded`
   (see `docs/network-protocol.md`). Migration `0027_end_tasks.sql` seeds both settings.
+- **Station dialog opens Standard, with everything else one click away.** The dialog now starts
+  on a few short facts — status, the session panel, the PC and its command buttons — and an
+  **Advanced** button next to _Close_ reveals what the desk rarely needs: device facts, hardware,
+  Wake-on-LAN, token actions and the connection log. The connection log is only fetched in the
+  advanced view, so the dialog opens instantly.
+- **Archive PC: a station can leave the floor without losing its money history.** _Archive PC_
+  (with a mandatory written reason) takes the station off the map and revokes its PC, so the same
+  machine can be paired again — as new, or under another name — while sessions, sales and the
+  connection log stay on record. Archived PCs are hidden by default and return with the
+  _Show archived_ toggle, greyed and dashed on the map; _Back to the floor_ restores one.
+  _Delete_ now also asks for a reason (kept in the audit log), revokes an approved device first,
+  and stays refused for stations with session history — those are archived instead. _Revoke_ is
+  unchanged. New endpoints `POST /stations/:id/archive`, `POST /stations/:id/unarchive`,
+  `GET /stations?includeArchived=true`; migration `0028_archive_station.sql`.
 
 ## [0.16.1] - 2026-10-13
 

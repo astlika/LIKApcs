@@ -166,6 +166,7 @@ export function StationTile({
       className="pc-tile"
       data-id={station.id}
       data-status={status}
+      data-archived={station.archived ? 'true' : undefined}
       data-selected={selected || undefined}
       role="button"
       tabIndex={0}
@@ -241,7 +242,12 @@ export function StationTile({
         </>
       ) : (
         <div className="pc-tile__state">
-          {td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}
+          {station.archived
+            ? t('stations.archived')
+            : td(
+                `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
+                station.status,
+              )}
           {station.isEnabled && station.status === 'available' && !station.device && !compact && (
             <span className="faint"> · {t('stations.noDevice')}</span>
           )}

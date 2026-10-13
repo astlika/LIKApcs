@@ -226,6 +226,12 @@ export type CreateStationRequest = z.infer<typeof createStationSchema>;
 export const updateStationSchema = createStationSchema.partial();
 export type UpdateStationRequest = z.infer<typeof updateStationSchema>;
 
+/** Archive PC / delete station (0.17.0): the reason is mandatory — it goes to the audit log. */
+export const stationReasonSchema = z.object({
+  reason: z.string().trim().min(3).max(300),
+});
+export type StationReasonRequest = z.infer<typeof stationReasonSchema>;
+
 export interface StationDeviceSummary {
   id: string;
   stationId: string | null;
@@ -283,8 +289,17 @@ export interface StationSummary {
   orders: StationOrdersSummary;
   /** End pay (0.14.0): ended sessions of this PC whose bill still waits at the desk. */
   awaitingPayment: { count: number; amountCents: number };
+  /** Archive PC (0.17.0): set once the station left the floor; it keeps its money history. */
+  archived: StationArchive | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Why and when a station was taken off the floor (kept on the row and in the audit log). */
+export interface StationArchive {
+  at: string;
+  reason: string | null;
+  byName: string | null;
 }
 
 export interface StationOrdersSummary {
