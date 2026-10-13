@@ -326,6 +326,27 @@ fn apply_locked(window: &WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+    // Entering fullscreen is asynchronous on Windows: re-assert once the transition settled, or
+    // the lock screen can end up under the shell instead of above everything.
+    reassert(window, move |w| {
+        let _ = w.set_always_on_top(true);
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    });
+}
+
+/// Runs `apply` again after the Windows window transition settles (fullscreen in/out, z-order).
+/// A no-op value-wise: re-applying the same state is how the client wins these races on 10/11.
+fn reassert(window: &WebviewWindow, apply: impl Fn(&WebviewWindow) + Send + 'static + Clone) {
+    for delay_ms in [180u64, 600] {
+        let window = window.clone();
+        let apply = apply.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            apply(&window);
+        });
+    }
 }
 
 fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
@@ -336,7 +357,25 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
     let _ = window.set_size(LogicalSize::new(width, height));
-    // The chosen corner of the work area (taskbar excluded) of the monitor the window is on.
+    position_overlay(window, layout.position, width, height);
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    // Leaving fullscreen is asynchronous on Windows (11 restores the window's old "normal" rect
+    // after this returns): re-apply the widget geometry and the topmost flag once the transition
+    // settles, or the countdown widget ends up off-screen / behind the shell — invisible.
+    reassert(window, move |w| {
+        let _ = w.set_size(LogicalSize::new(width, height));
+        position_overlay(w, layout.position, width, height);
+        let _ = w.set_always_on_top(true);
+        let _ = w.show();
+        let _ = w.unminimize();
+    });
+}
+
+/// Keeps the widget in the chosen corner of the work area (taskbar excluded) of the monitor the
+/// window is on — after every resize, or a grown card would drift away from its corner.
+fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64, height: f64) {
     let (mut x, mut y) = (OVERLAY_MARGIN, OVERLAY_MARGIN);
     if let Ok(Some(monitor)) = window.current_monitor() {
         let scale = monitor.scale_factor();
@@ -345,7 +384,7 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
         let pos = work.position.to_logical::<f64>(scale);
         let right = pos.x + size.width - width - OVERLAY_MARGIN;
         let bottom = pos.y + size.height - height - OVERLAY_MARGIN;
-        let (cx, cy) = match layout.position {
+        let (cx, cy) = match position {
             WidgetPosition::TopLeft => (pos.x + OVERLAY_MARGIN, pos.y + OVERLAY_MARGIN),
             WidgetPosition::TopRight => (right, pos.y + OVERLAY_MARGIN),
             WidgetPosition::BottomLeft => (pos.x + OVERLAY_MARGIN, bottom),
@@ -355,7 +394,28 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
         y = cy;
     }
     let _ = window.set_position(LogicalPosition::new(x, y));
-    let _ = window.show();
+}
+
+/// The card widget grows to fit its words (staff notice, maintenance, an order flash): the
+/// frontend measures what it rendered and asks for a window that shows all of it, so no text is
+/// ever cut (0.17.0). Ignored while the window is not the widget.
+#[tauri::command]
+async fn widget_fit(
+    app: AppHandle,
+    state: tauri::State<'_, WidgetState>,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    if !state.overlay.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    let layout = *state.layout.lock().map_err(|_| "widget state poisoned")?;
+    let (w, h) = (width.clamp(264.0, 900.0), height.clamp(60.0, 700.0));
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_size(LogicalSize::new(w, h));
+        position_overlay(&window, layout.position, w, h);
+    }
+    Ok(())
 }
 
 /// Owner changed the widget design / size / corner (pushed by the server): remember it and, when
@@ -754,6 +814,7 @@ pub fn run() {
             wol_configure,
             end_tasks,
             set_widget_layout,
+            widget_fit,
             secret_get,
             secret_set,
             secret_delete,
@@ -767,6 +828,8 @@ pub fn run() {
             // Keyboard hardening is armed from the start: the client boots locked.
             kiosk::install();
             kiosk::set_enabled(true);
+            // Next boot must lock at once: drop the Windows startup delay for autostart apps.
+            kiosk::arm_boot();
 
             // Tray icon: the only visible trace of the client during a session. Menu actions are
             // forwarded to the frontend, which knows the language and the lock state.

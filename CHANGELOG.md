@@ -28,6 +28,18 @@ All notable changes to LIKApcs are documented here. The format follows
   New settings: `stations.end_tasks_exes` (max 60 names), `stations.end_tasks_auto`. New command
   `tasks.end`, new client event `tasks_ended`, new station field `device.tasksEnded`
   (see `docs/network-protocol.md`). Migration `0027_end_tasks.sql` seeds both settings.
+- **The countdown widget survives Windows' fullscreen transition (Windows 10/11 fix).** Leaving the
+  lock screen is asynchronous on Windows: the shell could restore the window's old rect after the
+  widget geometry was applied, leaving the countdown off-screen or behind the desktop — the widget
+  simply never appeared. The native shell now re-applies the widget geometry and the topmost flag
+  once the transition settles, and the client watches its own window size: if it is not the size it
+  asked for, it asks again until it is (self-heals within a second).
+- **The PC locks the moment it is switched on.** Windows holds Run-key autostart apps back for up
+  to 10 s after logon (`StartupDelayInMSec`), which showed the desktop — taskbar included — before
+  the lock screen. The installer and the client now set that delay to 0, and the taskbar auto-hides
+  for the whole time the PC is locked (back the moment it is unlocked). The installer refuses
+  Windows 7 / 8 / 8.1 with a clear message: a WebView2 application cannot run there, so the client
+  supports **Windows 10 and Windows 11**.
 - **Station dialog opens Standard, with everything else one click away.** The dialog now starts
   on a few short facts — status, the session panel, the PC and its command buttons — and an
   **Advanced** button next to _Close_ reveals what the desk rarely needs: device facts, hardware,

@@ -87,6 +87,25 @@ export async function discoverServers(timeoutMs = 2500): Promise<DiscoveredServe
  * comes from the shared design table so the native shell needs no knowledge of the designs; the
  * see-through designs make the window background transparent. Browser dev mode mirrors it via CSS.
  */
+/** The window size we last asked the native shell for, and how to ask again (0.16.2 fix). */
+let expectedWidth = 0;
+let expectedHeight = 0;
+let replayWindow: (() => Promise<void>) | null = null;
+
+/** True when the webview really is the size we asked for (the widget window, on the desktop). */
+export function widgetWindowSizeOk(): boolean {
+  if (!isDesktopApp() || expectedWidth === 0) return true;
+  return (
+    Math.abs(window.innerWidth - expectedWidth) <= 6 &&
+    Math.abs(window.innerHeight - expectedHeight) <= 6
+  );
+}
+
+/** Asks the native shell for the widget window again (same design / same fit as last time). */
+export async function reapplyWidgetWindow(): Promise<void> {
+  await replayWindow?.();
+}
+
 export async function setWidgetLayout(
   size: string,
   position: string,
@@ -94,6 +113,9 @@ export async function setWidgetLayout(
 ): Promise<void> {
   const design = widgetDesign(style);
   const { width, height } = widgetFootprint(design.id, size);
+  expectedWidth = width;
+  expectedHeight = height;
+  replayWindow = () => setWidgetLayout(size, position, style);
   const root = document.documentElement;
   root.dataset.widgetSize = size;
   root.dataset.widgetPos = position;
@@ -106,6 +128,26 @@ export async function setWidgetLayout(
     await invoke<void>('set_widget_layout', { size, position, width, height });
   } catch {
     /* an older native shell without the command keeps the default corner */
+  }
+}
+
+/**
+ * The card widget grows to fit its words (staff notice, maintenance, an order flash): the overlay
+ * measures what it rendered and asks the native shell for a window that shows all of it, so no
+ * text is ever cut and a narrow footprint never clips the staff's message (0.17.0).
+ */
+export async function setWidgetFit(width: number, height: number): Promise<void> {
+  expectedWidth = Math.round(width);
+  expectedHeight = Math.round(height);
+  replayWindow = () => setWidgetFit(width, height);
+  const root = document.documentElement;
+  root.style.setProperty('--ov-w', `${Math.round(width)}px`);
+  root.style.setProperty('--ov-h', `${Math.round(height)}px`);
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('widget_fit', { width, height });
+  } catch {
+    /* an older native shell keeps the design footprint */
   }
 }
 

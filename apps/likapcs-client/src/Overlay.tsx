@@ -21,6 +21,7 @@ import {
   type WidgetDesignSpec,
 } from '@likapcs/shared';
 import { agent, type AgentSnapshot } from './lib/agent';
+import { setWidgetFit } from './lib/native';
 import { formatHMS, sessionView, type OrderView, type SessionView } from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
 import {
@@ -260,6 +261,21 @@ export function Overlay({
   const balance =
     snap.account && snap.account.walletBalanceCents > 0 ? snap.account.walletBalanceCents : null;
   const pendingRequest = snap.request?.status === 'pending';
+  // 0.17.0: the card grows to fit its words (staff notice, maintenance, an order flash) — measure
+  // what was rendered and ask the native shell for a window that shows all of it, so nothing is
+  // ever cut and a narrow footprint never clips the staff's message.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const needsWords = Boolean(notice) || Boolean(maintenance) || Boolean(flash);
+  useEffect(() => {
+    if (spec.text !== 'card' || !needsWords) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const wantW = Math.max(300, Math.ceil(el.getBoundingClientRect().width));
+    const wantH = Math.max(96, el.scrollHeight + 2);
+    if (Math.abs(wantW - window.innerWidth) > 1 || Math.abs(wantH - window.innerHeight) > 1) {
+      void setWidgetFit(wantW, wantH);
+    }
+  }, [spec.text, needsWords, notice, maintenance, flash, snap.state.language]);
   const pinned = openOrders.length + (pendingRequest ? 1 : 0);
   const hover = useHoverReveal();
   const hasActions = !notice && !maintenance && Boolean(onRequestTime || onPause || onOrder);
@@ -400,6 +416,7 @@ export function Overlay({
 
   return (
     <div
+      ref={rootRef}
       className={cls}
       data-tauri-drag-region
       data-testid="overlay"

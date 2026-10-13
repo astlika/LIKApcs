@@ -17,7 +17,9 @@ import {
   discoverServers,
   isDesktopApp,
   onTrayAction,
+  reapplyWidgetWindow,
   setWidgetLayout,
+  widgetWindowSizeOk,
   type TrayLabels,
 } from './lib/native';
 import { baseWindowModeOf, candidateServerUrls } from './lib/protocol';
@@ -195,6 +197,26 @@ export function App() {
   useEffect(() => {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
+
+  // Windows can finish the fullscreen → widget transition *after* the native resize landed (11
+  // restores the window's old rect), leaving the countdown off-screen: the webview then reports a
+  // size that is not the widget's, so ask again until it is. Self-heals within a second.
+  useEffect(() => {
+    if (snap.windowMode !== 'overlay') return;
+    let cancelled = false;
+    let tries = 0;
+    const timer = window.setTimeout(async () => {
+      while (!cancelled && tries < 4 && !widgetWindowSizeOk()) {
+        tries += 1;
+        await reapplyWidgetWindow();
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [snap.windowMode, widgetSize, widgetPosition, widgetStyle]);
 
   // Back to the lock screen (e.g. maintenance expired) while the panel was open: keep it open
   // there, the window is fullscreen again anyway.
