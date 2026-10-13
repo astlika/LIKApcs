@@ -19,8 +19,10 @@ import {
   adMoveToAlbumSchema,
   adPatchSchema,
   adReorderSchema,
+  clientDisplayFromSettings,
   productImageFromUrlSchema,
   uuidSchema,
+  type CustomerDisplayFeed,
 } from '@likapcs/shared';
 import fs from 'node:fs';
 import { AppError } from '../errors.js';
@@ -41,6 +43,21 @@ export const adsRoutes: FastifyPluginAsync = async (app) => {
   const manage = { preHandler: app.requirePermission(PERMISSIONS.PRODUCTS_MANAGE) };
 
   app.get('/ads', view, async () => ({ items: await services.ads.list() }));
+  // Counter customer display (0.16.0): the live program + the owner's default look. Any staff
+  // member may read it — it is exactly what the customers see.
+  app.get('/ads/feed', { preHandler: app.requireAuth }, async (): Promise<CustomerDisplayFeed> => {
+    const [feed, all] = await Promise.all([
+      services.ads.clientFeed(null),
+      services.settings.getAll(),
+    ]);
+    return {
+      feed,
+      ads: clientDisplayFromSettings(all).ads,
+      businessName: all['business.name'],
+      language: all['locale.default_language'],
+      currency: all['locale.currency'],
+    };
+  });
   app.get('/ads/:id', view, async (request) => services.ads.get(idParams.parse(request.params).id));
   app.post('/ads', manage, async (request, reply) => {
     const ad = await services.ads.create(adInputSchema.parse(request.body), actorOf(request));

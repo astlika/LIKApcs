@@ -635,6 +635,16 @@ as `exact` and placed first in `hits`. A bare number (`123`) lists matching docu
 product | station`) and carry only what the palette shows (number, name, total, status, …) plus
 the id to open; a refund hit also carries its `saleId`.
 
+### Customer display feed (0.16.0)
+
+`GET /ads/feed` — any signed-in user. What the counter's customer-facing screen plays while no
+sale is open: `{ feed: ClientAdsFeed, ads: ClientDisplayConfig['ads'], businessName, language,
+currency }` — the same live slides / albums a PC gets (`clientFeed` without a station filter)
+plus the owner's default look the albums resolve against. The Admin's main window fetches it
+(refetch on the admin WebSocket event `ads.changed`, no payload) and pushes it to the display
+window over Tauri events / `BroadcastChannel` together with the live `DisplayState` (idle / sale /
+paying / done); the display window itself holds no token and never calls the server.
+
 ### Import from another program (`backups.manage`; 0.15.0, migration 0026)
 
 `POST /imports/analyze { data }` → `ImportAnalysis` — recognises a LIKApos Pro backup (JSON) and

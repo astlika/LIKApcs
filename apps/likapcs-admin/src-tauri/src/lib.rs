@@ -5,6 +5,7 @@
 //! auto-updater (GitHub Releases, minisign-verified), start-at-login, LAN discovery and — on the main
 //! PC — supervision of the bundled server process (see `server_manager.rs`).
 
+mod display;
 mod server_manager;
 
 use std::time::Duration;
@@ -133,6 +134,28 @@ async fn open_url(url: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+// ─── Customer display (0.16.0) ─────────────────────────────────────────────────
+#[tauri::command]
+fn display_monitors(app: AppHandle) -> Vec<display::MonitorInfo> {
+    display::monitors(&app)
+}
+
+/// Async on purpose: creating a webview window from a *synchronous* command deadlocks on Windows.
+#[tauri::command]
+async fn display_open(app: AppHandle, monitor: Option<String>) -> Result<bool, String> {
+    display::open(&app, monitor.as_deref())
+}
+
+#[tauri::command]
+async fn display_close(app: AppHandle) -> Result<(), String> {
+    display::close(&app)
+}
+
+#[tauri::command]
+fn display_is_open(app: AppHandle) -> bool {
+    display::is_open(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let background = std::env::args().any(|a| a == "--background");
@@ -156,7 +179,11 @@ pub fn run() {
             discover_servers,
             firewall_status,
             allow_firewall,
-            open_url
+            open_url,
+            display_monitors,
+            display_open,
+            display_close,
+            display_is_open
         ])
         .setup(move |app| {
             let has_runtime = locate_runtime().is_some();
@@ -230,8 +257,9 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // With a bundled server, closing the window only hides it (the tray keeps it reachable).
+            // The customer display window closes for real.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if locate_runtime().is_some() {
+                if window.label() == "main" && locate_runtime().is_some() {
                     api.prevent_close();
                     let _ = window.hide();
                 }

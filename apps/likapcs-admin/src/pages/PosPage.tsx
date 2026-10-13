@@ -58,6 +58,8 @@ import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
 import { usePosCart } from '../state/pos-cart';
+import { displayCustomerOf, useCustomerDisplay } from '../state/customer-display';
+import { useAppSettings } from '../state/app-settings';
 import { SaleDoneDialog } from '../components/pos/SaleDoneDialog';
 import { CustomerPicker } from '../components/customers/CustomerPicker';
 import { TenderPanel, useTender } from '../components/payments/TenderPanel';
@@ -77,6 +79,8 @@ export function PosPage() {
   const { can } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const display = useCustomerDisplay();
+  const walletEnabled = useAppSettings()['wallet.enabled'];
   const [params, setParams] = useSearchParams();
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
@@ -591,9 +595,32 @@ export function PosPage() {
             setDialog(null);
             focusSearch();
           }}
-          onCompleted={(_sale, receiptData) => {
+          onCompleted={(sale, receiptData) => {
             setDialog(null);
             setReceipt(receiptData);
+            // Customer display: "thank you" with what was paid / put on the tab.
+            const paymentsNow = sale.payments.filter((p) => p.kind === 'sale');
+            const creditCents = paymentsNow
+              .filter((p) => p.method === 'credit')
+              .reduce((a, p) => a + p.amountCents, 0);
+            const walletCents = paymentsNow
+              .filter((p) => p.method === 'wallet')
+              .reduce((a, p) => a + p.amountCents, 0);
+            const after = customer
+              ? {
+                  ...customer,
+                  balanceDueCents: customer.balanceDueCents + creditCents,
+                  walletBalanceCents: customer.walletBalanceCents - walletCents,
+                }
+              : null;
+            display.setDone({
+              receiptNo: sale.receiptNo,
+              totalCents: sale.totalCents,
+              paidCents: sale.paidCents - creditCents,
+              changeCents: sale.changeCents,
+              creditCents,
+              customer: displayCustomerOf(after, walletEnabled),
+            });
           }}
         />
       )}
@@ -737,6 +764,32 @@ function PaymentDialog({
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const tender = useTender({ totalCents, customer });
+  const display = useCustomerDisplay();
+
+  // Customer display: what is being counted, live (cleared when the dialog closes).
+  const { mode, paidCents, cashCents, walletCents, creditCents, changeCents, covered } = tender;
+  useEffect(() => {
+    display.setTender({
+      mode,
+      paidCents,
+      cashCents: cashCents ?? 0,
+      walletCents: walletCents ?? 0,
+      creditCents,
+      changeCents: covered ? changeCents : paidCents - totalCents,
+      covered,
+    });
+  }, [
+    display,
+    mode,
+    paidCents,
+    cashCents,
+    walletCents,
+    creditCents,
+    changeCents,
+    covered,
+    totalCents,
+  ]);
+  useEffect(() => () => display.setTender(null), [display]);
 
   const complete = useMutation({
     mutationFn: async () => {

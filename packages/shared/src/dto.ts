@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
-import type { ClientMetrics, HardwareInfo } from './protocol.js';
+import type {
+  ClientAdsFeed,
+  ClientDisplayConfig,
+  ClientMetrics,
+  HardwareInfo,
+} from './protocol.js';
 import {
   AD_THEMES,
   CLIENT_ADS_CAPTIONS,
@@ -2948,4 +2953,19 @@ export interface ImportStatus {
     status: 'running' | 'succeeded' | 'failed';
     report: ImportReport | null;
   } | null;
+}
+
+// ─── Customer display (0.16.0) ──────────────────────────────────────────────────
+/**
+ * `GET /ads/feed` — what the counter's customer-facing screen plays while no sale is open: the
+ * same live slides / albums a PC gets (no station filter), plus the owner's default look the
+ * albums resolve against and the few business facts the screen shows. Any signed-in user may
+ * read it (it is what every customer sees anyway).
+ */
+export interface CustomerDisplayFeed {
+  feed: ClientAdsFeed;
+  ads: ClientDisplayConfig['ads'];
+  businessName: string;
+  language: 'en' | 'sq';
+  currency: string;
 }

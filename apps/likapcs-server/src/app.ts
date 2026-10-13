@@ -351,6 +351,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       .getAll()
       .then(pushDisplay)
       .catch((err: unknown) => app.log.warn({ err }, 'ads push failed'));
+    // Admin windows (the counter's customer display refetches `/ads/feed`).
+    hub.broadcastToAdmins('ads.changed', null);
   });
 
   // Presence → station status broadcasts

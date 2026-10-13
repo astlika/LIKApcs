@@ -1200,6 +1200,29 @@ export const en = {
       previewNote:
         'Changes reach every connected PC the moment you save — no restart needed on the gaming PCs.',
     },
+    display: {
+      title: 'Customer display',
+      subtitle:
+        'A second window for the monitor facing the customers: the open sale line by line with the total, the payment and the change, "Thank you" at the end — and the ads (albums) while nothing is being sold. Chosen per PC.',
+      enabled: 'Use the customer display on this PC',
+      enabledHint:
+        'Opens with the app, full screen on the chosen monitor. Fits any screen from 480p to 1080p, horizontal or vertical — the layout follows the size and orientation automatically.',
+      monitor: 'Monitor',
+      monitorHint: 'Automatic = the first monitor that is not the one LIKApcs is on.',
+      monitorAuto: 'Automatic (second monitor)',
+      monitorCurrent: 'LIKApcs is here',
+      landscape: 'horizontal',
+      portrait: 'vertical',
+      open: 'Open now',
+      close: 'Close',
+      connected: 'Connected',
+      notConnected: 'Not open',
+      opened: 'Customer display opened on its monitor.',
+      openedPreview: 'Only one monitor found — opened as a window for preview.',
+      failed: 'The customer display could not be opened.',
+      browserHint:
+        'In the browser the display opens in a separate window (allow pop-ups); the monitor choice applies in the desktop app.',
+    },
     printing: {
       receipts: 'Receipts (thermal printer)',
       receiptWidth: 'Receipt paper width',

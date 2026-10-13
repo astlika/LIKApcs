@@ -6,6 +6,26 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Customer display (Ekrani i klientit).** A second window of LIKApcs for the monitor turned
+  towards the customers (Settings › POS & Printing › _Customer display_, chosen per PC: on/off,
+  monitor, _Open now_). It opens full screen on the chosen (or the first other) monitor and adapts
+  to any screen from 480p to 1080p, horizontal or vertical — the layout follows the size and
+  orientation live. While nothing is sold it plays the ads program (the same albums / slides /
+  intervals as the PCs, grid pages re-flow 3×2 → 2×3 upright, boards use two columns only when
+  there is room); during a sale it shows the lines (small square product photo, name, qty ×
+  price, line total — the last change highlighted), subtotal / discount / total and the
+  customer's debt and balance; during the payment it shows cash handed over, balance used, what
+  goes on the tab and the **change** live as the cashier types; after the payment a "Thank you"
+  screen with total, paid and change for 8 s, then back to the ads. The window is a dumb screen:
+  the main window pushes everything over Tauri events / `BroadcastChannel`, so it holds no
+  token and never talks to the server. New endpoint `GET /ads/feed` (any signed-in user) and
+  admin event `ads.changed`; the slideshow page builder moved to the shared package
+  (`planAlbums` / `buildProgram`) so PC and counter play the same program. _Note: the native
+  window placement (Rust) is built only by the release pipeline — it is verified with the 0.16.0
+  installers._
+
 ## [0.15.0] - 2026-10-13
 
 Update both apps: **Update** in LIKApcs (Admin) first (server + migration 0026 `import_runs`,

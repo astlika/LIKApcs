@@ -1206,6 +1206,29 @@ export const sq: Dictionary = {
       previewNote:
         'Ndryshimet arrijnë në çdo PC të lidhur sapo i ruani — pa rinisje në PC-të e lojërave.',
     },
+    display: {
+      title: 'Ekrani i klientit',
+      subtitle:
+        'Një dritare e dytë për monitorin e kthyer nga klientët: shitja e hapur rresht për rresht me totalin, pagesa dhe kusuri, "Faleminderit" në fund — dhe reklamat (albumet) kur nuk shitet asgjë. Zgjidhet për çdo PC veç.',
+      enabled: 'Përdor ekranin e klientit në këtë PC',
+      enabledHint:
+        'Hapet bashkë me programin, në ekran të plotë te monitori i zgjedhur. Përshtatet me çdo ekran nga 480p deri 1080p, horizontal ose vertikal — pamja ndjek vetë madhësinë dhe orientimin.',
+      monitor: 'Monitori',
+      monitorHint: 'Automatik = monitori i parë që nuk është ai ku ndodhet LIKApcs.',
+      monitorAuto: 'Automatik (monitori i dytë)',
+      monitorCurrent: 'LIKApcs është këtu',
+      landscape: 'horizontal',
+      portrait: 'vertikal',
+      open: 'Hape tani',
+      close: 'Mbylle',
+      connected: 'I lidhur',
+      notConnected: 'I pahapur',
+      opened: 'Ekrani i klientit u hap në monitorin e vet.',
+      openedPreview: 'U gjet vetëm një monitor — u hap si dritare për parapamje.',
+      failed: 'Ekrani i klientit nuk u hap dot.',
+      browserHint:
+        'Në shfletues ekrani hapet në një dritare më vete (lejo pop-up); zgjedhja e monitorit vlen në programin desktop.',
+    },
     printing: {
       receipts: 'Kuponët (printer termik)',
       receiptWidth: 'Gjerësia e letrës së kuponit',

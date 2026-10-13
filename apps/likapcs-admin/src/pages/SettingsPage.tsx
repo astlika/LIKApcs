@@ -48,6 +48,7 @@ import { ClientScreenPreview } from '../components/settings/ClientScreenPreview'
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
+import { CustomerDisplayCard } from '../components/settings/CustomerDisplayCard';
 
 type TabId =
   'business' | 'locale' | 'stations' | 'client' | 'printing' | 'security' | 'system' | 'about';
@@ -970,6 +971,7 @@ export function SettingsPage() {
               })}
             </div>
           </Card>
+          <CustomerDisplayCard />
           <Card title={t('settings.printing.invoices')}>
             <Alert tone="info">{t('settings.printing.invoicesNote')}</Alert>
             <div className="form-grid" style={{ marginTop: 16 }}>

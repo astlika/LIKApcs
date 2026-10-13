@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -28,6 +29,13 @@ export default defineConfig({
     target: ['es2022', 'chrome110', 'edge110'],
     sourcemap: false,
     outDir: 'dist',
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        // Customer display (0.16.0): the second window on the monitor facing the customers.
+        display: fileURLToPath(new URL('./display.html', import.meta.url)),
+      },
+    },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
 });

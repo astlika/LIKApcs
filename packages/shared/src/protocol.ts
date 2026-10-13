@@ -454,6 +454,8 @@ export const ADMIN_EVENTS = [
   'request.changed',
   /** An order from a PC was created / answered / settled (payload: StationOrder). */
   'order.changed',
+  /** 0.16.0: a slide / album / promo changed — the customer display's feed is stale (no payload). */
+  'ads.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 
