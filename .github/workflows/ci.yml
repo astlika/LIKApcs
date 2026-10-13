@@ -110,6 +110,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --all-targets
         working-directory: apps/likapcs-client/src-tauri
+      # The Admin bundles the staged server runtime; the release workflow stages it, here an
+      # empty directory is enough for the build script to accept the resource path.
+      - run: |
+          New-Item -ItemType Directory -Force -Path apps/likapcs-admin/src-tauri/runtime | Out-Null
+          New-Item -ItemType File -Force -Path apps/likapcs-admin/src-tauri/runtime/.keep | Out-Null
       - run: cargo check --all-targets
         working-directory: apps/likapcs-admin/src-tauri
 
