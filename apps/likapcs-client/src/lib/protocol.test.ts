@@ -537,6 +537,40 @@ describe('reduce()', () => {
     state = msg.state;
     expect(state.mode).toBe('locked');
   });
+
+  it('End Task only ever closes the listed programs — never itself, never the shell', () => {
+    const state = applyWelcome(initialState, welcome);
+    const run = reduce(
+      state,
+      cmd({
+        command: 'tasks.end',
+        payload: { exes: ['C:\\Games\\cs2', 'steam.EXE', 'likapcs-client.exe', 'not a name?'] },
+      }),
+      T0,
+    );
+    expect(run.ok).toBe(true);
+    expect(run.state.mode).toBe(state.mode); // nothing about the lock/session changes
+    expect(run.effects).toEqual([
+      {
+        type: 'end_tasks',
+        exes: ['cs2.exe', 'steam.exe'],
+        // Only what was refused is reported as skipped — the rest was closed.
+        skipped: ['likapcs-client.exe', 'not a name?'],
+      },
+    ]);
+
+    // A list with nothing usable in it is refused instead of silently doing nothing.
+    const onlyProtected = reduce(
+      state,
+      cmd({ command: 'tasks.end', payload: { exes: ['explorer.exe', 'svchost'] } }),
+      T0,
+    );
+    expect(onlyProtected.ok).toBe(false);
+    expect(onlyProtected.effects).toEqual([]);
+    const empty = reduce(state, cmd({ command: 'tasks.end', payload: {} }), T0);
+    expect(empty.ok).toBe(false);
+    expect(empty.error).toMatch(/no programs to close/);
+  });
 });
 
 describe('server address helpers', () => {

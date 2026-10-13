@@ -318,6 +318,15 @@ export const en = {
       powerShutdown: 'Shut down PC',
       updateApply: 'Update client',
       wolConfigure: 'Enable Wake-on-LAN on the PC',
+      tasksEnd: 'End Task',
+    },
+    tasksEnd: {
+      pending: 'Closing…',
+      closed: '{n} closed',
+      notRunning: '{n} were not open',
+      failed: '{n} could not be closed',
+      byStaff: 'staff',
+      automatic: 'automatic',
     },
     wake: {
       title: 'Wake-on-LAN',
@@ -926,6 +935,9 @@ export const en = {
     restart: 'Restart',
     shutdown: 'Shut down',
     wake: 'Power on',
+    endTasks: 'End Task',
+    endTasksHint: 'Closes the programs listed in Settings › Stations — never LIKApcs itself',
+    endTasksPressed: 'games closed',
     selectShort: 'Select a PC',
     help: {
       title: 'Mouse & keyboard',
@@ -1015,6 +1027,23 @@ export const en = {
       maintenanceMinutes: 'Staff unlock duration (minutes)',
       maintenanceMinutesHint:
         'Staff with the "stations.unlock" permission can unlock a station PC with their own username and password (Ctrl+Alt+A on the PC). It locks again after this time.',
+      endTasks: {
+        title: 'End Task — the programs a PC closes',
+        subtitle:
+          'The "End Task" button on the Stations page closes exactly these programs, on one PC or on all the selected ones at once. Nothing else is ever closed: LIKApcs-Client and Windows are refused even if they are typed in here.',
+        list: 'Programs (name.exe)',
+        placeholder: 'steam.exe',
+        add: 'Add',
+        empty: 'Nothing listed yet — until you add one, the button answers "no programs listed".',
+        common: 'Common games & launchers',
+        count: '{n} of {max}',
+        protectedName: '"{name}" is part of Windows or LIKApcs and can never be closed.',
+        invalid: '"{name}" is not a program name — write it as name.exe.',
+        tooMany: 'At most {max} programs.',
+        auto: 'Close them automatically when a session ends',
+        autoHint:
+          'Runs when the time expires, when staff stop the session and when it is cancelled. Off: only the button closes them.',
+      },
     },
     pause: {
       title: 'Pause from the PC',

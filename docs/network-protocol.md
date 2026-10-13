@@ -94,7 +94,7 @@ gaming PC (see §4).
 
 #### Staff commands (`POST /stations/:id/command`)
 
-Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'update.apply' | 'wol.configure'}`
+Body: `{command: 'lock' | 'unlock' | 'power.restart' | 'power.shutdown' | 'update.apply' | 'wol.configure' | 'tasks.end'}`
 or `{command: 'message.show', text (1–300), durationSeconds? (3–600, default 20)}`. Permissions:
 `stations.control` for all of them, additionally `stations.power` for `power.*` and
 `devices.manage` for `update.apply`. The call waits for the client's acknowledgement (15 s) and
@@ -107,6 +107,18 @@ command was accepted), does the work on a worker thread — it needs administrat
 prompt may appear on the PC's screen — and then reports `client.event wol_configured {ok, message,
 elevated}` (audited as `station.wol_configured`) followed by a fresh `hardware` event, which is
 what updates the readiness badge in the Admin.
+
+`tasks.end` (0.17.0) closes the programs the owner listed in the settings
+(`stations.end_tasks_exes`) — the request body carries **no** list, the server sends its own
+validated copy (`payload.exes`, bare `name.exe`, protected names impossible). The client acks at
+once, runs `taskkill /IM <name> /F /T` per program on a worker thread and reports
+`client.event tasks_ended {closed[], notRunning[], failed[{exe,error}], skipped[]}` (audited as
+`station.tasks_ended`). The station keeps the outcome as `device.tasksEnded`
+(`{at, status: pending|done|failed, closed, notRunning, failed, trigger: manual|auto}`) — that is
+what the Admin's End Task button shows as pressed; it is released by the next `session.start`,
+survives a reconnect and is forgotten on revoke. With `stations.end_tasks_auto` on (default off)
+the server issues the same command by itself right after every session end, cancel and expiry.
+`409 end_tasks_empty` when the list is empty.
 
 #### Wake-on-LAN (`POST /stations/:id/wake`, `POST /stations/wake-all`)
 
@@ -803,14 +815,19 @@ Server → Client  { "type": "server.customer", "customer": { "id": "<uuid>", "n
 Server → Client  { "type": "server.command", "commandId": "<uuid>", "seq": 7,
                    "command": "session.start" | "session.pause" | "session.resume" | "session.extend"
                             | "session.end" | "lock" | "unlock" | "message.show"
-                            | "power.restart" | "power.shutdown" | "update.apply" | "wol.configure",
+                            | "power.restart" | "power.shutdown" | "update.apply" | "wol.configure"
+                            | "tasks.end",
                    "payload": {...}, "issuedAt": "…", "expiresAt": "…" }
+                   // tasks.end payload: { "exes": ["steam.exe", …] } — the owner's list, filtered
+                   // by the server; the client filters again and refuses protected names.
 Client → Server  { "type": "client.ack", "commandId": "<uuid>", "ok": true }
                  { "type": "client.ack", "commandId": "<uuid>", "ok": false, "error": "…" }
 
 Client → Server  { "type": "client.event", "event": "locked" | "unlocked" | "session_expired_locally"
                             | "maintenance_ended" | "update_status" | "error" | "hardware"
-                            | "wol_configured", "payload": {...} }
+                            | "wol_configured" | "tasks_ended", "payload": {...} }
+                   // tasks_ended payload: { "closed": [...], "notRunning": [...],
+                   //   "failed": [{ "exe": "…", "error": "…" }], "skipped": [...] }
 ```
 
 `hardware` (0.6.1) carries the same `HardwareInfo` object as `client.hello.hardware`, for the case

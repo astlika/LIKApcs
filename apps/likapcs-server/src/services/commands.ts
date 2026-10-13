@@ -1,15 +1,20 @@
 import type { Pool } from 'pg';
 import {
   isNewerVersion,
+  validateEndTasks,
   type ClientUpdatePushResponse,
   type StationCommandRequest,
   type StationCommandResponse,
 } from '@likapcs/shared';
-import { conflict } from '../errors.js';
+import { AppError, conflict } from '../errors.js';
 import type { DevicePresence, RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { MaintenanceService } from './maintenance.js';
+import type { SettingsService } from './settings.js';
 import { SERVER_VERSION } from '../version.js';
+
+/** What the hub answers for one command: delivered and acked, or why it was not. */
+type CommandOutcome = Awaited<ReturnType<RealtimeHub['sendCommand']>>;
 
 /** A policy decision for pushing `update.apply` to a connected client. */
 export type UpdatePolicy = 'manual' | 'idle_only' | 'maintenance_window';
@@ -57,7 +62,83 @@ export class CommandsService {
     private readonly pool: Pool,
     private readonly hub: RealtimeHub,
     private readonly maintenance: MaintenanceService,
+    private readonly settings: SettingsService,
   ) {}
+
+  /**
+   * End Task (0.17.0): the programs a PC may be told to close — only the owner's list from the
+   * settings, validated once more here (protected names never leave the server).
+   */
+  async endTasksList(): Promise<string[]> {
+    const v = validateEndTasks(await this.settings.get('stations.end_tasks_exes'));
+    return v.ok ? v.exes : [];
+  }
+
+  /**
+   * Sends `tasks.end` to the PC of a station and marks the station's button as pressed
+   * (`pending` until the PC reports what it closed). Used by the staff button and by the
+   * automatic run at the end of a session.
+   */
+  async endTasks(
+    stationId: string,
+    trigger: 'manual' | 'auto',
+    actor: AuditActor,
+  ): Promise<StationCommandResponse> {
+    const exes = await this.endTasksList();
+    if (exes.length === 0)
+      throw new AppError(
+        409,
+        'end_tasks_empty',
+        'No programs are listed for End Task — add them in Settings › Stations',
+      );
+    const presence = this.onlineDeviceForStation(stationId);
+    // The button is pressed *before* the command goes out. A fast PC answers in the same
+    // millisecond the ack resolves, and its report must have the last word — a "pending" written
+    // after it once left the desk staring at "Closing…" forever.
+    this.hub.setTasksEnded(presence.deviceId, {
+      at: new Date().toISOString(),
+      status: 'pending',
+      closed: [],
+      notRunning: [],
+      failed: [],
+      trigger,
+    });
+    let result: CommandOutcome;
+    try {
+      result = await this.hub.sendCommand(
+        presence.deviceId,
+        'tasks.end',
+        { exes },
+        {
+          timeoutMs: 15_000,
+        },
+      );
+    } catch (err) {
+      this.hub.setTasksEnded(presence.deviceId, null);
+      throw err;
+    }
+    // The command never reached the PC (offline, timeout, refused): release the button again.
+    if (!result.ok) this.hub.setTasksEnded(presence.deviceId, null);
+    await recordAudit(this.pool, actor, {
+      action: 'station.command.tasks.end',
+      entityType: 'station',
+      entityId: stationId,
+      details: {
+        deviceId: presence.deviceId,
+        exes,
+        trigger,
+        ok: result.ok,
+        error: result.error ?? null,
+      },
+      severity: result.ok ? 'info' : 'warning',
+    });
+    return {
+      commandId: result.commandId,
+      command: 'tasks.end',
+      ok: result.ok,
+      error: result.error,
+    };
+  }
 
   private onlineDeviceForStation(stationId: string): DevicePresence {
     const presence = this.hub.listDevices().find((d) => d.stationId === stationId);
@@ -70,6 +151,7 @@ export class CommandsService {
     request: StationCommandRequest,
     actor: AuditActor,
   ): Promise<StationCommandResponse> {
+    if (request.command === 'tasks.end') return this.endTasks(stationId, 'manual', actor);
     const presence = this.onlineDeviceForStation(stationId);
     const { command, ...rest } = request;
     let payload: Record<string, unknown> = rest;

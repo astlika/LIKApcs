@@ -38,6 +38,7 @@ import {
   checkForUpdate,
   deviceIdentity,
   discoverServers,
+  endTasks,
   firstReachable,
   hardwareInfo,
   hardwareMetrics,
@@ -1043,6 +1044,26 @@ export class Agent {
       case 'update':
         await this.selfUpdate('command');
         break;
+      case 'end_tasks': {
+        // End Task (0.17.0): `taskkill` needs a moment per program; the ack already went out, so
+        // the desk first sees the button pressed and then what the PC actually closed.
+        const outcome = await endTasks(effect.exes).catch((err: unknown) => ({
+          closed: [],
+          notRunning: [] as string[],
+          failed: effect.exes.map((exe) => ({ exe, error: String(err) })),
+          skipped: effect.skipped,
+        }));
+        this.send({
+          type: 'client.event',
+          event: 'tasks_ended',
+          payload: {
+            ...outcome,
+            // Both layers filter on their own (protocol.ts and the Rust side): report the union.
+            skipped: [...new Set([...effect.skipped, ...outcome.skipped])],
+          },
+        });
+        break;
+      }
       case 'wol_configure': {
         // Can take a while (UAC prompt on this PC); the ack already went out, the outcome is
         // reported as an event and the adapters are re-sent so the Admin's badge updates.

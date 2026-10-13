@@ -22,6 +22,7 @@ import {
   LockOpen,
   MessageSquare,
   Monitor,
+  OctagonX,
   Plus,
   Power,
   RotateCcw,
@@ -601,22 +602,33 @@ export function StationsPage() {
         <div className="map-actions__buttons">
           {actions
             .filter((a) => a.bar)
-            .map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className="map-action"
-                data-action={a.id}
-                data-tone={a.tone}
-                disabled={!selected || !a.enabled || busy}
-                title={a.enabled ? a.label : (a.hint ?? a.label)}
-                onClick={() => run(a.id)}
-              >
-                <a.icon size={20} />
-                <span>{a.label}</span>
-                {a.shortcut && selected && primary === a.id && <Kbd>{a.shortcut}</Kbd>}
-              </button>
-            ))}
+            .map((a) => {
+              const off = !selected || !a.enabled;
+              // A pressed action says so in words as well as in colour (screen readers, tooltips).
+              const title = off
+                ? (a.hint ?? a.label)
+                : a.pressed
+                  ? `${a.label} — ${t('map.endTasksPressed')}`
+                  : a.label;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="map-action"
+                  data-action={a.id}
+                  data-tone={a.tone}
+                  data-pressed={a.pressed ? 'true' : undefined}
+                  aria-pressed={a.pressed === undefined ? undefined : a.pressed}
+                  disabled={off || busy}
+                  title={title}
+                  onClick={() => run(a.id)}
+                >
+                  <a.icon size={20} />
+                  <span>{a.label}</span>
+                  {a.shortcut && selected && primary === a.id && <Kbd>{a.shortcut}</Kbd>}
+                </button>
+              );
+            })}
         </div>
       </div>
 
@@ -1552,6 +1564,7 @@ const COMMAND_LABEL = {
   'power.shutdown': 'stations.commands.powerShutdown',
   'update.apply': 'stations.commands.updateApply',
   'wol.configure': 'stations.commands.wolConfigure',
+  'tasks.end': 'stations.commands.tasksEnd',
 } as const;
 
 /** Lock / unlock / message / power / update — each one is a server command acknowledged by the PC. */
@@ -1588,6 +1601,32 @@ function DeviceCommands({
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
+  // End Task (0.17.0): the last run on this PC, kept by the server until the next session
+  // starts — it is what tells the desk whether the games are already closed.
+  const ended = station.device?.tasksEnded ?? null;
+  const endedText = !ended
+    ? ''
+    : ended.status === 'pending'
+      ? t('stations.tasksEnd.pending')
+      : [
+          ended.closed.length > 0 ? t('stations.tasksEnd.closed', { n: ended.closed.length }) : '',
+          ended.failed.length > 0 ? t('stations.tasksEnd.failed', { n: ended.failed.length }) : '',
+          ended.closed.length === 0 && ended.failed.length === 0
+            ? t('stations.tasksEnd.notRunning', { n: ended.notRunning.length })
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+  const endedDetail = !ended
+    ? ''
+    : [
+        ended.closed.length > 0 ? `✓ ${ended.closed.join(', ')}` : '',
+        ended.notRunning.length > 0 ? `– ${ended.notRunning.join(', ')}` : '',
+        ended.failed.length > 0 ? `✕ ${ended.failed.join('; ')}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
   if (!canControl) return null;
   const disabled = !online || send.isPending;
   // One compact row: icon buttons with the command name as tooltip (the dialog is for sessions
@@ -1622,6 +1661,12 @@ function DeviceCommands({
       {cmd(t(COMMAND_LABEL['message.show']), <MessageSquare size={15} />, () =>
         setMessageOpen(true),
       )}
+      {cmd(
+        ended ? `${t(COMMAND_LABEL['tasks.end'])} — ${endedText}` : t(COMMAND_LABEL['tasks.end']),
+        <OctagonX size={15} />,
+        () => send.mutate({ command: 'tasks.end' }),
+        'device-cmd-tasks',
+      )}
       {canPower &&
         cmd(t(COMMAND_LABEL['power.restart']), <RotateCcw size={15} />, () =>
           setConfirmPower('power.restart'),
@@ -1634,6 +1679,18 @@ function DeviceCommands({
         cmd(t(COMMAND_LABEL['update.apply']), <DownloadCloud size={15} />, () =>
           send.mutate({ command: 'update.apply' }),
         )}
+      {ended && (
+        <span
+          className="st-commands__tasks"
+          data-status={ended.status}
+          data-testid="device-tasks-state"
+          title={endedDetail}
+        >
+          <OctagonX size={12} />
+          {endedText}
+          <em>{t(`stations.tasksEnd.${ended.trigger === 'auto' ? 'automatic' : 'byStaff'}`)}</em>
+        </span>
+      )}
       {!online && <span className="st-commands__offline">{t('stations.commandsOffline')}</span>}
       <Dialog
         open={messageOpen}

@@ -6,6 +6,29 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **End Task — close the games on a PC from the desk.** A new **End Task** button sits in the
+  station action bar (one PC or every selected PC at once). It closes **only** the programs the
+  owner lists in Settings › Stations › _End Task — the programs a PC closes_: bare `name.exe`
+  entries, with one-click suggestions for the common games and launchers. LIKApcs-Client, its
+  WebView2 and the Windows shell are refused by the Admin, by the server **and** by the PC's own
+  Rust layer, so the list can never take a PC down or close the client itself; a protected name
+  typed in the box is refused inline before it is even saved. The client runs
+  `taskkill /IM <name> /F /T` per program and reports what it closed, what was not running and
+  what it could not close — the station dialog shows that outcome as a small badge, and every run
+  is audited (`station.command.tasks.end`, `station.tasks_ended`).
+  The button **never disappears**: it is simply not pressed, or pressed (green, sunken) once the
+  programs are closed, until the next session starts on that PC — and a PC that drops offline for
+  a moment keeps its state, so the desk never sees "the games are open again" after a network
+  blip. Optionally — Settings › Stations › _Close them automatically when a session ends_,
+  **off by default** — the server sends the same command by itself whenever a session expires, is
+  stopped or is cancelled. With an empty list the button answers "No programs are listed for End
+  Task — add them in Settings › Stations" instead of doing nothing.
+  New settings: `stations.end_tasks_exes` (max 60 names), `stations.end_tasks_auto`. New command
+  `tasks.end`, new client event `tasks_ended`, new station field `device.tasksEnded`
+  (see `docs/network-protocol.md`). Migration `0027_end_tasks.sql` seeds both settings.
+
 ## [0.16.1] - 2026-10-13
 
 Update both apps: **Update** in LIKApcs (Admin) first (server fix; no new migration), then the

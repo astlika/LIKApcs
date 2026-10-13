@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Check, Megaphone, Save, Undo2, UtensilsCrossed } from 'lucide-react';
+import { Check, Megaphone, OctagonX, Plus, Save, Undo2, UtensilsCrossed } from 'lucide-react';
 import {
   AD_THEMES,
   CLIENT_ADS_CAPTIONS,
@@ -11,7 +11,11 @@ import {
   CLIENT_ADS_STYLES,
   CLIENT_ADS_TRANSITIONS,
   CLIENT_LOCK_TITLES,
+  END_TASKS_SUGGESTIONS,
+  MAX_END_TASKS,
   adsGridSize,
+  isProtectedProcess,
+  normalizeExeName,
   CLIENT_WIDGET_POSITIONS,
   CLIENT_WIDGET_SIZES,
   PERMISSIONS,
@@ -446,6 +450,16 @@ export function SettingsPage() {
             })}
           </div>
         </Card>
+      )}
+      {tab === 'stations' && (
+        <EndTasksCard
+          list={current['stations.end_tasks_exes']}
+          auto={Boolean(current['stations.end_tasks_auto'])}
+          error={errors['stations.end_tasks_exes']}
+          readOnly={ro}
+          onChange={(exes) => set('stations.end_tasks_exes', exes)}
+          onAutoChange={(v) => set('stations.end_tasks_auto', v)}
+        />
       )}
       {tab === 'stations' && (
         <Card title={t('settings.pause.title')} subtitle={t('settings.pause.subtitle')}>
@@ -1127,5 +1141,165 @@ function AboutPanel({ info, loading }: { info: SystemInfoResponse | undefined; l
         {row(t('settings.about.usersCount', { n: info.counts.users }), '')}
       </Card>
     </div>
+  );
+}
+
+/**
+ * End Task (0.17.0): the owner's list of programs a PC may be told to close.
+ *
+ * Chips like the barcode editor, one-click suggestions for the common games and launchers, and
+ * an inline refusal the moment a protected name (Windows, LIKApcs itself) is typed — the server
+ * refuses it too, but nobody should have to press Save to find that out.
+ */
+function EndTasksCard({
+  list,
+  auto,
+  error,
+  readOnly,
+  onChange,
+  onAutoChange,
+}: {
+  list: string[];
+  auto: boolean;
+  error?: string;
+  readOnly: boolean;
+  onChange: (exes: string[]) => void;
+  onAutoChange: (value: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [entry, setEntry] = useState('');
+  const [refused, setRefused] = useState<string | null>(null);
+
+  const add = (raw: string) => {
+    const typed = raw.trim();
+    if (!typed) return;
+    const name = normalizeExeName(typed);
+    if (!name) {
+      setRefused(t('settings.stations.endTasks.invalid', { name: typed }));
+      return;
+    }
+    if (isProtectedProcess(name)) {
+      setRefused(t('settings.stations.endTasks.protectedName', { name }));
+      return;
+    }
+    if (list.length >= MAX_END_TASKS) {
+      setRefused(t('settings.stations.endTasks.tooMany', { max: MAX_END_TASKS }));
+      return;
+    }
+    setRefused(null);
+    setEntry('');
+    if (list.some((exe) => exe.toLowerCase() === name.toLowerCase())) return; // already listed
+    onChange([...list, name]);
+  };
+
+  const suggestions = END_TASKS_SUGGESTIONS.filter(
+    (name) => !list.some((exe) => exe.toLowerCase() === name.toLowerCase()),
+  );
+
+  return (
+    <Card
+      title={t('settings.stations.endTasks.title')}
+      subtitle={t('settings.stations.endTasks.subtitle')}
+      testId="settings-end-tasks"
+    >
+      <div className="stack">
+        <Field
+          label={t('settings.stations.endTasks.list')}
+          hint={t('settings.stations.endTasks.count', { n: list.length, max: MAX_END_TASKS })}
+          error={refused ?? error}
+        >
+          {(id, invalid) => (
+            <div className="row" style={{ gap: 8 }}>
+              <Input
+                id={id}
+                style={{ flex: 1 }}
+                value={entry}
+                maxLength={80}
+                placeholder={t('settings.stations.endTasks.placeholder')}
+                onChange={(e) => {
+                  setEntry(e.target.value);
+                  if (refused) setRefused(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    add(entry);
+                  }
+                }}
+                aria-invalid={invalid}
+                disabled={readOnly}
+                data-testid="settings-end-tasks-input"
+              />
+              <Button
+                onClick={() => add(entry)}
+                disabled={readOnly || !entry.trim()}
+                data-testid="settings-end-tasks-add"
+              >
+                {t('settings.stations.endTasks.add')}
+              </Button>
+            </div>
+          )}
+        </Field>
+
+        {list.length === 0 ? (
+          <p className="faint">{t('settings.stations.endTasks.empty')}</p>
+        ) : (
+          <div className="chips" data-testid="settings-end-tasks-list">
+            {list.map((exe) => (
+              <span key={exe} className="chip chip--static" data-testid="settings-end-tasks-chip">
+                <OctagonX size={12} />
+                <span className="mono">{exe}</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="chip__x"
+                    aria-label={t('common.delete')}
+                    data-testid={`settings-end-tasks-remove-${exe}`}
+                    onClick={() => onChange(list.filter((x) => x !== exe))}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {!readOnly && suggestions.length > 0 && (
+          <>
+            <div className="subhead">{t('settings.stations.endTasks.common')}</div>
+            <div className="chips">
+              {suggestions.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className="chip chip--suggest"
+                  data-testid={`settings-end-tasks-suggest-${name}`}
+                  onClick={() => add(name)}
+                >
+                  <Plus size={12} />
+                  <span className="mono">{name}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <Switch
+          checked={auto}
+          onChange={onAutoChange}
+          disabled={readOnly}
+          testId="settings-end-tasks-auto"
+          label={
+            <span>
+              {t('settings.stations.endTasks.auto')}
+              <div className="faint" style={{ fontSize: 12 }}>
+                {t('settings.stations.endTasks.autoHint')}
+              </div>
+            </span>
+          }
+        />
+      </div>
+    </Card>
   );
 }

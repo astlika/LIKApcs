@@ -240,6 +240,32 @@ export class SessionsService {
   }
 
   /**
+   * End Task (0.17.0): with `stations.end_tasks_auto` on, every session end (time ran out,
+   * stopped or cancelled by staff) is followed by "close the listed programs" on that PC. Runs
+   * after the response — the PC acks at once but the desk must not wait for `taskkill`; a
+   * failure is logged and audited by the hook, never swallowed.
+   */
+  private endTasksHook: ((stationId: string, actor: AuditActor) => Promise<unknown>) | null = null;
+  useEndTasks(hook: (stationId: string, actor: AuditActor) => Promise<unknown>): void {
+    this.endTasksHook = hook;
+  }
+  private autoEndTasks(session: SessionSummary, actor: AuditActor): void {
+    const hook = this.endTasksHook;
+    if (!hook) return;
+    void (async () => {
+      try {
+        if (!(await this.settings.get('stations.end_tasks_auto'))) return;
+        await hook(session.stationId, actor);
+      } catch (err) {
+        this.log.warn(
+          { err, sessionId: session.id, stationId: session.stationId },
+          'automatic End Task after the session failed',
+        );
+      }
+    })();
+  }
+
+  /**
    * Inside a session transaction: answer the request this action approves, or cancel the pending
    * ones it made moot. Returns the ids to announce once the transaction committed.
    */
@@ -1022,6 +1048,7 @@ export class SessionsService {
     if (billedOrders.length && this.orders) await this.orders.announce(billedOrders);
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
+    this.autoEndTasks(session, actor);
     return { session, client: ack, payment };
   }
 
@@ -1165,6 +1192,7 @@ export class SessionsService {
     await this.announceRequests(settled);
     const ack = await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
+    this.autoEndTasks(session, actor);
     return { session, client: ack };
   }
 
@@ -1215,6 +1243,7 @@ export class SessionsService {
     await this.announceRequests(settled);
     await this.mirror(session, 'session.end', { sessionId: id }, actor);
     await this.broadcast(session);
+    this.autoEndTasks(session, actor);
     return session;
   }
 

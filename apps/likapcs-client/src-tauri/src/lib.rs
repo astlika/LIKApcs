@@ -9,6 +9,7 @@
 mod hardware;
 mod kiosk;
 mod secrets;
+mod tasks;
 mod wol;
 
 use serde::{Deserialize, Serialize};
@@ -623,6 +624,17 @@ async fn power_action(action: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// End Task (0.17.0): closes the programs the owner listed in Settings › Stations. Only
+/// reachable through an authenticated, acknowledged server command (`tasks.end`); the native
+/// side filters the list once more and refuses LIKApcs itself and the Windows shell.
+#[tauri::command]
+async fn end_tasks(exes: Vec<String>) -> Result<tasks::EndTasksReport, String> {
+    // `taskkill` blocks per program: keep the UI thread free while the games go down.
+    tauri::async_runtime::spawn_blocking(move || tasks::end_tasks(&exes))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Where a crash is written: `%LOCALAPPDATA%\LIKApcs-Client\crash.log` (the temp dir elsewhere).
 fn crash_log_path() -> std::path::PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
@@ -740,6 +752,7 @@ pub fn run() {
             hardware_info,
             hardware_metrics,
             wol_configure,
+            end_tasks,
             set_widget_layout,
             secret_get,
             secret_set,

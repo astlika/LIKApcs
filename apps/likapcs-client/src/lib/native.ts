@@ -230,6 +230,31 @@ export async function wolConfigure(): Promise<WolConfigureResult> {
   return invoke<WolConfigureResult>('wol_configure');
 }
 
+/** What the PC did with an End Task request (`tasks.end`) — one entry per listed program. */
+export interface EndTasksResult {
+  /** Programs that were running and are closed now. */
+  closed: string[];
+  /** Listed programs that were not running at all. */
+  notRunning: string[];
+  /** Programs that could not be closed (`error` is what Windows said). */
+  failed: { exe: string; error: string }[];
+  /** Entries the native side refused by itself (protected or malformed). */
+  skipped: string[];
+}
+
+/**
+ * End Task (0.17.0): closes the listed programs with `taskkill /IM <name> /F /T`. The native
+ * side keeps its own protected list (LIKApcs-Client, WebView2, the Windows shell) and refuses
+ * anything that is not a plain `name.exe`, so a bad request can never take the PC down.
+ */
+export async function endTasks(exes: string[]): Promise<EndTasksResult> {
+  if (!isDesktopApp()) {
+    console.info(`[dev] end tasks ignored: ${exes.join(', ')}`);
+    return { closed: [], notRunning: exes, failed: [], skipped: [] };
+  }
+  return invoke<EndTasksResult>('end_tasks', { exes });
+}
+
 export async function powerAction(action: 'restart' | 'shutdown'): Promise<void> {
   if (!isDesktopApp()) {
     console.info(`[dev] power action ignored: ${action}`);

@@ -2257,6 +2257,19 @@ body:has(.pos) .toasts {
   align-items: center;
   gap: 6px;
 }
+/* End Task suggestions: quiet one-click chips that add a program to the list. */
+.chip--suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chip--suggest:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
 .chip__x {
   border: 0;
   background: transparent;
@@ -2663,6 +2676,33 @@ body:has(.pos) .toasts {
   font-size: 9px;
   padding: 0 4px;
   opacity: 0.85;
+}
+/*
+ * End Task (0.17.0): the button never disappears — it shows its own state. Pressed = the listed
+ * programs were closed on this PC (the server releases it when the next session starts).
+ */
+.map-action[data-pressed='true']:not(:disabled) {
+  background: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+  color: var(--success);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 18%);
+  transform: translateY(1px);
+}
+.map-action[data-pressed='true']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  border-color: var(--success);
+  transform: translateY(0);
+}
+.map-action[data-pressed='true']::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.8;
 }
 
 /* Floor */
@@ -5207,6 +5247,36 @@ button.ads-album .ads-album__meta {
   font-size: 12px;
   color: var(--text-muted);
   margin-left: 4px;
+}
+/* What the PC answered to the last End Task (tooltip lists every program). */
+.st-commands__tasks {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 2px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.st-commands__tasks em {
+  font-style: normal;
+  font-weight: 500;
+  opacity: 0.75;
+}
+.st-commands__tasks[data-status='pending'] {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+.st-commands__tasks[data-status='failed'] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 .st-log {
   list-style: none;

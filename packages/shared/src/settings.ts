@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ClientDisplayConfig } from './protocol.js';
+import { validateEndTasks } from './end-tasks.js';
 
 /**
  * Application settings stored in the `settings` table (one row per key, JSON value).
@@ -107,6 +108,32 @@ export const SETTING_SCHEMAS = {
   'stations.client_welcome_message': z.string().max(300),
   /** How long a staff unlock (maintenance) keeps a station PC open before it locks again. */
   'stations.maintenance_minutes': z.number().int().min(1).max(480),
+  /**
+   * End Task (0.17.0): the only programs a PC may be told to close (`name.exe`, no paths). The
+   * server refuses protected names (LIKApcs itself, the Windows shell) — see end-tasks.ts.
+   */
+  'stations.end_tasks_exes': z
+    .array(z.string().trim().max(80))
+    .max(60)
+    .superRefine((list, ctx) => {
+      const v = validateEndTasks(list);
+      if (!v.ok)
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            v.error === 'protected'
+              ? `"${v.entry}" is part of Windows or LIKApcs and can never be closed`
+              : v.error === 'invalid_exe'
+                ? `"${v.entry}" is not a program name (expected name.exe)`
+                : `At most 60 programs`,
+        });
+    })
+    .transform((list) => {
+      const v = validateEndTasks(list);
+      return v.ok ? v.exes : list;
+    }),
+  /** Close them by itself whenever a session ends (time ran out or staff ended it). Default off. */
+  'stations.end_tasks_auto': z.boolean(),
   /** Customer login on the PCs ("Client" button on the locked screen) + session requests. */
   'requests.enabled': z.boolean(),
   /** Quick durations (minutes) a signed-in customer can ask for, besides the gaming packages. */
@@ -256,6 +283,8 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.expiry_warning_minutes': [5, 1],
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
   'stations.maintenance_minutes': 15,
+  'stations.end_tasks_exes': [],
+  'stations.end_tasks_auto': false,
   'requests.enabled': true,
   'requests.quick_minutes': [30, 60, 120, 180],
   'sessions.customer_pause': true,

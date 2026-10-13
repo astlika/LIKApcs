@@ -61,6 +61,7 @@ export class DevicesService {
       online: this.hub.isDeviceOnline(row.id),
       hardware: row.hardware,
       metrics: this.hub.deviceMetrics(row.id),
+      tasksEnded: this.hub.tasksEnded(row.id),
     };
   }
 
@@ -354,6 +355,8 @@ export class DevicesService {
       });
       return { device: await this.getById(deviceId, client), stationId: row.station_id };
     });
+    // A revoked PC is a stranger from now on: its last End Task run must not be shown any more.
+    this.hub.clearTasksEnded(deviceId);
     const presence = this.hub.getDevice(deviceId);
     if (presence) presence.socket.close(WS_CLOSE_CODES.DEVICE_REVOKED, 'device revoked');
     this.hub.broadcastToAdmins('device.changed', device);

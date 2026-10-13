@@ -171,7 +171,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const search = new SearchService(pool);
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const maintenance = new MaintenanceService(pool, hub, stations, auth, users, settings);
-  const commands = new CommandsService(pool, hub, maintenance);
+  const commands = new CommandsService(pool, hub, maintenance, settings);
   const wake = new WakeService(pool, stations, options.wakeSender);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
@@ -194,6 +194,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     availablePackages: (stationId) => pricing.availablePackages(stationId),
   });
   sessions.useRequests(requests);
+  sessions.useEndTasks((stationId, actor) => commands.endTasks(stationId, 'auto', actor));
   // A revoked PC cannot show an answer any more: its waiting request is cancelled.
   devices.onRevoked(async (stationId, _deviceId, actor) => {
     await requests.cancelAndAnnounce(stationId, 'device_revoked', actor);

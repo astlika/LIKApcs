@@ -7,9 +7,11 @@ import {
   clientDisplayFromSettings,
   hardwareInfoSchema,
   isCompatibleWithServer,
+  tasksEndedPayloadSchema,
   type ServerError,
   type ServerHeartbeatAck,
   type ServerWelcomeToClient,
+  type StationTasksEnded,
 } from '@likapcs/shared';
 import type { DevicePresence } from './hub.js';
 import { recordAudit } from '../services/audit.js';
@@ -274,6 +276,46 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                   severity: p.ok === true ? 'info' : 'warning',
                 },
               );
+            }
+            if (message.event === 'tasks_ended') {
+              // End Task (0.17.0): the PC closed the listed programs — keep the outcome on the
+              // station (button pressed state) and in the audit log.
+              const parsed = tasksEndedPayloadSchema.safeParse(message.payload);
+              const previous = hub.tasksEnded(presence.deviceId);
+              const outcome: StationTasksEnded = parsed.success
+                ? {
+                    at: new Date().toISOString(),
+                    status: parsed.data.failed.length > 0 ? 'failed' : 'done',
+                    closed: parsed.data.closed,
+                    notRunning: parsed.data.notRunning,
+                    failed: parsed.data.failed.map((f) => `${f.exe} · ${f.error}`),
+                    trigger: previous?.trigger ?? 'manual',
+                  }
+                : {
+                    at: new Date().toISOString(),
+                    status: 'failed',
+                    closed: [],
+                    notRunning: [],
+                    failed: ['malformed report from the PC'],
+                    trigger: previous?.trigger ?? 'manual',
+                  };
+              hub.setTasksEnded(presence.deviceId, outcome);
+              await recordAudit(
+                app.pool,
+                {
+                  deviceId: presence.deviceId,
+                  label: `client ${presence.deviceId.slice(0, 8)}`,
+                  ip,
+                },
+                {
+                  action: 'station.tasks_ended',
+                  entityType: 'station',
+                  entityId: presence.stationId,
+                  details: { ...outcome },
+                  severity: outcome.status === 'failed' ? 'warning' : 'info',
+                },
+              );
+              await services.stations.broadcastStation(presence.stationId);
             }
             if (message.event === 'hardware') {
               // The PC finished reading its specs after it had already said hello (the GPU

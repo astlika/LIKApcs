@@ -328,6 +328,15 @@ export const sq: Dictionary = {
       powerShutdown: 'Fik PC-në',
       updateApply: 'Përditëso klientin',
       wolConfigure: 'Aktivizo Wake-on-LAN në PC',
+      tasksEnd: 'Mbyll lojërat',
+    },
+    tasksEnd: {
+      pending: 'Po mbyllen…',
+      closed: '{n} u mbyllën',
+      notRunning: '{n} nuk ishin hapur',
+      failed: '{n} nuk u mbyllën dot',
+      byStaff: 'stafi',
+      automatic: 'automatike',
     },
     wake: {
       title: 'Wake-on-LAN',
@@ -934,6 +943,9 @@ export const sq: Dictionary = {
     restart: 'Rinis',
     shutdown: 'Fik',
     wake: 'Ndiz',
+    endTasks: 'Mbyll lojërat',
+    endTasksHint: 'Mbyll programet e listuara te Cilësimet › Stacionet — kurrë vetë LIKApcs',
+    endTasksPressed: 'lojërat u mbyllën',
     selectShort: 'Zgjidh një PC',
     help: {
       title: 'Mausi & tastiera',
@@ -1020,6 +1032,24 @@ export const sq: Dictionary = {
       maintenanceMinutes: 'Kohëzgjatja e zhbllokimit nga stafi (minuta)',
       maintenanceMinutesHint:
         'Stafi me lejen "stations.unlock" mund ta zhbllokojë një PC stacioni me emrin e vet të përdoruesit dhe fjalëkalimin (Ctrl+Alt+A në PC). Pas kësaj kohe kyçet përsëri.',
+      endTasks: {
+        title: 'Mbyll lojërat — programet që mbyll një PC',
+        subtitle:
+          'Butoni "Mbyll lojërat" te faqja Stacionet mbyll saktësisht këto programe, në një PC ose në të gjithë të zgjedhurit njëherësh. Asgjë tjetër nuk mbyllet kurrë: LIKApcs-Client dhe Windows-i refuzohen edhe nëse shkruhen këtu.',
+        list: 'Programet (emri.exe)',
+        placeholder: 'steam.exe',
+        add: 'Shto',
+        empty:
+          'Ende asnjë — derisa të shtoni një, butoni përgjigjet "nuk ka programe për mbyllje".',
+        common: 'Lojëra & launcherë të zakonshëm',
+        count: '{n} nga {max}',
+        protectedName: '"{name}" është pjesë e Windows-it ose e LIKApcs dhe nuk mbyllet kurrë.',
+        invalid: '"{name}" nuk është emër programi — shkruaje si emri.exe.',
+        tooMany: 'Më së shumti {max} programe.',
+        auto: 'Mbylli automatikisht kur mbaron sesioni',
+        autoHint:
+          'Bëhet kur koha mbaron, kur stafi e ndalon sesionin dhe kur ai anulohet. Fikur: i mbyll vetëm butoni.',
+      },
     },
     pause: {
       title: 'Pauza nga PC',

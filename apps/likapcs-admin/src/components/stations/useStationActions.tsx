@@ -17,6 +17,7 @@ import {
   Lock,
   LockOpen,
   MessageSquare,
+  OctagonX,
   Pause,
   Play,
   Plus,
@@ -79,6 +80,7 @@ export type StationActionId =
   | 'restart'
   | 'shutdown'
   | 'wake'
+  | 'tasks'
   | 'details';
 
 /** Offline PC with a MAC on record — the only kind a magic packet can help. */
@@ -97,6 +99,11 @@ export interface StationAction {
   shortcut?: string;
   /** Why it is disabled (tooltip). */
   hint?: string;
+  /**
+   * End Task (0.17.0): the action stays in the bar and shows its own state — pressed once the
+   * programs were closed on this PC (until the next session starts), not pressed before.
+   */
+  pressed?: boolean;
 }
 
 type BulkOutcome = BulkOutcomeOf<StationSummary>;
@@ -197,6 +204,7 @@ export function useStationActions(
         'power.restart': t('stations.commands.powerRestart'),
         'power.shutdown': t('stations.commands.powerShutdown'),
         'update.apply': t('stations.commands.updateApply'),
+        'tasks.end': t('stations.commands.tasksEnd'),
       };
       if (r.ok) toast.success(t('stations.commandOk', { command: labels[r.command] ?? r.command }));
       else toast.error(t('stations.commandFailed', { error: r.error ?? '' }));
@@ -283,6 +291,7 @@ export function useStationActions(
         'message.show': t('stations.commands.messageShow'),
         'power.restart': t('stations.commands.powerRestart'),
         'power.shutdown': t('stations.commands.powerShutdown'),
+        'tasks.end': t('stations.commands.tasksEnd'),
       };
       const sum = summarizeBulk(results);
       const command = labels[body.command] ?? body.command;
@@ -316,6 +325,11 @@ export function useStationActions(
     group
       .filter((s) => s.device?.online)
       .every((s) => !s.activeSession && (s.status === 'available' || s.status === 'locked'));
+  // End Task state: pressed when the PC already closed the programs (the server clears it when
+  // the next session starts). With several PCs: pressed only when every online one has run it.
+  const tasksPressed = !!station?.device?.tasksEnded;
+  const groupTasksPressed =
+    groupOnline > 0 && group.filter((s) => s.device?.online).every((s) => !!s.device?.tasksEnded);
 
   const actions = useMemo<StationAction[]>(() => {
     if (!station) return [];
@@ -367,6 +381,15 @@ export function useStationActions(
           bar: true,
           enabled: canControl && !noneOnline,
           hint: noneOnline ? offlineHint : undefined,
+        },
+        {
+          id: 'tasks',
+          label: `${t('map.endTasks')} (${groupOnline})`,
+          icon: OctagonX,
+          bar: true,
+          enabled: canControl && !noneOnline,
+          hint: noneOnline ? offlineHint : t('map.endTasksHint'),
+          pressed: groupTasksPressed,
         },
         {
           id: 'restart',
@@ -458,6 +481,16 @@ export function useStationActions(
         hint: online ? undefined : offlineHint,
       },
       {
+        // End Task: always visible, pressed / not pressed shows whether the games are closed.
+        id: 'tasks',
+        label: t('map.endTasks'),
+        icon: OctagonX,
+        bar: true,
+        enabled: canControl && online,
+        hint: online ? t('map.endTasksHint') : offlineHint,
+        pressed: tasksPressed,
+      },
+      {
         id: 'restart',
         label: t('map.restart'),
         icon: RotateCcw,
@@ -514,6 +547,8 @@ export function useStationActions(
     groupStartable,
     groupUnlockable,
     groupWakeable,
+    tasksPressed,
+    groupTasksPressed,
   ]);
 
   const primary: StationActionId | null = !station
@@ -557,6 +592,12 @@ export function useStationActions(
           break;
         case 'message':
           setFlow({ kind: 'message' });
+          break;
+        case 'tasks':
+          // No dialog: the list of programs is the owner's (Settings › Stations), the desk only
+          // says "close them". Pressing it again simply runs it once more.
+          if (multi) commandMany.mutate({ command: 'tasks.end' });
+          else command.mutate({ stationId: station.id, body: { command: 'tasks.end' } });
           break;
         case 'restart':
           setFlow({ kind: 'power', command: 'power.restart' });

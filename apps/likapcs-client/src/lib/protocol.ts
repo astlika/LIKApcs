@@ -7,6 +7,8 @@
  *    effects the shell has to perform (power actions, update, lock/unlock the window…).
  */
 import {
+  isProtectedProcess,
+  normalizeExeName,
   priceForSeconds,
   type ClientDisplayConfig,
   type ClientSessionBilling,
@@ -158,6 +160,8 @@ export type Effect =
   | { type: 'update' }
   /** Turn the Windows side of Wake-on-LAN on, then report + re-send hardware facts. */
   | { type: 'wol_configure' }
+  /** End Task (0.17.0): close these programs (owner's list only), then report the outcome. */
+  | { type: 'end_tasks'; exes: string[]; skipped: string[] }
   | {
       type: 'event';
       event: 'locked' | 'unlocked' | 'maintenance_ended';
@@ -386,6 +390,27 @@ export function reduce(
       return { state, effects: [{ type: 'update' }], ok: true };
     case 'wol.configure':
       return { state, effects: [{ type: 'wol_configure' }], ok: true };
+    case 'tasks.end': {
+      // End Task (0.17.0): filtered entry by entry on the PC itself — whatever the payload
+      // claims, only a plausible `name.exe` that is not protected is closed, so LIKApcs-Client
+      // and the Windows shell can never be killed by a broken or tampered request.
+      const raw = Array.isArray(p.exes) ? (p.exes as unknown[]).map((x) => String(x)) : [];
+      const exes: string[] = [];
+      const seen = new Set<string>();
+      const skipped: string[] = [];
+      for (const entry of raw) {
+        const name = normalizeExeName(entry);
+        if (!name || isProtectedProcess(name) || seen.has(name.toLowerCase())) {
+          skipped.push(entry);
+          continue;
+        }
+        seen.add(name.toLowerCase());
+        exes.push(name);
+      }
+      if (exes.length === 0)
+        return { state, effects: [], ok: false, error: 'no programs to close' };
+      return { state, effects: [{ type: 'end_tasks', exes, skipped }], ok: true };
+    }
     default:
       return {
         state,

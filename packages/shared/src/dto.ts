@@ -243,6 +243,25 @@ export interface StationDeviceSummary {
   hardware: HardwareInfo | null;
   /** Latest heartbeat load (`at` = when it was received); only meaningful while online. */
   metrics: (ClientMetrics & { at: string }) | null;
+  /**
+   * End Task (0.17.0): the last "close the programs" run on this PC since its session started
+   * (cleared by the next session start) — the button shows as pressed while this is set.
+   */
+  tasksEnded: StationTasksEnded | null;
+}
+
+export interface StationTasksEnded {
+  at: string;
+  /** `pending` until the PC reports back; then what happened. */
+  status: 'pending' | 'done' | 'failed';
+  /** Programs that were running and got closed. */
+  closed: string[];
+  /** Listed programs that were not running. */
+  notRunning: string[];
+  /** Programs the PC could not close (`exe · error`). */
+  failed: string[];
+  /** Whether the staff pressed the button (`manual`) or the session end triggered it (`auto`). */
+  trigger: 'manual' | 'auto';
 }
 
 export interface StationSummary {
@@ -439,6 +458,7 @@ export const DIRECT_STATION_COMMANDS = [
   'power.shutdown',
   'update.apply',
   'wol.configure',
+  'tasks.end',
 ] as const;
 export type DirectStationCommand = (typeof DIRECT_STATION_COMMANDS)[number];
 
@@ -454,6 +474,8 @@ export const stationCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('power.shutdown') }),
   z.object({ command: z.literal('update.apply') }),
   z.object({ command: z.literal('wol.configure') }),
+  /** The list of programs comes from the settings on the server, never from the request. */
+  z.object({ command: z.literal('tasks.end') }),
 ]);
 export type StationCommandRequest = z.infer<typeof stationCommandSchema>;
 

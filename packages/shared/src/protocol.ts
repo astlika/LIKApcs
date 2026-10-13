@@ -132,9 +132,21 @@ export const clientEventSchema = z.object({
     'hardware',
     /** Outcome of a `wol.configure` command (payload: `{ok, message, elevated}`), hardware follows. */
     'wol_configured',
+    /** Outcome of a `tasks.end` command (payload: `TasksEndedPayload`). */
+    'tasks_ended',
   ]),
   payload: z.record(z.unknown()).default({}),
 });
+
+/** What the PC reports after closing the listed programs (`client.event` `tasks_ended`). */
+export const tasksEndedPayloadSchema = z.object({
+  closed: z.array(z.string().max(80)).max(100),
+  notRunning: z.array(z.string().max(80)).max(100),
+  failed: z.array(z.object({ exe: z.string().max(80), error: z.string().max(300) })).max(100),
+  /** Entries the PC refused (protected or malformed) — should be empty, the server filters first. */
+  skipped: z.array(z.string().max(80)).max(100),
+});
+export type TasksEndedPayload = z.infer<typeof tasksEndedPayloadSchema>;
 
 export const clientMessageSchema = z.discriminatedUnion('type', [
   clientHelloSchema,
@@ -170,6 +182,8 @@ export const STATION_COMMANDS = [
   'update.apply',
   /** Turn on "wake on magic packet" + turn off Fast startup on the PC (may need admin consent there). */
   'wol.configure',
+  /** End Task (0.17.0): close the owner-listed programs (`payload.exes`), never the client itself. */
+  'tasks.end',
 ] as const;
 export type StationCommand = (typeof STATION_COMMANDS)[number];
 

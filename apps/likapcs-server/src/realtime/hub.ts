@@ -8,6 +8,7 @@ import {
   type ServerEvent,
   type ServerToClientMessage,
   type StationCommand,
+  type StationTasksEnded,
 } from '@likapcs/shared';
 import { newId } from '../security/tokens.js';
 
@@ -58,6 +59,12 @@ export interface HubEvents {
 export class RealtimeHub extends EventEmitter<HubEvents> {
   private readonly devices = new Map<string, DevicePresence>();
   private readonly admins = new Set<AdminPresence>();
+  /**
+   * End Task (0.17.0): the last "close the programs" run per device, kept **outside** the socket
+   * presence on purpose — a PC that drops for a second and reconnects must not make the desk
+   * believe the games are open again. Cleared when the next session starts and on revoke.
+   */
+  private readonly endTaskRuns = new Map<string, StationTasksEnded>();
 
   // ─── Devices ─────────────────────────────────────────────────────────────────
   attachDevice(presence: DevicePresence): void {
@@ -95,6 +102,21 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     }
     if (locked !== null) presence.locked = locked;
     this.emit('device.heartbeat', presence);
+  }
+
+  /** End Task state shown on the station (see `StationTasksEnded`); survives a reconnect. */
+  tasksEnded(deviceId: string): StationTasksEnded | null {
+    return this.endTaskRuns.get(deviceId) ?? null;
+  }
+
+  setTasksEnded(deviceId: string, state: StationTasksEnded | null): void {
+    if (state) this.endTaskRuns.set(deviceId, state);
+    else this.endTaskRuns.delete(deviceId);
+  }
+
+  /** Forget the run (device revoked, or a new session started on that PC). */
+  clearTasksEnded(deviceId: string): void {
+    this.endTaskRuns.delete(deviceId);
   }
 
   /** Latest live load the PC reported (CPU %, RAM, temperatures) — only while it is connected. */
@@ -143,6 +165,8 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     if (!presence) return Promise.resolve({ ok: false, error: 'device offline', commandId });
     const now = new Date();
     presence.seq += 1;
+    // A new session releases the End Task button (the next customer opens the games again).
+    if (command === 'session.start') this.endTaskRuns.delete(deviceId);
     const message: ServerCommand = {
       type: 'server.command',
       commandId,
