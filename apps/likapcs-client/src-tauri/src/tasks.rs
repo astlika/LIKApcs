@@ -53,7 +53,7 @@ const PROTECTED: &[&str] = &[
 
 const MAX_NAME_LEN: usize = 64;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FailedTask {
     pub exe: String,
@@ -61,7 +61,7 @@ pub struct FailedTask {
 }
 
 /// What the PC did with one End Task request.
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EndTasksReport {
     /// Running programs that are closed now.
