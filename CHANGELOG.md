@@ -8,6 +8,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+_(nothing yet)_
+
+## [0.17.0] - 2026-10-13
+
+### Added
+
 - **End Task — close the games on a PC from the desk.** A new **End Task** button sits in the
   station action bar (one PC or every selected PC at once). It closes **only** the programs the
   owner lists in Settings › Stations › _End Task — the programs a PC closes_: bare `name.exe`
