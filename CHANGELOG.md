@@ -6,6 +6,15 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-13
+
+Update both apps: **Update** in LIKApcs (Admin) first (server: new endpoint
+`POST /customers/:id/debts/reschedule`; no new migration), then the gaming PCs (the Client shows
+the total to pay after an order is accepted on the bill). Covered by tests (shared 61, server 222,
+admin 40, client 48) and the browser smokes `display` (35 checks), `bulkstart` (12), `custdebts`
+(12) and `billtotal` (12). The customer display window placement (Rust) is compiled for the first
+time by this release — see the release notes if it misbehaves on a given monitor setup.
+
 ### Added
 
 - **Customer display (Ekrani i klientit).** A second window of LIKApcs for the monitor turned
