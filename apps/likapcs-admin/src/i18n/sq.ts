@@ -1291,6 +1291,8 @@ export const sq: Dictionary = {
       size: { small: 'I vogël', normal: 'Normal', large: 'I madh' },
       position: {
         'top-left': 'Lart majtas',
+        'top-center': 'Lart në qendër',
+        'bottom-center': 'Poshtë në qendër',
         'top-right': 'Lart djathtas',
         'bottom-left': 'Poshtë majtas',
         'bottom-right': 'Poshtë djathtas',

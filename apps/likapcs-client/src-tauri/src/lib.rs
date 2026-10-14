@@ -57,8 +57,10 @@ enum WidgetSize {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WidgetPosition {
     TopLeft,
+    TopCenter,
     TopRight,
     BottomLeft,
+    BottomCenter,
     BottomRight,
 }
 
@@ -384,10 +386,14 @@ fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64
         let pos = work.position.to_logical::<f64>(scale);
         let right = pos.x + size.width - width - OVERLAY_MARGIN;
         let bottom = pos.y + size.height - height - OVERLAY_MARGIN;
+        // 0.19.1: the centre positions sit in the middle of the work area, at the top or bottom edge.
+        let centre = pos.x + (size.width - width) / 2.0;
         let (cx, cy) = match position {
             WidgetPosition::TopLeft => (pos.x + OVERLAY_MARGIN, pos.y + OVERLAY_MARGIN),
+            WidgetPosition::TopCenter => (centre, pos.y + OVERLAY_MARGIN),
             WidgetPosition::TopRight => (right, pos.y + OVERLAY_MARGIN),
             WidgetPosition::BottomLeft => (pos.x + OVERLAY_MARGIN, bottom),
+            WidgetPosition::BottomCenter => (centre, bottom),
             WidgetPosition::BottomRight => (right, bottom),
         };
         x = cx;
@@ -648,8 +654,10 @@ async fn set_widget_layout(
     };
     let position = match position.as_str() {
         "top-left" => WidgetPosition::TopLeft,
+        "top-center" => WidgetPosition::TopCenter,
         "top-right" => WidgetPosition::TopRight,
         "bottom-left" => WidgetPosition::BottomLeft,
+        "bottom-center" => WidgetPosition::BottomCenter,
         "bottom-right" => WidgetPosition::BottomRight,
         other => return Err(format!("unknown widget position {other}")),
     };

@@ -25,8 +25,10 @@ export type ClientWidgetTheme = (typeof CLIENT_WIDGET_THEMES)[number];
 
 export const CLIENT_WIDGET_POSITIONS = [
   'top-left',
+  'top-center',
   'top-right',
   'bottom-left',
+  'bottom-center',
   'bottom-right',
 ] as const;
 /**

@@ -1283,8 +1283,10 @@ export const en = {
       size: { small: 'Small', normal: 'Normal', large: 'Large' },
       position: {
         'top-left': 'Top left',
+        'top-center': 'Top centre',
         'top-right': 'Top right',
         'bottom-left': 'Bottom left',
+        'bottom-center': 'Bottom centre',
         'bottom-right': 'Bottom right',
       },
       widgetTheme: 'Widget colour',
