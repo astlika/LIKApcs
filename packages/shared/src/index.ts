@@ -2,6 +2,7 @@ export * from './money.js';
 export * from './format.js';
 export * from './permissions.js';
 export * from './settings.js';
+export * from './client-look.js';
 export * from './widget-designs.js';
 export * from './dto.js';
 export * from './protocol.js';

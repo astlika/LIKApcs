@@ -31,6 +31,7 @@ import {
   type SessionRequest,
   type SessionRequestCreate,
   type StationOrder,
+  type ClientDisplayConfig,
 } from '@likapcs/shared';
 import {
   APP_VERSION,
@@ -66,6 +67,7 @@ import {
   CommandGuard,
   applyDisplay,
   applyWelcome,
+  withAbsoluteWallpaper,
   backoffMs,
   baseWindowModeOf,
   candidateServerUrls,
@@ -882,7 +884,7 @@ export class Agent {
             this.clock.sync(message.serverTime);
             this.heartbeatIntervalMs = Math.max(3, message.heartbeatIntervalSeconds) * 1000;
             this.lastAckAt = Date.now();
-            this.setState(applyWelcome(this.snapshot.state, message));
+            this.setState(applyWelcome(this.snapshot.state, this.withWallpaper(message)));
             void secretSet(KEYS.language, message.language);
             this.set({ lastError: null, serverNowMs: this.clock.now() });
             this.setPhase({ phase: 'online' });
@@ -911,7 +913,7 @@ export class Agent {
             this.lastAckAt = Date.now();
             break;
           case 'server.display':
-            this.setState(applyDisplay(this.snapshot.state, message));
+            this.setState(applyDisplay(this.snapshot.state, this.withWallpaper(message)));
             void secretSet(KEYS.language, message.language);
             this.refreshAds(true);
             break;
@@ -978,6 +980,13 @@ export class Agent {
   }
 
   // ─── Lock-screen slideshow ───────────────────────────────────────────────────
+
+  /** Makes this PC's wallpaper URL absolute (0.20.0) on the welcome and display messages. */
+  private withWallpaper<T extends { display?: ClientDisplayConfig }>(message: T): T {
+    if (!message.display) return message;
+    const base = this.snapshot.pairing?.serverUrl ?? '';
+    return { ...message, display: withAbsoluteWallpaper(message.display, base) };
+  }
 
   /** The owner's ads (Admin › Ads) for the lock screen; refreshed on connect, on `server.display`, every 10 min. */
   private refreshAds(force = false): void {

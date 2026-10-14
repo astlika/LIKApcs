@@ -11,6 +11,7 @@ import {
   applyDisplay,
   applyWelcome,
   backoffMs,
+  withAbsoluteWallpaper,
   formatHMS,
   initialState,
   reduce,
@@ -458,6 +459,8 @@ describe('reduce()', () => {
         widgetSize: 'small',
         widgetPosition: 'bottom-left',
         widgetStyle: 'minimal',
+        widgetTheme: 'indigo',
+        wallpaperUrl: null,
         widgetShowPayment: false,
         lockTitle: 'station',
         currency: 'EUR',
@@ -680,5 +683,30 @@ describe('customer session requests (0.9.0)', () => {
     expect(requestResultExpired(answered, t0 + REQUEST_RESULT_MS - 1)).toBe(false);
     expect(requestResultExpired(answered, t0 + REQUEST_RESULT_MS + 1)).toBe(true);
     expect(requestResultExpired(null, t0)).toBe(false);
+  });
+});
+
+describe('withAbsoluteWallpaper (0.20.0)', () => {
+  const base = { widgetTheme: 'indigo', wallpaperUrl: null } as unknown as Parameters<
+    typeof withAbsoluteWallpaper
+  >[0];
+
+  it('prefixes the server address to a relative wallpaper path', () => {
+    const out = withAbsoluteWallpaper(
+      { ...base, wallpaperUrl: '/api/v1/files/wallpapers/abc.png' },
+      'http://192.168.1.10:4010',
+    );
+    expect(out.wallpaperUrl).toBe('http://192.168.1.10:4010/api/v1/files/wallpapers/abc.png');
+  });
+
+  it('leaves a missing wallpaper alone', () => {
+    expect(withAbsoluteWallpaper(base, 'http://x').wallpaperUrl).toBeNull();
+  });
+
+  it('keeps an already absolute URL unchanged', () => {
+    const url = 'https://cdn.example.com/w.png';
+    expect(withAbsoluteWallpaper({ ...base, wallpaperUrl: url }, 'http://x').wallpaperUrl).toBe(
+      url,
+    );
   });
 });

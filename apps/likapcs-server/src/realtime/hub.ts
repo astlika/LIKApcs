@@ -142,6 +142,14 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     return this.devices.get(deviceId);
   }
 
+  /** Fire-and-forget message to one connected PC (its own look and wallpaper). */
+  sendToDevice(deviceId: string, message: ServerToClientMessage): boolean {
+    const presence = this.devices.get(deviceId);
+    if (!presence || presence.socket.readyState !== presence.socket.OPEN) return false;
+    presence.socket.send(JSON.stringify(message));
+    return true;
+  }
+
   /** Fire-and-forget message to every connected PC (display settings, business name …). */
   broadcastToDevices(message: ServerToClientMessage): void {
     const data = JSON.stringify(message);

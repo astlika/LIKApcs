@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
+import type { StationLook } from './client-look.js';
 import type {
   ClientAdsFeed,
   ClientDisplayConfig,
@@ -294,6 +295,10 @@ export interface StationSummary {
   awaitingPayment: { count: number; amountCents: number };
   /** Archive PC (0.17.0): set once the station left the floor; it keeps its money history. */
   archived: StationArchive | null;
+  /** 0.20.0: this PC's own look overrides (null = house setting). */
+  look: StationLook;
+  /** 0.20.0: this PC's lock-screen wallpaper (a server path under /api/v1), or null. */
+  wallpaperUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }

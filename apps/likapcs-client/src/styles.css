@@ -2112,6 +2112,32 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
   }
 }
 /* Backdrop preset behind the slides (Settings › Background) — the ad theme palette. */
+/* ─── 0.20.0: widget colour themes (the accent of the countdown widget) ───────── */
+.overlay--theme-emerald {
+  --accent: #10b981;
+  --accent-2: #a3e635;
+}
+.overlay--theme-sky {
+  --accent: #0ea5e9;
+  --accent-2: #67e8f9;
+}
+.overlay--theme-amber {
+  --accent: #f59e0b;
+  --accent-2: #fde047;
+}
+.overlay--theme-rose {
+  --accent: #f43f5e;
+  --accent-2: #fb7185;
+}
+.overlay--theme-violet {
+  --accent: #8b5cf6;
+  --accent-2: #e879f9;
+}
+.overlay--theme-mono {
+  --accent: #94a3b8;
+  --accent-2: #e2e8f0;
+}
+
 .lock--ads .lock__bg {
   background:
     radial-gradient(1200px 600px at 10% -10%, var(--ad-glow-1), transparent 60%),

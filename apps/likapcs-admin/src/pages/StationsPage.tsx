@@ -69,6 +69,7 @@ import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
 import { WakePanel } from '../components/stations/WakePanel';
+import { StationLookDialog } from '../components/stations/StationLookDialog';
 import { isWakeable } from '../components/stations/useStationActions';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -1282,6 +1283,8 @@ function StationDetailDialog({
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
   const [editOpen, setEditOpen] = useState(false);
+  // 0.20.0: this PC's own look and wallpaper.
+  const [lookOpen, setLookOpen] = useState(false);
   const [confirm, setConfirm] = useState<
     'revoke' | 'reissue' | 'delete' | 'archive' | 'unarchive' | null
   >(null);
@@ -1359,6 +1362,11 @@ function StationDetailDialog({
               </Button>
             )}
             <div style={{ flex: 1 }} />
+            {canManage && (
+              <Button onClick={() => setLookOpen(true)} data-testid="station-look">
+                {t('stations.look.button')}
+              </Button>
+            )}
             {canManage && (
               <Button onClick={() => setEditOpen(true)}>{t('stations.editStation')}</Button>
             )}
@@ -1615,6 +1623,8 @@ function StationDetailDialog({
           </>
         )}
       </Dialog>
+
+      {lookOpen && <StationLookDialog station={station} onClose={() => setLookOpen(false)} />}
 
       <StationFormDialog
         open={editOpen}

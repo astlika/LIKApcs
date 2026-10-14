@@ -6805,3 +6805,19 @@ button.ads-album .ads-album__meta {
 .import-report td.danger {
   color: var(--danger);
 }
+
+/* ─── 0.20.0: per-PC wallpaper preview (Stations › Look & wallpaper) ───────── */
+.look-wallpaper {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #0b0f17, #111826);
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}

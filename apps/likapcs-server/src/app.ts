@@ -4,12 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  CLIENT_DISPLAY_SETTING_KEYS,
-  WS_CLOSE_CODES,
-  clientDisplayFromSettings,
-  type SettingsMap,
-} from '@likapcs/shared';
+import { CLIENT_DISPLAY_SETTING_KEYS, WS_CLOSE_CODES, type SettingsMap } from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
 import type { DbPool } from './db/pool.js';
 import { getMigrationStatus } from './db/migrate.js';
@@ -65,6 +60,7 @@ import { importRoutes } from './routes/imports.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
+import { looksRoutes } from './routes/looks.js';
 import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
@@ -76,6 +72,7 @@ import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
 import { SettingsService } from './services/settings.js';
 import { StationsService } from './services/stations.js';
+import { LooksService } from './services/looks.js';
 import { UsersService } from './services/users.js';
 
 export interface Services {
@@ -101,6 +98,7 @@ export interface Services {
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
+  looks: LooksService;
   devices: DevicesService;
   audit: AuditQueryService;
   search: SearchService;
@@ -170,6 +168,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
+  // 0.20.0: per-PC looks, wallpapers and layout presets.
+  const looks = new LooksService(
+    pool,
+    hub,
+    settings,
+    stations,
+    new ProductImageStore(path.join(config.uploadDir, 'wallpapers')),
+  );
   // Archive / delete take the PC off the station: StationsService asks DevicesService to revoke.
   stations.useRevokeDevice((deviceId, actor) => devices.revoke(deviceId, actor));
   const audit = new AuditQueryService(pool);
@@ -281,6 +287,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     invoices,
     requests,
     orders,
+    looks,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -317,6 +324,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(userRoutes);
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
+      await api.register(looksRoutes);
       await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
@@ -344,17 +352,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(adminSocketRoutes);
 
   // Customer-screen settings → every connected PC, instantly (no reconnect needed).
+  // Each PC gets its own display: the house settings plus its look and wallpaper (0.20.0).
   const pushDisplay = (all: SettingsMap) =>
-    hub.broadcastToDevices({
-      type: 'server.display',
-      display: clientDisplayFromSettings(all),
-      businessName: all['business.name'],
-      welcomeMessage: all['stations.client_welcome_message'],
-      language: all['locale.default_language'],
-    });
+    looks.pushAll(all).catch((err: unknown) => app.log.warn({ err }, 'display push failed'));
   settings.onChange((keys, all) => {
     if (!keys.some((k) => CLIENT_DISPLAY_SETTING_KEYS.includes(k))) return;
-    pushDisplay(all);
+    void pushDisplay(all);
   });
   // Ads changed → same push; the PCs refetch `/client/ads` on it.
   ads.onChange(() => {

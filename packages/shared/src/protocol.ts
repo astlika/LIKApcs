@@ -13,6 +13,7 @@ import type {
   ClientWidgetPosition,
   ClientWidgetSize,
   ClientWidgetStyle,
+  ClientWidgetTheme,
 } from './settings.js';
 
 /**
@@ -281,6 +282,10 @@ export interface ClientDisplayConfig {
   widgetSize: ClientWidgetSize;
   widgetPosition: ClientWidgetPosition;
   widgetStyle: ClientWidgetStyle;
+  /** 0.20.0: the widget's colour theme (a per-PC override applies). */
+  widgetTheme: ClientWidgetTheme;
+  /** 0.20.0: this PC's lock-screen wallpaper (absolute once the PC resolves it), or null. */
+  wallpaperUrl: string | null;
   widgetShowPayment: boolean;
   lockTitle: ClientLockTitle;
   currency: string;

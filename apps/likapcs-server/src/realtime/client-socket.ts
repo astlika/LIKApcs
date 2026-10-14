@@ -4,7 +4,6 @@ import {
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
   clientMessageSchema,
-  clientDisplayFromSettings,
   hardwareInfoSchema,
   isCompatibleWithServer,
   tasksEndedPayloadSchema,
@@ -155,7 +154,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             businessName: settings['business.name'],
             session: await services.sessions.welcomePayload(device.station.id),
             maintenance: await services.stations.maintenanceOf(device.station.id),
-            display: clientDisplayFromSettings(settings),
+            display: await services.looks.displayFor(device.station.id, settings),
             request: await services.requests.pendingForStation(device.station.id).then((r) =>
               r
                 ? {

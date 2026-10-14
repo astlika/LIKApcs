@@ -8,6 +8,21 @@ import { validateEndTasks } from './end-tasks.js';
  */
 
 export const CLIENT_WIDGET_SIZES = ['small', 'normal', 'large'] as const;
+/**
+ * 0.20.0: the countdown widget's colour theme (its accent gradient). Per PC it can be overridden
+ * (`stations.look`); `indigo` is the look every PC had before.
+ */
+export const CLIENT_WIDGET_THEMES = [
+  'indigo',
+  'emerald',
+  'sky',
+  'amber',
+  'rose',
+  'violet',
+  'mono',
+] as const;
+export type ClientWidgetTheme = (typeof CLIENT_WIDGET_THEMES)[number];
+
 export const CLIENT_WIDGET_POSITIONS = [
   'top-left',
   'top-right',
@@ -168,6 +183,7 @@ export const SETTING_SCHEMAS = {
   'client.widget_position': z.enum(CLIENT_WIDGET_POSITIONS),
   /** `minimal` = one line like "PC1 · 23 min"; `detailed` = timer, ends-at, paid / owed. */
   'client.widget_style': z.enum(CLIENT_WIDGET_STYLES),
+  'client.widget_theme': z.enum(CLIENT_WIDGET_THEMES),
   /** Show the paid amount (prepaid) / the running amount owed (postpaid) in the widget. */
   'client.widget_show_payment': z.boolean(),
   /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
@@ -302,6 +318,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_size': 'normal',
   'client.widget_position': 'top-right',
   'client.widget_style': 'detailed',
+  'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
   'client.lock_title': 'brand',
   'client.ads_enabled': false,
@@ -375,6 +392,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
+  'client.widget_theme',
   'client.widget_show_payment',
   'client.lock_title',
   'client.ads_enabled',
@@ -443,6 +461,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
+  'client.widget_theme',
   'client.widget_show_payment',
   'client.lock_title',
   'client.ads_enabled',
@@ -476,6 +495,8 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetSize: settings['client.widget_size'],
     widgetPosition: settings['client.widget_position'],
     widgetStyle: settings['client.widget_style'],
+    widgetTheme: settings['client.widget_theme'],
+    wallpaperUrl: null,
     widgetShowPayment: settings['client.widget_show_payment'],
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],

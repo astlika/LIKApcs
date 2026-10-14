@@ -36,6 +36,16 @@ All notable changes to LIKApcs are documented here. The format follows
   a variant cannot have variants, and a main product with variants cannot become one. Selling a
   variant moves only its stock. A main product with variants cannot be deleted (archive it instead).
   Migration `0034_product_variants.sql`.
+- **Per-PC look and wallpaper (0.20 · in progress).** Stations › *Look & wallpaper* sets one PC's
+  own widget size, position, design, colour and ads on/off; *House setting* leaves a value to
+  Settings › Client screen. Each PC can also have its own lock-screen wallpaper (JPEG, PNG, WebP or
+  GIF, scaled down before upload). A change reaches only the PCs it touches, live. Migration
+  `0035_station_looks.sql`.
+- **Widget colour (0.20 · in progress).** Settings › Client screen has a *Widget colour* for the
+  countdown widget's accent (Indigo, Emerald, Sky, Amber, Rose, Violet, Mono). A PC can override it.
+- **Layout presets (0.20 · in progress).** Settings › Client screen › *Layout presets* saves the
+  current widget, ads and lock-screen layout under a name. *Apply* loads it into the form and
+  *Save* sends it to every PC in one step. Only customer-screen layout keys are stored.
 
 ## [0.18.1] - 2026-10-14
 

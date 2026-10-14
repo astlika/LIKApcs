@@ -331,6 +331,7 @@ export function Overlay({
     'overlay',
     `overlay--${spec.id}`,
     `overlay--${display?.widgetSize ?? 'normal'}`,
+    `overlay--theme-${display?.widgetTheme ?? 'indigo'}`,
     spec.text === 'card' ? 'overlay--card' : '',
     spec.transparent ? 'overlay--clear' : '',
     low ? 'overlay--low' : '',

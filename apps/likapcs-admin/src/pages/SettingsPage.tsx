@@ -16,7 +16,9 @@ import {
   adsGridSize,
   isProtectedProcess,
   normalizeExeName,
+  CLIENT_LAYOUT_SETTING_KEYS,
   CLIENT_WIDGET_POSITIONS,
+  CLIENT_WIDGET_THEMES,
   CLIENT_WIDGET_SIZES,
   PERMISSIONS,
   PROTOCOL_VERSION,
@@ -49,6 +51,7 @@ import {
   WebLink,
 } from '../components/ui/primitives';
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
+import { LayoutPresetsCard } from '../components/settings/LayoutPresetsCard';
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
@@ -119,6 +122,14 @@ export function SettingsPage() {
     [settings.data, draft],
   );
   const dirty = Object.keys(draft).length > 0;
+  // 0.20.0: the layout keys as they stand now (presets save exactly these).
+  const currentLayout = useMemo(
+    () =>
+      Object.fromEntries(
+        CLIENT_LAYOUT_SETTING_KEYS.map((key) => [key, (current as Record<string, unknown>)[key]]),
+      ) as Record<string, unknown>,
+    [current],
+  );
 
   // Warn before leaving the page with unsaved changes.
   useEffect(() => {
@@ -142,6 +153,21 @@ export function SettingsPage() {
       delete next[key];
       return next;
     });
+  }
+
+  // Loads a preset into the draft; "Save" sends it (one PATCH, like every other change here).
+  function applyLayout(values: Record<string, unknown>) {
+    setDraft((d) => {
+      const next = { ...d } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(values)) {
+        const saved = settings.data ? (settings.data as Record<string, unknown>)[key] : undefined;
+        if (JSON.stringify(saved) === JSON.stringify(value)) delete next[key];
+        else next[key] = value;
+      }
+      return next as Partial<SettingsMap>;
+    });
+    setErrors({});
+    toast.success(t('settings.client.presets.applied'));
   }
 
   const save = useMutation({
@@ -620,6 +646,22 @@ export function SettingsPage() {
                   )}
                 </div>
                 <Field
+                  label={t('settings.client.widgetTheme')}
+                  hint={t('settings.client.widgetThemeHint')}
+                  className="span-2"
+                >
+                  {() => (
+                    <Segmented
+                      value={current['client.widget_theme']}
+                      options={CLIENT_WIDGET_THEMES.map((v) => ({
+                        value: v,
+                        label: t(`settings.client.theme.${v}`),
+                      }))}
+                      onChange={(v) => !ro && set('client.widget_theme', v)}
+                    />
+                  )}
+                </Field>
+                <Field
                   label={t('settings.client.widgetStyle')}
                   hint={t('settings.client.widgetStyleHint')}
                   className="span-2"
@@ -654,6 +696,7 @@ export function SettingsPage() {
                 onChange={(v) => !ro && set('client.lock_title', v)}
               />
             </Card>
+            <LayoutPresetsCard canManage={canManage} layout={currentLayout} onApply={applyLayout} />
             <Card
               title={t('settings.client.staffLoginTitle')}
               subtitle={t('settings.client.staffLoginHint')}
