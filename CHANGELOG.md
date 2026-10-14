@@ -6,8 +6,15 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-14
+
 ### Added
 
+- **Optional till features, all off by default (0.19).** Settings › Printing & POS now has three
+  switches: *Sell off-inventory items at the till* (the "Free item" button), *Sell PC time at the
+  till* (the "PC time" button) and *Installments on pay-later sales* (the installments field).
+  While a switch is off, its button or field is hidden in the POS and the payment panel.
+  Existing data is not changed.
 - **Off-inventory "free item" lines at the till (0.19).** The POS cart has a
   "Free item" button: a name and a price typed in (a service, a repair, a one-off), quantity 1–999.
   It takes the default tax rate and its price includes tax, like a catalogue product. No stock
