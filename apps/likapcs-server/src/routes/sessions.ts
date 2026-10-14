@@ -62,13 +62,13 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       actorOf(request),
     ),
   );
-  /** 0.18.0: free minutes (`sessions.gift`) — the PC celebrates, the audit log remembers who gave them. */
+  /** 0.18.0: free minutes (`stations.gift`, 0.18.1) — the PC celebrates, the audit log remembers who gave them. */
   app.post(
     '/sessions/:id/gift',
     {
       preHandler: [
         app.requirePermission(PERMISSIONS.STATIONS_CONTROL),
-        app.requirePermission(PERMISSIONS.SESSIONS_GIFT),
+        app.requirePermission(PERMISSIONS.STATIONS_GIFT),
       ],
     },
     async (request) =>
@@ -78,7 +78,7 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
         actorOf(request),
       ),
   );
-  /** 0.18.0: "+ minutes" for every selected PC in one click (gift mode also needs sessions.gift). */
+  /** 0.18.0: "+ minutes" for every selected PC in one click (gift mode also needs stations.gift). */
   app.post('/sessions/bulk-minutes', control, async (request) =>
     services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
   );

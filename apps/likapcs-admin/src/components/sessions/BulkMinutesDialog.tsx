@@ -1,17 +1,20 @@
 /**
- * 0.18.0: "+ minutes" for every selected PC at once. Paid mode gives each live session its own
- * cash-paid extension at its quoted price (pricing rules can differ per station, so the estimate
- * is the sum of live quotes); gift mode (`sessions.gift`) adds free minutes — prepaid sessions
- * only, because end-pay/postpaid bill by elapsed time and "free" minutes there would silently
- * become money. The server applies it station by station and reports exactly what happened where.
+ * 0.18.0: "+ minutes" for every selected PC at once. 0.18.1: paid mode is ONE tender step for the
+ * whole batch — the prepaid bills (each PC quoted by its own pricing rule) are paid with one
+ * tender panel, and the server splits it across the bills (`allocatePayments`). End-pay sessions
+ * in the selection get their time added to the bill collected at their end (nothing taken now).
+ * Gift mode (`stations.gift`, owner/admin) adds free minutes to prepaid and end-pay sessions —
+ * the gift never raises the bill (end-pay bills are capped at the reserved amount).
+ * The server applies it station by station and reports exactly what happened where.
  */
 import { useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Gift, Plus } from 'lucide-react';
+import { ArrowLeft, Gift, Plus } from 'lucide-react';
 import {
   PERMISSIONS,
   type BulkMinutesResult,
   type GamingPackageSummary,
+  type SalePaymentInput,
   type SessionQuoteResponse,
   type StationSummary,
 } from '@likapcs/shared';
@@ -22,6 +25,7 @@ import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
+import { TenderPanel, useTender } from '../payments/TenderPanel';
 
 export function BulkMinutesDialog({
   stations,
@@ -38,11 +42,13 @@ export function BulkMinutesDialog({
   const toast = useToast();
   const { can } = useAuth();
   const queryClient = useQueryClient();
-  const canGift = can(PERMISSIONS.SESSIONS_GIFT);
+  const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const [gift, setGift] = useState(false);
   const [minutes, setMinutes] = useState('15');
   const [packageId, setPackageId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  // Set when the batch has prepaid bills to pay: the tender step replaces the form.
+  const [pending, setPending] = useState(false);
 
   const minutesValue = Number.parseInt(minutes, 10);
   const minutesValid = Number.isInteger(minutesValue) && minutesValue > 0 && minutesValue <= 1440;
@@ -53,7 +59,7 @@ export function BulkMinutesDialog({
     queryFn: () => api<GamingPackageSummary[]>('/pricing/packages'),
     staleTime: 30_000,
   });
-  // Live estimate: one quote per selected PC — stations may price differently.
+  // One quote per selected PC — stations may price differently.
   const quotes = useQueries({
     queries: stations.map((s) => ({
       queryKey: ['sessions', 'quote', s.id, body],
@@ -66,10 +72,16 @@ export function BulkMinutesDialog({
       staleTime: 30_000,
     })),
   });
-  const estimate = quotes.reduce((sum, q) => sum + (q.data?.priceCents ?? 0), 0);
+  // Only prepaid sessions pay now; end-pay sessions take nothing now (their time joins the bill).
+  const bills = stations.flatMap((s, i) => {
+    const cents = quotes[i]?.data?.priceCents ?? 0;
+    return s.activeSession?.billingMode === 'prepaid' && cents > 0 ? [{ code: s.code, cents }] : [];
+  });
+  const estimate = bills.reduce((sum, b) => sum + b.cents, 0);
+  const quotesLoading = !gift && body !== null && quotes.some((q) => q.isFetching);
 
   const apply = useMutation({
-    mutationFn: () =>
+    mutationFn: (payments: SalePaymentInput[] | undefined) =>
       api<BulkMinutesResult>('/sessions/bulk-minutes', {
         method: 'POST',
         body: {
@@ -77,6 +89,7 @@ export function BulkMinutesDialog({
           gift,
           ...(packageId ? { packageId } : { minutes: minutesValue }),
           reason: gift && reason.trim() ? reason.trim() : undefined,
+          ...(payments ? { payments } : {}),
         },
       }),
     onSuccess: (result) => {
@@ -86,13 +99,48 @@ export function BulkMinutesDialog({
       void queryClient.invalidateQueries({ queryKey: ['sales'] });
       onDone(result, gift);
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err) => {
+      setPending(false);
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
 
-  const submit = () => {
-    if (body && !apply.isPending) apply.mutate();
+  const choose = () => {
+    if (!body || apply.isPending || quotesLoading || pending) return;
+    if (gift || estimate <= 0) {
+      apply.mutate(gift ? undefined : []);
+      return;
+    }
+    setPending(true);
   };
-  useEnterSubmits(submit);
+  useEnterSubmits(choose);
+
+  if (pending) {
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title={t('map.bulkTitle', { n: stations.length })}
+        description={t('map.bulkTenderHint')}
+        size="md"
+      >
+        <ul className="bulk-bills" data-testid="bulk-minutes-bills">
+          {bills.map((b) => (
+            <li key={b.code}>
+              <span>{b.code}</span>
+              <strong>{fmt.money(b.cents)}</strong>
+            </li>
+          ))}
+        </ul>
+        <BulkMinutesTender
+          totalCents={estimate}
+          busy={apply.isPending}
+          onBack={() => setPending(false)}
+          onConfirm={(payments) => apply.mutate(payments)}
+        />
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -110,8 +158,8 @@ export function BulkMinutesDialog({
             variant="primary"
             size="lg"
             loading={apply.isPending}
-            disabled={!body}
-            onClick={submit}
+            disabled={!body || quotesLoading}
+            onClick={choose}
             data-testid="bulk-minutes-confirm"
           >
             {gift ? <Gift size={14} /> : <Plus size={14} />}{' '}
@@ -203,5 +251,51 @@ export function BulkMinutesDialog({
         </div>
       </div>
     </Dialog>
+  );
+}
+
+/** The single tender step of a batch: one amount, split across the bills by the server. */
+function BulkMinutesTender({
+  totalCents,
+  busy,
+  onBack,
+  onConfirm,
+}: {
+  totalCents: number;
+  busy: boolean;
+  onBack: () => void;
+  onConfirm: (payments: SalePaymentInput[]) => void;
+}) {
+  const { t } = useI18n();
+  // Pay-later and balance need a named customer per bill; a batch of PCs takes cash, card or split.
+  const tender = useTender({
+    totalCents,
+    customer: null,
+    allowCredit: false,
+    allowWallet: false,
+  });
+  const submit = () => {
+    if (tender.covered && !busy) onConfirm(tender.payments);
+  };
+  useEnterSubmits(submit);
+  return (
+    <div className="stack">
+      <TenderPanel tender={tender} onSubmit={submit} testId="bulk-minutes" />
+      <div className="row row--between" style={{ marginTop: 4 }}>
+        <Button onClick={onBack}>
+          <ArrowLeft size={14} /> {t('common.back')}
+        </Button>
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={!tender.covered}
+          loading={busy}
+          onClick={submit}
+          data-testid="bulk-minutes-pay"
+        >
+          <Plus size={14} /> {t('map.bulkApply')} <Kbd>Enter</Kbd>
+        </Button>
+      </div>
+    </div>
   );
 }

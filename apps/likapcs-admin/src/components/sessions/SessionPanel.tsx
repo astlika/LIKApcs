@@ -549,7 +549,7 @@ function ActiveSession({
   const now = useNow();
   const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | null>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
-  const canGift = can(PERMISSIONS.SESSIONS_GIFT);
+  const canGift = can(PERMISSIONS.STATIONS_GIFT);
   useEffect(() => {
     if (approveRequest) setDialog('extend');
   }, [approveRequest]);
@@ -979,7 +979,7 @@ export function ExtendSessionDialog({
   onConfirm: (body: Record<string, unknown>, action?: 'extend' | 'gift') => void;
   /** Approving a customer's extension request: duration pre-filled, `requestId` sent along. */
   request?: StationPendingRequest | null;
-  /** 0.18.0: `sessions.gift` — free minutes with a party on the PC (prepaid sessions only). */
+  /** 0.18.0: `stations.gift` — free minutes with a party on the PC (not for postpaid sessions). */
   canGift?: boolean;
 }) {
   const { t } = useI18n();
@@ -990,7 +990,7 @@ export function ExtendSessionDialog({
   );
   const [gift, setGift] = useState(false);
   const [reason, setReason] = useState('');
-  const giftPossible = canGift && !request && session.billingMode === 'prepaid';
+  const giftPossible = canGift && !request && session.billingMode !== 'postpaid';
   const useGift = gift && giftPossible;
   const [requestId] = useState(() => crypto.randomUUID());
   const minutesValue = Number.parseInt(minutes, 10);

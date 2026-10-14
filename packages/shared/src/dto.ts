@@ -709,7 +709,12 @@ export const sessionGiftSchema = z.object({
 });
 export type SessionGiftRequest = z.infer<typeof sessionGiftSchema>;
 
-/** 0.18.0: "+ minutes" for every selected PC in one click (gift, or paid with one tender). */
+/**
+ * 0.18.0: "+ minutes" for every selected PC in one click (gift, or paid with one tender).
+ * 0.18.1: `payments` is ONE tender step for the whole batch — the server splits it across the
+ * prepaid bills (`allocatePayments`); end-pay sessions add their time to the bill at the end and
+ * take nothing now; gift takes nothing at all.
+ */
 export const bulkMinutesSchema = z
   .object({
     stationIds: z.array(z.string().uuid()).min(1).max(60),
@@ -722,8 +727,14 @@ export const bulkMinutesSchema = z
       .optional(),
     gift: z.boolean().default(false),
     reason: z.string().trim().max(200).optional(),
-    /** Paid mode only: how each extension is paid at the desk. */
+    /** Paid mode: how the batch is paid at the desk (cash / card / bank transfer / other). */
     paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+    /** Paid mode: the tenders for the whole batch (see above). Takes precedence over paymentMethod. */
+    payments: z
+      .lazy(() =>
+        z.array(salePaymentInputSchema.extend({ method: z.enum(PAYMENT_METHODS) })).max(5),
+      )
+      .optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',

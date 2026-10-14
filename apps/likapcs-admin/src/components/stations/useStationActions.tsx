@@ -144,7 +144,7 @@ export function useStationActions(
   const queryClient = useQueryClient();
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
-  const canGift = can(PERMISSIONS.SESSIONS_GIFT);
+  const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),

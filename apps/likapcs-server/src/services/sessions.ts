@@ -19,6 +19,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  allocatePayments,
   billableSeconds,
   priceForSeconds,
   quotePrepaidMinutes,
@@ -835,9 +836,14 @@ export class SessionsService {
   }
 
   /**
-   * 0.18.0: free minutes — a gesture from the house (`sessions.gift`). No sale and no money:
-   * the session gets an `extended` event with `gift: true` and price 0, an audit row
+   * 0.18.0: free minutes — a gesture from the house (`stations.gift`, owner/admin). No sale and no
+   * money: the session gets an `extended` event with `gift: true` and price 0, an audit row
    * (`session.gift`), and the PC plays a celebration so the customer actually sees the gift.
+   *
+   * 0.18.1: also for pay-at-the-end sessions. A gift changes neither `quoted_price_cents` nor
+   * the bill: end-pay bills are capped at the reserved amount (`endPayAmountCents`), so the
+   * gifted minutes can only be used up inside that cap — they never turn into money.
+   * Postpaid sessions run until stopped; there is nothing to give away.
    */
   async gift(
     id: string,
@@ -848,11 +854,8 @@ export class SessionsService {
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
       await lockCustomers(client, row.customer_id);
-      // Prepaid only: there the paid time is already banked, so extra minutes are truly free.
-      // End-pay/postpaid bill by elapsed time at the end — "free" minutes there would silently
-      // become money, so they are refused instead.
-      if (row.billing_mode !== 'prepaid')
-        throw conflict('Gift minutes apply to prepaid sessions only');
+      if (row.billing_mode === 'postpaid')
+        throw conflict('Postpaid sessions run until stopped — there is no time to give away');
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session is ${row.status}`);
       await client.query(
@@ -915,34 +918,46 @@ export class SessionsService {
   }
 
   /**
-   * 0.18.0: "+ minutes" for every selected PC in one click. Each station with a live session is
-   * extended (gift = free, paid = one cash tender per session at the quoted price); stations
-   * without a live session are reported as skipped — nothing half-applies and the desk sees the
-   * exact outcome per PC.
+   * 0.18.0: "+ minutes" for every selected PC in one click. Stations without a live session, and
+   * postpaid sessions, are reported as skipped — nothing half-applies and the desk sees the exact
+   * outcome per PC.
+   *
+   * 0.18.1 — one tender step for the whole batch: the prepaid bills (each PC priced by its own
+   * rule) are covered by `payments`, split by `allocatePayments` before any time moves. Tenders
+   * that do not cover the bills refuse the whole batch. End-pay sessions get their time added to
+   * the bill collected at their end (nothing taken now). Gift mode takes nothing.
    */
   async bulkMinutes(
     req: BulkMinutesRequest,
     actor: SessionActorContext,
   ): Promise<BulkMinutesResult> {
-    if (req.gift && !actor.permissions?.has(PERMISSIONS.SESSIONS_GIFT))
-      throw forbidden('Giving minutes away needs the sessions.gift permission');
+    if (req.gift && !actor.permissions?.has(PERMISSIONS.STATIONS_GIFT))
+      throw forbidden('Giving minutes away needs the stations.gift permission');
     const applied: BulkMinutesApplied[] = [];
     const skipped: BulkMinutesSkipped[] = [];
-    let totalCents = 0;
     const stations = await this.pool.query<{ id: string; code: string }>(
       `SELECT id, code FROM stations WHERE id = ANY($1::uuid[]) AND archived_at IS NULL`,
       [req.stationIds],
     );
     const codeOf = new Map(stations.rows.map((r) => [r.id, r.code]));
+
+    // Pass 1 — plan: quote every live, extendable session. Nothing is changed yet.
+    type Planned = {
+      stationId: string;
+      code: string;
+      sessionId: string;
+      endPay: boolean;
+      minutes: number;
+      priceCents: number;
+      /** Paid now: a prepaid bill that takes part in the single tender step. */
+      payer: boolean;
+    };
+    const planned: Planned[] = [];
     for (const stationId of req.stationIds) {
       const code = codeOf.get(stationId) ?? stationId.slice(0, 8);
       const live = await this.liveForStation(stationId);
       if (!live) {
         skipped.push({ stationId, code, reason: 'no_active_session' });
-        continue;
-      }
-      if (req.gift && live.billingMode !== 'prepaid') {
-        skipped.push({ stationId, code, reason: 'not_extendable', detail: live.billingMode });
         continue;
       }
       if (live.billingMode === 'postpaid') {
@@ -959,31 +974,75 @@ export class SessionsService {
           },
           new Date(),
         );
-        const minutes = quote.minutes ?? req.minutes ?? 0;
-        if (req.gift) {
-          await this.gift(live.id, { minutes, reason: req.reason }, actor);
-          applied.push({ stationId, code, minutes, priceCents: 0 });
-        } else {
-          await this.extend(
-            live.id,
-            {
-              packageId: req.packageId,
-              minutes: req.packageId ? undefined : minutes,
-              paymentMethod: req.paymentMethod,
-              // A zero quote (free pricing rule) needs no tender at all — `payments: []` is the
-              // documented "nothing handed over" case for a zero bill.
-              payments:
-                quote.priceCents > 0 ? [{ method: 'cash', amountCents: quote.priceCents }] : [],
-            },
-            actor,
-          );
-          totalCents += quote.priceCents;
-          applied.push({ stationId, code, minutes, priceCents: quote.priceCents });
-        }
+        planned.push({
+          stationId,
+          code,
+          sessionId: live.id,
+          endPay: live.billingMode === 'endpay',
+          minutes: quote.minutes ?? req.minutes ?? 0,
+          priceCents: quote.priceCents,
+          payer: !req.gift && live.billingMode === 'prepaid' && quote.priceCents > 0,
+        });
       } catch (err) {
         skipped.push({
           stationId,
           code,
+          reason: 'error',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // One tender step, split across the paying bills — or refused whole, before anything moves.
+    const payers = planned.filter((p) => p.payer);
+    let perPayer: SalePaymentInput[][] | null = null;
+    if (!req.gift && payers.length > 0) {
+      const tenders: SalePaymentInput[] = req.payments ?? [
+        // Older clients: one tender of the chosen method for the whole batch.
+        { method: req.paymentMethod, amountCents: payers.reduce((a, p) => a + p.priceCents, 0) },
+      ];
+      try {
+        perPayer = allocatePayments(
+          tenders,
+          payers.map((p) => p.priceCents),
+        );
+      } catch {
+        throw badRequest('The tenders do not cover the bills of this batch');
+      }
+    }
+
+    // Pass 2 — apply, one session at a time. Each extension records its own bill / reservation.
+    let totalCents = 0;
+    for (const p of planned) {
+      const payerIndex = p.payer ? payers.indexOf(p) : -1;
+      try {
+        if (req.gift) {
+          await this.gift(p.sessionId, { minutes: p.minutes, reason: req.reason }, actor);
+          applied.push({ stationId: p.stationId, code: p.code, minutes: p.minutes, priceCents: 0 });
+          continue;
+        }
+        await this.extend(
+          p.sessionId,
+          {
+            packageId: req.packageId,
+            minutes: req.packageId ? undefined : p.minutes,
+            paymentMethod: req.paymentMethod,
+            // A zero quote needs no tender; end-pay takes nothing now (its time joins the bill).
+            payments: payerIndex >= 0 && perPayer ? (perPayer[payerIndex] ?? []) : [],
+          },
+          actor,
+        );
+        if (p.payer) totalCents += p.priceCents;
+        applied.push({
+          stationId: p.stationId,
+          code: p.code,
+          minutes: p.minutes,
+          priceCents: p.endPay ? 0 : p.priceCents,
+        });
+      } catch (err) {
+        skipped.push({
+          stationId: p.stationId,
+          code: p.code,
           reason: 'error',
           detail: err instanceof Error ? err.message : String(err),
         });

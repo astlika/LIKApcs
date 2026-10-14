@@ -19,8 +19,8 @@ export const PERMISSIONS = {
   STATIONS_POWER: 'stations.power',
   /** Unlock a station PC for maintenance with own credentials, standing at the PC. */
   STATIONS_UNLOCK: 'stations.unlock',
-  /** 0.18.0: give free minutes to a running session (no money moves; fully audited). */
-  SESSIONS_GIFT: 'sessions.gift',
+  /** 0.18.1: give free minutes to a running session (no money moves; fully audited). Owner/admin. */
+  STATIONS_GIFT: 'stations.gift',
   DEVICES_MANAGE: 'devices.manage',
   PRICING_MANAGE: 'pricing.manage',
 
