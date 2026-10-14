@@ -14,11 +14,13 @@ import {
   settlePayments,
   SaleMathError,
   type CreateSaleRequest,
+  type FreeSaleItemInput,
   type ReceiptData,
   type RefundRequest,
   type RefundSummary,
   type DebtStatus,
   type SaleDetail,
+  type SaleItemInput,
   type SaleItemSummary,
   type SaleListQuery,
   type SalePaymentSummary,
@@ -38,6 +40,10 @@ import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import { lockCustomers } from '../db/locks.js';
+
+/** Product ids of a sale request — off-inventory ("free") lines have none (0.19.0). */
+const productIdsOf = (items: readonly SaleItemInput[]): string[] =>
+  items.flatMap((i) => ('productId' in i ? [i.productId] : []));
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -421,11 +427,7 @@ export class SalesService {
     if (!actor.permissions.has('pos.suspend')) throw forbidden('Missing permission: pos.suspend');
     return withTransaction(this.pool, async (client) => {
       const saleId = await this.insertSaleShell(client, input, actor, 'suspended');
-      const products = await this.loadProducts(
-        client,
-        input.items.map((i) => i.productId),
-        false,
-      );
+      const products = await this.loadProducts(client, productIdsOf(input.items), false);
       const totals = this.compute(
         input,
         products,
@@ -722,6 +724,16 @@ export class SalesService {
     }
     if (fixedPrices) customer = null;
     const lines = input.items.map((i) => {
+      if (!('productId' in i)) {
+        // Off-inventory line: the typed price, the default tax, prices include tax.
+        return {
+          unitPriceCents: i.unitPriceCents,
+          quantityMilli: i.quantityMilli,
+          discountCents: i.discountCents,
+          taxRateBp: defaultRate,
+          priceIncludesTax: true,
+        };
+      }
       const p = products.get(i.productId)!;
       return {
         unitPriceCents:
@@ -774,8 +786,9 @@ export class SalesService {
   ): Promise<void> {
     for (const [i, line] of totals.lines.entries()) {
       const item = input.items[i]!;
-      const p = products.get(item.productId)!;
-      const unitCost = Number(p.average_cost_cents) || Number(p.purchase_cost_cents);
+      // Off-inventory lines book no product and no cost: their margin is the whole price.
+      const p = 'productId' in item ? products.get(item.productId)! : null;
+      const unitCost = p ? Number(p.average_cost_cents) || Number(p.purchase_cost_cents) : 0;
       await client.query(
         `INSERT INTO sale_items (sale_id, line_no, product_id, description, quantity_milli, unit_price_cents, discount_cents,
                                  tax_rate_bp, tax_cents, line_total_cents, cost_cents)
@@ -783,8 +796,8 @@ export class SalesService {
         [
           saleId,
           i + 1,
-          p.id,
-          p.name,
+          p?.id ?? null,
+          p ? p.name : (item as FreeSaleItemInput).description,
           line.quantityMilli,
           line.unitPriceCents,
           line.discountCents,
@@ -805,11 +818,7 @@ export class SalesService {
     actor: SaleActor,
     fixedPrices?: Map<string, number>,
   ): Promise<void> {
-    const products = await this.loadProducts(
-      client,
-      input.items.map((i) => i.productId),
-      true,
-    );
+    const products = await this.loadProducts(client, productIdsOf(input.items), true);
     const totals = this.compute(
       input,
       products,
@@ -828,8 +837,10 @@ export class SalesService {
     await this.writeLines(client, saleId, input, products, totals);
     // Stock: aggregate per product (the same product may appear on several lines).
     const perProduct = new Map<string, number>();
-    for (const item of input.items)
+    for (const item of input.items) {
+      if (!('productId' in item)) continue;
       perProduct.set(item.productId, (perProduct.get(item.productId) ?? 0) + item.quantityMilli);
+    }
     for (const [productId, qty] of [...perProduct.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       const p = products.get(productId)!;
       if (!p.track_stock) continue;
@@ -932,6 +943,12 @@ export class SalesService {
         totalCents: totals.totalCents,
         discountCents: totals.discountCents,
         items: input.items.length,
+        // 0.19.0: off-inventory lines are typed at the till — the audit keeps how many and what.
+        freeItems: input.items.flatMap((i) =>
+          'productId' in i
+            ? []
+            : [{ description: i.description, unitPriceCents: i.unitPriceCents }],
+        ),
         methods: [...new Set(payments.map((p) => p.method))],
       },
     });

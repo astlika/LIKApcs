@@ -41,17 +41,21 @@ import {
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
 import {
+  addFreeItem,
   addToCart,
   cartItemCount,
   cartToRequest,
   cartTotals,
   emptyCart,
+  lineKey,
+  lineName,
   removeLine,
   setLineDiscount,
   setQuantity,
   type Cart,
   unitPriceOf,
 } from '../lib/cart';
+import { FreeItemDialog } from '../components/pos/FreeItemDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -100,7 +104,9 @@ export function PosPage() {
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
-  const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | null>(null);
+  const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | 'freeItem' | null>(
+    null,
+  );
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
@@ -126,6 +132,8 @@ export function PosPage() {
     queryFn: () => api<SettingsMap>('/settings'),
     staleTime: 60_000,
   });
+  /** 0.19.0: off-inventory lines take the default tax rate, shown the same as the server computes. */
+  const defaultTaxBp = settings.data?.['tax.default_rate_bp'] ?? 0;
   const products = useQuery({
     queryKey: ['products', 'pos', categoryId, gridSearch],
     queryFn: () =>
@@ -213,7 +221,22 @@ export function PosPage() {
     void api<SaleDetail>(`/sales/${id}`).then(async (sale) => {
       let next = emptyCart();
       for (const item of sale.items) {
-        if (!item.productId) continue;
+        if (!item.productId) {
+          // Off-inventory line (0.19.0): it has no product row to reload — its snapshot is enough.
+          next = addFreeItem(next, {
+            name: item.description,
+            unitPriceCents: item.unitPriceCents,
+            taxRateBp: item.taxRateBp,
+            quantityMilli: item.quantityMilli,
+          });
+          if (item.discountCents)
+            next = setLineDiscount(
+              next,
+              lineKey(next.lines[next.lines.length - 1]!),
+              item.discountCents,
+            );
+          continue;
+        }
         const product = await api<ProductSummary>(`/products/${item.productId}`);
         next = addToCart(next, product, item.quantityMilli);
         if (item.discountCents) next = setLineDiscount(next, product.id, item.discountCents);
@@ -433,6 +456,14 @@ export function PosPage() {
             {resumedId && <Badge tone="warning">{t('sales.status.suspended')}</Badge>}
           </h2>
           <span className="muted">{t('pos.items', { n: cartItemCount(cart) })}</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setDialog('freeItem')}
+            data-testid="pos-free-item"
+          >
+            <Plus size={14} /> {t('pos.freeItem')}
+          </Button>
         </div>
         <div className="pos__customer">
           <CustomerPicker
@@ -448,13 +479,20 @@ export function PosPage() {
           {cart.lines.length === 0 && <div className="pos__empty">{t('pos.emptyCart')}</div>}
           {cart.lines.map((line, i) => {
             const computed = totals.lines[i]!;
+            const key = lineKey(line);
+            const unit = line.kind === 'product' ? unitPriceOf(line.product) : line.unitPriceCents;
             return (
-              <div key={line.product.id} className="pos-line">
+              <div key={key} className="pos-line">
                 <div className="pos-line__main">
-                  <div className="pos-line__name">{line.product.name}</div>
+                  <div className="pos-line__name">
+                    {lineName(line)}
+                    {line.kind === 'free' && (
+                      <span className="faint"> · {t('pos.freeItemTag')}</span>
+                    )}
+                  </div>
                   <div className="pos-line__price faint num">
-                    {fmt.money(unitPriceOf(line.product))} × {line.quantityMilli / 1000}
-                    {unitPriceOf(line.product) < line.product.sellingPriceCents && (
+                    {fmt.money(unit)} × {line.quantityMilli / 1000}
+                    {line.kind === 'product' && unit < line.product.sellingPriceCents && (
                       <span className="text-success"> · {t('pos.promo')}</span>
                     )}
                   </div>
@@ -463,9 +501,7 @@ export function PosPage() {
                   <button
                     type="button"
                     className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli - 1000))
-                    }
+                    onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
                     aria-label="−"
                   >
                     <Minus size={14} />
@@ -474,16 +510,14 @@ export function PosPage() {
                     quantityMilli={line.quantityMilli}
                     label={t('pos.qty')}
                     onCommit={(milli) => {
-                      setCart((c) => setQuantity(c, line.product.id, milli));
+                      setCart((c) => setQuantity(c, key, milli));
                       focusSearch();
                     }}
                   />
                   <button
                     type="button"
                     className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli + 1000))
-                    }
+                    onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
                     aria-label="+"
                   >
                     <Plus size={14} />
@@ -500,7 +534,7 @@ export function PosPage() {
                       defaultValue={line.discountCents ? (line.discountCents / 100).toFixed(2) : ''}
                       onBlur={(e) => {
                         const cents = e.target.value.trim() ? parseMoneyInput(e.target.value) : 0;
-                        if (cents !== null) setCart(setLineDiscount(cart, line.product.id, cents));
+                        if (cents !== null) setCart(setLineDiscount(cart, key, cents));
                       }}
                       aria-label={t('pos.lineDiscount')}
                     />
@@ -509,7 +543,7 @@ export function PosPage() {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  onClick={() => setCart(removeLine(cart, line.product.id))}
+                  onClick={() => setCart(removeLine(cart, key))}
                   aria-label={t('common.delete')}
                 >
                   <Trash2 size={14} />
@@ -650,6 +684,19 @@ export function PosPage() {
         confirmLabel={t('pos.newSale')}
         danger
       />
+      {dialog === 'freeItem' && (
+        <FreeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onAdd={(item) => {
+            setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
       {dialog === 'suspended' && (
         <Dialog
           open

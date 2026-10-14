@@ -8,7 +8,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
-_(nothing yet)_
+- **Off-inventory "free item" lines at the till (0.19 · in progress).** The POS cart has a
+  "Free item" button: a name and a price typed in (a service, a repair, a one-off), quantity 1–999.
+  It takes the default tax rate and its price includes tax, like a catalogue product. No stock
+  moves and no cost is booked, so the margin is the whole price. The line survives suspend/resume,
+  appears on the receipt and can be refunded (restocking is a no-op for it). Each completed sale
+  with free lines is audited with the typed names and prices (`sale.completed` → `freeItems`).
 
 ## [0.18.1] - 2026-10-14
 

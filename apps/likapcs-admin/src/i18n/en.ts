@@ -721,6 +721,17 @@ export const en = {
     stockLeft: '{n} in stock',
     cart: 'Current sale',
     emptyCart: 'Scan or tap products to add them.',
+    freeItem: 'Free item',
+    freeItemTag: 'free item',
+    freeItemHint:
+      'Something that is not in the catalogue: a service or a one-off. No stock moves; the default tax applies.',
+    freeItemName: 'Name',
+    freeItemPrice: 'Price (incl. tax)',
+    freeItemAdd: 'Add to sale',
+    freeItemNameInvalid: 'Type a name (up to 120 characters).',
+    freeItemPriceInvalid: 'Type a price, e.g. 2.50 (zero or more).',
+    freeItemQtyInvalid: 'Quantity: a whole number from 1 to 999.',
+
     qty: 'Qty',
     lineDiscount: 'Line discount',
     saleDiscount: 'Sale discount',

@@ -1163,11 +1163,28 @@ export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
  */
 export const REFUND_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'wallet'] as const;
 
-export const saleItemInputSchema = z.object({
+/** A catalogue product: stock, tax and price come from the product row. */
+export const productSaleItemSchema = z.object({
   productId: z.string().uuid(),
   quantityMilli: z.number().int().min(1).max(1_000_000_000),
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
 });
+
+/**
+ * 0.19.0: an off-inventory line ("free item") — a service or any sale without a product row:
+ * a name and a price typed at the till. No stock moves, no cost is booked (COGS 0), and the line
+ * is priced like the default-tax products (price includes tax).
+ */
+export const freeSaleItemSchema = z.object({
+  description: z.string().trim().min(1).max(120),
+  unitPriceCents: z.number().int().min(0).max(100_000_00),
+  quantityMilli: z.number().int().min(1).max(1_000_000_000),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+});
+
+export const saleItemInputSchema = z.union([productSaleItemSchema, freeSaleItemSchema]);
+export type ProductSaleItemInput = z.infer<typeof productSaleItemSchema>;
+export type FreeSaleItemInput = z.infer<typeof freeSaleItemSchema>;
 export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
 
 export const salePaymentInputSchema = z.object({

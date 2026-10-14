@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ProductSummary } from '@likapcs/shared';
 import {
+  addFreeItem,
   addToCart,
   cartToRequest,
   cartTotals,
   emptyCart,
+  lineKey,
+  lineName,
   removeLine,
   ScanBuffer,
   setLineDiscount,
@@ -57,7 +60,7 @@ describe('cart', () => {
     cart = setQuantity(cart, 'p1', 1000);
     expect(cart.lines[0]!.quantityMilli).toBe(1000);
     cart = setQuantity(cart, 'p2', 0);
-    expect(cart.lines.map((l) => l.product.id)).toEqual(['p1']);
+    expect(cart.lines.map((l) => lineKey(l))).toEqual(['p1']);
     cart = removeLine(cart, 'p1');
     expect(cart.lines).toEqual([]);
   });
@@ -100,5 +103,53 @@ describe('ScanBuffer', () => {
     buf.push('1', 5000);
     buf.push('2', 5005);
     expect(buf.flush(5010)).toBeNull();
+  });
+
+  it('0.19.0: an off-inventory line is priced at the typed price, with the default tax, and sent as a description', () => {
+    const cart = addFreeItem(
+      emptyCart(),
+      { name: '  Repair  ', unitPriceCents: 1000, taxRateBp: 1800, quantityMilli: 2000 },
+      () => 'k1',
+    );
+    expect(cart.lines).toHaveLength(1);
+    const line = cart.lines[0]!;
+    expect(lineKey(line)).toBe('free:k1');
+    expect(lineName(line)).toBe('Repair');
+    // 2 × 10.00, prices include tax at 18 %: total 20.00, tax 3.05 (20.00 × 18/118 rounded).
+    const t = cartTotals(cart);
+    expect(t.totalCents).toBe(2000);
+    expect(t.taxCents).toBe(305);
+    const body = cartToRequest(cart);
+    expect(body.items).toEqual([
+      { description: 'Repair', unitPriceCents: 1000, quantityMilli: 2000, discountCents: 0 },
+    ]);
+  });
+
+  it('0.19.0: free lines never merge; each keeps its own key, quantity and discount', () => {
+    let cart = addFreeItem(
+      emptyCart(),
+      { name: 'Tape', unitPriceCents: 50, taxRateBp: 0 },
+      () => 'a',
+    );
+    cart = addFreeItem(cart, { name: 'Tape', unitPriceCents: 50, taxRateBp: 0 }, () => 'b');
+    expect(cart.lines.map((l) => lineKey(l))).toEqual(['free:a', 'free:b']);
+    cart = setQuantity(cart, 'free:a', 3000);
+    cart = setLineDiscount(cart, 'free:b', 20);
+    expect(cartTotals(cart).totalCents).toBe(150 + 50 - 20);
+    cart = removeLine(cart, 'free:a');
+    expect(cart.lines.map((l) => lineKey(l))).toEqual(['free:b']);
+  });
+
+  it('0.19.0: a product line added after a free line keeps the product request shape', () => {
+    let cart = addFreeItem(
+      emptyCart(),
+      { name: 'Service', unitPriceCents: 300, taxRateBp: 0 },
+      () => 'z',
+    );
+    cart = addToCart(cart, product({}), 1000);
+    expect(cartToRequest(cart).items).toEqual([
+      { description: 'Service', unitPriceCents: 300, quantityMilli: 1000, discountCents: 0 },
+      { productId: 'p1', quantityMilli: 1000, discountCents: 0 },
+    ]);
   });
 });

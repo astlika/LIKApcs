@@ -20,7 +20,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CustomerDisplayFeed, CustomerSummary } from '@likapcs/shared';
 import { api, fileUrl } from '../lib/api';
-import { cartItemCount, cartTotals, unitPriceOf, type Cart } from '../lib/cart';
+import { cartItemCount, cartTotals, lineKey, lineName, unitPriceOf, type Cart } from '../lib/cart';
 import {
   DISPLAY_THANKS_SECONDS,
   DisplayChannel,
@@ -78,16 +78,19 @@ export function displaySaleOf(
   const totals = cartTotals(cart, customer?.discountBp ?? 0);
   return {
     lines: cart.lines.map((l) => {
-      const unit = unitPriceOf(l.product);
+      const unit = l.kind === 'product' ? unitPriceOf(l.product) : l.unitPriceCents;
       const gross = Math.round((unit * l.quantityMilli) / 1000);
       return {
-        id: l.product.id,
-        name: l.product.name,
+        id: lineKey(l),
+        name: lineName(l),
         quantityMilli: l.quantityMilli,
         unitPriceCents: unit,
         totalCents: Math.max(0, gross - Math.min(l.discountCents, gross)),
-        regularPriceCents: unit < l.product.sellingPriceCents ? l.product.sellingPriceCents : null,
-        imageUrl: fileUrl(l.product.imageUrl),
+        regularPriceCents:
+          l.kind === 'product' && unit < l.product.sellingPriceCents
+            ? l.product.sellingPriceCents
+            : null,
+        imageUrl: l.kind === 'product' ? fileUrl(l.product.imageUrl) : null,
       };
     }),
     subtotalCents: totals.subtotalCents,
@@ -118,10 +121,10 @@ export function CustomerDisplayProvider({ children }: { children: ReactNode }) {
     const prev = prevLines.current;
     let changed: string | null = null;
     for (const l of cart.lines) {
-      if (prev.get(l.product.id) !== l.quantityMilli) changed = l.product.id;
+      if (prev.get(lineKey(l)) !== l.quantityMilli) changed = lineKey(l);
     }
-    prevLines.current = new Map(cart.lines.map((l) => [l.product.id, l.quantityMilli]));
-    return changed ?? cart.lines[cart.lines.length - 1]?.product.id ?? null;
+    prevLines.current = new Map(cart.lines.map((l) => [lineKey(l), l.quantityMilli]));
+    return changed ?? (cart.lines.length ? lineKey(cart.lines[cart.lines.length - 1]!) : null);
   }, [cart.lines]);
 
   const walletEnabled = settings['wallet.enabled'];

@@ -731,6 +731,17 @@ export const sq: Dictionary = {
     stockLeft: '{n} në stok',
     cart: 'Shitja aktuale',
     emptyCart: 'Skano ose prek produktet për t’i shtuar.',
+    freeItem: 'Artikull i lirë',
+    freeItemTag: 'artikull i lirë',
+    freeItemHint:
+      'Diçka që nuk është në katalog: shërbim ose artikull i rastit. Nuk lëviz stoku; zbatohet tatimi i parazgjedhur.',
+    freeItemName: 'Emërtimi',
+    freeItemPrice: 'Çmimi (me tatim)',
+    freeItemAdd: 'Shto në shitje',
+    freeItemNameInvalid: 'Shkruani një emërtim (deri në 120 karaktere).',
+    freeItemPriceInvalid: 'Shkruani një çmim, p.sh. 2.50 (zero ose më shumë).',
+    freeItemQtyInvalid: 'Sasia: numër i plotë nga 1 deri në 999.',
+
     qty: 'Sasia',
     lineDiscount: 'Zbritje në rresht',
     saleDiscount: 'Zbritje në shitje',
