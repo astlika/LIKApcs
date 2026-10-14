@@ -10,6 +10,30 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _(nothing yet)_
 
+## [0.18.1] - 2026-10-14
+
+### Changed
+
+- **Gift minutes also for pay-at-the-end sessions.** A gift adds the time and nothing else: the
+  reserved amount does not move, and an end-pay bill is capped at that reserved amount, so the
+  gifted minutes can only be used inside the cap and never turn into money. Covered by an
+  integration test (the bill of an overrun session stays at the reservation). Postpaid sessions
+  still cannot be gifted — they run until stopped.
+- **The gift permission is `stations.gift`, owner and admin only.** It replaces `sessions.gift`,
+  which managers also had. Migration `0030_stations_gift.sql` moves the grants: owner and admin
+  keep the ability, managers lose it until the owner grants `stations.gift` to a role again.
+- **One payment step for "+ minutes" on many PCs.** Paid mode now opens a single tender panel
+  (cash, card or split) for the whole selection, with the bill of each prepaid PC listed. The
+  server splits that one payment across the bills (`allocatePayments`, shared package) and
+  refuses the whole batch, before any time moves, when the tender does not cover the bills.
+  Pay-later and balance are not offered here — a batch of PCs has no single customer. Change is
+  the cashier's, never a per-session payment.
+
+### Fixed
+
+- **Bulk "+ minutes" on a pay-at-the-end PC** no longer treats its price as cash taken now. End-pay
+  time joins the bill collected at the end, as it does for a single extension.
+
 ## [0.18.0] - 2026-10-14
 
 ### Added
