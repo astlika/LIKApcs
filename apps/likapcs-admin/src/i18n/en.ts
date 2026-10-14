@@ -826,6 +826,12 @@ export const en = {
     walletPaid: 'Balance: {amount}',
   },
   products: {
+    variantOf: 'Variant of',
+    variantOfNone: '— main product —',
+    variantOfHasVariants: 'This product has variants, so it stays a main product.',
+    variantLabel: 'Variant label',
+    variantLabelHint: 'Size, colour… Each variant has its own barcode, price and stock.',
+    variantsCount: '{n} variants',
     clientMenu: 'Orderable from the PCs',
     clientMenuHint:
       'Shown on the customer PCs under "Order" (drinks, snacks…). Manage the whole list under Orders › Menu.',

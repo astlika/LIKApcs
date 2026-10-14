@@ -1001,6 +1001,9 @@ export const productSchema = z.object({
   /** Offered on the PC menu (orders from the seat, 0.10.0). */
   clientMenu: z.boolean().default(false),
   barcodes: z.array(productBarcodeSchema).max(20).default([]),
+  /** 0.19.0: this product is a variant of `parentId` (e.g. size M of a T-shirt). Both or neither. */
+  parentId: z.string().uuid().nullable().default(null),
+  variantLabel: z.string().trim().min(1).max(40).nullable().default(null),
   /** Opening stock recorded as an `initial` movement when the product is created. */
   initialStockMilli: z.number().int().min(0).max(1_000_000_000).optional(),
 });
@@ -1051,6 +1054,11 @@ export interface ProductSummary {
   /** Offered on the PC menu (customers can order it from their seat, 0.10.0). */
   clientMenu: boolean;
   clientMenuOrder: number;
+  /** 0.19.0: the parent product this one is a variant of, its label, and how many variants it has. */
+  parentId: string | null;
+  parentName: string | null;
+  variantLabel: string | null;
+  variantCount: number;
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
   barcodes: ProductBarcodeSummary[];

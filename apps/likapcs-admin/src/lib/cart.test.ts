@@ -17,6 +17,10 @@ import {
 
 const product = (over: Partial<ProductSummary>): ProductSummary => ({
   id: 'p1',
+  parentId: null,
+  parentName: null,
+  variantLabel: null,
+  variantCount: 0,
   name: 'Cola',
   sku: 'SKU-1',
   categoryId: null,

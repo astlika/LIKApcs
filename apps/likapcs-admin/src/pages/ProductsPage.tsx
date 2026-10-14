@@ -233,6 +233,15 @@ export function ProductsPage() {
                           {p.clientMenu && (
                             <Badge tone="info">{t('products.clientMenuBadge')}</Badge>
                           )}
+                          {p.parentName && (
+                            <span className="faint" data-testid="product-variant-tag">
+                              {' '}
+                              · {p.parentName} · {p.variantLabel}
+                            </span>
+                          )}
+                          {p.variantCount > 0 && (
+                            <Badge>{t('products.variantsCount', { n: p.variantCount })}</Badge>
+                          )}
                         </div>
                         {p.barcodes.length > 0 && (
                           <div className="faint" style={{ fontSize: 12 }}>
@@ -377,6 +386,9 @@ interface ProductForm {
   isActive: boolean;
   clientMenu: boolean;
   initialStock: string;
+  /** 0.19.0: the main product this one is a variant of ('' = a main product) and its label. */
+  parentId: string;
+  variantLabel: string;
 }
 function formFrom(p: ProductSummary | null): ProductForm {
   return {
@@ -397,6 +409,8 @@ function formFrom(p: ProductSummary | null): ProductForm {
     isActive: p?.isActive ?? true,
     clientMenu: p?.clientMenu ?? false,
     initialStock: '',
+    parentId: p?.parentId ?? '',
+    variantLabel: p?.variantLabel ?? '',
   };
 }
 
@@ -422,6 +436,11 @@ function ProductDialog({
   const toast = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProductForm>(() => formFrom(product));
+  const mainProducts = useQuery({
+    queryKey: ['products', 'mains'],
+    queryFn: () => api<{ items: ProductSummary[] }>('/products', { query: { pageSize: 500 } }),
+    staleTime: 15_000,
+  });
   const [barcodes, setBarcodes] = useState<ProductBarcodeInput[]>(
     product?.barcodes.map((b) => ({
       barcode: b.barcode,
@@ -493,6 +512,8 @@ function ProductDialog({
         storageLocation: form.storageLocation.trim() || null,
         isActive: form.isActive,
         clientMenu: form.clientMenu,
+        parentId: form.parentId || null,
+        variantLabel: form.parentId ? form.variantLabel.trim() || null : null,
       };
       let saved: ProductSummary;
       if (product) {
@@ -812,6 +833,46 @@ function ProductDialog({
               label={t('products.active')}
             />
           )}
+          <div className="grid grid--2" data-testid="product-variant">
+            <Field
+              label={t('products.variantOf')}
+              optional
+              hint={
+                product && product.variantCount > 0 ? t('products.variantOfHasVariants') : undefined
+              }
+            >
+              {(id) => (
+                <Select
+                  id={id}
+                  value={form.parentId}
+                  disabled={Boolean(product && product.variantCount > 0)}
+                  onChange={(e) => set('parentId', e.target.value)}
+                  data-testid="product-variant-of"
+                >
+                  <option value="">{t('products.variantOfNone')}</option>
+                  {(mainProducts.data?.items ?? [])
+                    .filter((p) => !p.parentId && p.id !== product?.id)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </Select>
+              )}
+            </Field>
+            <Field label={t('products.variantLabel')} hint={t('products.variantLabelHint')}>
+              {(id) => (
+                <Input
+                  id={id}
+                  value={form.variantLabel}
+                  maxLength={40}
+                  disabled={!form.parentId}
+                  onChange={(e) => set('variantLabel', e.target.value)}
+                  data-testid="product-variant-label"
+                />
+              )}
+            </Field>
+          </div>
           <div data-testid="product-client-menu">
             <Switch
               checked={form.clientMenu}

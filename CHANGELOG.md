@@ -30,6 +30,12 @@ All notable changes to LIKApcs are documented here. The format follows
   each repayment counts as one part, and the debt shows "N of M paid · next part X". No dates are
   scheduled — the due date still applies. Installments are refused on any tender but pay-later.
   Combined with the off-inventory item, this sells a PC build or service paid in parts.
+- **Product variants — size, colour… (0.19 · in progress).** A variant is a product of its own: its
+  own barcode, selling price and stock. In Products, a product can be a *variant of* a main product
+  and carries a label ("M", "42", "Red"); the main product lists its variant count. One level only:
+  a variant cannot have variants, and a main product with variants cannot become one. Selling a
+  variant moves only its stock. A main product with variants cannot be deleted (archive it instead).
+  Migration `0034_product_variants.sql`.
 
 ## [0.18.1] - 2026-10-14
 

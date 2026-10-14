@@ -836,6 +836,12 @@ export const sq: Dictionary = {
     walletPaid: 'Balanca: {amount}',
   },
   products: {
+    variantOf: 'Variant i',
+    variantOfNone: '— produkt kryesor —',
+    variantOfHasVariants: 'Ky produkt ka variante, prandaj mbetet produkt kryesor.',
+    variantLabel: 'Etiketa e variantit',
+    variantLabelHint: 'Madhësia, ngjyra… Çdo variant ka barkodin, çmimin dhe stokun e vet.',
+    variantsCount: '{n} variante',
     clientMenu: 'Porositet nga PC-të',
     clientMenuHint:
       'Shfaqet në PC-të e klientëve te "Porosit" (pije, snack…). Lista e plotë menaxhohet te Porositë › Menyja.',
