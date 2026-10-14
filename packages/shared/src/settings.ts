@@ -239,6 +239,12 @@ export const SETTING_SCHEMAS = {
   'pos.credit_default_days': z.number().int().min(0).max(365),
   /** 0.18.0: the POS grid hides sold-out products (a barcode scan can still add one, with a warning). */
   'pos.hide_out_of_stock': z.boolean(),
+  /** Off by default: the till offers \"sell an off-inventory item\" (phones, PCs, other non-stock). */
+  'pos.off_inventory_items': z.boolean(),
+  /** Off by default: the till offers \"PC time\" (cart stations) — sell minutes now, the PC starts later. */
+  'pos.time_items': z.boolean(),
+  /** Off by default: pay-later sales can be split into installments. */
+  'pos.installments': z.boolean(),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -350,6 +356,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.card_payments': false,
   'pos.credit_default_days': 7,
   'pos.hide_out_of_stock': true,
+  'pos.off_inventory_items': false,
+  'pos.time_items': false,
+  'pos.installments': false,
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',

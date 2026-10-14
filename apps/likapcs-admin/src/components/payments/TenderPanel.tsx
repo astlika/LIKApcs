@@ -30,6 +30,7 @@ import { useFormat } from '../../lib/format';
 import { suggestTenders } from '../../lib/tender';
 import { useAppSettings } from '../../state/app-settings';
 import { useAuth } from '../../state/auth';
+import { usePosFlags } from '../../lib/pos-flags';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { Alert, Field, Input } from '../ui/primitives';
 
@@ -284,6 +285,7 @@ export function TenderPanel({
   testId?: string;
 }) {
   const { t } = useI18n();
+  const flags = usePosFlags();
   const fmt = useFormat();
   const cashRef = useRef<HTMLInputElement>(null);
   const { mode, customer } = tender;
@@ -498,18 +500,20 @@ export function TenderPanel({
           ) : (
             <Alert tone="warning">{t('pos.payLaterNeedsCustomer')}</Alert>
           )}
-          <Field label={t('pos.installments')} optional hint={t('pos.installmentsHint')}>
-            {(id) => (
-              <Input
-                id={id}
-                inputMode="numeric"
-                placeholder="—"
-                value={tender.installmentsText}
-                onChange={(e) => tender.setInstallmentsText(e.target.value.slice(0, 2))}
-                data-testid={`${testId}-installments`}
-              />
-            )}
-          </Field>
+          {flags.installments && (
+            <Field label={t('pos.installments')} optional hint={t('pos.installmentsHint')}>
+              {(id) => (
+                <Input
+                  id={id}
+                  inputMode="numeric"
+                  placeholder="—"
+                  value={tender.installmentsText}
+                  onChange={(e) => tender.setInstallmentsText(e.target.value.slice(0, 2))}
+                  data-testid={`${testId}-installments`}
+                />
+              )}
+            </Field>
+          )}
           <div className="grid grid--2">
             <Field label={t('pos.payLaterDue')}>
               {(id) => (

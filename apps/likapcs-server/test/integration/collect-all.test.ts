@@ -105,7 +105,12 @@ describe('pay all: the bills waiting at one PC, in one step', () => {
     const before = await counts();
     const res = await post<{
       stationId: string;
-      collected: { sessionId: string; receiptNo: string; totalCents: number }[];
+      collected: {
+        sessionId: string;
+        receiptNo: string;
+        totalCents: number;
+        payment: { saleId: string; receiptNo: string } | null;
+      }[];
       totalCents: number;
     }>(`/stations/${pc1.id}/collect-all`, {
       paymentMethod: 'cash',

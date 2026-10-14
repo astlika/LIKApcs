@@ -41,6 +41,7 @@ import {
   type SalesListResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
+import { usePosFlags } from '../lib/pos-flags';
 import {
   addFreeItem,
   addTimeItem,
@@ -130,6 +131,7 @@ export function PosPage() {
     const h = setTimeout(() => setGridSearch(search.trim()), 180);
     return () => clearTimeout(h);
   }, [search]);
+  const flags = usePosFlags();
   const settings = useQuery({
     queryKey: ['settings', 'all'],
     queryFn: () => api<SettingsMap>('/settings'),
@@ -459,22 +461,26 @@ export function PosPage() {
             {resumedId && <Badge tone="warning">{t('sales.status.suspended')}</Badge>}
           </h2>
           <span className="muted">{t('pos.items', { n: cartItemCount(cart) })}</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setDialog('freeItem')}
-            data-testid="pos-free-item"
-          >
-            <Plus size={14} /> {t('pos.freeItem')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setDialog('timeItem')}
-            data-testid="pos-time-item"
-          >
-            <Clock size={14} /> {t('pos.timeItem')}
-          </Button>
+          {flags.offInventory && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDialog('freeItem')}
+              data-testid="pos-free-item"
+            >
+              <Plus size={14} /> {t('pos.freeItem')}
+            </Button>
+          )}
+          {flags.timeItems && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDialog('timeItem')}
+              data-testid="pos-time-item"
+            >
+              <Clock size={14} /> {t('pos.timeItem')}
+            </Button>
+          )}
         </div>
         <div className="pos__customer">
           <CustomerPicker

@@ -1013,6 +1013,27 @@ export function SettingsPage() {
                   t('settings.printing.hideOutOfStockHint'),
                 )}
               </div>
+              <div className="span-2" data-testid="settings-off-inventory">
+                {bool(
+                  'pos.off_inventory_items',
+                  t('settings.printing.offInventory'),
+                  t('settings.printing.offInventoryHint'),
+                )}
+              </div>
+              <div className="span-2" data-testid="settings-time-items">
+                {bool(
+                  'pos.time_items',
+                  t('settings.printing.timeItems'),
+                  t('settings.printing.timeItemsHint'),
+                )}
+              </div>
+              <div className="span-2" data-testid="settings-installments">
+                {bool(
+                  'pos.installments',
+                  t('settings.printing.installments'),
+                  t('settings.printing.installmentsHint'),
+                )}
+              </div>
               <div className="span-2">
                 {bool(
                   'pos.card_payments',
