@@ -28,6 +28,7 @@ import { ProductImageStore } from './product-images.js';
 import type { SettingsService } from './settings.js';
 
 interface ProductRow {
+  addons: { id: string; name: string; price_cents: string | number }[] | null;
   id: string;
   name: string;
   sku: string;
@@ -77,7 +78,10 @@ const PRODUCT_SELECT = `
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
-            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes
+            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes,
+         (SELECT json_agg(json_build_object('id', a.id, 'name', a.name, 'price_cents', a.price_cents)
+                          ORDER BY a.sort_order, a.created_at)
+            FROM product_addons a WHERE a.product_id = p.id) AS addons
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
@@ -283,6 +287,11 @@ export class CatalogService {
         barcode: b.barcode,
         isPrimary: b.is_primary,
         quantityMilli: Number(b.quantity_milli),
+      })),
+      addons: (row.addons ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        priceCents: Number(a.price_cents),
       })),
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
@@ -672,6 +681,40 @@ export class CatalogService {
           );
         throw err;
       });
+  }
+
+  /** 0.19.1: replaces the product's extras. Existing sales keep their snapshot. */
+  async setAddons(
+    productId: string,
+    input: { addons: { name: string; priceCents: number }[] },
+    actor: AuditActor,
+  ): Promise<ProductSummary> {
+    return withTransaction(this.pool, async (client) => {
+      const exists = await client.query('SELECT 1 FROM products WHERE id = $1', [productId]);
+      if (!exists.rowCount) throw notFound('Product');
+      // An extra saved again under the same name keeps its id, so a parked sale still resolves it.
+      const current = await client.query<{ id: string; name: string }>(
+        'SELECT id, name FROM product_addons WHERE product_id = $1',
+        [productId],
+      );
+      const byName = new Map(current.rows.map((r) => [r.name, r.id]));
+      await client.query('DELETE FROM product_addons WHERE product_id = $1', [productId]);
+      for (const [i, a] of input.addons.entries()) {
+        const name = a.name.trim();
+        await client.query(
+          `INSERT INTO product_addons (id, product_id, name, price_cents, sort_order)
+           VALUES (COALESCE($5::uuid, gen_random_uuid()), $1, $2, $3, $4)`,
+          [productId, name, a.priceCents, i, byName.get(name) ?? null],
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'catalog.product.addons',
+        entityType: 'product',
+        entityId: productId,
+        details: { count: input.addons.length },
+      });
+      return this.getProduct(productId, client);
+    });
   }
 
   async addBarcode(

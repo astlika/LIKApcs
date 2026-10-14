@@ -1084,6 +1084,8 @@ export interface ProductSummary {
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
   barcodes: ProductBarcodeSummary[];
+  /** 0.19.1: extras with their own price (see `productAddonsSchema`). */
+  addons: ProductAddonSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1202,7 +1204,26 @@ export const productSaleItemSchema = z.object({
   productId: z.string().uuid(),
   quantityMilli: z.number().int().min(1).max(1_000_000_000),
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
+  /** 0.19.1: extras chosen for this line (ids from the product's `addons`). Each adds its price. */
+  addonIds: z.array(z.string().uuid()).max(20).default([]),
 });
+
+/** 0.19.1: the extras of a product (Toast → cheese +0.50). Replaces the whole list on save. */
+export const productAddonsSchema = z.object({
+  addons: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        priceCents: z.number().int().min(0).max(100_000_000),
+      }),
+    )
+    .max(30),
+});
+export interface ProductAddonSummary {
+  id: string;
+  name: string;
+  priceCents: number;
+}
 
 /**
  * 0.19.0: an off-inventory line ("free item") — a service or any sale without a product row:
@@ -1317,6 +1338,8 @@ export interface SaleItemSummary {
   taxCents: number;
   lineTotalCents: number;
   refundedMilli: number;
+  /** 0.19.1: the extras chosen on a product line (ids of the product's extras at the time). */
+  addonIds: string[];
 }
 
 export interface SalePaymentSummary {

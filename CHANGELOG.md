@@ -6,6 +6,15 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Product extras with their own price (0.19.1).** A product can have extras (e.g. *Tost* with
+  *Kackavall* +0.50), set in Admin › Products under *Extras* (its own Save). At the till, a product
+  with extras opens a dialog to tick them; each combination is its own sale line, named
+  `Tost + Kackavall`. An extra adds its price and never moves stock. The chosen extras are kept on
+  the sale line (`sale_items.addons`, migration `0037_product_addons.sql`), so past receipts do not
+  change when an extra is edited, and a parked sale resumes with its extras.
+
 ### Fixed
 
 - **\"+ minutes\" on several PCs says what happened (0.19.1).** The dialog lists the PCs that will

@@ -49,6 +49,7 @@ const product = (over: Partial<ProductSummary>): ProductSummary => ({
   storageLocation: null,
   isActive: true,
   barcodes: [],
+  addons: [],
   createdAt: '',
   updatedAt: '',
   ...over,
@@ -195,5 +196,49 @@ describe('ScanBuffer', () => {
     cart = addToCart(cart, product({}), 1000);
     expect(cart.lines[0]).toMatchObject({ kind: 'product', quantityMilli: 2000 });
     expect(cart.lines[1]).toMatchObject({ kind: 'time', minutes: 60 });
+  });
+
+  it('0.19.1: the same product with different extras is separate lines; the same extras merge', () => {
+    const tost = product({
+      id: 'tost',
+      name: 'Tost',
+      sellingPriceCents: 300,
+      addons: [
+        { id: 'k', name: 'Kackavall', priceCents: 50 },
+        { id: 'h', name: 'Proshute', priceCents: 120 },
+      ],
+    });
+    let cart = emptyCart();
+    cart = addToCart(cart, tost, 1000, ['k']);
+    cart = addToCart(cart, tost, 1000);
+    cart = addToCart(cart, tost, 1000, ['k']);
+    cart = addToCart(cart, tost, 1000, ['h', 'k']);
+    cart = addToCart(cart, tost, 1000, ['k', 'h']);
+    expect(cart.lines).toHaveLength(3);
+    expect(cart.lines[0]).toMatchObject({ addonIds: ['k'], quantityMilli: 2000 });
+    expect(cart.lines[1]).toMatchObject({ addonIds: [], quantityMilli: 1000 });
+    expect(cart.lines[2]).toMatchObject({ addonIds: ['h', 'k'], quantityMilli: 2000 });
+    expect(lineKey(cart.lines[0]!)).not.toBe(lineKey(cart.lines[1]!));
+    expect(lineName(cart.lines[0]!)).toBe('Tost + Kackavall');
+    expect(lineName(cart.lines[2]!)).toBe('Tost + Kackavall + Proshute');
+  });
+
+  it('0.19.1: extras add their price to the unit price, and are sent as addonIds', () => {
+    const tost = product({
+      id: 'tost',
+      sellingPriceCents: 300,
+      addons: [{ id: 'k', name: 'Kackavall', priceCents: 50 }],
+    });
+    const cart = addToCart(emptyCart(), tost, 2000, ['k', 'unknown']);
+    const totals = cartTotals(cart);
+    expect(totals.subtotalCents).toBe(700);
+    expect(cartToRequest(cart).items[0]).toEqual({
+      productId: 'tost',
+      quantityMilli: 2000,
+      discountCents: 0,
+      addonIds: ['k'],
+    });
+    // a line without extras sends the plain request shape
+    expect(cartToRequest(addToCart(emptyCart(), tost)).items[0]).not.toHaveProperty('addonIds');
   });
 });

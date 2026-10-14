@@ -59,6 +59,7 @@ import {
   unitPriceOf,
 } from '../lib/cart';
 import { FreeItemDialog } from '../components/pos/FreeItemDialog';
+import { AddonDialog } from '../components/pos/AddonDialog';
 import { TimeItemDialog } from '../components/pos/TimeItemDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
@@ -111,6 +112,11 @@ export function PosPage() {
   const [dialog, setDialog] = useState<
     'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
   >(null);
+  // 0.19.1: a product with extras opens the extras dialog before it is added to the cart.
+  const [addonPick, setAddonPick] = useState<{
+    product: ProductSummary;
+    quantityMilli: number;
+  } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
@@ -169,6 +175,10 @@ export function PosPage() {
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      if (product.addons?.length) {
+        setAddonPick({ product, quantityMilli });
+        return;
+      }
       setCart((c) => addToCart(c, product, quantityMilli));
       focusSearch();
     },
@@ -243,8 +253,13 @@ export function PosPage() {
           continue;
         }
         const product = await api<ProductSummary>(`/products/${item.productId}`);
-        next = addToCart(next, product, item.quantityMilli);
-        if (item.discountCents) next = setLineDiscount(next, product.id, item.discountCents);
+        next = addToCart(next, product, item.quantityMilli, item.addonIds ?? []);
+        if (item.discountCents)
+          next = setLineDiscount(
+            next,
+            lineKey(next.lines[next.lines.length - 1]!),
+            item.discountCents,
+          );
       }
       // A parked sale's discount may be the customer's default one (applied by the server); do
       // not resend it as an explicit discount, the server re-applies it on completion.
@@ -715,6 +730,21 @@ export function PosPage() {
         confirmLabel={t('pos.newSale')}
         danger
       />
+      {addonPick && (
+        <AddonDialog
+          product={addonPick.product}
+          onClose={() => {
+            setAddonPick(null);
+            focusSearch();
+          }}
+          onAdd={(addonIds) => {
+            const { product, quantityMilli } = addonPick;
+            setCart((c) => addToCart(c, product, quantityMilli, addonIds));
+            setAddonPick(null);
+            focusSearch();
+          }}
+        />
+      )}
       {dialog === 'freeItem' && (
         <FreeItemDialog
           onClose={() => {

@@ -35,6 +35,7 @@ import {
   type PendingImage,
 } from '../components/catalog/ProductImageField';
 import { useFormat } from '../lib/format';
+import { ProductExtrasEditor } from '../components/catalog/ProductExtrasEditor';
 import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -992,6 +993,12 @@ function ProductDialog({
             <Plus size={14} /> {t('products.addBarcode')}
           </Button>
         </div>
+        {product && (
+          <ProductExtrasEditor
+            productId={product.id}
+            addons={existing.data?.addons ?? product.addons ?? []}
+          />
+        )}
         <button type="submit" hidden />
       </form>
     </Dialog>

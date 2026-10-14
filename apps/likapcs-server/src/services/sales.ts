@@ -113,7 +113,26 @@ interface CustomerTerms {
   discountBp: number;
 }
 
+/** 0.19.1: the extras of a product as loaded for a sale. */
+interface AddonForSale {
+  id: string;
+  name: string;
+  price_cents: string | number;
+}
+
+/** 0.19.1: the chosen extras of one line; an id the product does not have is refused. */
+export function resolveAddons(p: ProductForSale, ids: string[] | undefined) {
+  const chosen: { id: string; name: string; priceCents: number }[] = [];
+  for (const id of new Set(ids ?? [])) {
+    const a = (p.addons ?? []).find((x) => x.id === id);
+    if (!a) throw badRequest(`${p.name} has no such extra`, { field: 'addonIds', productId: p.id });
+    chosen.push({ id: a.id, name: a.name, priceCents: Number(a.price_cents) });
+  }
+  return chosen;
+}
+
 interface ProductForSale {
+  addons?: AddonForSale[];
   id: string;
   name: string;
   sku: string;
@@ -219,10 +238,11 @@ export class SalesService {
       tax_cents: string;
       line_total_cents: string;
       refunded_milli: string;
+      addons: { id: string }[];
     }>(
       `SELECT i.id::text, i.line_no, i.product_id, i.gaming_session_id, i.description, p.sku, i.quantity_milli::text,
               i.unit_price_cents::text, i.discount_cents::text, i.tax_rate_bp, i.tax_cents::text,
-              i.line_total_cents::text, i.refunded_milli::text
+              i.line_total_cents::text, i.refunded_milli::text, i.addons
          FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
         WHERE i.sale_id = $1 ORDER BY i.line_no`,
       [saleId],
@@ -241,6 +261,7 @@ export class SalesService {
       taxCents: Number(i.tax_cents),
       lineTotalCents: Number(i.line_total_cents),
       refundedMilli: Number(i.refunded_milli),
+      addonIds: (i.addons ?? []).map((a) => a.id),
     }));
   }
 
@@ -728,6 +749,17 @@ export class SalesService {
       [unique],
     );
     const map = new Map(r.rows.map((p) => [p.id, p]));
+    if (unique.length > 0) {
+      const extras = await client.query<AddonForSale & { product_id: string }>(
+        `SELECT id, product_id, name, price_cents FROM product_addons
+          WHERE product_id = ANY($1::uuid[]) ORDER BY sort_order, created_at`,
+        [unique],
+      );
+      for (const a of extras.rows) {
+        const p = map.get(a.product_id);
+        if (p) (p.addons ??= []).push({ id: a.id, name: a.name, price_cents: a.price_cents });
+      }
+    }
     for (const id of unique) {
       const p = map.get(id);
       if (!p) throw notFound(`Product ${id}`);
@@ -780,9 +812,11 @@ export class SalesService {
         };
       }
       const p = products.get(i.productId)!;
+      const extrasCents = resolveAddons(p, i.addonIds).reduce((sum, a) => sum + a.priceCents, 0);
       return {
         unitPriceCents:
-          fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents),
+          (fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents)) +
+          extrasCents,
         quantityMilli: i.quantityMilli,
         discountCents: i.discountCents,
         taxRateBp: p.tax_rate_bp ?? defaultRate,
@@ -837,15 +871,16 @@ export class SalesService {
       // Off-inventory and PC-time lines book no product and no cost: their margin is the whole price.
       const p = 'productId' in item ? products.get(item.productId)! : null;
       const unitCost = p ? Number(p.average_cost_cents) || Number(p.purchase_cost_cents) : 0;
+      const extras = p && 'addonIds' in item ? resolveAddons(p, item.addonIds) : [];
       const description = time
         ? `${time.stationCode} · ${time.minutes} min`
         : p
-          ? p.name
+          ? [p.name, ...extras.map((a) => a.name)].join(' + ')
           : (item as FreeSaleItemInput).description;
       const r = await client.query<{ id: string }>(
         `INSERT INTO sale_items (sale_id, line_no, product_id, description, quantity_milli, unit_price_cents, discount_cents,
-                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents, addons)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING id`,
         [
           saleId,
           i + 1,
@@ -858,6 +893,7 @@ export class SalesService {
           line.taxCents,
           line.lineTotalCents,
           Math.round((unitCost * line.quantityMilli) / 1000),
+          JSON.stringify(extras),
         ],
       );
       saleItemIds.set(i, Number(r.rows[0]!.id));

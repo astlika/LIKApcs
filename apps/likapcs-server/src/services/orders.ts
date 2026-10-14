@@ -677,6 +677,7 @@ export class OrdersService implements SessionOrdersHook {
           productId: i.product_id,
           quantityMilli: Number(i.quantity_milli),
           discountCents: 0,
+          addonIds: [],
         })),
         discountCents: 0,
         customerId,

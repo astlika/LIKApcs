@@ -9,6 +9,7 @@
 import {
   computeSale,
   customerDiscountCents,
+  type ProductAddonSummary,
   type ProductSummary,
   type SaleTotals,
 } from '@likapcs/shared';
@@ -18,6 +19,8 @@ export interface ProductLine {
   product: ProductSummary;
   quantityMilli: number;
   discountCents: number;
+  /** 0.19.1: the product's extras chosen for this line (sorted ids; empty when none). */
+  addonIds: string[];
 }
 
 export interface FreeLine {
@@ -73,21 +76,68 @@ export const emptyCart = (): Cart => ({
   clientRequestId: newRequestId(),
 });
 
-/** The line's key: the product id, or the free line's own key. */
-export const lineKey = (l: CartLine): string => (l.kind === 'product' ? l.product.id : l.key);
+/** Sorted, de-duplicated extra ids: the same set of extras always yields the same line key. */
+export const normalizeAddonIds = (ids: readonly string[]): string[] => [...new Set(ids)].sort();
+
+/**
+ * The line's key: the product id, or the free line's own key. A product line with extras gets
+ * its own key, so "Tost" and "Tost + Kackavall" are separate lines and do not merge.
+ */
+export const lineKey = (l: CartLine): string => {
+  if (l.kind !== 'product') return l.key;
+  return l.addonIds.length > 0 ? `${l.product.id}|${l.addonIds.join(',')}` : l.product.id;
+};
+
+/** The extras of a product that are chosen (ids unknown to the product are ignored). */
+export function chosenAddons(
+  product: Pick<ProductSummary, 'addons'>,
+  addonIds: readonly string[],
+): ProductAddonSummary[] {
+  const wanted = new Set(addonIds);
+  return (product.addons ?? []).filter((a) => wanted.has(a.id));
+}
+
+/** Total price of the chosen extras for one unit. */
+export function addonsCents(
+  product: Pick<ProductSummary, 'addons'>,
+  addonIds: readonly string[],
+): number {
+  return chosenAddons(product, addonIds).reduce((n, a) => n + a.priceCents, 0);
+}
+
 export const lineName = (l: CartLine): string => {
-  if (l.kind === 'product') return l.product.name;
+  if (l.kind === 'product') {
+    const extras = chosenAddons(l.product, l.addonIds);
+    return extras.length > 0
+      ? [l.product.name, ...extras.map((a) => a.name)].join(' + ')
+      : l.product.name;
+  }
   if (l.kind === 'time') return `${l.stationCode} · ${l.minutes} min`;
   return l.name;
 };
 
-/** Adds a product; the same product merges into one line (quantity accumulates). */
-export function addToCart(cart: Cart, product: ProductSummary, quantityMilli = 1000): Cart {
-  const idx = cart.lines.findIndex((l) => l.kind === 'product' && l.product.id === product.id);
+/**
+ * Adds a product; the same product with the same extras merges into one line (quantity
+ * accumulates). Different extras make a separate line.
+ */
+export function addToCart(
+  cart: Cart,
+  product: ProductSummary,
+  quantityMilli = 1000,
+  addonIds: readonly string[] = [],
+): Cart {
+  // Only the product's own extras can be chosen; an id it no longer has is dropped.
+  const known = new Set((product.addons ?? []).map((a) => a.id));
+  const ids = normalizeAddonIds(addonIds.filter((id) => known.has(id)));
+  const key = ids.length > 0 ? `${product.id}|${ids.join(',')}` : product.id;
+  const idx = cart.lines.findIndex((l) => l.kind === 'product' && lineKey(l) === key);
   if (idx < 0) {
     return {
       ...cart,
-      lines: [...cart.lines, { kind: 'product', product, quantityMilli, discountCents: 0 }],
+      lines: [
+        ...cart.lines,
+        { kind: 'product', product, quantityMilli, discountCents: 0, addonIds: ids },
+      ],
     };
   }
   const lines = cart.lines.slice();
@@ -194,7 +244,7 @@ export function cartTotals(
         priceIncludesTax: true,
       };
     }
-    const unit = unitPriceOf(l.product);
+    const unit = unitPriceOf(l.product) + addonsCents(l.product, l.addonIds);
     const gross = Math.round((unit * l.quantityMilli) / 1000);
     return {
       unitPriceCents: unit,
@@ -223,6 +273,7 @@ export function cartToRequest(cart: Cart) {
           productId: l.product.id,
           quantityMilli: l.quantityMilli,
           discountCents: l.discountCents,
+          ...(l.addonIds.length > 0 ? { addonIds: l.addonIds } : {}),
         };
       }
       if (l.kind === 'time') {
