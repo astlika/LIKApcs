@@ -26,6 +26,8 @@ import {
   splitInclusiveTax,
   type BillingMode,
   type CollectSessionRequest,
+  type CollectStationRequest,
+  type CollectStationResponse,
   type EndSessionRequest,
   PERMISSIONS,
   type ExtendSessionRequest,
@@ -123,6 +125,13 @@ const SESSION_SELECT = `
     LEFT JOIN users u ON u.id = g.created_by`;
 
 export type SessionMutationResult = SessionMutationResponse;
+
+/** What one bill of a collect (or a pay-all step) produced, before the commit is announced. */
+interface CollectedBill {
+  session: SessionSummary;
+  payment: SessionPaymentSummary | null;
+  billedOrders: string[];
+}
 
 /** One ordered product line that joins the session's sale (snapshot prices from the order). */
 export interface OrderLineForSale {
@@ -1342,90 +1351,190 @@ export class SessionsService {
     actor: SessionActorContext,
     at: Date = new Date(),
   ): Promise<SessionMutationResult> {
-    let payment: SessionPaymentSummary | null = null;
-    let billedOrders: string[] = [];
-    const session = await withTransaction(this.pool, async (client) => {
-      const row = await this.lock(client, id);
-      await lockCustomers(client, row.customer_id, req.customerId);
-      if (row.billing_mode !== 'endpay')
-        throw conflict('Only pay-at-the-end sessions are collected at the desk');
-      if (row.status === 'active' || row.status === 'paused')
-        throw conflict('Session is still running — end it first');
-      if (row.status === 'cancelled') throw conflict('Session was cancelled; nothing to collect');
-      if (row.billed_at) throw conflict('Session is already paid');
-      const orderLines = this.orders ? await this.orders.openLinesForSession(client, id) : [];
-      const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
-      if (req.customerId && req.customerId !== row.customer_id) {
-        const found = await client.query<{ status: string }>(
-          'SELECT status FROM customers WHERE id = $1',
-          [req.customerId],
-        );
-        if (!found.rows[0] || found.rows[0].status === 'archived')
-          throw badRequest('Customer not found');
-        await client.query(
-          'UPDATE gaming_sessions SET customer_id = $2, customer_name = NULL WHERE id = $1',
-          [id, req.customerId],
-        );
-        row.customer_id = req.customerId;
-      }
-      // The amount due was fixed when the session ended (used time capped at the reservation, or
-      // the full reservation when it ran out); a discount already applied at the end stays.
-      const due = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
-      if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
-        throw forbidden('Missing permission: pos.discount');
-      if (req.discountCents > due) throw badRequest('Discount exceeds the amount due');
-      const final = due - req.discountCents;
-      const sale = await this.recordSale(client, {
-        sessionId: id,
-        description: describe(row, row.billable_seconds ?? 0),
-        priceCents: due,
-        discountCents: req.discountCents,
-        tenders: req,
-        customerId: row.customer_id,
-        actor,
-        at,
-        orderLines,
-      });
-      payment = sale.payment;
-      if (orderIds.length && this.orders) {
-        await this.orders.markBilled(client, orderIds, sale.saleId, actor);
-        billedOrders = orderIds;
-      }
-      const updated = await client.query(
-        `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4, billed_at = $5,
-           notes = COALESCE($6, notes), version = version + 1
-         WHERE id = $1 AND billed_at IS NULL`,
-        [id, req.discountCents, final, sale.saleId, at, req.notes ?? null],
-      );
-      if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
-      if (req.discountCents > 0)
-        await this.addEvent(client, id, 'discount_applied', actor, {
-          discountCents: req.discountCents,
-        });
-      await this.addEvent(client, id, 'billed', actor, {
-        saleId: sale.saleId,
-        receiptNo: sale.receiptNo,
-        amountCents: final,
-        methods: sale.methods,
-        collected: true,
-        orders: orderIds.length,
-      });
-      await recordAudit(client, actor, {
-        action: 'session.collect',
-        entityType: 'gaming_session',
-        entityId: id,
-        details: {
-          stationCode: row.station_code,
-          amountCents: final,
-          discountCents: req.discountCents,
-          orders: orderIds.length,
-        },
-      });
-      return this.getById(id, client);
-    });
+    const { session, payment, billedOrders } = await withTransaction(this.pool, (client) =>
+      this.collectInTx(client, id, req, actor, at),
+    );
     if (billedOrders.length && this.orders) await this.orders.announce(billedOrders);
     await this.broadcast(session);
     return { session, client: null, payment };
+  }
+
+  /**
+   * The body of `collect`, run inside a transaction the caller owns (one bill, or one of the bills
+   * of pay-all). Nothing is broadcast here: the caller does that after its commit.
+   */
+  private async collectInTx(
+    client: DbClient,
+    id: string,
+    req: CollectSessionRequest,
+    actor: SessionActorContext,
+    at: Date,
+  ): Promise<CollectedBill> {
+    let payment: SessionPaymentSummary | null = null;
+    let billedOrders: string[] = [];
+    const row = await this.lock(client, id);
+    await lockCustomers(client, row.customer_id, req.customerId);
+    if (row.billing_mode !== 'endpay')
+      throw conflict('Only pay-at-the-end sessions are collected at the desk');
+    if (row.status === 'active' || row.status === 'paused')
+      throw conflict('Session is still running — end it first');
+    if (row.status === 'cancelled') throw conflict('Session was cancelled; nothing to collect');
+    if (row.billed_at) throw conflict('Session is already paid');
+    const orderLines = this.orders ? await this.orders.openLinesForSession(client, id) : [];
+    const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
+    if (req.customerId && req.customerId !== row.customer_id) {
+      const found = await client.query<{ status: string }>(
+        'SELECT status FROM customers WHERE id = $1',
+        [req.customerId],
+      );
+      if (!found.rows[0] || found.rows[0].status === 'archived')
+        throw badRequest('Customer not found');
+      await client.query(
+        'UPDATE gaming_sessions SET customer_id = $2, customer_name = NULL WHERE id = $1',
+        [id, req.customerId],
+      );
+      row.customer_id = req.customerId;
+    }
+    // The amount due was fixed when the session ended (used time capped at the reservation, or
+    // the full reservation when it ran out); a discount already applied at the end stays.
+    const due = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+    if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
+      throw forbidden('Missing permission: pos.discount');
+    if (req.discountCents > due) throw badRequest('Discount exceeds the amount due');
+    const final = due - req.discountCents;
+    const sale = await this.recordSale(client, {
+      sessionId: id,
+      description: describe(row, row.billable_seconds ?? 0),
+      priceCents: due,
+      discountCents: req.discountCents,
+      tenders: req,
+      customerId: row.customer_id,
+      actor,
+      at,
+      orderLines,
+    });
+    payment = sale.payment;
+    if (orderIds.length && this.orders) {
+      await this.orders.markBilled(client, orderIds, sale.saleId, actor);
+      billedOrders = orderIds;
+    }
+    const updated = await client.query(
+      `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4, billed_at = $5,
+       notes = COALESCE($6, notes), version = version + 1
+     WHERE id = $1 AND billed_at IS NULL`,
+      [id, req.discountCents, final, sale.saleId, at, req.notes ?? null],
+    );
+    if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
+    if (req.discountCents > 0)
+      await this.addEvent(client, id, 'discount_applied', actor, {
+        discountCents: req.discountCents,
+      });
+    await this.addEvent(client, id, 'billed', actor, {
+      saleId: sale.saleId,
+      receiptNo: sale.receiptNo,
+      amountCents: final,
+      methods: sale.methods,
+      collected: true,
+      orders: orderIds.length,
+    });
+    await recordAudit(client, actor, {
+      action: 'session.collect',
+      entityType: 'gaming_session',
+      entityId: id,
+      details: {
+        stationCode: row.station_code,
+        amountCents: final,
+        discountCents: req.discountCents,
+        orders: orderIds.length,
+      },
+    });
+    return { session: await this.getById(id, client), payment, billedOrders };
+  }
+
+  /**
+   * 0.21.0 — pay all: every bill waiting at one PC (pay-at-the-end sessions that ended and are not
+   * paid) is collected in ONE tender step and ONE transaction. Each bill keeps its own sale and
+   * receipt. The tenders are split across the bills by `allocatePayments`; a tender that does not
+   * cover every bill refuses the whole step, so nothing half-applies.
+   */
+  async collectStation(
+    stationId: string,
+    req: CollectStationRequest,
+    actor: SessionActorContext,
+    at: Date = new Date(),
+  ): Promise<CollectStationResponse> {
+    const outcome = await withTransaction(this.pool, async (client) => {
+      // Lock the waiting bills in id order, so two desks paying the same PC cannot deadlock.
+      const waiting = await client.query<{
+        id: string;
+        final_price_cents: string | number | null;
+        quoted_price_cents: string | number | null;
+      }>(
+        `SELECT id, final_price_cents, quoted_price_cents FROM gaming_sessions
+          WHERE station_id = $1 AND billing_mode = 'endpay' AND billed_at IS NULL
+            AND status IN ('expired', 'completed')
+          ORDER BY id FOR UPDATE`,
+        [stationId],
+      );
+      if (waiting.rowCount === 0) throw conflict('No bill is waiting at this PC');
+      // The same total collect() would bill: the amount due plus the open orders on the session.
+      const bills: { sessionId: string; totalCents: number }[] = [];
+      for (const row of waiting.rows) {
+        const lines = this.orders ? await this.orders.openLinesForSession(client, row.id) : [];
+        const due = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+        const ordersCents = lines.reduce((acc, l) => acc + l.lineTotalCents, 0);
+        bills.push({ sessionId: row.id, totalCents: due + ordersCents });
+      }
+      const total = bills.reduce((acc, b) => acc + b.totalCents, 0);
+      let perBill: SalePaymentInput[][];
+      if (total === 0) {
+        perBill = bills.map(() => []);
+      } else {
+        const tenders: SalePaymentInput[] = req.payments ?? [
+          { method: req.paymentMethod as SalePaymentInput['method'], amountCents: total },
+        ];
+        try {
+          perBill = allocatePayments(
+            tenders,
+            bills.map((b) => b.totalCents),
+          );
+        } catch {
+          throw badRequest('The tenders do not cover the bills waiting at this PC');
+        }
+      }
+      const collected: CollectedBill[] = [];
+      for (let i = 0; i < bills.length; i++) {
+        collected.push(
+          await this.collectInTx(
+            client,
+            bills[i]!.sessionId,
+            { discountCents: 0, paymentMethod: req.paymentMethod, payments: perBill[i] ?? [] },
+            actor,
+            at,
+          ),
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'session.collect_all',
+        entityType: 'station',
+        entityId: stationId,
+        details: { count: bills.length, totalCents: total, method: req.paymentMethod },
+      });
+      return { collected, total };
+    });
+    for (const c of outcome.collected) {
+      if (c.billedOrders.length && this.orders) await this.orders.announce(c.billedOrders);
+      await this.broadcast(c.session);
+    }
+    return {
+      stationId,
+      collected: outcome.collected.map((c) => ({
+        sessionId: c.session.id,
+        receiptNo: c.payment?.receiptNo ?? '',
+        totalCents: c.payment?.totalCents ?? 0,
+      })),
+      totalCents: outcome.total,
+    };
   }
 
   /** Postpaid / end pay: stop without charging (wrong station, test, customer left immediately). */

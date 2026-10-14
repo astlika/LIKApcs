@@ -592,6 +592,12 @@ export const en = {
     awaiting: {
       title: 'To collect',
       hint: 'Ended "End Pay" sessions whose bill is still open.',
+      collectAll: 'Collect all at {code} ({n})',
+      collectAllTitle: 'Collect all bills · {code}',
+      collectAllBody:
+        'Every bill waiting at this PC is paid in one step. Each keeps its own receipt; if the tender does not cover them all, nothing is taken.',
+      collectedAll: '{code}: {n} bills collected · {total}',
+      total: 'Total',
     },
     duration: 'Duration',
     minutes: 'Minutes',

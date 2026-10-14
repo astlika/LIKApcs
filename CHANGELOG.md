@@ -46,6 +46,13 @@ All notable changes to LIKApcs are documented here. The format follows
 - **Layout presets (0.20 · in progress).** Settings › Client screen › *Layout presets* saves the
   current widget, ads and lock-screen layout under a name. *Apply* loads it into the form and
   *Save* sends it to every PC in one step. Only customer-screen layout keys are stored.
+- **Pay all: every bill waiting at one PC in one step (0.21 · in progress).** When a PC has two or
+  more bills waiting (pay-at-the-end sessions that ran out or ended), the *To collect* strip shows
+  *Collect all at PC n (count)*. One tender step (cash, card or split; no pay-later) covers them
+  all, in one transaction: each bill gets its own sale and receipt, open order lines included. A
+  tender that does not cover every bill is refused and nothing is written; other PCs are not
+  touched. Endpoint `POST /stations/:id/collect-all`, audited as `session.collect_all`. A PC with
+  nothing waiting gets 409.
 
 ## [0.18.1] - 2026-10-14
 

@@ -882,6 +882,17 @@ export const collectSessionSchema = z.object({
 });
 export type CollectSessionRequest = z.infer<typeof collectSessionSchema>;
 
+/** 0.21.0 — pay all: the bills waiting at one PC, paid in one tender step (cash by default). */
+export const collectStationSchema = z.object({ ...sessionTenders });
+export type CollectStationRequest = z.infer<typeof collectStationSchema>;
+
+/** One bill settled by a pay-all step; each keeps its own sale and receipt. */
+export interface CollectStationResponse {
+  stationId: string;
+  collected: { sessionId: string; receiptNo: string; totalCents: number }[];
+  totalCents: number;
+}
+
 /** Outcome of the command mirrored to the PC after a session transition. */
 export interface ClientAckSummary {
   commandId: string;

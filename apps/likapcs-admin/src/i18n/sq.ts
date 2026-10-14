@@ -602,6 +602,12 @@ export const sq: Dictionary = {
     awaiting: {
       title: 'Për arkëtim',
       hint: 'Seanca "Pagesë në fund" të mbaruara, me llogari ende të hapur.',
+      collectAll: 'Thu të gjitha te {code} ({n})',
+      collectAllTitle: 'Thu të gjitha faturat · {code}',
+      collectAllBody:
+        'Çdo faturë që pret te ky PC paguhet në një hap. Secila mban faturën e vet; nëse pagesa nuk i mbulon të gjitha, nuk merret asnjë.',
+      collectedAll: '{code}: u arkëtuan {n} fatura · {total}',
+      total: 'Totali',
     },
     duration: 'Kohëzgjatja',
     minutes: 'Minuta',

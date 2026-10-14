@@ -22,6 +22,12 @@ import { formatHms } from '../../lib/session-time';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
+import {
+  awaitingAmountCents,
+  multiBillPcs,
+  payAllTotalCents,
+  type PcBills,
+} from '../../lib/pay-all';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
@@ -31,9 +37,6 @@ import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 export const AWAITING_PAYMENT_KEY = ['sessions', 'awaiting-payment'] as const;
 
 /** Amount still owed for an ended end-pay session: the fixed time price plus orders on the bill. */
-export function awaitingAmountCents(s: SessionSummary): number {
-  return (s.finalPriceCents ?? s.currentPriceCents) + s.openOrdersCents;
-}
 
 export function useAwaitingPayment(enabled = true) {
   return useQuery({
@@ -56,6 +59,7 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   const canCollect = can(PERMISSIONS.STATIONS_CONTROL);
   const list = useAwaitingPayment(canView);
   const [collecting, setCollecting] = useState<SessionSummary | null>(null);
+  const [collectingAll, setCollectingAll] = useState<PcBills | null>(null);
   const [paid, setPaid] = useState<SessionPaid | null>(null);
   const items = list.data?.items ?? [];
   if (!canView || items.length === 0) {
@@ -78,6 +82,18 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           </span>
           <span className="muted num">· {fmt.money(total)}</span>
           <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>
+          {canCollect &&
+            multiBillPcs(items).map((group) => (
+              <Button
+                key={group.stationId}
+                size="sm"
+                onClick={() => setCollectingAll(group)}
+                data-testid={`${testId}-collect-all`}
+              >
+                <Wallet size={13} />{' '}
+                {t('sessions.awaiting.collectAll', { code: group.code, n: group.bills.length })}
+              </Button>
+            ))}
         </div>
         <div className="awaiting__chips">
           {items.map((s) => (
@@ -106,6 +122,13 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           ))}
         </div>
       </div>
+      {collectingAll && (
+        <CollectStationDialog
+          group={collectingAll}
+          onClose={() => setCollectingAll(null)}
+          onPaid={() => setCollectingAll(null)}
+        />
+      )}
       {collecting && (
         <CollectDialog
           session={collecting}
@@ -118,6 +141,106 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
       )}
       {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
     </>
+  );
+}
+
+/**
+ * 0.21.0 — pay all: the bills of one PC in one tender step (cash, card or split; no pay-later,
+ * which needs one customer). The server settles every bill in one transaction, each with its own
+ * receipt, or refuses the whole step.
+ */
+export function CollectStationDialog({
+  group,
+  onClose,
+  onPaid,
+}: {
+  group: PcBills;
+  onClose: () => void;
+  onPaid: () => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const shiftGuard = useShiftGuard();
+  const queryClient = useQueryClient();
+  const total = payAllTotalCents(group.bills);
+  const tender = useTender({ totalCents: total, customer: null, allowCredit: false });
+  const collectAll = useMutation({
+    mutationFn: () =>
+      api<{ totalCents: number; collected: { sessionId: string }[] }>(
+        `/stations/${group.stationId}/collect-all`,
+        { method: 'POST', body: { paymentMethod: 'cash', payments: tender.payments } },
+      ),
+    onSuccess: (result) => {
+      toast.success(
+        t('sessions.awaiting.collectedAll', {
+          code: group.code,
+          n: result.collected.length,
+          total: fmt.money(result.totalCents),
+        }),
+      );
+      for (const key of [['sessions'], ['stations'], ['cash'], ['dashboard'], ['orders']])
+        void queryClient.invalidateQueries({ queryKey: key });
+      onPaid();
+    },
+    onError: (err) => {
+      if (shiftGuard.handle(err, () => collectAll.mutate())) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+      void queryClient.invalidateQueries({ queryKey: AWAITING_PAYMENT_KEY });
+    },
+  });
+  const ready = tender.covered && !collectAll.isPending;
+  const submit = () => {
+    if (ready) collectAll.mutate();
+  };
+  useEnterSubmits(submit);
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('sessions.awaiting.collectAllTitle', { code: group.code })}
+      description={t('sessions.awaiting.collectAllBody')}
+      size="md"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={collectAll.isPending}
+            disabled={!ready}
+            onClick={submit}
+            data-testid="collect-all-confirm"
+          >
+            <Wallet size={14} /> {t('sessions.collectAmount', { amount: fmt.money(total) })}{' '}
+            <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="quote" data-testid="collect-all-bills">
+          {group.bills.map((s) => (
+            <div className="quote__row" key={s.id}>
+              <span className="muted">
+                {s.customerName ?? t('pos.walkIn')} · {formatHms(s.billableSeconds)}
+              </span>
+              <span className="num">{fmt.money(awaitingAmountCents(s))}</span>
+            </div>
+          ))}
+          <div className="quote__row">
+            <strong>{t('sessions.awaiting.total')}</strong>
+            <strong className="num" data-testid="collect-all-total">
+              {fmt.money(total)}
+            </strong>
+          </div>
+        </div>
+        <TenderPanel tender={tender} onSubmit={submit} testId="collect-all" />
+      </div>
+    </Dialog>
   );
 }
 

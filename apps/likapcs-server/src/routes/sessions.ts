@@ -4,6 +4,7 @@ import {
   PERMISSIONS,
   bulkMinutesSchema,
   collectSessionSchema,
+  collectStationSchema,
   endSessionSchema,
   extendSessionSchema,
   sessionGiftSchema,
@@ -101,6 +102,17 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.collect(
       idParams.parse(request.params).id,
       collectSessionSchema.parse(request.body ?? {}),
+      actorOf(request),
+    ),
+  );
+  /**
+   * 0.21.0 — pay all: the bills waiting at one PC, paid in one tender step (one transaction; each
+   * bill keeps its own receipt). Same permission as collecting a single bill.
+   */
+  app.post('/stations/:stationId/collect-all', control, async (request) =>
+    services.sessions.collectStation(
+      z.object({ stationId: uuidSchema }).parse(request.params).stationId,
+      collectStationSchema.parse(request.body ?? {}),
       actorOf(request),
     ),
   );
