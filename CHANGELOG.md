@@ -10,6 +10,34 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _(nothing yet)_
 
+## [0.18.0] - 2026-10-14
+
+### Added
+
+- **Add time to several PCs at once.** Select two or more PCs with a running timed session and
+  press **Add time**: pick 5–60 minutes, see each PC's bill (every PC is priced by its own rule),
+  and pay once — the amount is split per PC, exactly like a bulk start. Each PC receives its own
+  request, so a retry never adds time twice. Open-time (postpaid) PCs are skipped by design.
+- **Give minutes (gift).** Staff with the new permission `stations.gift` (owner and administrator
+  by default) can hand free minutes to a running prepaid or end-pay session. Nothing is billed,
+  the reason is optional and kept in the audit log (`session.gift`), and the PC plays a short
+  party-popper celebration: the widget grows into a card for a few seconds and returns to its size.
+- **Debts per customer.** The Debts page now shows one line per customer — open bills, remaining
+  amount, the earliest due date and the most overdue bill. Opening a name lists that customer's
+  bills, with a **Pay everything** button. Filters and search work on the customer view too.
+- **Hide sold-out products in the POS.** Settings › Printing & POS › "Hide products that are out of
+  stock" (on by default). Scanning a barcode of a hidden product still reports that it has no stock.
+- **Cash book shows the latest 20 movements** of a shift, with a button to show all of them.
+
+### Changed
+
+- **Station details (Standard view) is a small dialog.** The device is one line; device commands
+  moved to the Advanced view.
+
+### Database
+
+- Migration `0029_station_gift`: the `stations.gift` permission and the `gifted` session event.
+
 ## [0.17.1] - 2026-10-13
 
 ### Fixed
