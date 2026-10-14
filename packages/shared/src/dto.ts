@@ -702,6 +702,14 @@ export const extendSessionSchema = z
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
 
+/** Free minutes handed to a running session (0.18.0). No money moves; the reason is audited. */
+export const giftSessionSchema = z.object({
+  minutes: z.number().int().min(1).max(240),
+  reason: z.string().trim().max(200).optional(),
+  clientRequestId: z.string().min(8).max(64).optional(),
+});
+export type GiftSessionRequest = z.infer<typeof giftSessionSchema>;
+
 /** How far back staff may "stop the clock" before the end request actually arrives. */
 export const SESSION_STOP_CLOCK_GRACE_SECONDS = 10 * 60;
 
@@ -2411,6 +2419,30 @@ export const DEBT_LIST_FILTERS = [
   'written_off',
   'all',
 ] as const;
+/** One row per customer: what they owe in total, so a name is one line, not one line per bill. */
+export interface DebtCustomerSummary {
+  customerId: string;
+  customerCode: string;
+  customerName: string;
+  customerPhone: string | null;
+  /** Bills still open or partly paid. */
+  openCount: number;
+  /** Money still owed across all open bills. */
+  remainingCents: number;
+  /** Part of that money that is past its due date. */
+  overdueCents: number;
+  /** YYYY-MM-DD of the earliest open due date; null when nothing is open. */
+  oldestDueDate: string | null;
+  /** Days past due of the most overdue open bill (0 when none). */
+  maxOverdueDays: number;
+}
+
+export const debtCustomerListQuerySchema = paginationQuerySchema.extend({
+  filter: z.enum(DEBT_LIST_FILTERS).default('open'),
+  q: z.string().trim().max(120).optional(),
+});
+export type DebtCustomerListQuery = z.infer<typeof debtCustomerListQuerySchema>;
+
 export const debtListQuerySchema = paginationQuerySchema.extend({
   filter: z.enum(DEBT_LIST_FILTERS).default('open'),
   customerId: uuidSchema.optional(),

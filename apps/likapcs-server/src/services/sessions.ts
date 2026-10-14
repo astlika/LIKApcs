@@ -27,6 +27,7 @@ import {
   type CollectSessionRequest,
   type EndSessionRequest,
   type ExtendSessionRequest,
+  type GiftSessionRequest,
   type ClientSessionBilling,
   type PricingTerms,
   type SessionEventSummary,
@@ -826,6 +827,66 @@ export class SessionsService {
     );
     await this.broadcast(session);
     return { session, client: ack, payment };
+  }
+
+  /**
+   * Free minutes (0.18.0): the session ends later, nothing is billed. Prepaid and end-pay sessions
+   * only — an open-time (postpaid) session already runs until it is stopped. The PC gets
+   * `session.gift` and plays its celebration; the gift is audited with the staff member's reason.
+   */
+  async gift(
+    id: string,
+    req: GiftSessionRequest,
+    actor: SessionActorContext,
+  ): Promise<SessionMutationResult> {
+    const now = new Date();
+    const session = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      if (row.billing_mode === 'postpaid')
+        throw conflict('Open-time sessions run until stopped; there is nothing to gift');
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict(`Session is ${row.status}`);
+      if (req.clientRequestId) {
+        const dup = await client.query(
+          'SELECT 1 FROM session_events WHERE session_id = $1 AND event_type = $2 AND payload->>$3 = $4',
+          [id, 'gifted', 'clientRequestId', req.clientRequestId],
+        );
+        if (dup.rowCount) return this.getById(id, client);
+      }
+      const seconds = req.minutes * 60;
+      await client.query(
+        `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
+           version = version + 1
+         WHERE id = $1`,
+        [id, seconds],
+      );
+      await this.addEvent(client, id, 'gifted', actor, {
+        minutes: req.minutes,
+        reason: req.reason ?? null,
+        at: now.toISOString(),
+        clientRequestId: req.clientRequestId ?? null,
+      });
+      await recordAudit(client, actor, {
+        action: 'session.gift',
+        entityType: 'gaming_session',
+        entityId: id,
+        details: { minutes: req.minutes, reason: req.reason ?? null },
+      });
+      return this.getById(id, client);
+    });
+    const ack = await this.mirror(
+      session,
+      'session.gift',
+      {
+        sessionId: id,
+        minutes: req.minutes,
+        endsAt: session.endsAt,
+        billing: clientBillingOf(session),
+      },
+      actor,
+    );
+    await this.broadcast(session);
+    return { session, client: ack, payment: null };
   }
 
   /** Staff stop. Postpaid sessions are billed here, exactly once. */
@@ -1702,7 +1763,12 @@ export class SessionsService {
   private async mirror(
     session: SessionSummary,
     command:
-      'session.start' | 'session.pause' | 'session.resume' | 'session.extend' | 'session.end',
+      | 'session.start'
+      | 'session.pause'
+      | 'session.resume'
+      | 'session.extend'
+      | 'session.gift'
+      | 'session.end',
     payload: Record<string, unknown>,
     actor: AuditActor,
   ): Promise<ClientAckSummary | null> {

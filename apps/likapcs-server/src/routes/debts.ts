@@ -10,6 +10,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  debtCustomerListQuerySchema,
   debtListQuerySchema,
   debtPaymentSchema,
   debtRescheduleSchema,
@@ -33,6 +34,9 @@ export const debtRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/debts', view, async (request) =>
     services.debts.list(debtListQuerySchema.parse(request.query)),
+  );
+  app.get('/debts/customers', view, async (request) =>
+    services.debts.listCustomers(debtCustomerListQuerySchema.parse(request.query)),
   );
   app.get('/debts/overview', view, async () => services.debts.overview());
   app.get('/debts/:id', view, async (request) => {

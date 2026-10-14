@@ -13,6 +13,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import {
   ArrowLeft,
   Clock,
+  Gift,
   Info,
   Lock,
   LockOpen,
@@ -73,6 +74,7 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'gift'
   | 'cancel'
   | 'lock'
   | 'unlock'
@@ -112,6 +114,9 @@ type Flow =
   | { kind: 'start' }
   | { kind: 'end'; sessionId: string }
   | { kind: 'extend'; sessionId: string }
+  | { kind: 'gift'; sessionId: string }
+  /** Add time to several timed sessions with one payment (0.18.0). */
+  | { kind: 'bulk-extend' }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
@@ -143,6 +148,7 @@ export function useStationActions(
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
+  const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),
     [targets, station],
@@ -168,11 +174,12 @@ export function useStationActions(
         method: 'POST',
         body: body ?? {},
       }),
-    onSuccess: (result, { action }) => {
+    onSuccess: (result, { action, body }) => {
       const messages: Record<string, string> = {
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
+        gift: t('sessions.gifted', { n: Number(body?.minutes ?? 0) }),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
               total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
@@ -320,6 +327,10 @@ export function useStationActions(
   const groupOnline = group.filter((s) => s.device?.online).length;
   const groupWakeable = group.filter(isWakeable).length;
   const groupStartable = group.filter((s) => s.isEnabled && !s.activeSession).length;
+  // Add-time works on running prepaid / end-pay sessions; open time (postpaid) has no end to move.
+  const timedTargets = group.filter(
+    (s) => s.activeSession && s.activeSession.billingMode !== 'postpaid',
+  );
   const groupUnlockable =
     groupOnline > 0 &&
     group
@@ -360,11 +371,11 @@ export function useStationActions(
         },
         {
           id: 'extend',
-          label: t('map.addTime'),
+          label: `${t('map.addTime')} (${timedTargets.length})`,
           icon: Plus,
           bar: true,
-          enabled: false,
-          hint: singleOnly,
+          enabled: canControl && timedTargets.length > 0,
+          hint: timedTargets.length === 0 ? t('map.noneTimed') : undefined,
         },
         {
           id: groupUnlockable ? 'unlock' : 'lock',
@@ -463,6 +474,16 @@ export function useStationActions(
         hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
       {
+        // Free minutes: no money moves; the PC plays its celebration (needs stations.gift).
+        id: 'gift',
+        label: t('map.gift'),
+        icon: Gift,
+        bar: canGift && !!live,
+        enabled: canGift && !!live && live.billingMode !== 'postpaid',
+        tone: 'primary',
+        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+      },
+      {
         // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
         // on the server). In maintenance or during a session the action locks the screen.
         id: unlockable ? 'unlock' : 'lock',
@@ -549,6 +570,8 @@ export function useStationActions(
     groupWakeable,
     tasksPressed,
     groupTasksPressed,
+    timedTargets.length,
+    canGift,
   ]);
 
   const primary: StationActionId | null = !station
@@ -576,7 +599,11 @@ export function useStationActions(
           if (live) setFlow({ kind: 'end', sessionId: live.id });
           break;
         case 'extend':
-          if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          if (multi) setFlow({ kind: 'bulk-extend' });
+          else if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          break;
+        case 'gift':
+          if (live) setFlow({ kind: 'gift', sessionId: live.id });
           break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
@@ -665,6 +692,27 @@ export function useStationActions(
           )}
         </SessionFlow>
       )}
+      {flow.kind === 'gift' && (
+        <SessionFlow sessionId={flow.sessionId} onClose={close}>
+          {(s) => (
+            <GiftSessionDialog
+              busy={sessionAct.isPending}
+              onClose={close}
+              onConfirm={(body) => sessionAct.mutate({ sessionId: s.id, action: 'gift', body })}
+            />
+          )}
+        </SessionFlow>
+      )}
+      {flow.kind === 'bulk-extend' && (
+        <BulkExtendDialog
+          targets={timedTargets}
+          onClose={close}
+          onDone={() => {
+            setFlow(null);
+            refresh();
+          }}
+        />
+      )}
       {flow.kind === 'cancel' && (
         <CancelSessionDialog
           busy={sessionAct.isPending}
@@ -752,6 +800,368 @@ function SessionFlow({
   const { elapsed } = projectSession(s, session.dataUpdatedAt, now);
   const livePrice = liveSessionPrice(s, Math.floor(elapsed));
   return <>{children(s, Math.floor(elapsed), livePrice)}</>;
+}
+
+// ─── Free minutes (gift) ─────────────────────────────────────────────────────────
+
+const GIFT_CHIPS = [5, 10, 15, 30];
+
+function GiftSessionDialog({
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (body: Record<string, unknown>) => void;
+}) {
+  const { t } = useI18n();
+  const [minutes, setMinutes] = useState('5');
+  const [reason, setReason] = useState('');
+  const [requestId] = useState(() => crypto.randomUUID());
+  const value = Number.parseInt(minutes, 10);
+  const valid = Number.isInteger(value) && value >= 1 && value <= 240;
+  const submit = () => {
+    if (valid && !busy)
+      onConfirm({
+        minutes: value,
+        reason: reason.trim() || undefined,
+        clientRequestId: requestId,
+      });
+  };
+  useEnterSubmits(submit);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('sessions.giftTitle')}
+      description={t('sessions.giftBody')}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={busy}
+            disabled={!valid}
+            onClick={submit}
+            data-testid="gift-confirm"
+          >
+            <Gift size={14} /> {t('sessions.gift')} <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="chips">
+          {GIFT_CHIPS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className="chip"
+              aria-pressed={minutes === String(m)}
+              onClick={() => setMinutes(String(m))}
+            >
+              {m} min
+            </button>
+          ))}
+        </div>
+        <Field label={t('sessions.giftMinutes')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="number"
+              min={1}
+              max={240}
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              data-testid="gift-minutes"
+            />
+          )}
+        </Field>
+        <Field label={t('sessions.giftReason')}>
+          {(id) => (
+            <Input
+              id={id}
+              value={reason}
+              maxLength={200}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          )}
+        </Field>
+      </div>
+    </Dialog>
+  );
+}
+
+// ─── Add time to several PCs at once (0.18.0) ────────────────────────────────────
+
+const BULK_EXTEND_CHIPS = [5, 10, 15, 30, 60];
+
+/**
+ * One amount of minutes for every selected timed session. Each PC is quoted by its own pricing
+ * rule; prepaid sessions are paid in one tender step (split per bill, like a bulk start), end-pay
+ * sessions add the time to the bill collected at their end. Each PC gets its own request, so a
+ * retry never adds time twice.
+ */
+export function BulkExtendDialog({
+  targets,
+  onClose,
+  onDone,
+}: {
+  targets: StationSummary[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const shiftGuard = useShiftGuard();
+  const [minutes, setMinutes] = useState('15');
+  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const [quoting, setQuoting] = useState(false);
+  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
+  const value = Number.parseInt(minutes, 10);
+  const valid = Number.isInteger(value) && value >= 1 && value <= 240;
+  const payers = useMemo(
+    () => targets.filter((s) => s.activeSession?.billingMode === 'prepaid'),
+    [targets],
+  );
+  // Set after the quote: what each paying PC costs, and the tender step is shown.
+  const [pending, setPending] = useState<{ totalCents: number; bills: number[] } | null>(null);
+
+  const extendOne = (target: StationSummary, body: Record<string, unknown>) => {
+    const session = target.activeSession;
+    if (!session) throw new Error('no session');
+    return api<SessionMutationResponse>(`/sessions/${session.id}/extend`, {
+      method: 'POST',
+      body: { ...body, clientRequestId: `${requestId}:${target.number}` },
+    });
+  };
+  type ExtendVars = { perPayer?: SalePaymentInput[][]; changeCents?: number };
+  const extend = useMutation({
+    mutationFn: async ({ perPayer }: ExtendVars) => {
+      const outcomes = await Promise.all(
+        targets.map(async (s): Promise<BulkOutcome> => {
+          const payerIndex = payers.findIndex((p) => p.id === s.id);
+          const payments = perPayer && payerIndex >= 0 ? (perPayer[payerIndex] ?? []) : null;
+          try {
+            await extendOne(s, {
+              minutes: value,
+              ...(payments ? { payments } : {}),
+            });
+            return { station: s, ok: true };
+          } catch (err) {
+            if (isShiftRequired(err)) throw err;
+            return {
+              station: s,
+              ok: false,
+              error: err instanceof ApiError ? err.message : String(err),
+            };
+          }
+        }),
+      );
+      return outcomes;
+    },
+    onSuccess: (outcomes, vars) => {
+      const sum = summarizeBulk(outcomes);
+      if (sum.failed === 0)
+        toast.success(
+          vars.changeCents
+            ? t('map.extendedManyChange', { n: sum.ok, change: fmt.money(vars.changeCents) })
+            : t('map.extendedMany', { n: sum.ok, minutes: value }),
+        );
+      else
+        toast.error(
+          t('map.extendedPartial', {
+            ok: sum.ok,
+            failed: sum.failed,
+            codes: sum.failedCodes.join(', '),
+          }),
+        );
+      setRequestId(crypto.randomUUID());
+      if (sum.ok > 0) onDone();
+    },
+    onError: (err, vars) => {
+      setRequestId(crypto.randomUUID());
+      if (shiftGuard.handle(err, () => extend.mutate(vars))) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
+  });
+
+  const choose = async () => {
+    if (!valid || quoting) return;
+    if (payers.length === 0) {
+      extend.mutate({});
+      return;
+    }
+    setQuoting(true);
+    try {
+      const bills = await Promise.all(
+        payers.map((s) =>
+          api<SessionQuoteResponse>('/sessions/quote', {
+            method: 'POST',
+            body: { stationId: s.id, billingMode: 'prepaid', minutes: value },
+          }).then((q) => q.priceCents),
+        ),
+      );
+      const totalCents = bills.reduce((a, b) => a + b, 0);
+      if (totalCents <= 0) extend.mutate({});
+      else setPending({ totalCents, bills });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    } finally {
+      setQuoting(false);
+    }
+  };
+
+  if (pending) {
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title={t('map.extendManyTitle', { n: payers.length })}
+        description={t('map.extendManyPayHint', { minutes: value })}
+        size="md"
+      >
+        <ul className="bulk-bills" data-testid="bulk-extend-bills">
+          {payers.map((s, i) => (
+            <li key={s.id}>
+              <span>{s.code}</span>
+              <strong>{fmt.money(pending.bills[i] ?? 0)}</strong>
+            </li>
+          ))}
+        </ul>
+        <BulkExtendTender
+          totalCents={pending.totalCents}
+          customer={customer}
+          onCustomerChange={setCustomer}
+          busy={extend.isPending}
+          onBack={() => setPending(null)}
+          onConfirm={(payments, changeCents) => {
+            try {
+              extend.mutate({
+                perPayer: allocatePayments(payments, pending.bills),
+                changeCents,
+              });
+            } catch {
+              toast.error(t('map.bulkTenderShort'));
+            }
+          }}
+        />
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('map.extendManyTitle', { n: targets.length })}
+      description={t('map.extendManyHint')}
+      size="md"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={quoting || extend.isPending}
+            disabled={!valid || targets.length === 0}
+            onClick={() => void choose()}
+            data-testid="bulk-extend-confirm"
+          >
+            <Plus size={14} /> {t('map.addTime')} <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+          <strong>{targets.map((s) => s.code).join(', ')}</strong>
+        </p>
+        <div className="chips">
+          {BULK_EXTEND_CHIPS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className="chip"
+              aria-pressed={minutes === String(m)}
+              onClick={() => setMinutes(String(m))}
+            >
+              {m} min
+            </button>
+          ))}
+        </div>
+        <Field label={t('sessions.customMinutes')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="number"
+              min={1}
+              max={240}
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              data-testid="bulk-extend-minutes"
+            />
+          )}
+        </Field>
+      </div>
+    </Dialog>
+  );
+}
+
+function BulkExtendTender({
+  totalCents,
+  customer,
+  onCustomerChange,
+  busy,
+  onBack,
+  onConfirm,
+}: {
+  totalCents: number;
+  customer: CustomerSummary | null;
+  onCustomerChange: (customer: CustomerSummary | null) => void;
+  busy: boolean;
+  onBack: () => void;
+  onConfirm: (payments: SalePaymentInput[], changeCents: number) => void;
+}) {
+  const { t } = useI18n();
+  const tender = useTender({ totalCents, customer });
+  const submit = () => {
+    if (tender.covered && !busy) onConfirm(tender.payments, tender.changeCents);
+  };
+  useEnterSubmits(submit);
+  return (
+    <div className="stack">
+      <TenderPanel
+        tender={tender}
+        onSubmit={submit}
+        onCustomerChange={onCustomerChange}
+        testId="bulk-extend"
+      />
+      <div className="row row--between" style={{ marginTop: 4 }}>
+        <Button onClick={onBack}>
+          <ArrowLeft size={14} /> {t('common.back')}
+        </Button>
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={!tender.covered}
+          loading={busy}
+          onClick={submit}
+          data-testid="bulk-extend-submit"
+        >
+          <Plus size={14} /> {t('map.addTime')} <Kbd>Enter</Kbd>
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // ─── Quick start: one click on "open time" or a package ────────────────────────

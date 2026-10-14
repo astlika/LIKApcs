@@ -970,6 +970,13 @@ export function SettingsPage() {
                   t('settings.printing.cardPaymentsHint'),
                 )}
               </div>
+              <div className="span-2">
+                {bool(
+                  'pos.hide_out_of_stock',
+                  t('settings.printing.hideOutOfStock'),
+                  t('settings.printing.hideOutOfStockHint'),
+                )}
+              </div>
               {number('pos.credit_default_days', t('settings.printing.creditDays'), {
                 min: 0,
                 max: 365,

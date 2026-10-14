@@ -81,6 +81,7 @@ export function PosPage() {
   const queryClient = useQueryClient();
   const display = useCustomerDisplay();
   const walletEnabled = useAppSettings()['wallet.enabled'];
+  const hideOutOfStock = useAppSettings()['pos.hide_out_of_stock'];
   const [params, setParams] = useSearchParams();
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
@@ -306,7 +307,10 @@ export function PosPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
-  const list = products.data?.items ?? [];
+  // Sold-out products are hidden from the grid when the setting is on; a scan still finds them.
+  const list = (products.data?.items ?? []).filter(
+    (p) => !hideOutOfStock || !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0),
+  );
 
   return (
     <div className="pos">

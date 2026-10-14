@@ -13,6 +13,8 @@
  * that will not be paid is written off with a reason (audited).
  */
 import type {
+  DebtCustomerListQuery,
+  DebtCustomerSummary,
   DebtDetail,
   DebtListQuery,
   DebtPaymentRequest,
@@ -201,6 +203,89 @@ export class DebtsService {
   }
 
   // ─── Queries ────────────────────────────────────────────────────────────────
+
+  /**
+   * Debts grouped per customer (the default view): totals, the earliest due date and the most
+   * overdue bill. Same filters as the bill list; the bills themselves come from `list` filtered
+   * by `customerId` when a name is opened.
+   */
+  async listCustomers(query: DebtCustomerListQuery): Promise<Paginated<DebtCustomerSummary>> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    switch (query.filter) {
+      case 'open':
+        where.push(`d.status IN ('open', 'partial')`);
+        break;
+      case 'overdue':
+        where.push(`d.status IN ('open', 'partial') AND d.due_date < CURRENT_DATE`);
+        break;
+      case 'due_today':
+        where.push(`d.status IN ('open', 'partial') AND d.due_date = CURRENT_DATE`);
+        break;
+      case 'paid':
+        where.push(`d.status = 'paid'`);
+        break;
+      case 'written_off':
+        where.push(`d.status = 'written_off'`);
+        break;
+      case 'all':
+        break;
+    }
+    if (query.q) {
+      params.push(`%${query.q}%`);
+      where.push(
+        `(c.name ILIKE $${params.length} OR c.code ILIKE $${params.length} OR c.phone ILIKE $${params.length})`,
+      );
+    }
+    const sql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const grouped = `
+      FROM customer_debts d
+      JOIN customers c ON c.id = d.customer_id
+      ${sql}
+      GROUP BY c.id, c.code, c.name, c.phone`;
+    const total = await this.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM (SELECT c.id ${grouped}) g`,
+      params,
+    );
+    const rows = await this.pool.query<{
+      customer_id: string;
+      customer_code: string;
+      customer_name: string;
+      customer_phone: string | null;
+      open_count: string;
+      remaining_cents: string;
+      overdue_cents: string;
+      oldest_due: string | null;
+      max_overdue_days: number;
+    }>(
+      `SELECT c.id AS customer_id, c.code AS customer_code, c.name AS customer_name, c.phone AS customer_phone,
+              count(*) FILTER (WHERE d.status IN ('open', 'partial'))::text AS open_count,
+              COALESCE(SUM(CASE WHEN d.status IN ('open', 'partial') THEN d.amount_cents - d.paid_cents ELSE 0 END), 0)::bigint::text AS remaining_cents,
+              COALESCE(SUM(CASE WHEN d.status IN ('open', 'partial') AND d.due_date < CURRENT_DATE THEN d.amount_cents - d.paid_cents ELSE 0 END), 0)::bigint::text AS overdue_cents,
+              to_char(MIN(d.due_date) FILTER (WHERE d.status IN ('open', 'partial')), 'YYYY-MM-DD') AS oldest_due,
+              COALESCE(MAX(CASE WHEN d.status IN ('open', 'partial') AND d.due_date < CURRENT_DATE THEN (CURRENT_DATE - d.due_date)::int ELSE 0 END), 0)::int AS max_overdue_days
+       ${grouped}
+       ORDER BY max_overdue_days DESC, remaining_cents DESC, c.name ASC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, query.pageSize, (query.page - 1) * query.pageSize],
+    );
+    return {
+      items: rows.rows.map((r) => ({
+        customerId: r.customer_id,
+        customerCode: r.customer_code,
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone,
+        openCount: Number(r.open_count),
+        remainingCents: Number(r.remaining_cents),
+        overdueCents: Number(r.overdue_cents),
+        oldestDueDate: r.oldest_due,
+        maxOverdueDays: r.max_overdue_days,
+      })),
+      page: query.page,
+      pageSize: query.pageSize,
+      total: Number(total.rows[0]!.n),
+    };
+  }
 
   async list(query: DebtListQuery): Promise<Paginated<DebtSummary>> {
     const where: string[] = [];

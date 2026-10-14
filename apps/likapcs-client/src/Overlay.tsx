@@ -20,7 +20,7 @@ import {
   type ClientDisplayConfig,
   type WidgetDesignSpec,
 } from '@likapcs/shared';
-import { agent, type AgentSnapshot } from './lib/agent';
+import { agent, GIFT_CELEBRATION_MS, type AgentSnapshot } from './lib/agent';
 import { setWidgetFit } from './lib/native';
 import { formatHMS, sessionView, type OrderView, type SessionView } from './lib/protocol';
 import { t as translate, type Key, type Language } from './lib/i18n';
@@ -152,6 +152,66 @@ function WalletIcon() {
       <path d="M2 7h12" />
       <circle cx="11" cy="10" r="0.9" fill="currentColor" stroke="none" />
     </svg>
+  );
+}
+
+/** Size of the window while the gift celebration plays (logical px), anchored to its corner. */
+const GIFT_CARD = { width: 400, height: 190 };
+/** Confetti pieces: fixed pseudo-random spread so every celebration looks the same and cheap. */
+const GIFT_PARTICLES = Array.from({ length: 40 }, (_, i) => {
+  const angle = (i / 40) * Math.PI * 2 + ((i * 37) % 11) * 0.05;
+  const dist = 110 + ((i * 53) % 90);
+  return {
+    dx: Math.round(Math.cos(angle) * dist),
+    dy: Math.round(Math.sin(angle) * dist * 0.8 - 20),
+    rot: ((i * 97) % 720) - 360,
+    delay: (i % 8) * 25,
+    color: ['#f472b6', '#facc15', '#38bdf8', '#4ade80', '#a78bfa', '#fb923c'][i % 6],
+  };
+});
+
+/** Party popper + confetti burst + "+N min" (0.18.0). Pure CSS; no assets, no network. */
+function GiftCelebration({ minutes, t }: { minutes: number; t: T }) {
+  return (
+    <div className="gift" role="status" aria-live="polite" data-testid="gift-celebration">
+      <span className="gift__ring" aria-hidden />
+      <div className="gift__burst" aria-hidden>
+        {GIFT_PARTICLES.map((p, i) => (
+          <i
+            key={i}
+            style={
+              {
+                '--dx': `${p.dx}px`,
+                '--dy': `${p.dy}px`,
+                '--rot': `${p.rot}deg`,
+                '--delay': `${p.delay}ms`,
+                '--c': p.color,
+              } as CSSProperties
+            }
+          />
+        ))}
+      </div>
+      <svg className="gift__popper" viewBox="0 0 48 48" aria-hidden>
+        <path
+          d="M8 42 L20 14 L34 28 Z"
+          fill="#facc15"
+          stroke="#fde68a"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M22 12 Q30 4 40 8 M26 20 Q34 16 42 22 M18 26 Q24 30 26 38"
+          fill="none"
+          stroke="#f472b6"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        <circle cx="40" cy="10" r="2.5" fill="#38bdf8" />
+        <circle cx="44" cy="30" r="2" fill="#4ade80" />
+      </svg>
+      <strong className="gift__amount">{t('giftAmount', { n: minutes })}</strong>
+      <span className="gift__text">{t('giftTitle')}</span>
+    </div>
   );
 }
 
@@ -298,6 +358,22 @@ export function Overlay({
     .filter(Boolean)
     .join(' ');
 
+  // Gift celebration (0.18.0): the window grows into a card in its corner for a few seconds and
+  // then returns to the footprint the owner chose. Keyed on the gift id, so each gift plays once.
+  const giftId = snap.gift?.id ?? null;
+  const footprintW = spec.footprint[display?.widgetSize ?? 'normal'].width;
+  const footprintH = spec.footprint[display?.widgetSize ?? 'normal'].height;
+  useEffect(() => {
+    if (giftId === null) return;
+    void setWidgetFit(GIFT_CARD.width, GIFT_CARD.height);
+    const back = window.setTimeout(
+      () => void setWidgetFit(footprintW, footprintH),
+      GIFT_CELEBRATION_MS + 150,
+    );
+    return () => window.clearTimeout(back);
+  }, [giftId, footprintW, footprintH]);
+  const gift = snap.gift;
+
   const tray = hasActions ? (
     <div className="overlay__anchor">
       {!revealed && pinned > 0 && (
@@ -425,6 +501,7 @@ export function Overlay({
       onMouseLeave={hover.leave}
     >
       {body}
+      {gift && <GiftCelebration key={gift.id} minutes={gift.minutes} t={t} />}
       {tray}
     </div>
   );

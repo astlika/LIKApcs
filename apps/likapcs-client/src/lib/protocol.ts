@@ -162,6 +162,8 @@ export type Effect =
   | { type: 'wol_configure' }
   /** End Task (0.17.0): close these programs (owner's list only), then report the outcome. */
   | { type: 'end_tasks'; exes: string[]; skipped: string[] }
+  /** Free minutes (0.18.0): the widget plays the celebration for `minutes`. */
+  | { type: 'gift'; minutes: number }
   | {
       type: 'event';
       event: 'locked' | 'unlocked' | 'maintenance_ended';
@@ -360,6 +362,20 @@ export function reduce(
       return {
         state: { ...state, session: { ...state.session, endsAt, billing } },
         effects: [],
+        ok: true,
+      };
+    }
+    case 'session.gift': {
+      if (!state.session || state.session.id !== str(p.sessionId))
+        return { state, effects: [], ok: false, error: 'no matching session' };
+      const endsAt = str(p.endsAt);
+      if (!endsAt) return { state, effects: [], ok: false, error: 'endsAt missing' };
+      const minutes = Math.min(240, Math.max(1, Math.round(num(p.minutes) ?? 0)));
+      if (minutes < 1) return { state, effects: [], ok: false, error: 'minutes missing' };
+      const billing = billingOf(p.billing) ?? state.session.billing;
+      return {
+        state: { ...state, session: { ...state.session, endsAt, billing } },
+        effects: [{ type: 'gift', minutes }],
         ok: true,
       };
     }

@@ -22,6 +22,7 @@ import {
 import {
   DEBT_LIST_FILTERS,
   PERMISSIONS,
+  type DebtCustomerSummary,
   type DebtDetail,
   type DebtSummary,
   type DebtsOverview,
@@ -77,15 +78,33 @@ export function DebtsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [paying, setPaying] = useState<{ debt: DebtSummary; all: boolean } | null>(null);
 
+  // Default view: one line per customer. Opening a name shows that customer's bills (below).
+  const grouped = !customerId;
   const query = useMemo(
     () => ({ q: q.trim() || undefined, filter, customerId, page, pageSize: PAGE_SIZE }),
     [q, filter, customerId, page],
   );
+  const customers = useQuery({
+    queryKey: ['debts', 'customers', query],
+    queryFn: () =>
+      api<Paginated<DebtCustomerSummary>>('/debts/customers', {
+        query: { q: query.q, filter, page, pageSize: PAGE_SIZE },
+      }),
+    enabled: grouped,
+    placeholderData: (prev) => prev,
+  });
   const list = useQuery({
     queryKey: ['debts', 'list', query],
     queryFn: () => api<Paginated<DebtSummary>>('/debts', { query }),
+    enabled: !grouped,
     placeholderData: (prev) => prev,
   });
+  const openCustomer = (id: string) => {
+    params.set('customer', id);
+    setParams(params);
+    setFilter('all');
+    setPage(1);
+  };
   const overview = useQuery({
     queryKey: ['debts', 'overview'],
     queryFn: () => api<DebtsOverview>('/debts/overview'),
@@ -186,9 +205,24 @@ export function DebtsPage() {
             </button>
           </Badge>
         )}
+        {customerId &&
+          canCollect &&
+          (list.data?.items.some((d) => d.remainingCents > 0) ?? false) && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const d = list.data?.items.find((x) => x.remainingCents > 0);
+                if (d) setPaying({ debt: d, all: true });
+              }}
+              data-testid="debt-pay-everything"
+            >
+              <Banknote size={14} /> {t('debts.payEverything')}
+            </Button>
+          )}
       </div>
-      {list.isLoading && <Loading />}
-      {list.isSuccess && list.data.items.length === 0 && (
+      {grouped && customers.isLoading && <Loading />}
+      {grouped && customers.isSuccess && customers.data.items.length === 0 && (
         <EmptyState
           icon={<CheckCircle2 size={22} />}
           title={
@@ -196,7 +230,75 @@ export function DebtsPage() {
           }
         />
       )}
-      {list.isSuccess && list.data.items.length > 0 && (
+      {grouped && customers.isSuccess && customers.data.items.length > 0 && (
+        <div className="card table-wrap">
+          <table className="table table--clickable" data-testid="debts-customers-table">
+            <thead>
+              <tr>
+                <th>{t('pos.customer')}</th>
+                <th className="right">{t('debts.colOpenBills')}</th>
+                <th>{t('debts.colOldestDue')}</th>
+                <th className="right">{t('debts.remaining')}</th>
+                <th>{t('debts.colMostOverdue')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customers.data.items.map((c) => (
+                <tr
+                  key={c.customerId}
+                  onClick={() => openCustomer(c.customerId)}
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && openCustomer(c.customerId)}
+                  data-testid="debt-customer-row"
+                >
+                  <td>
+                    <strong>{c.customerName}</strong>
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      {c.customerCode}
+                      {c.customerPhone ? ` · ${c.customerPhone}` : ''}
+                    </div>
+                  </td>
+                  <td className="right num">{c.openCount}</td>
+                  <td className={`num ${c.maxOverdueDays > 0 ? 'text-danger' : ''}`}>
+                    {c.oldestDueDate ? fmt.date(c.oldestDueDate) : '—'}
+                  </td>
+                  <td className="right num">
+                    <strong>{fmt.money(c.remainingCents)}</strong>
+                    {c.overdueCents > 0 && (
+                      <div className="text-danger" style={{ fontSize: 12 }}>
+                        {t('debts.overdueAmount', { amount: fmt.money(c.overdueCents) })}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {c.maxOverdueDays > 0 ? (
+                      <Badge tone="danger">{t('debts.overdueDays', { n: c.maxOverdueDays })}</Badge>
+                    ) : (
+                      <Badge tone="info">{t('debts.status.open')}</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={customers.data.total}
+            onPage={setPage}
+          />
+        </div>
+      )}
+      {!grouped && list.isLoading && <Loading />}
+      {!grouped && list.isSuccess && list.data.items.length === 0 && (
+        <EmptyState
+          icon={<CheckCircle2 size={22} />}
+          title={
+            filter === 'open' || filter === 'overdue' ? t('debts.emptyOpen') : t('debts.empty')
+          }
+        />
+      )}
+      {!grouped && list.isSuccess && list.data.items.length > 0 && (
         <div className="card table-wrap">
           <table className="table table--clickable" data-testid="debts-table">
             <thead>

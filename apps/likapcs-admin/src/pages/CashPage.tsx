@@ -348,10 +348,17 @@ function DifferenceBadge({ cents, warnCents }: { cents: number; warnCents: numbe
 }
 
 // ─── Ledger & breakdown ────────────────────────────────────────────────────────
+/** The ledger opens on the latest rows; the full list is one button away. */
+const LEDGER_LATEST = 20;
+
 function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
   const { t } = useI18n();
   const fmt = useFormat();
+  const [showAll, setShowAll] = useState(false);
   const label = (m: CashMovementSummary) => t(`cash.movement.${m.type}` as 'cash.movement.sale');
+  const newestFirst = [...shift.movements].reverse();
+  const hidden = Math.max(0, newestFirst.length - LEDGER_LATEST);
+  const rows = showAll ? newestFirst : newestFirst.slice(0, LEDGER_LATEST);
   return (
     <Card title={t('cash.ledger')}>
       <p className="muted" style={{ marginTop: 0 }}>
@@ -371,7 +378,7 @@ function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
               </tr>
             </thead>
             <tbody>
-              {[...shift.movements].reverse().map((m) => (
+              {rows.map((m) => (
                 <tr key={m.id}>
                   <td className="num">{fmt.time(m.createdAt)}</td>
                   <td>
@@ -393,6 +400,25 @@ function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
               ))}
             </tbody>
           </table>
+          {hidden > 0 && (
+            <div className="row row--between" style={{ marginTop: 8 }}>
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {showAll
+                  ? t('cash.ledgerShowingAll', { n: newestFirst.length })
+                  : t('cash.ledgerShowingLatest', {
+                      shown: LEDGER_LATEST,
+                      total: newestFirst.length,
+                    })}
+              </span>
+              <Button
+                size="sm"
+                onClick={() => setShowAll((v) => !v)}
+                data-testid="cash-ledger-toggle"
+              >
+                {showAll ? t('cash.ledgerShowLatest') : t('cash.ledgerShowAll', { n: hidden })}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </Card>

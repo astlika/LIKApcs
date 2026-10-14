@@ -1327,7 +1327,8 @@ function StationDetailDialog({
       <Dialog
         open
         onClose={onClose}
-        size="lg"
+        // 0.18.0: the standard view is a small card; the advanced view needs the room.
+        size={view === 'standard' ? 'md' : 'lg'}
         title={`${station.code} · ${station.name}`}
         description={station.zone ?? undefined}
         footer={
@@ -1408,34 +1409,25 @@ function StationDetailDialog({
                 approveRequestId={approveRequestId}
               />
             </Card>
-            <Card title={t('stations.device')} testId="station-device">
+            <div className="st-device-line" data-testid="station-device">
               {device ? (
-                <div className="st-device">
-                  <div className="st-device__row" data-testid="station-device-row">
-                    <span className="st-device__name">
-                      <Monitor size={14} /> {device.hostname ?? '—'}
+                <div className="st-device__row" data-testid="station-device-row">
+                  <span className="st-device__name">
+                    <Monitor size={14} /> {device.hostname ?? '—'}
+                  </span>
+                  <Badge tone={device.online ? 'success' : 'default'} dot={device.online}>
+                    {device.online ? t('stations.online') : t('stations.offline')}
+                  </Badge>
+                  {device.appVersion && (
+                    <span className="st-device__meta" title={t('stations.clientVersion')}>
+                      v{device.appVersion}
                     </span>
-                    <Badge tone={device.online ? 'success' : 'default'} dot={device.online}>
-                      {device.online ? t('stations.online') : t('stations.offline')}
-                    </Badge>
-                    {device.appVersion && (
-                      <span className="st-device__meta" title={t('stations.clientVersion')}>
-                        v{device.appVersion}
-                      </span>
-                    )}
-                  </div>
-                  {device.status === 'approved' && (
-                    <DeviceCommands station={station} online={device.online} onDone={onChanged} />
                   )}
                 </div>
               ) : (
-                <EmptyState
-                  icon={<Cpu size={22} />}
-                  title={t('stations.noDevice')}
-                  hint={t('stations.pendingHint')}
-                />
+                <span className="muted">{t('stations.noDevice')}</span>
               )}
-            </Card>
+            </div>
           </div>
         ) : (
           <>

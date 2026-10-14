@@ -218,6 +218,8 @@ export const SETTING_SCHEMAS = {
   'pos.auto_finish_seconds': z.number().int().min(0).max(60),
   /** Offer card as a payment method. Off: every payment choice in the app is cash only. */
   'pos.card_payments': z.boolean(),
+  /** Point of sale grid: hide products with no stock left (scanning still finds them). */
+  'pos.hide_out_of_stock': z.boolean(),
   /** Offer "pay later" (customer debt with a due date) in POS and session bills. */
   /** Pre-filled due date for a new debt: today + this many days. */
   'pos.credit_default_days': z.number().int().min(0).max(365),
@@ -329,6 +331,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.auto_print_receipt': false,
   'pos.auto_finish_seconds': 5,
   'pos.card_payments': false,
+  'pos.hide_out_of_stock': true,
   'pos.credit_default_days': 7,
 
   'printing.invoice_due_days': 0,
@@ -361,6 +364,8 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   // Which payment methods the app offers; every cashier needs it before any sale exists.
   'pos.card_payments',
   'pos.credit_default_days',
+  // Presentation only: the POS grid hides sold-out products.
+  'pos.hide_out_of_stock',
   // Orders from the PCs: the bell pre-selects the settlement; every station operator needs it.
   'orders.enabled',
   'orders.settlement',

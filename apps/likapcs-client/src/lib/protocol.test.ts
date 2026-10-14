@@ -269,6 +269,50 @@ describe('reduce()', () => {
     expect(r.effects[0]).toMatchObject({ type: 'event', event: 'locked' });
   });
 
+  it('a gift moves the end time and asks the widget for a celebration (0.18.0)', () => {
+    let state = applyWelcome(initialState, welcome);
+    let r = reduce(
+      state,
+      cmd({
+        command: 'session.start',
+        payload: {
+          sessionId: 'g2',
+          endsAt: new Date(T0 + 1_800_000).toISOString(),
+          billing: 'prepaid',
+        },
+      }),
+      T0,
+    );
+    state = r.state;
+    r = reduce(
+      state,
+      cmd({
+        command: 'session.gift',
+        payload: {
+          sessionId: 'g2',
+          minutes: 10,
+          endsAt: new Date(T0 + 2_400_000).toISOString(),
+        },
+      }),
+      T0,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.state.session?.endsAt).toBe(new Date(T0 + 2_400_000).toISOString());
+    expect(r.effects).toEqual([{ type: 'gift', minutes: 10 }]);
+
+    // A gift for another session is refused and celebrates nothing.
+    const wrong = reduce(
+      r.state,
+      cmd({
+        command: 'session.gift',
+        payload: { sessionId: 'other', minutes: 10, endsAt: new Date(T0).toISOString() },
+      }),
+      T0,
+    );
+    expect(wrong.ok).toBe(false);
+    expect(wrong.effects).toEqual([]);
+  });
+
   it('keeps who paused and the automatic resume instant (0.10.0)', () => {
     const autoResumeAt = new Date(T0 + 15 * 60_000).toISOString();
     const started = reduce(

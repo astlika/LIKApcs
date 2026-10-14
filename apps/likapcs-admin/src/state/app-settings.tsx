@@ -16,6 +16,7 @@ type Presentation = Pick<
   | 'locale.default_language'
   | 'pos.card_payments'
   | 'pos.credit_default_days'
+  | 'pos.hide_out_of_stock'
   | 'wallet.enabled'
 >;
 
@@ -26,6 +27,7 @@ const AppSettingsContext = createContext<Presentation>({
   'locale.default_language': SETTING_DEFAULTS['locale.default_language'],
   'pos.card_payments': SETTING_DEFAULTS['pos.card_payments'],
   'pos.credit_default_days': SETTING_DEFAULTS['pos.credit_default_days'],
+  'pos.hide_out_of_stock': SETTING_DEFAULTS['pos.hide_out_of_stock'],
   'wallet.enabled': SETTING_DEFAULTS['wallet.enabled'],
 });
 
@@ -48,6 +50,8 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       'pos.card_payments': s['pos.card_payments'] ?? SETTING_DEFAULTS['pos.card_payments'],
       'pos.credit_default_days':
         s['pos.credit_default_days'] ?? SETTING_DEFAULTS['pos.credit_default_days'],
+      'pos.hide_out_of_stock':
+        s['pos.hide_out_of_stock'] ?? SETTING_DEFAULTS['pos.hide_out_of_stock'],
       'wallet.enabled': s['wallet.enabled'] ?? SETTING_DEFAULTS['wallet.enabled'],
     };
   }, [publicQuery.data]);

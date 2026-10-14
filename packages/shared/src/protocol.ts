@@ -187,6 +187,8 @@ export const STATION_COMMANDS = [
   'session.pause',
   'session.resume',
   'session.extend',
+  /** Free minutes (0.18.0): new end time + the PC plays the celebration. */
+  'session.gift',
   'session.end',
   'lock',
   'unlock',

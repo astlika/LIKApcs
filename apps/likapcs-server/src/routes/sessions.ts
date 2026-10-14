@@ -5,6 +5,7 @@ import {
   collectSessionSchema,
   endSessionSchema,
   extendSessionSchema,
+  giftSessionSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
   startSessionSchema,
@@ -57,6 +58,15 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.extend(
       idParams.parse(request.params).id,
       extendSessionSchema.parse(request.body),
+      actorOf(request),
+    ),
+  );
+  // Free minutes need their own permission: a gift costs the shop money, so not every cashier may.
+  const gift = { preHandler: app.requirePermission(PERMISSIONS.STATIONS_GIFT) };
+  app.post('/sessions/:id/gift', gift, async (request) =>
+    services.sessions.gift(
+      idParams.parse(request.params).id,
+      giftSessionSchema.parse(request.body),
       actorOf(request),
     ),
   );

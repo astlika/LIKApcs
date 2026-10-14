@@ -6805,3 +6805,11 @@ button.ads-album .ads-album__meta {
 .import-report td.danger {
   color: var(--danger);
 }
+
+/* Station details, standard view (0.18.0): the device is one quiet line, not a big card. */
+.st-device-line {
+  padding: 8px 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.22));
+  border-radius: 10px;
+  font-size: 13px;
+}

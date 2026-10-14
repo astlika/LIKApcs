@@ -137,6 +137,8 @@ export interface AgentSnapshot {
   orders: OrderView[];
   /** A just-decided order the widget shows for a few seconds ("Order #3 accepted"). */
   orderFlash: { order: OrderView; untilMs: number } | null;
+  /** Free minutes just received: the widget celebrates until `untilMs` (0.18.0). */
+  gift: { id: number; minutes: number; untilMs: number } | null;
 }
 
 /** Who is signed in at the PC. The token only lets this device create requests (20 min). */
@@ -200,6 +202,8 @@ const UPDATE_RETRY_MS = 30 * 60_000;
 const ADS_REFRESH_MS = 10 * 60_000;
 /** How long "Order #3 accepted" stays in the widget. */
 const ORDER_FLASH_MS = 8000;
+/** How long the gift celebration stays on the PC. */
+export const GIFT_CELEBRATION_MS = 4500;
 
 /** The PC keeps only what it shows of an order (no ids of staff, sales or customers). */
 function orderViewOf(order: StationOrder | ServerOrderUpdate['order']): OrderView {
@@ -224,6 +228,8 @@ function orderViewOf(order: StationOrder | ServerOrderUpdate['order']): OrderVie
 type Listener = () => void;
 
 export class Agent {
+  /** Counts gifts so each celebration has its own id (the overlay restarts its animation). */
+  private giftSeq = 0;
   private snapshot: AgentSnapshot = {
     phase: { phase: 'starting' },
     state: initialState,
@@ -247,6 +253,7 @@ export class Agent {
     request: null,
     orders: [],
     orderFlash: null,
+    gift: null,
   };
   private readonly listeners = new Set<Listener>();
   private updateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1086,6 +1093,16 @@ export class Agent {
       case 'event':
         this.send({ type: 'client.event', event: effect.event, payload: effect.payload ?? {} });
         break;
+      case 'gift':
+        this.giftSeq += 1;
+        this.set({
+          gift: {
+            id: this.giftSeq,
+            minutes: effect.minutes,
+            untilMs: this.clock.now() + GIFT_CELEBRATION_MS,
+          },
+        });
+        break;
       case 'power':
         // The ack went out first so staff see "ok" before the PC goes down.
         await new Promise((r) => setTimeout(r, 800));
@@ -1525,6 +1542,7 @@ export class Agent {
     if (requestResultExpired(this.snapshot.request, now)) this.set({ request: null });
     if (this.snapshot.orderFlash && this.snapshot.orderFlash.untilMs <= now)
       this.set({ orderFlash: null });
+    if (this.snapshot.gift && this.snapshot.gift.untilMs <= now) this.set({ gift: null });
     this.set({ serverNowMs: now });
     // Periodic slideshow refresh while locked (new products / photos appear without a reconnect).
     if (next.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();
