@@ -2145,6 +2145,31 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
   --accent: #94a3b8;
   --accent-2: #e2e8f0;
 }
+/* 0.19.1: six more accent colours (item 11). */
+.overlay--theme-teal {
+  --accent: #14b8a6;
+  --accent-2: #5eead4;
+}
+.overlay--theme-orange {
+  --accent: #f97316;
+  --accent-2: #fdba74;
+}
+.overlay--theme-fuchsia {
+  --accent: #d946ef;
+  --accent-2: #f0abfc;
+}
+.overlay--theme-lime {
+  --accent: #84cc16;
+  --accent-2: #d9f99d;
+}
+.overlay--theme-red {
+  --accent: #ef4444;
+  --accent-2: #fca5a5;
+}
+.overlay--theme-blue {
+  --accent: #3b82f6;
+  --accent-2: #93c5fd;
+}
 
 .lock--ads .lock__bg {
   background:

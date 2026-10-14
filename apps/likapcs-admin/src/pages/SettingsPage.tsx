@@ -58,12 +58,21 @@ import { LocalServerPanel } from '../components/LocalServerPanel';
 import { CustomerDisplayCard } from '../components/settings/CustomerDisplayCard';
 
 type TabId =
-  'business' | 'locale' | 'stations' | 'client' | 'printing' | 'security' | 'system' | 'about';
+  | 'business'
+  | 'locale'
+  | 'stations'
+  | 'client'
+  | 'ads'
+  | 'printing'
+  | 'security'
+  | 'system'
+  | 'about';
 const TAB_IDS: TabId[] = [
   'business',
   'locale',
   'stations',
   'client',
+  'ads',
   'printing',
   'security',
   'system',
@@ -705,6 +714,34 @@ export function SettingsPage() {
                 hint: t('settings.client.staffLoginUsernameHint'),
               })}
             </Card>
+          </div>
+          <div className="client-screen__preview">
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewSession')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="session"
+            />
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewLockTitle')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="locked"
+            />
+            <div className="faint" style={{ fontSize: 12 }}>
+              {t('settings.client.previewNote')}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'ads' && (
+        <div className="client-screen">
+          <div className="client-screen__controls">
             <Card
               title={t('settings.client.adsTitle')}
               subtitle={t('settings.client.adsHint')}

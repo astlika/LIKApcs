@@ -23,6 +23,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Changed
 
+- **Ads have their own settings tab (0.19.1).** Settings › Ads holds the ad settings and the
+  screen options that go with them (with a preview). Settings › Client screen keeps the customer
+  display options only. The settings are the same; only where they are edited changed.
+- **Widget colours: six more (0.19.1).** Teal, orange, fuchsia, lime, red and blue, next to the
+  six existing ones.
+- **Widget centre positions (0.19.1).** The countdown widget can sit at the top centre or the
+  bottom centre of the screen, in addition to the four corners.
 - **Stock-less purchase lines are expenses (0.19.1).** A purchase line for a product that does not
   track stock (a service, a consumable not kept in stock) is booked automatically as an expense
   (category *Other*, payment *Other*, the supplier linked) when it is received; a partial receipt

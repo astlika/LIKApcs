@@ -20,6 +20,12 @@ export const CLIENT_WIDGET_THEMES = [
   'rose',
   'violet',
   'mono',
+  'teal',
+  'orange',
+  'fuchsia',
+  'lime',
+  'red',
+  'blue',
 ] as const;
 export type ClientWidgetTheme = (typeof CLIENT_WIDGET_THEMES)[number];
 
