@@ -2647,10 +2647,21 @@ export const sq: Dictionary = {
     sessions: 'Seanca',
     byEmployee: 'Sipas punonjësit',
     expensesByCategory: 'Shpenzimet sipas kategorisë',
+    section: {
+      sales: 'Shitjet',
+      salesHint: 'Sa hyri, dhe kur.',
+      payments: 'Pagesat dhe burimet',
+      paymentsHint: 'Si paguan klientët dhe ku u bënë shitjet.',
+      products: 'Produktet, stafi dhe lojërat',
+      productsHint:
+        'Çfarë shitet më shumë, në cilën kategori, kush shiti dhe koha e faturuar e PC-ve.',
+      money: 'Dalja e parave dhe arka',
+      moneyHint: 'Shpenzimet dhe çdo turn arke.',
+    },
     cashBook: {
       title: 'Libri i arkës',
       hint: 'Një rresht për çdo turn arke. Hap një rresht për lëvizjet e tij.',
-      summary: '{count} turne · {open} të hapura · diferenca {difference}',
+      summary: 'Turne: {count} · të hapura: {open} · diferenca {difference}',
       empty: 'Nuk ka turne arke në këtë periudhë.',
       opening: 'Hapja',
       cashIn: 'Hyrje në arkë',

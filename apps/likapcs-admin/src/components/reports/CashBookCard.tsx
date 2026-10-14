@@ -31,6 +31,7 @@ export function CashBookCard({
     placeholderData: (prev) => prev,
   });
   const data = book.data;
+  const noneClosed = data ? data.totals.openShiftsCount === data.totals.shiftsCount : true;
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -143,8 +144,12 @@ export function CashBookCard({
                   <td className="right num">{fmt.money(data.totals.cashInCents)}</td>
                   <td className="right num">{fmt.money(-data.totals.cashOutCents)}</td>
                   <td className="right num">{fmt.money(data.totals.expectedCashCents)}</td>
-                  <td className="right num">{fmt.money(data.totals.countedCashCents)}</td>
-                  <td className="right num">{fmt.money(data.totals.differenceCents)}</td>
+                  <td className="right num">
+                    {noneClosed ? '—' : fmt.money(data.totals.countedCashCents)}
+                  </td>
+                  <td className="right num">
+                    {noneClosed ? '—' : fmt.money(data.totals.differenceCents)}
+                  </td>
                 </tr>
               </tfoot>
             </table>

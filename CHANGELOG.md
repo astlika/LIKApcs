@@ -58,6 +58,10 @@ All notable changes to LIKApcs are documented here. The format follows
   movements. Totals cover all shifts; counted and difference only the closed ones. The export
   kind *Cash book (one row per shift)* writes the same rows as CSV, with local times. Endpoint
   `GET /reports/cash-book`. The older *Cash shifts* table is replaced by this card.
+- **Reports redesign (0.21 · in progress).** Same numbers, new layout. A result card at the top
+  (net sales minus expenses, with sales split by source). Titled sections: Sales (columns per day and
+  per hour), Payments and sources (share bars with a legend, and the tables), Products, staff and
+  gaming, Money out and cash. The charts are plain CSS, so they need no library and work offline.
 
 ## [0.18.1] - 2026-10-14
 
