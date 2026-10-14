@@ -527,6 +527,15 @@ function DebtDetailDialog({
                   {fmt.date(d.dueDate)}
                 </strong>
               </div>
+              {d.installmentCount && d.remainingCents > 0 && (
+                <div className="muted" data-testid="debt-installments">
+                  {t('debts.installments', {
+                    paid: d.installmentsPaid,
+                    count: d.installmentCount,
+                    next: fmt.money(d.installmentCents ?? 0),
+                  })}
+                </div>
+              )}
               <div className="muted">
                 {t('debts.opened')}: {fmt.dateTime(d.createdAt)}
                 {d.createdByName ? ` · ${d.createdByName}` : ''}

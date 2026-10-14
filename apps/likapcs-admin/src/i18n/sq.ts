@@ -812,6 +812,9 @@ export const sq: Dictionary = {
     endPayCustomerHint: 'Opsionale — i vë emër llogarisë së hapur.',
     payLaterDue: 'Afati i pagesës',
     payLaterCashNow: 'Para tani',
+    installments: 'Këste',
+    installmentsHint: 'Paguani borxhin në këtë numër pjesësh (2–24). Nuk vendosen data.',
+    installmentsInvalid: 'Këste: numër i plotë nga 2 deri në 24.',
     payLaterOnTab: 'Mbetet borxh',
     payLaterNeedsCustomer: 'Zgjidh klientin që do të paguajë më vonë.',
     payLaterBalance: 'Ka borxh {amount}',
@@ -2180,6 +2183,7 @@ export const sq: Dictionary = {
     windowInvalid: 'Duhet të mbarojë pasi të fillojë.',
   },
   debts: {
+    installments: 'Këste: {paid} nga {count} të paguara · kësti tjetër {next}',
     title: 'Borxhet',
     subtitle: 'Kush paguan më vonë, sa dhe deri kur. Të vonuarat së pari.',
     disabledHint:

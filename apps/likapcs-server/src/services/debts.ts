@@ -56,6 +56,8 @@ interface DebtRow {
   created_at: Date;
   settled_at: Date | null;
   written_off_reason: string | null;
+  installment_count: number | null;
+  payments_count: string;
 }
 
 const SELECT = `
@@ -64,15 +66,30 @@ const SELECT = `
          to_char(d.due_date, 'YYYY-MM-DD') AS due_date,
          CASE WHEN d.status IN ('open', 'partial') AND d.due_date < CURRENT_DATE
               THEN (CURRENT_DATE - d.due_date)::int ELSE 0 END AS overdue_days,
-         d.notes, u.full_name AS created_by_name, d.created_at, d.settled_at, d.written_off_reason
+         d.notes, u.full_name AS created_by_name, d.created_at, d.settled_at, d.written_off_reason,
+         d.installment_count, (SELECT count(*) FROM debt_payments dp WHERE dp.debt_id = d.id)::text AS payments_count
     FROM customer_debts d
     JOIN customers c ON c.id = d.customer_id
     LEFT JOIN sales s ON s.id = d.sale_id
     LEFT JOIN users u ON u.id = d.created_by`;
 
+/**
+ * The next part of an installment plan: what is left, split over the parts not yet paid (at
+ * least one), rounded up to the cent. Null for a plain debt or a settled one.
+ */
+export function installmentPart(
+  count: number | null,
+  remainingCents: number,
+  paidParts: number,
+): number | null {
+  if (!count || remainingCents <= 0) return null;
+  return Math.ceil(remainingCents / Math.max(1, count - paidParts));
+}
+
 function toSummary(r: DebtRow): DebtSummary {
   const amount = Number(r.amount_cents);
   const paid = Number(r.paid_cents);
+  const remaining = r.status === 'open' || r.status === 'partial' ? amount - paid : 0;
   return {
     id: r.id,
     customerId: r.customer_id,
@@ -83,10 +100,13 @@ function toSummary(r: DebtRow): DebtSummary {
     receiptNo: r.receipt_no,
     amountCents: amount,
     paidCents: paid,
-    remainingCents: r.status === 'open' || r.status === 'partial' ? amount - paid : 0,
+    remainingCents: remaining,
     status: r.status,
     dueDate: r.due_date,
     overdueDays: Number(r.overdue_days),
+    installmentCount: r.installment_count,
+    installmentsPaid: Number(r.payments_count),
+    installmentCents: installmentPart(r.installment_count, remaining, Number(r.payments_count)),
     notes: r.notes,
     createdByName: r.created_by_name,
     createdAt: r.created_at.toISOString(),
@@ -125,6 +145,8 @@ export class DebtsService {
       amountCents: number;
       dueDate?: string | null;
       notes?: string | null;
+      /** 0.19.0: planned parts (2–24) or null for a plain debt. */
+      installmentCount?: number | null;
       /** Whoever sells; `permissions` decides whether credit may be given at all. */
       actor: AuditActor & { permissions?: ReadonlySet<string> };
     },
@@ -171,8 +193,8 @@ export class DebtsService {
     const dueDate =
       input.dueDate ?? dueDateFromToday(await this.settings.get('pos.credit_default_days'));
     const r = await client.query<{ id: string }>(
-      `INSERT INTO customer_debts (customer_id, sale_id, amount_cents, due_date, notes, created_by)
-       VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
+      `INSERT INTO customer_debts (customer_id, sale_id, amount_cents, due_date, notes, created_by, installment_count)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7) RETURNING id`,
       [
         input.customerId,
         input.saleId,
@@ -180,6 +202,7 @@ export class DebtsService {
         dueDate,
         input.notes ?? null,
         input.actor.userId ?? null,
+        input.installmentCount ?? null,
       ],
     );
     await client.query(
@@ -195,6 +218,7 @@ export class DebtsService {
         saleId: input.saleId,
         amountCents: input.amountCents,
         dueDate,
+        installmentCount: input.installmentCount ?? null,
       },
     });
     this.wallet.announce(client, input.customerId);

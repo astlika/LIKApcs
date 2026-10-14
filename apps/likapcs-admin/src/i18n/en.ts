@@ -802,6 +802,9 @@ export const en = {
     endPayCustomerHint: 'Optional — puts a name on the open bill.',
     payLaterDue: 'Due date',
     payLaterCashNow: 'Cash now',
+    installments: 'Installments',
+    installmentsHint: 'Pay the debt in this many parts (2–24). No dates are set.',
+    installmentsInvalid: 'Installments: a whole number from 2 to 24.',
     payLaterOnTab: 'On the tab',
     payLaterNeedsCustomer: 'Choose the customer who will pay later.',
     payLaterBalance: 'Owes {amount}',
@@ -2171,6 +2174,7 @@ export const en = {
     windowInvalid: 'Must end after it starts.',
   },
   debts: {
+    installments: 'Installments: {paid} of {count} paid · next part {next}',
     title: 'Debts',
     subtitle: 'Who pays later, how much and until when. Overdue first.',
     disabledHint:

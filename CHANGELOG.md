@@ -25,6 +25,11 @@ All notable changes to LIKApcs are documented here. The format follows
   Parking a sale that holds PC time is refused — it is completed or removed.
   Migration `0032_time_credit_sessions.sql` lets a credit-started session be billed without a
   sale of its own, with `time_credit_id` recording which credit paid for it.
+- **Simple installments on a pay-later sale (0.19 · in progress).** The "Pay later" tender has an
+  optional *Installments* count (2–24). The debt records it (migration `0033_debt_installments.sql`),
+  each repayment counts as one part, and the debt shows "N of M paid · next part X". No dates are
+  scheduled — the due date still applies. Installments are refused on any tender but pay-later.
+  Combined with the off-inventory item, this sells a PC build or service paid in parts.
 
 ## [0.18.1] - 2026-10-14
 

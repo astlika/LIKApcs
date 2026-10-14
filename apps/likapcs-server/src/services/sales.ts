@@ -905,6 +905,12 @@ export class SalesService {
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
+    // 0.19.0: installments are a way of paying a debt, so they only mean something on pay-later.
+    if (payments.some((p) => p.installments && p.method !== 'credit')) {
+      throw badRequest('Installments apply to pay-later (on the tab) only', {
+        code: 'INSTALLMENTS_CREDIT_ONLY',
+      });
+    }
     const totals = this.compute(
       input,
       products,
@@ -995,6 +1001,7 @@ export class SalesService {
         saleId,
         amountCents: credit.reduce((acc, p) => acc + p.amountCents, 0),
         dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
+        installmentCount: credit.find((p) => p.installments)?.installments ?? null,
         notes: receiptNo,
         actor,
       });

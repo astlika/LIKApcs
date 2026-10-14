@@ -1227,6 +1227,8 @@ export const salePaymentInputSchema = z.object({
   reference: z.string().trim().max(80).optional(),
   /** `credit` only: when the customer promised to pay (defaults to `pos.credit_default_days`). */
   dueDate: isoDate.optional(),
+  /** `credit` only (0.19.0): pay the debt in this many parts — no dates are scheduled. */
+  installments: z.number().int().min(2).max(24).optional(),
 });
 export type SalePaymentInput = z.infer<typeof salePaymentInputSchema>;
 
@@ -2491,6 +2493,10 @@ export interface DebtSummary {
   dueDate: string;
   /** Days past the due date for open debts (0 when not yet due). */
   overdueDays: number;
+  /** 0.19.0: planned installments (null = a plain debt), repayments made so far, and the next part. */
+  installmentCount: number | null;
+  installmentsPaid: number;
+  installmentCents: number | null;
   notes: string | null;
   createdByName: string | null;
   createdAt: string;
