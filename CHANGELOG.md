@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-15
+
 ### Added
 
 - **Product extras with their own price (0.19.1).** A product can have extras (e.g. *Tost* with
