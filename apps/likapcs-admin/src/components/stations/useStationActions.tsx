@@ -698,6 +698,21 @@ export function useStationActions(
                       total: fmt.money(result.totalCents),
                     }),
               );
+            // Name the PCs that did not get the minutes, and why (not just a count).
+            if (skipped > 0) {
+              const list = result.skipped
+                .map((s) => {
+                  const why =
+                    s.reason === 'not_extendable'
+                      ? t('map.skipPostpaid')
+                      : s.reason === 'error'
+                        ? (s.detail ?? t('map.skipError'))
+                        : t('map.skipNoSession');
+                  return `${s.code} (${why})`;
+                })
+                .join(', ');
+              toast.toast('info', t('map.bulkSkippedList', { list }));
+            }
             refresh();
           }}
         />

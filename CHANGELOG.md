@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **\"+ minutes\" on several PCs says what happened (0.19.1).** The dialog lists the PCs that will
+  get the minutes and those that will be skipped, with the reason (no running session, or postpaid).
+  After the step, a toast names each PC that was not changed. Before, only a count was shown.
+
+### Changed
+
+- **Managers can give free minutes (0.19.1).** `stations.gift` is granted to the manager role too
+  (migration `0036_stations_gift_manager.sql`). Owner and admin keep it; every gift is audited.
+
 ## [0.19.0] - 2026-10-14
 
 ### Added
