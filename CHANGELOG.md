@@ -23,6 +23,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Changed
 
+- **Stock-less purchase lines are expenses (0.19.1).** A purchase line for a product that does not
+  track stock (a service, a consumable not kept in stock) is booked automatically as an expense
+  (category *Other*, payment *Other*, the supplier linked) when it is received; a partial receipt
+  books the received part. A stock product still goes into inventory as before. Migration
+  `0038_stockless_purchase_expenses.sql`. Purchases received before this change are not
+  converted; they stay as they were.
 - **Managers can give free minutes (0.19.1).** `stations.gift` is granted to the manager role too
   (migration `0036_stations_gift_manager.sql`). Owner and admin keep it; every gift is audited.
 
