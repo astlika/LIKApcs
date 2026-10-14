@@ -12,6 +12,7 @@ import { useState } from 'react';
 import {
   PERMISSIONS,
   parseMoneyInput,
+  type CollectStationResponse,
   type SessionMutationResponse,
   type SessionSummary,
 } from '@likapcs/shared';
@@ -60,10 +61,13 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   const list = useAwaitingPayment(canView);
   const [collecting, setCollecting] = useState<SessionSummary | null>(null);
   const [collectingAll, setCollectingAll] = useState<PcBills | null>(null);
-  const [paid, setPaid] = useState<SessionPaid | null>(null);
+  /** Receipts to show, one "done" dialog after another (a pay-all step has one per bill). */
+  const [paidQueue, setPaidQueue] = useState<SessionPaid[]>([]);
+  const paid = paidQueue[0] ?? null;
+  const finishPaid = () => setPaidQueue((q) => q.slice(1));
   const items = list.data?.items ?? [];
   if (!canView || items.length === 0) {
-    return paid ? <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} /> : null;
+    return paid ? <SessionPaidDialog paid={paid} onFinish={finishPaid} /> : null;
   }
   const total = items.reduce((a, s) => a + awaitingAmountCents(s), 0);
   return (
@@ -126,7 +130,10 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
         <CollectStationDialog
           group={collectingAll}
           onClose={() => setCollectingAll(null)}
-          onPaid={() => setCollectingAll(null)}
+          onPaid={(receipts) => {
+            setCollectingAll(null);
+            setPaidQueue(receipts);
+          }}
         />
       )}
       {collecting && (
@@ -135,11 +142,11 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           onClose={() => setCollecting(null)}
           onPaid={(p) => {
             setCollecting(null);
-            setPaid(p);
+            setPaidQueue(p ? [p] : []);
           }}
         />
       )}
-      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+      {paid && <SessionPaidDialog paid={paid} onFinish={finishPaid} />}
     </>
   );
 }
@@ -156,7 +163,7 @@ export function CollectStationDialog({
 }: {
   group: PcBills;
   onClose: () => void;
-  onPaid: () => void;
+  onPaid: (receipts: SessionPaid[]) => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
@@ -167,7 +174,7 @@ export function CollectStationDialog({
   const tender = useTender({ totalCents: total, customer: null, allowCredit: false });
   const collectAll = useMutation({
     mutationFn: () =>
-      api<{ totalCents: number; collected: { sessionId: string }[] }>(
+      api<{ totalCents: number; collected: CollectStationResponse['collected'] }>(
         `/stations/${group.stationId}/collect-all`,
         { method: 'POST', body: { paymentMethod: 'cash', payments: tender.payments } },
       ),
@@ -181,7 +188,11 @@ export function CollectStationDialog({
       );
       for (const key of [['sessions'], ['stations'], ['cash'], ['dashboard'], ['orders']])
         void queryClient.invalidateQueries({ queryKey: key });
-      onPaid();
+      onPaid(
+        result.collected.flatMap((c) =>
+          c.payment ? [{ sessionId: c.sessionId, payment: c.payment }] : [],
+        ),
+      );
     },
     onError: (err) => {
       if (shiftGuard.handle(err, () => collectAll.mutate())) return;

@@ -1532,6 +1532,7 @@ export class SessionsService {
         sessionId: c.session.id,
         receiptNo: c.payment?.receiptNo ?? '',
         totalCents: c.payment?.totalCents ?? 0,
+        payment: c.payment,
       })),
       totalCents: outcome.total,
     };

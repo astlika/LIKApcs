@@ -889,7 +889,13 @@ export type CollectStationRequest = z.infer<typeof collectStationSchema>;
 /** One bill settled by a pay-all step; each keeps its own sale and receipt. */
 export interface CollectStationResponse {
   stationId: string;
-  collected: { sessionId: string; receiptNo: string; totalCents: number }[];
+  /** One entry per bill paid; `payment` carries the receipt the desk prints for it. */
+  collected: {
+    sessionId: string;
+    receiptNo: string;
+    totalCents: number;
+    payment: SessionPaymentSummary | null;
+  }[];
   totalCents: number;
 }
 

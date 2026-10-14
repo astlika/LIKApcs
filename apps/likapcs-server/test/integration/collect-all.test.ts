@@ -119,6 +119,11 @@ describe('pay all: the bills waiting at one PC, in one step', () => {
     const receipts = new Set(res.body.collected.map((c) => c.receiptNo));
     expect(receipts.size).toBe(2);
     expect(receipts.has('')).toBe(false);
+    // Each bill comes back with its full receipt payment, so the desk can print it.
+    expect(res.body.collected.every((c) => c.payment && c.payment.saleId)).toBe(true);
+    expect(res.body.collected.find((c) => c.sessionId === a.id)!.payment!.receiptNo).toBe(
+      res.body.collected.find((c) => c.sessionId === a.id)!.receiptNo,
+    );
 
     const after = await counts();
     expect(after.sales - before.sales).toBe(2);

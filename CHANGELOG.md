@@ -8,13 +8,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
-- **Off-inventory "free item" lines at the till (0.19 · in progress).** The POS cart has a
+- **Off-inventory "free item" lines at the till (0.19).** The POS cart has a
   "Free item" button: a name and a price typed in (a service, a repair, a one-off), quantity 1–999.
   It takes the default tax rate and its price includes tax, like a catalogue product. No stock
   moves and no cost is booked, so the margin is the whole price. The line survives suspend/resume,
   appears on the receipt and can be refunded (restocking is a no-op for it). Each completed sale
   with free lines is audited with the typed names and prices (`sale.completed` → `freeItems`).
-- **Cart stations: sell PC time now, the PC starts later (0.19 · in progress).** The POS has a
+- **Cart stations: sell PC time now, the PC starts later (0.19).** The POS has a
   "PC time" button: pick a PC and minutes; the price is that PC's own quote, and the server
   quotes it again when the sale is made. Completing the sale creates a *time credit* for that PC
   (migration `0031_time_credits.sql`). Starting the PC from its station screen then uses it
@@ -25,43 +25,46 @@ All notable changes to LIKApcs are documented here. The format follows
   Parking a sale that holds PC time is refused — it is completed or removed.
   Migration `0032_time_credit_sessions.sql` lets a credit-started session be billed without a
   sale of its own, with `time_credit_id` recording which credit paid for it.
-- **Simple installments on a pay-later sale (0.19 · in progress).** The "Pay later" tender has an
+- **Simple installments on a pay-later sale (0.19).** The "Pay later" tender has an
   optional *Installments* count (2–24). The debt records it (migration `0033_debt_installments.sql`),
   each repayment counts as one part, and the debt shows "N of M paid · next part X". No dates are
   scheduled — the due date still applies. Installments are refused on any tender but pay-later.
   Combined with the off-inventory item, this sells a PC build or service paid in parts.
-- **Product variants — size, colour… (0.19 · in progress).** A variant is a product of its own: its
+- **Product variants — size, colour… (0.19).** A variant is a product of its own: its
   own barcode, selling price and stock. In Products, a product can be a *variant of* a main product
   and carries a label ("M", "42", "Red"); the main product lists its variant count. One level only:
   a variant cannot have variants, and a main product with variants cannot become one. Selling a
   variant moves only its stock. A main product with variants cannot be deleted (archive it instead).
   Migration `0034_product_variants.sql`.
-- **Per-PC look and wallpaper (0.20 · in progress).** Stations › *Look & wallpaper* sets one PC's
+- **Per-PC look and wallpaper (0.20).** Stations › *Look & wallpaper* sets one PC's
   own widget size, position, design, colour and ads on/off; *House setting* leaves a value to
   Settings › Client screen. Each PC can also have its own lock-screen wallpaper (JPEG, PNG, WebP or
   GIF, scaled down before upload). A change reaches only the PCs it touches, live. Migration
   `0035_station_looks.sql`.
-- **Widget colour (0.20 · in progress).** Settings › Client screen has a *Widget colour* for the
+- **Widget colour (0.20).** Settings › Client screen has a *Widget colour* for the
   countdown widget's accent (Indigo, Emerald, Sky, Amber, Rose, Violet, Mono). A PC can override it.
-- **Layout presets (0.20 · in progress).** Settings › Client screen › *Layout presets* saves the
+- **Layout presets (0.20).** Settings › Client screen › *Layout presets* saves the
   current widget, ads and lock-screen layout under a name. *Apply* loads it into the form and
   *Save* sends it to every PC in one step. Only customer-screen layout keys are stored.
-- **Pay all: every bill waiting at one PC in one step (0.21 · in progress).** When a PC has two or
+- **Pay all: every bill waiting at one PC in one step (0.21).** When a PC has two or
   more bills waiting (pay-at-the-end sessions that ran out or ended), the *To collect* strip shows
   *Collect all at PC n (count)*. One tender step (cash, card or split; no pay-later) covers them
   all, in one transaction: each bill gets its own sale and receipt, open order lines included. A
   tender that does not cover every bill is refused and nothing is written; other PCs are not
   touched. Endpoint `POST /stations/:id/collect-all`, audited as `session.collect_all`. A PC with
   nothing waiting gets 409.
-- **Cash book per shift (0.21 · in progress).** Reports has a *Cash book*: one row per cash shift in
+- **Cash book per shift (0.21).** Reports has a *Cash book*: one row per cash shift in
   the range (opening, cash in, cash out, expected, counted, difference). Open a row to see its drawer
   movements. Totals cover all shifts; counted and difference only the closed ones. The export
   kind *Cash book (one row per shift)* writes the same rows as CSV, with local times. Endpoint
   `GET /reports/cash-book`. The older *Cash shifts* table is replaced by this card.
-- **Reports redesign (0.21 · in progress).** Same numbers, new layout. A result card at the top
+- **Reports redesign (0.21).** Same numbers, new layout. A result card at the top
   (net sales minus expenses, with sales split by source). Titled sections: Sales (columns per day and
   per hour), Payments and sources (share bars with a legend, and the tables), Products, staff and
   gaming, Money out and cash. The charts are plain CSS, so they need no library and work offline.
+- **Pay all shows every receipt (0.21).** After a pay-all step, the same *Payment recorded* dialog
+  opens for each bill in turn, with its receipt number, change and Print. The collect response
+  carries each bill's receipt payment (`collected[].payment`).
 
 ## [0.18.1] - 2026-10-14
 
