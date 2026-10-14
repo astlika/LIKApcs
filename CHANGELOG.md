@@ -14,6 +14,17 @@ All notable changes to LIKApcs are documented here. The format follows
   moves and no cost is booked, so the margin is the whole price. The line survives suspend/resume,
   appears on the receipt and can be refunded (restocking is a no-op for it). Each completed sale
   with free lines is audited with the typed names and prices (`sale.completed` → `freeItems`).
+- **Cart stations: sell PC time now, the PC starts later (0.19 · in progress).** The POS has a
+  "PC time" button: pick a PC and minutes; the price is that PC's own quote, and the server
+  quotes it again when the sale is made. Completing the sale creates a *time credit* for that PC
+  (migration `0031_time_credits.sql`). Starting the PC from its station screen then uses it
+  ("Use PC time (paid at the till)", all remaining minutes): no new sale and no second payment.
+  Extending a session can also redeem a credit (`creditId`, minutes only). A credit is bound to
+  its PC and used whole-request only: asking for more minutes than remain is refused.
+  Refunding a PC-time line cancels its credit, but only while none of its minutes were used.
+  Parking a sale that holds PC time is refused — it is completed or removed.
+  Migration `0032_time_credit_sessions.sql` lets a credit-started session be billed without a
+  sale of its own, with `time_credit_id` recording which credit paid for it.
 
 ## [0.18.1] - 2026-10-14
 

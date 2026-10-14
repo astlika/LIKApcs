@@ -63,6 +63,7 @@ import type { SettingsService } from './settings.js';
 import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
+import type { TimeCreditsService } from './time-credits.js';
 import type { StationsService } from './stations.js';
 import { lockCustomers } from '../db/locks.js';
 
@@ -220,6 +221,8 @@ export class SessionsService {
     private readonly cash: CashService,
     private readonly debts: DebtsService,
     private readonly wallet: WalletService,
+    /** 0.19.0: prepaid time sold at the till, redeemed by start / extend. */
+    private readonly credits: TimeCreditsService,
     private readonly log: {
       info: (o: unknown, m?: string) => void;
       warn: (o: unknown, m?: string) => void;
@@ -539,10 +542,14 @@ export class SessionsService {
     }
     const station = await this.stations.getById(req.stationId);
     if (!station.isEnabled) throw conflict('Station is disabled');
+    if (req.creditId && (req.billingMode !== 'prepaid' || req.packageId)) {
+      throw badRequest('A time credit starts a prepaid session by minutes only');
+    }
     const quote = await this.quote(req, now);
     const plannedSeconds = quote.minutes ? quote.minutes * 60 : null;
     let payment: SessionPaymentSummary | null = null;
     let settled = { approved: null as string | null, cancelled: [] as string[] };
+    let redeemed: { creditId: string; minutesLeft: number } | null = null;
 
     const session = await withTransaction(this.pool, async (client) => {
       // Customer first (see db/locks.ts): several PCs started at once on one tab must queue, not
@@ -577,7 +584,7 @@ export class SessionsService {
           now,
           plannedSeconds ? new Date(now.getTime() + plannedSeconds * 1000) : null,
           // Prepaid: the amount paid. End pay: the amount due at the desk when the time ends.
-          req.billingMode === 'postpaid' ? null : quote.priceCents,
+          req.billingMode === 'postpaid' ? null : req.creditId ? 0 : quote.priceCents,
           actor.userId ?? null,
           req.notes ?? null,
           req.clientRequestId ?? null,
@@ -585,13 +592,35 @@ export class SessionsService {
       );
       const id = inserted.rows[0]!.id;
       await this.addEvent(client, id, 'created', actor, { billingMode: req.billingMode, quote });
+      if (req.creditId) {
+        // 0.19.0: the minutes were paid at the till; this takes them from the credit, all or nothing.
+        redeemed = await this.credits.redeem(client, {
+          creditId: req.creditId,
+          stationId: req.stationId,
+          minutes: quote.minutes ?? 0,
+        });
+      }
       await this.addEvent(client, id, 'started', actor, {
         startedAt: now.toISOString(),
         plannedSeconds,
         // End pay (0.14.0): nothing is taken now; the figure is what the desk collects later.
         ...(req.billingMode === 'endpay' ? { dueCents: quote.priceCents, endPay: true } : {}),
+        ...(redeemed ? { creditId: redeemed.creditId, creditMinutes: quote.minutes } : {}),
       });
-      if (req.billingMode === 'prepaid') {
+      if (req.billingMode === 'prepaid' && redeemed) {
+        // Already paid at the till (see sales): no sale here, nothing billed twice. Migration 0032
+        // lets a session be billed by a credit (billed_at, no sale of its own).
+        await client.query(
+          'UPDATE gaming_sessions SET billed_at = $2, final_price_cents = 0, time_credit_id = $3 WHERE id = $1 AND billed_at IS NULL',
+          [id, now, redeemed.creditId],
+        );
+        await this.addEvent(client, id, 'billed', actor, {
+          saleId: null,
+          receiptNo: null,
+          amountCents: 0,
+          creditId: redeemed.creditId,
+        });
+      } else if (req.billingMode === 'prepaid') {
         const sale = await this.recordSale(client, {
           sessionId: id,
           description: `${station.code} · ${quote.minutes} min (prepaid${quote.package ? `: ${quote.package.name}` : ''})`,
@@ -772,30 +801,43 @@ export class SessionsService {
         now,
       );
       const extraSeconds = (quote.minutes ?? 0) * 60;
+      // 0.19.0: minutes from a time credit were paid at the till — they add no price here.
+      const priceCents = req.creditId ? 0 : quote.priceCents;
+      let redeemed: { creditId: string; minutesLeft: number } | null = null;
+      if (req.creditId) {
+        if (req.packageId) throw badRequest('A time credit extends a session by minutes only');
+        redeemed = await this.credits.redeem(client, {
+          creditId: req.creditId,
+          stationId: row.station_id,
+          minutes: quote.minutes ?? 0,
+        });
+      }
       // Prepaid: the extension is paid right now (a second sale). End pay: it is added to the
       // amount the desk collects when the time ends — no money moves here.
-      const sale = endPay
-        ? null
-        : await this.recordSale(client, {
-            sessionId: id,
-            description: `${row.station_code} · +${quote.minutes} min (extension${quote.package ? `: ${quote.package.name}` : ''})`,
-            priceCents: quote.priceCents,
-            discountCents: 0,
-            tenders: req,
-            customerId: row.customer_id,
-            actor,
-            at: now,
-          });
+      const sale =
+        endPay || redeemed
+          ? null
+          : await this.recordSale(client, {
+              sessionId: id,
+              description: `${row.station_code} · +${quote.minutes} min (extension${quote.package ? `: ${quote.package.name}` : ''})`,
+              priceCents: quote.priceCents,
+              discountCents: 0,
+              tenders: req,
+              customerId: row.customer_id,
+              actor,
+              at: now,
+            });
       payment = sale?.payment ?? null;
       await client.query(
         `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
            quoted_price_cents = quoted_price_cents + $3, final_price_cents = final_price_cents + $3, version = version + 1
          WHERE id = $1`,
-        [id, extraSeconds, quote.priceCents],
+        [id, extraSeconds, priceCents],
       );
       await this.addEvent(client, id, 'extended', actor, {
         minutes: quote.minutes,
-        priceCents: quote.priceCents,
+        priceCents,
+        ...(redeemed ? { creditId: redeemed.creditId } : {}),
         saleId: sale?.saleId ?? null,
         receiptNo: sale?.receiptNo ?? null,
         deferred: endPay,

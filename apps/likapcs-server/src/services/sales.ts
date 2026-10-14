@@ -16,6 +16,9 @@ import {
   type CreateSaleRequest,
   type FreeSaleItemInput,
   type ReceiptData,
+  type SessionQuoteRequest,
+  type SessionQuoteResponse,
+  type TimeSaleItemInput,
   type RefundRequest,
   type RefundSummary,
   type DebtStatus,
@@ -40,6 +43,23 @@ import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import { lockCustomers } from '../db/locks.js';
+import type { TimeCreditsService } from './time-credits.js';
+
+/** The part of SessionsService that prices a PC-time line (0.19.0). */
+export interface TimeLineQuoter {
+  quote(req: SessionQuoteRequest, at?: Date): Promise<SessionQuoteResponse>;
+}
+
+/** A prepaid PC-time line, priced by the server: by sale-item index. */
+interface TimeLine {
+  stationId: string;
+  stationCode: string;
+  minutes: number;
+  priceCents: number;
+}
+type TimeLines = Map<number, TimeLine>;
+
+const isTimeItem = (i: SaleItemInput): i is TimeSaleItemInput => 'stationId' in i;
 
 /** Product ids of a sale request — off-inventory ("free") lines have none (0.19.0). */
 const productIdsOf = (items: readonly SaleItemInput[]): string[] =>
@@ -142,6 +162,8 @@ export class SalesService {
     private readonly cash: CashService,
     private readonly debts: DebtsService,
     private readonly wallet: WalletService,
+    private readonly timeCredits: TimeCreditsService,
+    private readonly sessions: TimeLineQuoter,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -425,17 +447,27 @@ export class SalesService {
   /** Parks a sale (no stock change, no payment, no receipt number) to be completed later. */
   async suspend(input: SuspendSaleRequest, actor: SaleActor): Promise<SaleDetail> {
     if (!actor.permissions.has('pos.suspend')) throw forbidden('Missing permission: pos.suspend');
+    // A parked sale is resumed as it was typed; PC time has no product to resume from, and its
+    // credit is only made when the sale is paid. So it is completed or removed, never parked.
+    if (input.items.some(isTimeItem)) {
+      throw conflict('PC time cannot be parked — complete the sale or remove the PC time line', {
+        code: 'TIME_NOT_PARKABLE',
+      });
+    }
     return withTransaction(this.pool, async (client) => {
       const saleId = await this.insertSaleShell(client, input, actor, 'suspended');
       const products = await this.loadProducts(client, productIdsOf(input.items), false);
+      const timeLines = await this.priceTimeLines(client, input.items, new Date());
       const totals = this.compute(
         input,
         products,
         actor,
         await this.defaultTaxRate(client),
         await this.customerTerms(client, input.customerId),
+        undefined,
+        timeLines,
       );
-      await this.writeLines(client, saleId, input, products, totals);
+      await this.writeLines(client, saleId, input, products, totals, timeLines);
       await client.query(
         `UPDATE sales SET subtotal_cents = $2, discount_cents = $3, tax_cents = $4, total_cents = $5 WHERE id = $1`,
         [saleId, totals.subtotalCents, totals.discountCents, totals.taxCents, totals.totalCents],
@@ -537,6 +569,8 @@ export class SalesService {
         const idx = lines.rows.findIndex((l) => Number(l.id) === item.saleItemId);
         if (idx < 0) throw badRequest(`Line ${item.saleItemId} does not belong to this sale`);
         const line = lines.rows[idx]!;
+        // PC time sold on this line: refused once any of it was used; otherwise the credit goes.
+        await this.timeCredits.cancelForSaleItem(client, Number(line.id), actor);
         const remainingMilli = Number(line.quantity_milli) - Number(line.refunded_milli);
         if (item.quantityMilli > remainingMilli) {
           throw conflict('Refund quantity exceeds what was sold', {
@@ -716,14 +750,25 @@ export class SalesService {
     actor: SaleActor,
     defaultRate: number,
     customer: CustomerTerms | null,
-    fixedPrices?: Map<string, number>,
+    fixedPrices: Map<string, number> | undefined,
+    timeLines: TimeLines,
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
     if (hasDiscount && !actor.permissions.has('pos.discount')) {
       throw forbidden('Discounts require the pos.discount permission');
     }
     if (fixedPrices) customer = null;
-    const lines = input.items.map((i) => {
+    const lines = input.items.map((i, idx) => {
+      if (isTimeItem(i)) {
+        // PC time: the station's quoted price (tax included, default rate), one unit.
+        return {
+          unitPriceCents: timeLines.get(idx)!.priceCents,
+          quantityMilli: 1000,
+          discountCents: i.discountCents,
+          taxRateBp: defaultRate,
+          priceIncludesTax: true,
+        };
+      }
       if (!('productId' in i)) {
         // Off-inventory line: the typed price, the default tax, prices include tax.
         return {
@@ -783,21 +828,29 @@ export class SalesService {
     input: SuspendSaleRequest,
     products: Map<string, ProductForSale>,
     totals: ReturnType<typeof computeSale>,
-  ): Promise<void> {
+    timeLines: TimeLines,
+  ): Promise<Map<number, number>> {
+    const saleItemIds = new Map<number, number>();
     for (const [i, line] of totals.lines.entries()) {
       const item = input.items[i]!;
-      // Off-inventory lines book no product and no cost: their margin is the whole price.
+      const time = timeLines.get(i);
+      // Off-inventory and PC-time lines book no product and no cost: their margin is the whole price.
       const p = 'productId' in item ? products.get(item.productId)! : null;
       const unitCost = p ? Number(p.average_cost_cents) || Number(p.purchase_cost_cents) : 0;
-      await client.query(
+      const description = time
+        ? `${time.stationCode} · ${time.minutes} min`
+        : p
+          ? p.name
+          : (item as FreeSaleItemInput).description;
+      const r = await client.query<{ id: string }>(
         `INSERT INTO sale_items (sale_id, line_no, product_id, description, quantity_milli, unit_price_cents, discount_cents,
                                  tax_rate_bp, tax_cents, line_total_cents, cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
           saleId,
           i + 1,
           p?.id ?? null,
-          p ? p.name : (item as FreeSaleItemInput).description,
+          description,
           line.quantityMilli,
           line.unitPriceCents,
           line.discountCents,
@@ -807,7 +860,39 @@ export class SalesService {
           Math.round((unitCost * line.quantityMilli) / 1000),
         ],
       );
+      saleItemIds.set(i, Number(r.rows[0]!.id));
     }
+    return saleItemIds;
+  }
+
+  /**
+   * 0.19.0: prices every PC-time line at the station's own quote, right now, and checks the PC
+   * exists. The client's price is never used.
+   */
+  private async priceTimeLines(
+    client: DbClient,
+    items: readonly SaleItemInput[],
+    at: Date,
+  ): Promise<TimeLines> {
+    const out: TimeLines = new Map();
+    for (const [idx, item] of items.entries()) {
+      if (!isTimeItem(item)) continue;
+      const st = await client.query<{ code: string }>('SELECT code FROM stations WHERE id = $1', [
+        item.stationId,
+      ]);
+      if (!st.rows[0]) throw notFound('PC');
+      const quote = await this.sessions.quote(
+        { stationId: item.stationId, billingMode: 'prepaid', minutes: item.minutes },
+        at,
+      );
+      out.set(idx, {
+        stationId: item.stationId,
+        stationCode: st.rows[0].code,
+        minutes: item.minutes,
+        priceCents: quote.priceCents,
+      });
+    }
+    return out;
   }
 
   private async fillAndComplete(
@@ -819,6 +904,7 @@ export class SalesService {
     fixedPrices?: Map<string, number>,
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
+    const timeLines = await this.priceTimeLines(client, input.items, new Date());
     const totals = this.compute(
       input,
       products,
@@ -826,6 +912,7 @@ export class SalesService {
       await this.defaultTaxRate(client),
       await this.customerTerms(client, input.customerId),
       fixedPrices,
+      timeLines,
     );
     let settled: { paidCents: number; changeCents: number };
     try {
@@ -834,7 +921,18 @@ export class SalesService {
       if (err instanceof SaleMathError) throw badRequest(err.message, { code: 'PAYMENT' });
       throw err;
     }
-    await this.writeLines(client, saleId, input, products, totals);
+    const saleItemIds = await this.writeLines(client, saleId, input, products, totals, timeLines);
+    // PC time sold: one credit per time line, redeemed at that PC later (0.19.0).
+    for (const [idx, time] of timeLines) {
+      await this.timeCredits.create(client, {
+        saleId,
+        saleItemId: saleItemIds.get(idx)!,
+        stationId: time.stationId,
+        minutes: time.minutes,
+        priceCents: totals.lines[idx]!.lineTotalCents,
+        actor,
+      });
+    }
     // Stock: aggregate per product (the same product may appear on several lines).
     const perProduct = new Map<string, number>();
     for (const item of input.items) {
@@ -945,9 +1043,13 @@ export class SalesService {
         items: input.items.length,
         // 0.19.0: off-inventory lines are typed at the till — the audit keeps how many and what.
         freeItems: input.items.flatMap((i) =>
-          'productId' in i
+          'productId' in i || isTimeItem(i)
             ? []
             : [{ description: i.description, unitPriceCents: i.unitPriceCents }],
+        ),
+        // 0.19.0: PC time sold at the till — each line's station and minutes.
+        timeItems: input.items.flatMap((i) =>
+          isTimeItem(i) ? [{ stationId: i.stationId, minutes: i.minutes }] : [],
         ),
         methods: [...new Set(payments.map((p) => p.method))],
       },

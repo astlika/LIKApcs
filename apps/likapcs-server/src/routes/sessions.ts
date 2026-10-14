@@ -33,6 +33,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/sessions', view, async (request) =>
     services.sessions.list(sessionListQuerySchema.parse(request.query)),
   );
+  // 0.19.0: open prepaid-time credits (sold at the till) — optionally for one PC.
+  app.get('/time-credits', view, async (request) => {
+    const q = z.object({ stationId: uuidSchema.optional() }).parse(request.query);
+    return { credits: await services.timeCredits.open(q.stationId) };
+  });
+
   app.get('/sessions/:id', view, async (request) =>
     services.sessions.getById(idParams.parse(request.params).id),
   );

@@ -731,6 +731,17 @@ export const en = {
     freeItemNameInvalid: 'Type a name (up to 120 characters).',
     freeItemPriceInvalid: 'Type a price, e.g. 2.50 (zero or more).',
     freeItemQtyInvalid: 'Quantity: a whole number from 1 to 999.',
+    timeItem: 'PC time',
+    timeItemTag: 'PC time',
+    timeItemHint:
+      'Sell minutes on a PC now. The PC starts later from its station screen, using this sale — no second payment.',
+    timeItemStation: 'PC',
+    timeItemMinutes: 'Minutes',
+    timeItemQuote: 'Price (incl. tax)',
+    timeItemAdd: 'Add to sale',
+    timeItemNoStations: 'No PC is available.',
+    timeItemInvalid: 'Choose a PC and a whole number of minutes from 1 to 1440.',
+    timeItemNotParkable: 'PC time cannot be parked. Complete the sale or remove the PC time line.',
 
     qty: 'Qty',
     lineDiscount: 'Line discount',
@@ -963,6 +974,8 @@ export const en = {
     debtNote: 'Pay later: {amount} due by {date}',
   },
   map: {
+    useCredit: 'Use PC time (paid at the till)',
+    useCreditSub: '{n} min ready',
     free: 'free',
     inUse: 'in use',
     paused: 'paused',

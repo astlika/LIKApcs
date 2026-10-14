@@ -35,6 +35,7 @@ import { CatalogService } from './services/catalog.js';
 import { MaintenanceService } from './services/maintenance.js';
 import { ProductImageStore } from './services/product-images.js';
 import { SalesService } from './services/sales.js';
+import { TimeCreditsService } from './services/time-credits.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { CustomersService } from './services/customers.js';
@@ -85,6 +86,7 @@ export interface Services {
   ads: AdsService;
   maintenance: MaintenanceService;
   sales: SalesService;
+  timeCredits: TimeCreditsService;
   cash: CashService;
   expenses: ExpensesService;
   customers: CustomersService;
@@ -181,6 +183,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // Customer balance (0.11.0): spent inside sale / bill / debt transactions, told to the PCs.
   const wallet = new WalletService(pool, settings, cash, hub);
   const debts = new DebtsService(pool, settings, cash, wallet);
+  // 0.19.0: prepaid PC time sold at the till (sales create credits, sessions redeem them).
+  const timeCredits = new TimeCreditsService(pool);
   const sessions = new SessionsService(
     pool,
     hub,
@@ -190,6 +194,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cash,
     debts,
     wallet,
+    timeCredits,
     app.log,
   );
   const requests = new SessionRequestsService(pool, hub, settings, stations, {
@@ -209,7 +214,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     productImages,
     new AdVideoStore(path.join(config.uploadDir, 'videos')),
   );
-  const sales = new SalesService(pool, settings, cash, debts, wallet);
+  const sales = new SalesService(pool, settings, cash, debts, wallet, timeCredits, sessions);
   // Orders from the PC (0.10.0): accepted "pay now" through the sales service, "on the bill"
   // settled inside the session's end transaction.
   const orders = new OrdersService(pool, hub, settings, stations, sales);
@@ -262,6 +267,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     catalog,
     ads,
     sales,
+    timeCredits,
     cash,
     expenses,
     customers,

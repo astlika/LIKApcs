@@ -741,6 +741,18 @@ export const sq: Dictionary = {
     freeItemNameInvalid: 'Shkruani një emërtim (deri në 120 karaktere).',
     freeItemPriceInvalid: 'Shkruani një çmim, p.sh. 2.50 (zero ose më shumë).',
     freeItemQtyInvalid: 'Sasia: numër i plotë nga 1 deri në 999.',
+    timeItem: 'Kohë PC',
+    timeItemTag: 'kohë PC',
+    timeItemHint:
+      'Shitni minuta në një PC tani. PC-ja niset më vonë nga ekrani i stacionit, me këtë shitje — pa pagesë të dytë.',
+    timeItemStation: 'PC',
+    timeItemMinutes: 'Minuta',
+    timeItemQuote: 'Çmimi (me tatim)',
+    timeItemAdd: 'Shto në shitje',
+    timeItemNoStations: 'Nuk ka PC të disponueshme.',
+    timeItemInvalid: 'Zgjidhni një PC dhe një numër të plotë minutash nga 1 deri në 1440.',
+    timeItemNotParkable:
+      'Kohës së PC-së nuk i bëhet parkim. Përfundoni shitjen ose hiqni rreshtin e kohës.',
 
     qty: 'Sasia',
     lineDiscount: 'Zbritje në rresht',
@@ -972,6 +984,8 @@ export const sq: Dictionary = {
     debtNote: 'Borxh: {amount} deri më {date}',
   },
   map: {
+    useCredit: 'Përdor kohën e PC-së (e paguar te arka)',
+    useCreditSub: '{n} min gati',
     free: 'të lira',
     inUse: 'në përdorim',
     paused: 'në pauzë',

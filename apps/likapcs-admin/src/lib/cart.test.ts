@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProductSummary } from '@likapcs/shared';
 import {
   addFreeItem,
+  addTimeItem,
   addToCart,
   cartToRequest,
   cartTotals,
@@ -151,5 +152,44 @@ describe('ScanBuffer', () => {
       { description: 'Service', unitPriceCents: 300, quantityMilli: 1000, discountCents: 0 },
       { productId: 'p1', quantityMilli: 1000, discountCents: 0 },
     ]);
+  });
+
+  it('0.19.0: a PC-time line is one unit per booking, priced by the quote, and sent as stationId + minutes', () => {
+    let cart = addTimeItem(
+      emptyCart(),
+      { stationId: 's1', stationCode: 'PC-03', minutes: 60, unitPriceCents: 600, taxRateBp: 0 },
+      () => 'a',
+    );
+    cart = addTimeItem(
+      cart,
+      { stationId: 's2', stationCode: 'PC-04', minutes: 30, unitPriceCents: 300, taxRateBp: 0 },
+      () => 'b',
+    );
+    expect(cart.lines.map((l) => lineKey(l))).toEqual(['time:a', 'time:b']);
+    expect(lineName(cart.lines[0]!)).toBe('PC-03 · 60 min');
+    // Quantity is fixed for PC time: the edit is ignored, not turned into a second booking.
+    cart = setQuantity(cart, 'time:a', 3000);
+    expect(cart.lines[0]!).toMatchObject({ quantityMilli: 1000 });
+    expect(cartTotals(cart).totalCents).toBe(600 + 300);
+    cart = setLineDiscount(cart, 'time:b', 50);
+    expect(cartTotals(cart).totalCents).toBe(600 + 250);
+    expect(cartToRequest(cart).items).toEqual([
+      { stationId: 's1', minutes: 60, discountCents: 0 },
+      { stationId: 's2', minutes: 30, discountCents: 50 },
+    ]);
+    cart = removeLine(cart, 'time:a');
+    expect(cart.lines.map((l) => lineKey(l))).toEqual(['time:b']);
+  });
+
+  it('0.19.0: a PC-time line never changes a product line into something else', () => {
+    let cart = addToCart(emptyCart(), product({}), 1000);
+    cart = addTimeItem(
+      cart,
+      { stationId: 's1', stationCode: 'PC-03', minutes: 60, unitPriceCents: 600, taxRateBp: 0 },
+      () => 'a',
+    );
+    cart = addToCart(cart, product({}), 1000);
+    expect(cart.lines[0]).toMatchObject({ kind: 'product', quantityMilli: 2000 });
+    expect(cart.lines[1]).toMatchObject({ kind: 'time', minutes: 60 });
   });
 });

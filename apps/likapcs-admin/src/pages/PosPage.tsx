@@ -18,6 +18,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
+  Clock,
   Minus,
   PauseCircle,
   Plus,
@@ -42,6 +43,7 @@ import {
 import { api, ApiError, fileUrl } from '../lib/api';
 import {
   addFreeItem,
+  addTimeItem,
   addToCart,
   cartItemCount,
   cartToRequest,
@@ -56,6 +58,7 @@ import {
   unitPriceOf,
 } from '../lib/cart';
 import { FreeItemDialog } from '../components/pos/FreeItemDialog';
+import { TimeItemDialog } from '../components/pos/TimeItemDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -104,9 +107,9 @@ export function PosPage() {
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
-  const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | 'freeItem' | null>(
-    null,
-  );
+  const [dialog, setDialog] = useState<
+    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
+  >(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
@@ -464,6 +467,14 @@ export function PosPage() {
           >
             <Plus size={14} /> {t('pos.freeItem')}
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setDialog('timeItem')}
+            data-testid="pos-time-item"
+          >
+            <Clock size={14} /> {t('pos.timeItem')}
+          </Button>
         </div>
         <div className="pos__customer">
           <CustomerPicker
@@ -489,6 +500,9 @@ export function PosPage() {
                     {line.kind === 'free' && (
                       <span className="faint"> · {t('pos.freeItemTag')}</span>
                     )}
+                    {line.kind === 'time' && (
+                      <span className="faint"> · {t('pos.timeItemTag')}</span>
+                    )}
                   </div>
                   <div className="pos-line__price faint num">
                     {fmt.money(unit)} × {line.quantityMilli / 1000}
@@ -498,30 +512,36 @@ export function PosPage() {
                   </div>
                 </div>
                 <div className="pos-line__qty">
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
-                    aria-label="−"
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <QtyInput
-                    quantityMilli={line.quantityMilli}
-                    label={t('pos.qty')}
-                    onCommit={(milli) => {
-                      setCart((c) => setQuantity(c, key, milli));
-                      focusSearch();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
-                    aria-label="+"
-                  >
-                    <Plus size={14} />
-                  </button>
+                  {line.kind === 'time' ? (
+                    <span className="faint num">1</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
+                        aria-label="−"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <QtyInput
+                        quantityMilli={line.quantityMilli}
+                        label={t('pos.qty')}
+                        onCommit={(milli) => {
+                          setCart((c) => setQuantity(c, key, milli));
+                          focusSearch();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
+                        aria-label="+"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
@@ -601,7 +621,12 @@ export function PosPage() {
             {canSuspend && (
               <>
                 <Button
-                  disabled={cart.lines.length === 0}
+                  disabled={cart.lines.length === 0 || cart.lines.some((l) => l.kind === 'time')}
+                  title={
+                    cart.lines.some((l) => l.kind === 'time')
+                      ? t('pos.timeItemNotParkable')
+                      : undefined
+                  }
                   loading={suspend.isPending}
                   onClick={() => suspend.mutate()}
                 >
@@ -692,6 +717,19 @@ export function PosPage() {
           }}
           onAdd={(item) => {
             setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'timeItem' && (
+        <TimeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onAdd={(item) => {
+            setCart((c) => addTimeItem(c, { ...item, taxRateBp: defaultTaxBp }));
             setDialog(null);
             focusSearch();
           }}

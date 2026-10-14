@@ -679,6 +679,8 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   clientRequestId: z.string().min(8).max(64).optional(),
   /** Approving a customer's request: it is marked approved in the same transaction (once). */
   requestId: z.string().uuid().optional(),
+  /** 0.19.0: start with minutes from a time credit sold for this PC (prepaid, minutes only). */
+  creditId: z.string().uuid().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
 
@@ -695,6 +697,8 @@ export const extendSessionSchema = z
     clientRequestId: z.string().min(8).max(64).optional(),
     /** Approving a customer's extension request (see startSessionSchema.requestId). */
     requestId: z.string().uuid().optional(),
+    /** 0.19.0: extend with minutes from a time credit sold for this PC (minutes only). */
+    creditId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
@@ -1182,10 +1186,40 @@ export const freeSaleItemSchema = z.object({
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
 });
 
-export const saleItemInputSchema = z.union([productSaleItemSchema, freeSaleItemSchema]);
+/**
+ * 0.19.0: prepaid PC time sold at the till — "PC 3 · 60 min". The price is the station's own
+ * quote (the server prices it); the line creates a time credit that the desk redeems at that PC.
+ */
+export const timeSaleItemSchema = z.object({
+  stationId: z.string().uuid(),
+  minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+});
+
+export const saleItemInputSchema = z.union([
+  productSaleItemSchema,
+  freeSaleItemSchema,
+  timeSaleItemSchema,
+]);
 export type ProductSaleItemInput = z.infer<typeof productSaleItemSchema>;
 export type FreeSaleItemInput = z.infer<typeof freeSaleItemSchema>;
+export type TimeSaleItemInput = z.infer<typeof timeSaleItemSchema>;
 export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
+
+/** 0.19.0: an open prepaid-time credit at a PC (see `GET /time-credits`). */
+export interface TimeCreditSummary {
+  id: string;
+  stationId: string;
+  stationCode: string;
+  minutesTotal: number;
+  minutesRemaining: number;
+  saleId: string;
+  createdAt: string;
+}
 
 export const salePaymentInputSchema = z.object({
   method: z.enum(SALE_PAYMENT_METHODS),

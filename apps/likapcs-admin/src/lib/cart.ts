@@ -2,8 +2,9 @@
  * POS cart state (pure functions; the server recomputes everything on submission).
  * Quantities are milli-units, money is integer cents — identical to the server model.
  *
- * 0.19.0: a line is either a catalogue product (stock, tax and price from the product row) or an
- * off-inventory \"free\" line — a name and a price typed at the till, default tax, no stock.
+ * 0.19.0: a line is a catalogue product (stock, tax and price from the product row), an
+ * off-inventory "free" line (a name and a price typed at the till, default tax, no stock), or a
+ * "time" line (prepaid PC minutes sold now — the server prices it and creates a credit for the PC).
  */
 import {
   computeSale,
@@ -32,7 +33,23 @@ export interface FreeLine {
   discountCents: number;
 }
 
-export type CartLine = ProductLine | FreeLine;
+/** Prepaid PC time (0.19.0). One unit per line; the server re-quotes the price on submission. */
+export interface TimeLine {
+  kind: 'time';
+  /** Stable key of this line: each addition is its own line (two PCs, or two bookings). */
+  key: string;
+  stationId: string;
+  stationCode: string;
+  minutes: number;
+  /** Gross price as quoted for the PC right now (includes tax, like the catalogue). */
+  unitPriceCents: number;
+  taxRateBp: number;
+  /** Always one unit: PC time is sold per booking, its quantity is not editable. */
+  quantityMilli: 1000;
+  discountCents: number;
+}
+
+export type CartLine = ProductLine | FreeLine | TimeLine;
 
 export interface Cart {
   lines: CartLine[];
@@ -58,7 +75,11 @@ export const emptyCart = (): Cart => ({
 
 /** The line's key: the product id, or the free line's own key. */
 export const lineKey = (l: CartLine): string => (l.kind === 'product' ? l.product.id : l.key);
-export const lineName = (l: CartLine): string => (l.kind === 'product' ? l.product.name : l.name);
+export const lineName = (l: CartLine): string => {
+  if (l.kind === 'product') return l.product.name;
+  if (l.kind === 'time') return `${l.stationCode} · ${l.minutes} min`;
+  return l.name;
+};
 
 /** Adds a product; the same product merges into one line (quantity accumulates). */
 export function addToCart(cart: Cart, product: ProductSummary, quantityMilli = 1000): Cart {
@@ -71,6 +92,7 @@ export function addToCart(cart: Cart, product: ProductSummary, quantityMilli = 1
   }
   const lines = cart.lines.slice();
   const line = lines[idx]!;
+  if (line.kind !== 'product') return cart;
   lines[idx] = { ...line, quantityMilli: line.quantityMilli + quantityMilli };
   return { ...cart, lines };
 }
@@ -93,11 +115,39 @@ export function addFreeItem(
   return { ...cart, lines: [...cart.lines, line] };
 }
 
+/** Adds PC time (0.19.0): its own line, priced by the caller's quote for that PC. */
+export function addTimeItem(
+  cart: Cart,
+  input: {
+    stationId: string;
+    stationCode: string;
+    minutes: number;
+    unitPriceCents: number;
+    taxRateBp: number;
+  },
+  newKey: () => string = newRequestId,
+): Cart {
+  const line: TimeLine = {
+    kind: 'time',
+    key: `time:${newKey()}`,
+    stationId: input.stationId,
+    stationCode: input.stationCode,
+    minutes: input.minutes,
+    unitPriceCents: input.unitPriceCents,
+    taxRateBp: input.taxRateBp,
+    quantityMilli: 1000,
+    discountCents: 0,
+  };
+  return { ...cart, lines: [...cart.lines, line] };
+}
+
 export function setQuantity(cart: Cart, key: string, quantityMilli: number): Cart {
   if (quantityMilli <= 0) return removeLine(cart, key);
   return {
     ...cart,
-    lines: cart.lines.map((l) => (lineKey(l) === key ? { ...l, quantityMilli } : l)),
+    lines: cart.lines.map((l) =>
+      lineKey(l) === key && l.kind !== 'time' ? { ...l, quantityMilli } : l,
+    ),
   };
 }
 
@@ -134,7 +184,7 @@ export function cartTotals(
   memberDiscountBp = 0,
 ): SaleTotals & { memberDiscount: boolean } {
   const lines = cart.lines.map((l) => {
-    if (l.kind === 'free') {
+    if (l.kind === 'free' || l.kind === 'time') {
       const gross = Math.round((l.unitPriceCents * l.quantityMilli) / 1000);
       return {
         unitPriceCents: l.unitPriceCents,
@@ -167,20 +217,24 @@ export function cartItemCount(cart: Cart): number {
 /** Request body for POST /sales or /sales/suspend (payments added by the caller). */
 export function cartToRequest(cart: Cart) {
   return {
-    items: cart.lines.map((l) =>
-      l.kind === 'product'
-        ? {
-            productId: l.product.id,
-            quantityMilli: l.quantityMilli,
-            discountCents: l.discountCents,
-          }
-        : {
-            description: l.name,
-            unitPriceCents: l.unitPriceCents,
-            quantityMilli: l.quantityMilli,
-            discountCents: l.discountCents,
-          },
-    ),
+    items: cart.lines.map((l) => {
+      if (l.kind === 'product') {
+        return {
+          productId: l.product.id,
+          quantityMilli: l.quantityMilli,
+          discountCents: l.discountCents,
+        };
+      }
+      if (l.kind === 'time') {
+        return { stationId: l.stationId, minutes: l.minutes, discountCents: l.discountCents };
+      }
+      return {
+        description: l.name,
+        unitPriceCents: l.unitPriceCents,
+        quantityMilli: l.quantityMilli,
+        discountCents: l.discountCents,
+      };
+    }),
     discountCents: cart.discountCents,
     customerId: cart.customerId,
     notes: cart.notes.trim() || undefined,

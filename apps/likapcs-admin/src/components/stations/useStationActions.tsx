@@ -42,6 +42,7 @@ import {
   type StationCommandResponse,
   type StationSummary,
   type StationWakeResponse,
+  type TimeCreditSummary,
   type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
@@ -833,6 +834,14 @@ export function QuickStartDialog({
   );
   const bulk = others.length > 0;
 
+  // 0.19.0: PC time sold at the till for this PC, not yet used (a single start only).
+  const credits = useQuery({
+    queryKey: ['time-credits', station.id],
+    queryFn: () =>
+      api<{ credits: TimeCreditSummary[] }>('/time-credits', { query: { stationId: station.id } }),
+    enabled: !others.length,
+    staleTime: 0,
+  });
   const packages = useQuery({
     queryKey: ['pricing', 'packages', 'available', station.id],
     queryFn: () =>
@@ -1060,6 +1069,26 @@ export function QuickStartDialog({
         </div>
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
         <div className="start-grid">
+          {(credits.data?.credits ?? []).map((cr) => (
+            <button
+              key={cr.id}
+              type="button"
+              className="start-tile"
+              disabled={start.isPending || quoting}
+              onClick={() =>
+                start.mutate({
+                  body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
+                })
+              }
+              data-testid="start-use-credit"
+            >
+              <Timer size={22} />
+              <span className="start-tile__title">{t('map.useCredit')}</span>
+              <span className="start-tile__sub">
+                {t('map.useCreditSub', { n: cr.minutesRemaining })}
+              </span>
+            </button>
+          ))}
           <button
             type="button"
             className="start-tile start-tile--open"
