@@ -15,6 +15,7 @@ import {
   type SalesReport,
 } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, getToken } from '../lib/api';
+import { CashBookCard } from '../components/reports/CashBookCard';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -395,7 +396,7 @@ export function ReportsPage() {
             </Card>
           </div>
 
-          <div className="grid grid--2" style={{ alignItems: 'start' }}>
+          <div className="stack">
             <Card title={t('reports.expensesByCategory')}>
               <BucketTable
                 rows={r.expenses.byCategory.map((b) => ({ ...b, label: b.label ?? b.key }))}
@@ -403,50 +404,9 @@ export function ReportsPage() {
                 countLabel={t('expenses.count')}
               />
             </Card>
-            <Card title={t('reports.cashShifts')}>
-              {r.cash.shifts.length === 0 ? (
-                <p className="muted">{t('common.none')}</p>
-              ) : (
-                <>
-                  <p className="muted" style={{ marginTop: 0 }}>
-                    {t('reports.cashShiftsSummary', {
-                      count: r.cash.shiftsCount,
-                      difference: fmt.money(r.cash.differenceCents),
-                    })}
-                  </p>
-                  <table className="table table--compact">
-                    <thead>
-                      <tr>
-                        <th>{t('cash.opened')}</th>
-                        <th>{t('cash.register')}</th>
-                        <th className="right">{t('cash.expectedCash')}</th>
-                        <th className="right">{t('cash.difference')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {r.cash.shifts.map((s) => (
-                        <tr key={s.id}>
-                          <td className="num">
-                            {fmt.dateTime(s.openedAt)}
-                            <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
-                              {s.openedBy.name}
-                            </span>
-                          </td>
-                          <td>{s.registerName}</td>
-                          <td className="right num">
-                            {s.expectedCashCents != null ? fmt.money(s.expectedCashCents) : '—'}
-                          </td>
-                          <td className={`right num ${s.differenceCents ? 'text-danger' : ''}`}>
-                            {s.differenceCents != null ? fmt.money(s.differenceCents) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
-            </Card>
           </div>
+
+          <CashBookCard from={range.from} to={range.to} enabled={valid} />
         </div>
       )}
     </>

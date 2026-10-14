@@ -2011,12 +2011,47 @@ export interface SalesReport {
   generatedAt: string;
 }
 
+/**
+ * 0.21.0 — the cash book: one row per cash shift that overlaps the range. Money is integer cents;
+ * `cashInCents` and `cashOutCents` are magnitudes (every drawer movement except the opening float),
+ * so `expectedCashCents = openingCents + cashInCents − cashOutCents`. Counted and difference are
+ * null while the shift is open.
+ */
+export interface CashBookRow {
+  shift: CashShiftSummary;
+  cashInCents: number;
+  cashOutCents: number;
+  expectedCashCents: number;
+  movements: CashMovementSummary[];
+}
+
+export interface CashBookTotals {
+  shiftsCount: number;
+  openShiftsCount: number;
+  openingCents: number;
+  cashInCents: number;
+  cashOutCents: number;
+  expectedCashCents: number;
+  /** Closed shifts only: the counted cash and the difference, summed. */
+  countedCashCents: number;
+  differenceCents: number;
+}
+
+export interface CashBookReport {
+  from: string;
+  to: string;
+  rows: CashBookRow[];
+  totals: CashBookTotals;
+  generatedAt: string;
+}
+
 export const REPORT_EXPORT_KINDS = [
   'sales',
   'sale_items',
   'expenses',
   'sessions',
   'shifts',
+  'cash_book',
 ] as const;
 export type ReportExportKind = (typeof REPORT_EXPORT_KINDS)[number];
 export const reportExportQuerySchema = reportRangeSchema.extend({

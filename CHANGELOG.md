@@ -53,6 +53,11 @@ All notable changes to LIKApcs are documented here. The format follows
   tender that does not cover every bill is refused and nothing is written; other PCs are not
   touched. Endpoint `POST /stations/:id/collect-all`, audited as `session.collect_all`. A PC with
   nothing waiting gets 409.
+- **Cash book per shift (0.21 · in progress).** Reports has a *Cash book*: one row per cash shift in
+  the range (opening, cash in, cash out, expected, counted, difference). Open a row to see its drawer
+  movements. Totals cover all shifts; counted and difference only the closed ones. The export
+  kind *Cash book (one row per shift)* writes the same rows as CSV, with local times. Endpoint
+  `GET /reports/cash-book`. The older *Cash shifts* table is replaced by this card.
 
 ## [0.18.1] - 2026-10-14
 
