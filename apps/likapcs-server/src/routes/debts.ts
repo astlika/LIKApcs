@@ -35,6 +35,11 @@ export const debtRoutes: FastifyPluginAsync = async (app) => {
     services.debts.list(debtListQuerySchema.parse(request.query)),
   );
   app.get('/debts/overview', view, async () => services.debts.overview());
+  /** 0.18.0: one row per customer for the grouped debts page. */
+  app.get('/debts/by-customer', view, async (request) => {
+    const { q } = z.object({ q: z.string().trim().max(120).optional() }).parse(request.query);
+    return services.debts.byCustomer(q);
+  });
   app.get('/debts/:id', view, async (request) => {
     const debt = await services.debts.get(idParams.parse(request.params).id);
     if (!debt) throw notFound('Debt');

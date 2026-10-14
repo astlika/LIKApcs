@@ -13,6 +13,7 @@
  * that will not be paid is written off with a reason (audited).
  */
 import type {
+  DebtCustomerGroup,
   DebtDetail,
   DebtListQuery,
   DebtPaymentRequest,
@@ -252,6 +253,52 @@ export class DebtsService {
       pageSize: query.pageSize,
       total: Number(total.rows[0]!.n),
     };
+  }
+
+  /**
+   * 0.18.0: the debts page groups by customer — one row per name with the open total, the number
+   * of open invoices and the oldest due date. Clicking a name opens that customer's invoices
+   * (the existing `list` with `customerId`, which also shows settled ones).
+   */
+  async byCustomer(q?: string): Promise<DebtCustomerGroup[]> {
+    const params: unknown[] = [];
+    let where = `WHERE d.status IN ('open', 'partial')`;
+    if (q && q.trim()) {
+      params.push(`%${q.trim()}%`);
+      where += ` AND (c.name ILIKE $1 OR c.code ILIKE $1 OR c.phone ILIKE $1)`;
+    }
+    const rows = await this.pool.query<{
+      customer_id: string;
+      name: string;
+      code: string | null;
+      phone: string | null;
+      total_cents: string;
+      n: number;
+      oldest_due: Date | string | null;
+    }>(
+      `SELECT c.id AS customer_id, c.name, c.code, c.phone,
+              COALESCE(SUM(d.amount_cents - d.paid_cents), 0)::bigint::text AS total_cents,
+              count(*)::int AS n,
+              min(d.due_date) AS oldest_due
+         FROM customer_debts d
+         JOIN customers c ON c.id = d.customer_id
+         ${where}
+        GROUP BY c.id, c.name, c.code, c.phone
+        ORDER BY SUM(d.amount_cents - d.paid_cents) DESC, c.name ASC`,
+      params,
+    );
+    return rows.rows.map((r) => ({
+      customerId: r.customer_id,
+      name: r.name,
+      code: r.code,
+      phone: r.phone,
+      totalCents: Number(r.total_cents),
+      count: r.n,
+      oldestDue:
+        r.oldest_due instanceof Date
+          ? r.oldest_due.toISOString().slice(0, 10)
+          : (r.oldest_due ?? null),
+    }));
   }
 
   async overview(): Promise<DebtsOverview> {

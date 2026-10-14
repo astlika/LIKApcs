@@ -23,6 +23,7 @@ import {
   DEBT_LIST_FILTERS,
   PERMISSIONS,
   type DebtDetail,
+  type DebtCustomerGroup,
   type DebtSummary,
   type DebtsOverview,
   type Paginated,
@@ -85,6 +86,14 @@ export function DebtsPage() {
     queryKey: ['debts', 'list', query],
     queryFn: () => api<Paginated<DebtSummary>>('/debts', { query }),
     placeholderData: (prev) => prev,
+    enabled: Boolean(customerId),
+  });
+  // 0.18.0: the main view is one row per customer; clicking a name opens that customer's invoices.
+  const groups = useQuery({
+    queryKey: ['debts', 'by-customer', q.trim()],
+    queryFn: () =>
+      api<DebtCustomerGroup[]>('/debts/by-customer', { query: { q: q.trim() || undefined } }),
+    enabled: !customerId,
   });
   const overview = useQuery({
     queryKey: ['debts', 'overview'],
@@ -111,6 +120,8 @@ export function DebtsPage() {
           icon={<HandCoins size={18} />}
           tone="accent"
           onClick={() => {
+            params.delete('customer');
+            setParams(params, { replace: true });
             setFilter('open');
             setPage(1);
           }}
@@ -122,6 +133,8 @@ export function DebtsPage() {
           icon={<AlertTriangle size={18} />}
           tone={(ov?.overdueCount ?? 0) > 0 ? 'danger' : undefined}
           onClick={() => {
+            params.delete('customer');
+            setParams(params, { replace: true });
             setFilter('overdue');
             setPage(1);
           }}
@@ -132,6 +145,8 @@ export function DebtsPage() {
           icon={<CalendarClock size={18} />}
           tone={(ov?.dueTodayCents ?? 0) > 0 ? 'warning' : undefined}
           onClick={() => {
+            params.delete('customer');
+            setParams(params, { replace: true });
             setFilter('due_today');
             setPage(1);
           }}
@@ -154,20 +169,22 @@ export function DebtsPage() {
           aria-label={t('debts.search')}
           autoFocus
         />
-        <Select
-          value={filter}
-          onChange={(e) => {
-            setFilter(e.target.value as Filter);
-            setPage(1);
-          }}
-          aria-label={t('common.status')}
-        >
-          {DEBT_LIST_FILTERS.map((f) => (
-            <option key={f} value={f}>
-              {t(`debts.filter.${f}` as 'debts.filter.open')}
-            </option>
-          ))}
-        </Select>
+        {customerId && (
+          <Select
+            value={filter}
+            onChange={(e) => {
+              setFilter(e.target.value as Filter);
+              setPage(1);
+            }}
+            aria-label={t('common.status')}
+          >
+            {DEBT_LIST_FILTERS.map((f) => (
+              <option key={f} value={f}>
+                {t(`debts.filter.${f}` as 'debts.filter.open')}
+              </option>
+            ))}
+          </Select>
+        )}
         {customerId && (
           <Badge tone="accent">
             {customerName ?? t('debts.oneCustomer')}
@@ -187,8 +204,62 @@ export function DebtsPage() {
           </Badge>
         )}
       </div>
-      {list.isLoading && <Loading />}
-      {list.isSuccess && list.data.items.length === 0 && (
+      {!customerId && groups.isLoading && <Loading />}
+      {!customerId && groups.isSuccess && groups.data.length === 0 && (
+        <EmptyState icon={<CheckCircle2 size={22} />} title={t('debts.emptyOpen')} />
+      )}
+      {!customerId && groups.isSuccess && groups.data.length > 0 && (
+        <div className="card table-wrap">
+          <table className="table table--clickable" data-testid="debts-customers-table">
+            <thead>
+              <tr>
+                <th>{t('pos.customer')}</th>
+                <th>{t('debts.oldestDue')}</th>
+                <th className="right">{t('debts.invoices')}</th>
+                <th className="right">{t('debts.remaining')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.data.map((g) => (
+                <tr
+                  key={g.customerId}
+                  onClick={() => {
+                    params.set('customer', g.customerId);
+                    setParams(params, { replace: true });
+                    setFilter('all');
+                    setPage(1);
+                  }}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      params.set('customer', g.customerId);
+                      setParams(params, { replace: true });
+                      setFilter('all');
+                      setPage(1);
+                    }
+                  }}
+                  data-testid="debts-customer-row"
+                >
+                  <td>
+                    <strong>{g.name}</strong>
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      {g.code}
+                      {g.phone ? ` · ${g.phone}` : ''}
+                    </div>
+                  </td>
+                  <td className="num">{g.oldestDue ? fmt.date(g.oldestDue) : '—'}</td>
+                  <td className="right num">{g.count}</td>
+                  <td className="right num">
+                    <strong>{fmt.money(g.totalCents)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {customerId && list.isLoading && <Loading />}
+      {customerId && list.isSuccess && list.data.items.length === 0 && (
         <EmptyState
           icon={<CheckCircle2 size={22} />}
           title={
@@ -196,7 +267,7 @@ export function DebtsPage() {
           }
         />
       )}
-      {list.isSuccess && list.data.items.length > 0 && (
+      {customerId && list.isSuccess && list.data.items.length > 0 && (
         <div className="card table-wrap">
           <table className="table table--clickable" data-testid="debts-table">
             <thead>

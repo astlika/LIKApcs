@@ -2,9 +2,11 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  bulkMinutesSchema,
   collectSessionSchema,
   endSessionSchema,
   extendSessionSchema,
+  sessionGiftSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
   startSessionSchema,
@@ -59,6 +61,26 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       extendSessionSchema.parse(request.body),
       actorOf(request),
     ),
+  );
+  /** 0.18.0: free minutes (`sessions.gift`) — the PC celebrates, the audit log remembers who gave them. */
+  app.post(
+    '/sessions/:id/gift',
+    {
+      preHandler: [
+        app.requirePermission(PERMISSIONS.STATIONS_CONTROL),
+        app.requirePermission(PERMISSIONS.SESSIONS_GIFT),
+      ],
+    },
+    async (request) =>
+      services.sessions.gift(
+        idParams.parse(request.params).id,
+        sessionGiftSchema.parse(request.body),
+        actorOf(request),
+      ),
+  );
+  /** 0.18.0: "+ minutes" for every selected PC in one click (gift mode also needs sessions.gift). */
+  app.post('/sessions/bulk-minutes', control, async (request) =>
+    services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
   );
   app.post('/sessions/:id/end', control, async (request) =>
     services.sessions.end(

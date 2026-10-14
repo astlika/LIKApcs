@@ -26,7 +26,13 @@ import {
   type BillingMode,
   type CollectSessionRequest,
   type EndSessionRequest,
+  PERMISSIONS,
   type ExtendSessionRequest,
+  type SessionGiftRequest,
+  type BulkMinutesRequest,
+  type BulkMinutesResult,
+  type BulkMinutesApplied,
+  type BulkMinutesSkipped,
   type ClientSessionBilling,
   type PricingTerms,
   type SessionEventSummary,
@@ -826,6 +832,178 @@ export class SessionsService {
     );
     await this.broadcast(session);
     return { session, client: ack, payment };
+  }
+
+  /**
+   * 0.18.0: free minutes — a gesture from the house (`sessions.gift`). No sale and no money:
+   * the session gets an `extended` event with `gift: true` and price 0, an audit row
+   * (`session.gift`), and the PC plays a celebration so the customer actually sees the gift.
+   */
+  async gift(
+    id: string,
+    req: SessionGiftRequest,
+    actor: SessionActorContext,
+  ): Promise<SessionMutationResult> {
+    let settled = { approved: null as string | null, cancelled: [] as string[] };
+    const session = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id);
+      // Prepaid only: there the paid time is already banked, so extra minutes are truly free.
+      // End-pay/postpaid bill by elapsed time at the end — "free" minutes there would silently
+      // become money, so they are refused instead.
+      if (row.billing_mode !== 'prepaid')
+        throw conflict('Gift minutes apply to prepaid sessions only');
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict(`Session is ${row.status}`);
+      await client.query(
+        `UPDATE gaming_sessions
+            SET planned_seconds = planned_seconds + $2,
+                ends_at = ends_at + make_interval(secs => $2),
+                version = version + 1
+          WHERE id = $1`,
+        [id, req.minutes * 60],
+      );
+      await this.addEvent(client, id, 'extended', actor, {
+        minutes: req.minutes,
+        priceCents: 0,
+        gift: true,
+        reason: req.reason ?? null,
+      });
+      await recordAudit(client, actor, {
+        action: 'session.gift',
+        entityType: 'gaming_session',
+        entityId: id,
+        details: { minutes: req.minutes, reason: req.reason ?? null },
+      });
+      settled = await this.settleRequests(
+        client,
+        {
+          stationId: row.station_id,
+          sessionId: id,
+          approve: null,
+          cancel: { kinds: ['extend'], reason: 'session_extended' },
+        },
+        actor,
+      );
+      return this.getById(id, client);
+    });
+    await this.announceRequests(settled);
+    this.warned.forEach((k) => k.startsWith(`${id}:`) && this.warned.delete(k));
+    // The clock first, then the party: the widget must show the new end time while it celebrates.
+    const ack = await this.mirror(
+      session,
+      'session.extend',
+      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session) },
+      actor,
+    );
+    const deviceId = await this.deviceForStation(session.stationId);
+    if (deviceId && this.hub.isDeviceOnline(deviceId)) {
+      const result = await this.hub.sendCommand(
+        deviceId,
+        'celebrate',
+        { minutes: req.minutes, endsAt: session.endsAt },
+        { timeoutMs: 5000 },
+      );
+      if (!result.ok)
+        this.log.warn(
+          { sessionId: id, error: result.error },
+          'PC did not confirm the gift celebration',
+        );
+    }
+    await this.broadcast(session);
+    return { session, client: ack, payment: null };
+  }
+
+  /**
+   * 0.18.0: "+ minutes" for every selected PC in one click. Each station with a live session is
+   * extended (gift = free, paid = one cash tender per session at the quoted price); stations
+   * without a live session are reported as skipped — nothing half-applies and the desk sees the
+   * exact outcome per PC.
+   */
+  async bulkMinutes(
+    req: BulkMinutesRequest,
+    actor: SessionActorContext,
+  ): Promise<BulkMinutesResult> {
+    if (req.gift && !actor.permissions?.has(PERMISSIONS.SESSIONS_GIFT))
+      throw forbidden('Giving minutes away needs the sessions.gift permission');
+    const applied: BulkMinutesApplied[] = [];
+    const skipped: BulkMinutesSkipped[] = [];
+    let totalCents = 0;
+    const stations = await this.pool.query<{ id: string; code: string }>(
+      `SELECT id, code FROM stations WHERE id = ANY($1::uuid[]) AND archived_at IS NULL`,
+      [req.stationIds],
+    );
+    const codeOf = new Map(stations.rows.map((r) => [r.id, r.code]));
+    for (const stationId of req.stationIds) {
+      const code = codeOf.get(stationId) ?? stationId.slice(0, 8);
+      const live = await this.liveForStation(stationId);
+      if (!live) {
+        skipped.push({ stationId, code, reason: 'no_active_session' });
+        continue;
+      }
+      if (req.gift && live.billingMode !== 'prepaid') {
+        skipped.push({ stationId, code, reason: 'not_extendable', detail: live.billingMode });
+        continue;
+      }
+      if (live.billingMode === 'postpaid') {
+        skipped.push({ stationId, code, reason: 'not_extendable', detail: 'postpaid' });
+        continue;
+      }
+      try {
+        const quote = await this.quote(
+          {
+            stationId,
+            billingMode: 'prepaid',
+            packageId: req.packageId,
+            minutes: req.minutes,
+          },
+          new Date(),
+        );
+        const minutes = quote.minutes ?? req.minutes ?? 0;
+        if (req.gift) {
+          await this.gift(live.id, { minutes, reason: req.reason }, actor);
+          applied.push({ stationId, code, minutes, priceCents: 0 });
+        } else {
+          await this.extend(
+            live.id,
+            {
+              packageId: req.packageId,
+              minutes: req.packageId ? undefined : minutes,
+              paymentMethod: req.paymentMethod,
+              // A zero quote (free pricing rule) needs no tender at all — `payments: []` is the
+              // documented "nothing handed over" case for a zero bill.
+              payments:
+                quote.priceCents > 0 ? [{ method: 'cash', amountCents: quote.priceCents }] : [],
+            },
+            actor,
+          );
+          totalCents += quote.priceCents;
+          applied.push({ stationId, code, minutes, priceCents: quote.priceCents });
+        }
+      } catch (err) {
+        skipped.push({
+          stationId,
+          code,
+          reason: 'error',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    await recordAudit(this.pool, actor, {
+      action: 'station.bulk_minutes',
+      entityType: null,
+      entityId: null,
+      details: {
+        stations: req.stationIds.length,
+        applied: applied.length,
+        skipped: skipped.length,
+        gift: req.gift,
+        minutes: req.minutes ?? null,
+        packageId: req.packageId ?? null,
+        totalCents,
+      },
+    });
+    return { applied, skipped, totalCents };
   }
 
   /** Staff stop. Postpaid sessions are billed here, exactly once. */

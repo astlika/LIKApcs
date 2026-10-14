@@ -3447,3 +3447,90 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
 .ads__row .ads__old {
   font-size: clamp(12px, 1.5vh, 17px);
 }
+
+/* ─── 0.18.0: gifted minutes — party-popper burst over the widget ─────────────── */
+.gift-celebration {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 60%, rgba(255, 214, 102, 0.28), transparent 72%);
+  animation: gift-boom 0.5s ease-out;
+}
+.gift-celebration__popper {
+  font-size: 1.7em;
+  line-height: 1;
+  animation: gift-popper 0.9s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.gift-celebration__text {
+  font-weight: 800;
+  font-size: 1.05em;
+  letter-spacing: 0.02em;
+  color: #ffd666;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65);
+  animation: gift-text 0.6s ease-out;
+}
+.gift-confetti {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  width: 6px;
+  height: 10px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: gift-confetti 1.7s ease-out var(--d) forwards;
+}
+@keyframes gift-boom {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes gift-popper {
+  0% {
+    transform: scale(0) rotate(-32deg);
+  }
+  60% {
+    transform: scale(1.55) rotate(14deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+@keyframes gift-text {
+  0% {
+    transform: translateY(10px) scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes gift-confetti {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(calc(var(--x) * 0.75), calc(var(--y) - 46px)) rotate(calc(var(--r) * 0.6));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--x), calc(var(--y) + 26px)) rotate(var(--r));
+  }
+}

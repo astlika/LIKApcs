@@ -221,6 +221,8 @@ export const SETTING_SCHEMAS = {
   /** Offer "pay later" (customer debt with a due date) in POS and session bills. */
   /** Pre-filled due date for a new debt: today + this many days. */
   'pos.credit_default_days': z.number().int().min(0).max(365),
+  /** 0.18.0: the POS grid hides sold-out products (a barcode scan can still add one, with a warning). */
+  'pos.hide_out_of_stock': z.boolean(),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -330,6 +332,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.auto_finish_seconds': 5,
   'pos.card_payments': false,
   'pos.credit_default_days': 7,
+  'pos.hide_out_of_stock': true,
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',

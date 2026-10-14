@@ -130,11 +130,19 @@ export interface MaintenanceState {
   byName: string | null;
 }
 
+/** 0.18.0: gifted minutes — the widget throws a party-popper burst (see `GiftCelebration`). */
+export interface Celebration {
+  minutes: number;
+  /** Local clock when the command arrived; anything older than ~10 s is ignored by the widget. */
+  at: number;
+}
+
 export interface ClientState {
   mode: Mode;
   session: SessionState | null;
   maintenance: MaintenanceState | null;
   notice: Notice | null;
+  celebration: Celebration | null;
   station: ServerWelcomeToClient['station'] | null;
   businessName: string;
   welcomeMessage: string;
@@ -148,6 +156,7 @@ export const initialState: ClientState = {
   session: null,
   maintenance: null,
   notice: null,
+  celebration: null,
   station: null,
   businessName: '',
   welcomeMessage: '',
@@ -363,9 +372,21 @@ export function reduce(
         ok: true,
       };
     }
+    case 'celebrate': {
+      // 0.18.0: free minutes were gifted. The countdown itself was already refreshed by the
+      // `session.extend` mirror the server sends right before this command — here the widget
+      // only celebrates, so a payload with no plausible minutes is simply refused.
+      const raw = Math.round(num(p.minutes) ?? 0);
+      if (raw < 1) return { state, effects: [], ok: false, error: 'minutes missing' };
+      return {
+        state: { ...state, celebration: { minutes: Math.min(600, raw), at: Date.now() } },
+        effects: [],
+        ok: true,
+      };
+    }
     case 'session.end':
       return {
-        state: { ...state, mode: 'locked', session: null },
+        state: { ...state, mode: 'locked', session: null, celebration: null },
         effects: [{ type: 'event', event: 'locked', payload: { sessionId: str(p.sessionId) } }],
         ok: true,
       };

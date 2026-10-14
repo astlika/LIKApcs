@@ -203,6 +203,52 @@ function useHoverReveal(): { revealed: boolean; enter: () => void; leave: () => 
 
 // ─── Component ──────────────────────────────────────────────────────────────────
 
+/** Fixed burst geometry: 26 confetti pieces in a deterministic ring (no re-roll per render). */
+const CONFETTI_COLORS = ['#ff5d5d', '#ffd666', '#69db7c', '#4dabf7', '#da77f2', '#ffa94d'];
+const CONFETTI = Array.from({ length: 26 }, (_, i) => {
+  const angle = (i / 26) * Math.PI * 2;
+  const dist = 42 + ((i * 37) % 60);
+  return {
+    x: `${Math.round(Math.cos(angle) * dist)}px`,
+    y: `${Math.round(Math.sin(angle) * dist * 0.65)}px`,
+    r: `${(i * 47) % 360}deg`,
+    d: `${((i * 13) % 10) / 40}s`,
+    color: CONFETTI_COLORS[i % CONFETTI_COLORS.length]!,
+  };
+});
+
+/** 0.18.0: gifted minutes — a party-popper "boom" over the widget for ~3.8 s. */
+function GiftCelebration({ at, label }: { at: number; label: string }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    setVisible(true);
+    const timer = setTimeout(() => setVisible(false), 3800);
+    return () => clearTimeout(timer);
+  }, [at]);
+  if (!visible) return null;
+  return (
+    <div className="gift-celebration" data-testid="gift-celebration" aria-hidden="true">
+      <span className="gift-celebration__popper">🎉</span>
+      <span className="gift-celebration__text">{label}</span>
+      {CONFETTI.map((c, i) => (
+        <span
+          key={i}
+          className="gift-confetti"
+          style={
+            {
+              '--x': c.x,
+              '--y': c.y,
+              '--r': c.r,
+              '--d': c.d,
+              background: c.color,
+            } as CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 export function Overlay({
   snap,
   notice,
@@ -414,6 +460,12 @@ export function Overlay({
       break;
   }
 
+  // A gift celebration shows only while fresh (re-renders/reconnects must not replay old bursts).
+  const celebration =
+    snap.state.celebration && Date.now() - snap.state.celebration.at < 10_000
+      ? snap.state.celebration
+      : null;
+
   return (
     <div
       ref={rootRef}
@@ -424,6 +476,9 @@ export function Overlay({
       onMouseEnter={hover.enter}
       onMouseLeave={hover.leave}
     >
+      {celebration && (
+        <GiftCelebration at={celebration.at} label={t('giftMinutes', { n: celebration.minutes })} />
+      )}
       {body}
       {tray}
     </div>

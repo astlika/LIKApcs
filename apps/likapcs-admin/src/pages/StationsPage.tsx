@@ -1327,7 +1327,9 @@ function StationDetailDialog({
       <Dialog
         open
         onClose={onClose}
-        size="lg"
+        // 0.18.0: the standard view is deliberately small — session controls first, everything
+        // else (device facts, logs, management) lives behind "Advanced".
+        size={view === 'standard' ? 'md' : 'lg'}
         title={`${station.code} · ${station.name}`}
         description={station.zone ?? undefined}
         footer={
@@ -1408,7 +1410,7 @@ function StationDetailDialog({
                 approveRequestId={approveRequestId}
               />
             </Card>
-            <Card title={t('stations.device')} testId="station-device">
+            <Card flush testId="station-device">
               {device ? (
                 <div className="st-device">
                   <div className="st-device__row" data-testid="station-device-row">

@@ -352,6 +352,11 @@ function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const label = (m: CashMovementSummary) => t(`cash.movement.${m.type}` as 'cash.movement.sale');
+  // 0.18.0: the book opens with the last 20 movements — a long shift stays readable; one click
+  // loads everything.
+  const [showAll, setShowAll] = useState(false);
+  const newestFirst = useMemo(() => [...shift.movements].reverse(), [shift.movements]);
+  const visible = showAll ? newestFirst : newestFirst.slice(0, 20);
   return (
     <Card title={t('cash.ledger')}>
       <p className="muted" style={{ marginTop: 0 }}>
@@ -371,8 +376,8 @@ function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
               </tr>
             </thead>
             <tbody>
-              {[...shift.movements].reverse().map((m) => (
-                <tr key={m.id}>
+              {visible.map((m) => (
+                <tr key={m.id} data-testid="ledger-row">
                   <td className="num">{fmt.time(m.createdAt)}</td>
                   <td>
                     <Badge tone={MOVEMENT_TONE[m.type]}>{label(m)}</Badge>
@@ -393,6 +398,20 @@ function ShiftLedger({ shift }: { shift: CashShiftDetail }) {
               ))}
             </tbody>
           </table>
+          {newestFirst.length > 20 && (
+            <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAll((v) => !v)}
+                data-testid="ledger-toggle"
+              >
+                {showAll
+                  ? t('cash.showLatest20')
+                  : t('cash.showAllMovements', { n: newestFirst.length })}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </Card>

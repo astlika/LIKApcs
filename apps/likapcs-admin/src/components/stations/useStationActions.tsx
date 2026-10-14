@@ -56,6 +56,7 @@ import { isShiftRequired, useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
+import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
@@ -114,6 +115,7 @@ type Flow =
   | { kind: 'extend'; sessionId: string }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
+  | { kind: 'bulk-minutes' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -142,6 +144,7 @@ export function useStationActions(
   const queryClient = useQueryClient();
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  const canGift = can(PERMISSIONS.SESSIONS_GIFT);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),
@@ -170,6 +173,7 @@ export function useStationActions(
       }),
     onSuccess: (result, { action }) => {
       const messages: Record<string, string> = {
+        gift: t('sessions.gifted'),
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
@@ -320,6 +324,7 @@ export function useStationActions(
   const groupOnline = group.filter((s) => s.device?.online).length;
   const groupWakeable = group.filter(isWakeable).length;
   const groupStartable = group.filter((s) => s.isEnabled && !s.activeSession).length;
+  const groupWithSession = group.filter((s) => s.activeSession).length;
   const groupUnlockable =
     groupOnline > 0 &&
     group
@@ -359,12 +364,14 @@ export function useStationActions(
           hint: singleOnly,
         },
         {
+          // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
+          // a per-PC outcome summary (stations without a live session are reported as skipped).
           id: 'extend',
-          label: t('map.addTime'),
+          label: `${t('map.addTime')} (${n})`,
           icon: Plus,
           bar: true,
-          enabled: false,
-          hint: singleOnly,
+          enabled: canControl && groupWithSession > 0,
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
           id: groupUnlockable ? 'unlock' : 'lock',
@@ -545,6 +552,7 @@ export function useStationActions(
     group.length,
     groupOnline,
     groupStartable,
+    groupWithSession,
     groupUnlockable,
     groupWakeable,
     tasksPressed,
@@ -576,7 +584,8 @@ export function useStationActions(
           if (live) setFlow({ kind: 'end', sessionId: live.id });
           break;
         case 'extend':
-          if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          if (multi) setFlow({ kind: 'bulk-minutes' });
+          else if (live) setFlow({ kind: 'extend', sessionId: live.id });
           break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
@@ -660,10 +669,37 @@ export function useStationActions(
               session={s}
               busy={sessionAct.isPending}
               onClose={close}
-              onConfirm={(body) => sessionAct.mutate({ sessionId: s.id, action: 'extend', body })}
+              canGift={canGift}
+              onConfirm={(body, action) =>
+                sessionAct.mutate({ sessionId: s.id, action: action ?? 'extend', body })
+              }
             />
           )}
         </SessionFlow>
+      )}
+      {flow.kind === 'bulk-minutes' && (
+        <BulkMinutesDialog
+          stations={group}
+          onClose={close}
+          onDone={(result, gifted) => {
+            setFlow(null);
+            const applied = result.applied.length;
+            const skipped = result.skipped.length;
+            if (applied === 0)
+              toast.toast('info', t('map.bulkNone', { skipped, reason: t('map.bulkReasonFirst') }));
+            else
+              toast.success(
+                gifted
+                  ? t('map.bulkGiftResult', { applied, skipped })
+                  : t('map.bulkResult', {
+                      applied,
+                      skipped,
+                      total: fmt.money(result.totalCents),
+                    }),
+              );
+            refresh();
+          }}
+        />
       )}
       {flow.kind === 'cancel' && (
         <CancelSessionDialog

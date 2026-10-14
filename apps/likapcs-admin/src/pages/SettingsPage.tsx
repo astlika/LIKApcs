@@ -963,6 +963,13 @@ export function SettingsPage() {
                 max: 60,
                 hint: t('settings.printing.autoFinishHint'),
               })}
+              <div className="span-2" data-testid="settings-hide-out-of-stock">
+                {bool(
+                  'pos.hide_out_of_stock',
+                  t('settings.printing.hideOutOfStock'),
+                  t('settings.printing.hideOutOfStockHint'),
+                )}
+              </div>
               <div className="span-2">
                 {bool(
                   'pos.card_payments',

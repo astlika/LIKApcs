@@ -702,6 +702,64 @@ export const extendSessionSchema = z
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
 
+/** 0.18.0: free minutes for a running session (`sessions.gift`) — no sale, no money, full audit. */
+export const sessionGiftSchema = z.object({
+  minutes: z.number().int().min(1).max(600),
+  reason: z.string().trim().max(200).optional(),
+});
+export type SessionGiftRequest = z.infer<typeof sessionGiftSchema>;
+
+/** 0.18.0: "+ minutes" for every selected PC in one click (gift, or paid with one tender). */
+export const bulkMinutesSchema = z
+  .object({
+    stationIds: z.array(z.string().uuid()).min(1).max(60),
+    packageId: z.string().uuid().optional(),
+    minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .optional(),
+    gift: z.boolean().default(false),
+    reason: z.string().trim().max(200).optional(),
+    /** Paid mode only: how each extension is paid at the desk. */
+    paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
+  })
+  .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
+    message: 'either a package or a number of minutes',
+    path: ['minutes'],
+  });
+export type BulkMinutesRequest = z.infer<typeof bulkMinutesSchema>;
+
+export interface BulkMinutesApplied {
+  stationId: string;
+  code: string;
+  minutes: number;
+  priceCents: number;
+}
+export interface BulkMinutesSkipped {
+  stationId: string;
+  code: string;
+  reason: 'no_active_session' | 'not_extendable' | 'error';
+  detail?: string | null;
+}
+export interface BulkMinutesResult {
+  applied: BulkMinutesApplied[];
+  skipped: BulkMinutesSkipped[];
+  totalCents: number;
+}
+
+/** 0.18.0: the debts page groups by customer — one row, click for the invoices. */
+export interface DebtCustomerGroup {
+  customerId: string;
+  name: string;
+  code: string | null;
+  phone: string | null;
+  totalCents: number;
+  count: number;
+  oldestDue: string | null;
+}
+
 /** How far back staff may "stop the clock" before the end request actually arrives. */
 export const SESSION_STOP_CLOCK_GRACE_SECONDS = 10 * 60;
 

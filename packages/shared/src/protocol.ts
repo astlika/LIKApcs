@@ -198,6 +198,8 @@ export const STATION_COMMANDS = [
   'wol.configure',
   /** End Task (0.17.0): close the owner-listed programs (`payload.exes`), never the client itself. */
   'tasks.end',
+  /** 0.18.0: gifted minutes — the widget throws a party-popper celebration (`payload.minutes`). */
+  'celebrate',
 ] as const;
 export type StationCommand = (typeof STATION_COMMANDS)[number];
 

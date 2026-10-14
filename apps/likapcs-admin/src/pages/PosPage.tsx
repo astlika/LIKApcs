@@ -34,6 +34,7 @@ import {
   type CustomerSummary,
   type ProductLookupResponse,
   type ProductSummary,
+  type SettingsMap,
   type ReceiptData,
   type SaleDetail,
   type SalesListResponse,
@@ -120,6 +121,11 @@ export function PosPage() {
     const h = setTimeout(() => setGridSearch(search.trim()), 180);
     return () => clearTimeout(h);
   }, [search]);
+  const settings = useQuery({
+    queryKey: ['settings', 'all'],
+    queryFn: () => api<SettingsMap>('/settings'),
+    staleTime: 60_000,
+  });
   const products = useQuery({
     queryKey: ['products', 'pos', categoryId, gridSearch],
     queryFn: () =>
@@ -306,7 +312,15 @@ export function PosPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
-  const list = products.data?.items ?? [];
+  // 0.18.0: the grid can hide sold-out products (Settings → POS); a barcode scan still adds one
+  // (the server decides at payment time), the grid is only the browsing surface.
+  const hideOut = settings.data?.['pos.hide_out_of_stock'] ?? true;
+  const list = useMemo(() => {
+    const items = products.data?.items ?? [];
+    return hideOut
+      ? items.filter((p) => !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0))
+      : items;
+  }, [products.data, hideOut]);
 
   return (
     <div className="pos">

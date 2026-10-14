@@ -8,7 +8,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, Check, Clock, Hourglass, Pause, Play, Plus, Square, X, XCircle } from 'lucide-react';
+import {
+  Bell,
+  Check,
+  Clock,
+  Gift,
+  Hourglass,
+  Pause,
+  Play,
+  Plus,
+  Square,
+  X,
+  XCircle,
+} from 'lucide-react';
 import {
   PERMISSIONS,
   parseMoneyInput,
@@ -537,6 +549,7 @@ function ActiveSession({
   const now = useNow();
   const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | null>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  const canGift = can(PERMISSIONS.SESSIONS_GIFT);
   useEffect(() => {
     if (approveRequest) setDialog('extend');
   }, [approveRequest]);
@@ -559,6 +572,7 @@ function ActiveSession({
       }),
     onSuccess: (result, { action }) => {
       const messages: Record<string, string> = {
+        gift: t('sessions.gifted'),
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
@@ -729,7 +743,8 @@ function ActiveSession({
             setDialog(null);
             onApproveHandled?.();
           }}
-          onConfirm={(body) => act.mutate({ action: 'extend', body })}
+          canGift={canGift}
+          onConfirm={(body, action) => act.mutate({ action: action ?? 'extend', body })}
         />
       )}
       {dialog === 'cancel' && (
@@ -956,13 +971,16 @@ export function ExtendSessionDialog({
   onClose,
   onConfirm,
   request = null,
+  canGift = false,
 }: {
   session: SessionSummary;
   busy: boolean;
   onClose: () => void;
-  onConfirm: (body: Record<string, unknown>) => void;
+  onConfirm: (body: Record<string, unknown>, action?: 'extend' | 'gift') => void;
   /** Approving a customer's extension request: duration pre-filled, `requestId` sent along. */
   request?: StationPendingRequest | null;
+  /** 0.18.0: `sessions.gift` — free minutes with a party on the PC (prepaid sessions only). */
+  canGift?: boolean;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
@@ -970,6 +988,10 @@ export function ExtendSessionDialog({
   const [minutes, setMinutes] = useState(
     request && !request.packageId ? String(request.durationMinutes) : '30',
   );
+  const [gift, setGift] = useState(false);
+  const [reason, setReason] = useState('');
+  const giftPossible = canGift && !request && session.billingMode === 'prepaid';
+  const useGift = gift && giftPossible;
   const [requestId] = useState(() => crypto.randomUUID());
   const minutesValue = Number.parseInt(minutes, 10);
   const minutesValid = Number.isInteger(minutesValue) && minutesValue > 0 && minutesValue <= 1440;
@@ -987,21 +1009,25 @@ export function ExtendSessionDialog({
         method: 'POST',
         body: { stationId: session.stationId, billingMode: 'prepaid', ...body },
       }),
-    enabled: body !== null,
+    enabled: body !== null && !useGift,
   });
   const { customer, setCustomer } = useSessionCustomer(session);
   const tender = useTender({ totalCents: quote.data?.priceCents ?? 0, customer });
   // End pay: the added time goes on the bill collected at the end — nothing is paid now.
   const endpay = session.billingMode === 'endpay';
-  const ready = !!body && !!quote.data && (endpay || tender.covered);
+  const ready = !!body && (useGift || (!!quote.data && (endpay || tender.covered)));
   const submit = () => {
-    if (ready && !busy)
-      onConfirm({
-        ...body,
-        ...(endpay ? {} : { payments: tender.payments }),
-        clientRequestId: requestId,
-        ...(request ? { requestId: request.id } : {}),
-      });
+    if (!ready || busy) return;
+    if (useGift) {
+      onConfirm({ ...body, reason: reason.trim() || undefined }, 'gift');
+      return;
+    }
+    onConfirm({
+      ...body,
+      ...(endpay ? {} : { payments: tender.payments }),
+      clientRequestId: requestId,
+      ...(request ? { requestId: request.id } : {}),
+    });
   };
   useEnterSubmits(submit);
   return (
@@ -1030,7 +1056,8 @@ export function ExtendSessionDialog({
             onClick={submit}
             data-testid="session-extend-confirm"
           >
-            <Plus size={14} /> {t('sessions.extend')} <Kbd>Enter</Kbd>
+            {useGift ? <Gift size={14} /> : <Plus size={14} />}{' '}
+            {useGift ? t('sessions.giftConfirm') : t('sessions.extend')} <Kbd>Enter</Kbd>
           </Button>
         </>
       }
@@ -1079,7 +1106,35 @@ export function ExtendSessionDialog({
             />
           )}
         </Field>
-        {quote.data && (
+        {giftPossible && (
+          <label
+            className="row"
+            style={{ gap: 8, alignItems: 'center', cursor: 'pointer' }}
+            data-testid="session-gift-toggle"
+          >
+            <input type="checkbox" checked={gift} onChange={(e) => setGift(e.target.checked)} />
+            <Gift size={14} />
+            <strong>{t('sessions.giftMode')}</strong>
+            <span className="faint" style={{ fontSize: 12 }}>
+              {t('sessions.giftModeHint')}
+            </span>
+          </label>
+        )}
+        {useGift && (
+          <Field label={t('sessions.giftReason')} hint={t('sessions.giftReasonHint')}>
+            {(id) => (
+              <Input
+                id={id}
+                value={reason}
+                maxLength={200}
+                placeholder={t('sessions.giftReasonPlaceholder')}
+                onChange={(e) => setReason(e.target.value)}
+                data-testid="session-gift-reason"
+              />
+            )}
+          </Field>
+        )}
+        {!useGift && quote.data && (
           <>
             <div className="quote">
               <div className="quote__row">

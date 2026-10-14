@@ -10,6 +10,39 @@ All notable changes to LIKApcs are documented here. The format follows
 
 _(nothing yet)_
 
+## [0.18.0] - 2026-10-14
+
+### Added
+
+- **"+ minutes" for a whole selection of PCs.** With several stations selected on the map, the
+  Add-time action now opens one bulk dialog: presets (5/15/30/60), any custom amount up to 24 h,
+  or a pricing package. Paid mode charges each running session its own quoted price as a normal
+  cash sale (the dialog shows the live total before you confirm); PCs without a running session
+  are skipped and reported. One toast summarises the outcome ("added on 6 · skipped 2 · total
+  €4.50") and the whole operation is written to the audit log (`station.bulk_minutes`).
+- **Gift minutes — free time, with a celebration.** A new permission `sessions.gift` (granted to
+  owner/admin/manager by default; the owner decides who else gets it) unlocks a "Gift these
+  minutes" toggle in the extend dialog and in the bulk dialog: no sale is recorded, the reason is
+  optional and audited (`session.gift`), and the customer's PC answers with a ~4-second confetti
+  BOOM over the widget and "+15 min — it's a gift!". Gifts only apply to prepaid sessions —
+  end-pay/postpaid bill by elapsed time, so "free" minutes there would quietly turn into money;
+  the server refuses them with a clear message.
+- **Debts grouped by customer.** The Debts page now opens on one row per customer — open total,
+  number of open invoices and the oldest due date, biggest debtor first, with search. Clicking a
+  name drills into that customer's invoices with the existing per-invoice Pay and pay-all-debt
+  buttons.
+- **POS can hide sold-out products.** New setting "Hide out-of-stock products" (POS → Printing &
+  display section, default ON): the POS grid shows only what can actually be sold. A barcode scan
+  still adds a hidden/sold-out product — with a warning — so the cashier is never blocked.
+
+### Changed
+
+- **The station Details dialog is small again.** The standard view is a compact card: status,
+  session controls and one slim device line. Device facts, connection logs and management
+  (delete/archive/edit) wait behind the existing "Advanced" toggle.
+- **The cash book shows the last 20 movements** by default with a "Show all" button, instead of
+  rendering every movement of the shift at once.
+
 ## [0.17.1] - 2026-10-13
 
 ### Fixed
