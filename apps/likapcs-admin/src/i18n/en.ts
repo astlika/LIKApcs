@@ -1431,6 +1431,7 @@ export const en = {
         'In the browser the display opens in a separate window (allow pop-ups); the monitor choice applies in the desktop app.',
     },
     printing: {
+      posCard: 'Sales (POS)',
       receipts: 'Receipts (thermal printer)',
       receiptWidth: 'Receipt paper width',
       autoPrint: 'Print receipt automatically',

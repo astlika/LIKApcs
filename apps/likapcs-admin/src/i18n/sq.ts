@@ -1439,6 +1439,7 @@ export const sq: Dictionary = {
         'Në shfletues ekrani hapet në një dritare më vete (lejo pop-up); zgjedhja e monitorit vlen në programin desktop.',
     },
     printing: {
+      posCard: 'Shitja (POS)',
       receipts: 'Kuponët (printer termik)',
       receiptWidth: 'Gjerësia e letrës së kuponit',
       autoPrint: 'Printo faturën automatikisht',

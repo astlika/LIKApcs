@@ -1044,6 +1044,15 @@ export function SettingsPage() {
                 max: 60,
                 hint: t('settings.printing.autoFinishHint'),
               })}
+              {text('business.receipt_footer', t('settings.business.receiptFooter'), {
+                hint: t('settings.business.receiptFooterHint'),
+                multiline: true,
+                className: 'span-2',
+              })}
+            </div>
+          </Card>
+          <Card title={t('settings.printing.posCard')}>
+            <div className="form-grid">
               <div className="span-2" data-testid="settings-hide-out-of-stock">
                 {bool(
                   'pos.hide_out_of_stock',
@@ -1091,11 +1100,6 @@ export function SettingsPage() {
                   t('settings.printing.walletHint'),
                 )}
               </div>
-              {text('business.receipt_footer', t('settings.business.receiptFooter'), {
-                hint: t('settings.business.receiptFooterHint'),
-                multiline: true,
-                className: 'span-2',
-              })}
             </div>
           </Card>
           <CustomerDisplayCard />
