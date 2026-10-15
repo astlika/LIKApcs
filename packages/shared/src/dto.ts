@@ -724,6 +724,26 @@ export type SessionGiftRequest = z.infer<typeof sessionGiftSchema>;
  * prepaid bills (`allocatePayments`); end-pay sessions add their time to the bill at the end and
  * take nothing now; gift takes nothing at all.
  */
+/**
+ * 0.19.4: "Ndalo" for every selected PC in one step. Each running session is stopped and nothing is
+ * charged now (see `endSessionSchema.parkForDesk`); one failing session does not stop the others.
+ */
+export const bulkEndSessionsSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+});
+export type BulkEndSessionsRequest = z.infer<typeof bulkEndSessionsSchema>;
+
+export interface BulkEndSessionsResult {
+  ended: number;
+  failed: number;
+  results: {
+    sessionId: string;
+    stationId: string | null;
+    ok: boolean;
+    error: string | null;
+  }[];
+}
+
 export const bulkMinutesSchema = z
   .object({
     stationIds: z.array(z.string().uuid()).min(1).max(60),
@@ -794,6 +814,11 @@ export const endSessionSchema = z.object({
    * `SESSION_STOP_CLOCK_GRACE_SECONDS`.
    */
   stoppedSecondsAgo: z.number().int().min(0).max(86_400).optional(),
+  /**
+   * 0.19.4: bulk stop — the time is priced now, nothing is charged, and the bill waits at the desk
+   * (postpaid and pay-at-the-end) or the open orders stay open (prepaid). Used by `/sessions/bulk-end`.
+   */
+  parkForDesk: z.boolean().optional(),
   /** Attach the customer at checkout (a walk-in session that ends with "pay later"). */
   customerId: z.string().uuid().optional(),
   ...sessionTenders,

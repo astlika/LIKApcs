@@ -1079,6 +1079,16 @@ export const sq: Dictionary = {
     clearSelection: 'Pastro zgjedhjen',
     selectAll: 'Zgjidh të gjitha PC-të',
     multiHint: 'Veprimet zbatohen në çdo PC të zgjedhur.',
+    stopTitle: 'Të ndalohen {n} PC?',
+    stopBody:
+      'Tani nuk faturohet asgjë. Faturat postpaid dhe pay-at-the-end presin te banaku (Paguaj të gjitha te PC-ja); koha prepaid është paguar më parë; porosit e hapura mbeten të hapura.',
+    stopConfirm: 'Ndalo {n}',
+    stopPrepaid: 'prepaid — e paguar më parë',
+    stopEndPay: 'paguan në fund — pret te banaku',
+    stopPostpaid: 'postpaid — pret te banaku',
+    stopResult: 'U ndaluan {ended} PC.',
+    stopPartial: 'U ndaluan {ended} PC; {failed} nuk u ndaluan.',
+    stopNone: "Nuk ka sesion aktiv për t'u ndaluar.",
     singleOnly: 'Zgjidh vetëm një PC për këtë veprim',
     bulkTitle: '+ minuta në {n} PC',
     bulkBody:

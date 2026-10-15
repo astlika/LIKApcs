@@ -100,10 +100,10 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
-         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode = 'endpay'
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid')
            AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
          (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
-           WHERE a.station_id = s.id AND a.billing_mode = 'endpay' AND a.billed_at IS NULL
+           WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL
            AND a.status IN ('expired', 'completed')) AS awaiting_cents
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'

@@ -1069,6 +1069,16 @@ export const en = {
     clearSelection: 'Clear selection',
     selectAll: 'Select all PCs',
     multiHint: 'Actions apply to every selected PC.',
+    stopTitle: 'Stop {n} PCs?',
+    stopBody:
+      'Nothing is charged now. Postpaid and pay-at-the-end bills wait at the desk (Pay all on the PC); prepaid time was already paid; open orders stay open.',
+    stopConfirm: 'Stop {n}',
+    stopPrepaid: 'prepaid — already paid',
+    stopEndPay: 'pay at the end — waits at the desk',
+    stopPostpaid: 'postpaid — waits at the desk',
+    stopResult: 'Stopped {ended} PCs.',
+    stopPartial: 'Stopped {ended} PCs; {failed} could not be stopped.',
+    stopNone: 'No running session to stop.',
     singleOnly: 'Select a single PC for this action',
     bulkTitle: '+ minutes on {n} PCs',
     bulkBody:

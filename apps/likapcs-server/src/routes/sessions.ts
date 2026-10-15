@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  bulkEndSessionsSchema,
   bulkMinutesSchema,
   collectSessionSchema,
   collectStationSchema,
@@ -88,6 +89,10 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   /** 0.18.0: "+ minutes" for every selected PC in one click (gift mode also needs stations.gift). */
   app.post('/sessions/bulk-minutes', control, async (request) =>
     services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
+  );
+  /** 0.19.4: "Ndalo" for several PCs at once — nothing is charged now; bills wait at the desk. */
+  app.post('/sessions/bulk-end', control, async (request) =>
+    services.sessions.bulkEnd(bulkEndSessionsSchema.parse(request.body), actorOf(request)),
   );
   app.post('/sessions/:id/end', control, async (request) =>
     services.sessions.end(

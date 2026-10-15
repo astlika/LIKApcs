@@ -59,6 +59,7 @@ import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
+import { BulkStopDialog } from '../sessions/BulkStopDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
@@ -119,6 +120,7 @@ type Flow =
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
+  | { kind: 'bulk-end' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -359,12 +361,14 @@ export function useStationActions(
           hint: groupStartable === 0 ? t('map.noneStartable') : undefined,
         },
         {
+          // 0.19.4: "Ndalo" works for the whole selection (one confirm, nothing charged now).
           id: 'end',
-          label: t('map.stop'),
+          label: `${t('map.stop')} (${groupWithSession})`,
           icon: Square,
           bar: true,
-          enabled: false,
-          hint: singleOnly,
+          enabled: canControl && groupWithSession > 0,
+          tone: 'danger',
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
           // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
@@ -598,7 +602,9 @@ export function useStationActions(
           setFlow({ kind: 'start' });
           break;
         case 'end':
-          if (live) setFlow({ kind: 'end', sessionId: live.id });
+          // 0.19.4: several PCs → one confirm, every running session stopped, nothing charged now.
+          if (multi) setFlow({ kind: 'bulk-end' });
+          else if (live) setFlow({ kind: 'end', sessionId: live.id });
           break;
         case 'extend':
           if (multi) setFlow({ kind: 'bulk-minutes' });
@@ -697,6 +703,24 @@ export function useStationActions(
             />
           )}
         </SessionFlow>
+      )}
+      {flow.kind === 'bulk-end' && (
+        <BulkStopDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.ended === 0) toast.toast('info', t('map.stopNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.stopResult', { ended: result.ended }));
+            else
+              toast.toast(
+                'warning',
+                t('map.stopPartial', { ended: result.ended, failed: result.failed }),
+              );
+          }}
+        />
       )}
       {flow.kind === 'bulk-minutes' && (
         <BulkMinutesDialog

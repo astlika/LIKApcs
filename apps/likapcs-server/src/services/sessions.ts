@@ -30,10 +30,13 @@ import {
   type CollectStationResponse,
   type EndSessionRequest,
   PERMISSIONS,
+  endSessionSchema,
   type ExtendSessionRequest,
   type SessionGiftRequest,
   type BulkMinutesRequest,
   type BulkMinutesResult,
+  type BulkEndSessionsRequest,
+  type BulkEndSessionsResult,
   type BulkMinutesApplied,
   type BulkMinutesSkipped,
   type ClientSessionBilling,
@@ -352,7 +355,7 @@ export class SessionsService {
     // Prepaid: what was paid. End pay: what will be due (the reserved amount).
     else currentPrice = Number(row.quoted_price_cents ?? 0);
     const awaitingPayment =
-      row.billing_mode === 'endpay' &&
+      (row.billing_mode === 'endpay' || row.billing_mode === 'postpaid') &&
       !live &&
       row.status !== 'cancelled' &&
       row.billed_at === null;
@@ -440,7 +443,7 @@ export class SessionsService {
     }
     if (query.awaitingPayment)
       where.push(
-        `g.billing_mode = 'endpay' AND g.billed_at IS NULL AND g.status IN ('expired', 'completed')`,
+        `g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed')`,
       );
     if (query.from) {
       params.push(query.from);
@@ -1162,7 +1165,32 @@ export class SessionsService {
         );
         row.customer_id = req.customerId;
       }
-      if (row.billing_mode === 'postpaid') {
+      if (row.billing_mode === 'postpaid' && req.parkForDesk) {
+        // 0.19.4: bulk stop — the time is priced now, the bill waits at the desk (collect / pay all).
+        if (row.billed_at) throw conflict('Session is already billed');
+        const price = priceForSeconds(seconds, termsFromRow(row));
+        if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
+          throw forbidden('Missing permission: pos.discount');
+        if (req.discountCents > price) throw badRequest('Discount exceeds the price');
+        const final = price - req.discountCents;
+        await client.query(
+          `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
+             discount_cents = $4, final_price_cents = $5, paused_at = NULL, paused_by = NULL,
+             notes = COALESCE($6, notes), version = version + 1
+           WHERE id = $1 AND billed_at IS NULL`,
+          [id, at, seconds, req.discountCents, final, req.notes ?? null],
+        );
+        await this.addEvent(client, id, 'stopped', actor, {
+          endedAt: at.toISOString(),
+          billableSeconds: seconds,
+          awaitingPayment: true,
+          dueCents: final,
+        });
+        if (req.discountCents > 0)
+          await this.addEvent(client, id, 'discount_applied', actor, {
+            discountCents: req.discountCents,
+          });
+      } else if (row.billing_mode === 'postpaid') {
         if (row.billed_at) throw conflict('Session is already billed');
         const price = priceForSeconds(seconds, termsFromRow(row));
         if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
@@ -1280,7 +1308,8 @@ export class SessionsService {
             });
         }
       } else {
-        if (orderLines.length && this.orders) {
+        // 0.19.4: a bulk stop leaves the orders open on the bill (nothing is charged now).
+        if (orderLines.length && this.orders && !req.parkForDesk) {
           // Prepaid time was paid at the start; only the orders are billed now.
           const sale = await this.recordSale(client, {
             sessionId: id,
@@ -1341,6 +1370,37 @@ export class SessionsService {
   }
 
   /**
+   * 0.19.4: "Ndalo" for several PCs at once. Each session is stopped the way the single stop does,
+   * but nothing is charged now: postpaid and pay-at-the-end bills wait at the desk, prepaid time is
+   * already paid and open orders stay open. One session failing (for example one that ended a
+   * moment before) does not stop the others; every outcome is reported.
+   */
+  async bulkEnd(
+    req: BulkEndSessionsRequest,
+    actor: SessionActorContext,
+  ): Promise<BulkEndSessionsResult> {
+    const results: BulkEndSessionsResult['results'] = [];
+    for (const sessionId of [...new Set(req.sessionIds)]) {
+      try {
+        const out = await this.end(sessionId, endSessionSchema.parse({ parkForDesk: true }), actor);
+        results.push({ sessionId, stationId: out.session.stationId, ok: true, error: null });
+      } catch (err) {
+        results.push({
+          sessionId,
+          stationId: null,
+          ok: false,
+          error: err instanceof Error ? err.message : 'failed',
+        });
+      }
+    }
+    return {
+      ended: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
+  }
+
+  /**
    * End pay (0.14.0): staff take the money for a session that has ended (ran out or was stopped
    * without payment). One receipt: the time (the amount due, minus an optional discount) plus
    * any orders still open on the bill. Exactly once — `billed_at` guards it.
@@ -1374,7 +1434,8 @@ export class SessionsService {
     let billedOrders: string[] = [];
     const row = await this.lock(client, id);
     await lockCustomers(client, row.customer_id, req.customerId);
-    if (row.billing_mode !== 'endpay')
+    // 0.19.4: a postpaid bill parked by a bulk stop waits at the desk too.
+    if (row.billing_mode !== 'endpay' && row.billing_mode !== 'postpaid')
       throw conflict('Only pay-at-the-end sessions are collected at the desk');
     if (row.status === 'active' || row.status === 'paused')
       throw conflict('Session is still running — end it first');
@@ -1471,7 +1532,7 @@ export class SessionsService {
         quoted_price_cents: string | number | null;
       }>(
         `SELECT id, final_price_cents, quoted_price_cents FROM gaming_sessions
-          WHERE station_id = $1 AND billing_mode = 'endpay' AND billed_at IS NULL
+          WHERE station_id = $1 AND billing_mode IN ('endpay', 'postpaid') AND billed_at IS NULL
             AND status IN ('expired', 'completed')
           ORDER BY id FOR UPDATE`,
         [stationId],

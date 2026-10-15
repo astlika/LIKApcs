@@ -6,6 +6,11 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Stations map: a visible "Select all PCs" button on the toolbar (Ctrl+A already did this).
+- Stations: "Stop" works for a selection of PCs. One confirmation stops every running session at once and reports each PC. Nothing is charged at that moment: postpaid and pay-at-the-end bills wait at the desk ("Pay all" on the PC), prepaid time was already paid, and open orders stay open. Endpoint: `POST /sessions/bulk-end`.
+
 ## [0.19.3] - 2026-10-15
 
 ### Changed
