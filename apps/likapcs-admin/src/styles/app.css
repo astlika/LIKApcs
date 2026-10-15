@@ -6999,9 +6999,7 @@ button.ads-album .ads-album__meta {
   font-size: 13px;
 }
 .pc-tile--line .pc-tile__line-state {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: none;
   opacity: 0.85;
 }
 .pc-tile--line .pc-tile__line-state[data-warn] {

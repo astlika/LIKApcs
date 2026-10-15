@@ -172,7 +172,7 @@ export function StationTile({
       tabIndex={0}
       aria-pressed={selected}
       aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
-      style={{ width: size + 24 }}
+      style={compact ? undefined : { width: size + 24 }}
       onClick={(e) => onSelect(modifiersOf(e))}
       onDoubleClick={(e) => {
         e.preventDefault();
