@@ -12,6 +12,10 @@ All notable changes to LIKApcs are documented here. The format follows
 - Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.
 - Ads grid 5×5 (up to 25 products per screen).
 
+### Security
+
+- Build tool: `esbuild` used by the server build bumped from 0.27.7 to 0.28.2 (fixes GHSA-g7r4-m6w7-qqqr, a low-severity dev-server file read on Windows). Build-time only; the shipped app does not run esbuild.
+
 ## [0.19.1] - 2026-10-15
 
 ### Added
