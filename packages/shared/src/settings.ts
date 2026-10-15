@@ -72,7 +72,7 @@ export const CLIENT_ADS_TRANSITIONS = [
 export const CLIENT_ADS_STYLES = ['poster', 'hero', 'split', 'banner'] as const;
 export type ClientAdsStyle = (typeof CLIENT_ADS_STYLES)[number];
 /** Grid pages: columns × rows → 4, 6, 8, 9, 12 or 16 products per page. */
-export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4'] as const;
+export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4', '5x5'] as const;
 export const CLIENT_ADS_IMAGE_FITS = ['contain', 'cover'] as const;
 export const CLIENT_ADS_CAPTIONS = ['bottom', 'top', 'hidden'] as const;
 /** Slide / backdrop colour presets (ads 0017, screen backdrop 0018). `midnight` is the default. */

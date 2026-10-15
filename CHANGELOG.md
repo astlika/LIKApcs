@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under "More options".
+- Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.
+- Ads grid 5×5 (up to 25 products per screen).
+
 ## [0.19.1] - 2026-10-15
 
 ### Added

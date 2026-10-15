@@ -1308,6 +1308,15 @@ export const en = {
         red: 'Red',
         blue: 'Blue',
       },
+      adsMore: 'More options',
+      views: {
+        title: 'Ready-made screen views',
+        hint: 'Ten views from 800 × 600 to 4K. Apply loads one into the form; press Save to send it to the PCs.',
+        photo: 'Photo',
+        text: 'Text list',
+        products: 'products',
+        apply: 'Apply',
+      },
       presets: {
         title: 'Layout presets',
         hint: 'Named sets of the widget, ads and lock-screen layout. Apply one, then press Save: it goes to every PC in one step.',

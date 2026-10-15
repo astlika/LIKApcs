@@ -52,6 +52,7 @@ import {
 } from '../components/ui/primitives';
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
 import { LayoutPresetsCard } from '../components/settings/LayoutPresetsCard';
+import { ScreenViewsCard } from '../components/settings/ScreenViewsCard';
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
@@ -705,6 +706,7 @@ export function SettingsPage() {
                 onChange={(v) => !ro && set('client.lock_title', v)}
               />
             </Card>
+            <ScreenViewsCard canManage={canManage} onApply={applyLayout} />
             <LayoutPresetsCard canManage={canManage} layout={currentLayout} onApply={applyLayout} />
             <Card
               title={t('settings.client.staffLoginTitle')}
@@ -767,84 +769,6 @@ export function SettingsPage() {
                       />
                     )}
                   </Field>
-                  {current['client.ads_layout'] === 'grid' && (
-                    <Field
-                      label={t('settings.client.gridSize')}
-                      hint={t('settings.client.gridSizeHint')}
-                      className="span-2"
-                    >
-                      {() => (
-                        <div className="grid-pick" role="radiogroup" data-testid="screen-grids">
-                          {CLIENT_ADS_GRIDS.map((g) => {
-                            const { cols, rows } = adsGridSize(g);
-                            const on = current['client.ads_grid'] === g;
-                            return (
-                              <button
-                                key={g}
-                                type="button"
-                                role="radio"
-                                aria-checked={on}
-                                className={`grid-pick__opt ${on ? 'is-on' : ''}`}
-                                onClick={() => !ro && set('client.ads_grid', g)}
-                                data-testid={`screen-grid-${g}`}
-                              >
-                                <span
-                                  className="grid-pick__thumb"
-                                  style={{
-                                    gridTemplateColumns: `repeat(${cols}, 1fr)`,
-                                    gridTemplateRows: `repeat(${rows}, 1fr)`,
-                                  }}
-                                  aria-hidden
-                                >
-                                  {Array.from({ length: cols * rows }, (_, i) => (
-                                    <i key={i} />
-                                  ))}
-                                </span>
-                                <span className="grid-pick__label">
-                                  <b>{cols * rows}</b>
-                                  <small>
-                                    {cols} × {rows}
-                                  </small>
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </Field>
-                  )}
-                  {current['client.ads_layout'] === 'full' && (
-                    <Field label={t('settings.client.caption')} className="span-2">
-                      {() => (
-                        <Segmented
-                          value={current['client.ads_caption']}
-                          options={CLIENT_ADS_CAPTIONS.map((v) => ({
-                            value: v,
-                            label: t(`settings.client.captions.${v}`),
-                          }))}
-                          onChange={(v) => !ro && set('client.ads_caption', v)}
-                          testId="screen-caption"
-                        />
-                      )}
-                    </Field>
-                  )}
-                  <Field
-                    label={t('settings.client.adsStyle')}
-                    hint={t('settings.client.adsStyleHint')}
-                    className="span-2"
-                  >
-                    {() => (
-                      <Segmented
-                        value={current['client.ads_style']}
-                        options={CLIENT_ADS_STYLES.map((v) => ({
-                          value: v,
-                          label: t(`ads.styles.${v}`),
-                        }))}
-                        onChange={(v) => !ro && set('client.ads_style', v)}
-                        testId="screen-style"
-                      />
-                    )}
-                  </Field>
                   <Field label={t('settings.client.adsTransition')} className="span-2">
                     {() => (
                       <Segmented
@@ -861,130 +785,207 @@ export function SettingsPage() {
                     min: 3,
                     max: 120,
                   })}
+                  <div data-testid="screen-shuffle">
+                    {bool(
+                      'client.ads_shuffle',
+                      t('settings.client.adsShuffle'),
+                      t('settings.client.adsShuffleHint'),
+                    )}
+                  </div>
                   <Field
-                    label={t('settings.client.imageFit')}
-                    hint={t('settings.client.imageFitHint')}
+                    label={t('settings.client.background')}
+                    hint={t('settings.client.backgroundHint')}
                   >
                     {() => (
-                      <Segmented
-                        value={current['client.ads_image_fit']}
-                        options={CLIENT_ADS_IMAGE_FITS.map((v) => ({
-                          value: v,
-                          label: t(`settings.client.fits.${v}`),
-                        }))}
-                        onChange={(v) => !ro && set('client.ads_image_fit', v)}
-                        testId="screen-fit"
+                      <div className="ad-themes" role="radiogroup" data-testid="screen-backgrounds">
+                        {AD_THEMES.map((theme) => {
+                          const on = current['client.ads_background'] === theme;
+                          return (
+                            <button
+                              key={theme}
+                              type="button"
+                              role="radio"
+                              aria-checked={on}
+                              className={`ad-theme ${on ? 'is-on' : ''}`}
+                              title={t(`ads.themes.${theme}`)}
+                              onClick={() => !ro && set('client.ads_background', theme)}
+                              data-testid={`screen-background-${theme}`}
+                            >
+                              <span className="ad-theme__swatch" style={themeStyle(theme)}>
+                                {on && <Check size={14} />}
+                              </span>
+                              <span className="ad-theme__label">{t(`ads.themes.${theme}`)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </Field>
+                </div>
+              </div>
+              <details data-testid="ads-more" className="ads-more">
+                <summary>{t('settings.client.adsMore')}</summary>
+                <div className="stack">
+                  <div className="form-grid">
+                    {current['client.ads_layout'] === 'grid' && (
+                      <Field
+                        label={t('settings.client.gridSize')}
+                        hint={t('settings.client.gridSizeHint')}
+                        className="span-2"
+                      >
+                        {() => (
+                          <div className="grid-pick" role="radiogroup" data-testid="screen-grids">
+                            {CLIENT_ADS_GRIDS.map((g) => {
+                              const { cols, rows } = adsGridSize(g);
+                              const on = current['client.ads_grid'] === g;
+                              return (
+                                <button
+                                  key={g}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={on}
+                                  className={`grid-pick__opt ${on ? 'is-on' : ''}`}
+                                  onClick={() => !ro && set('client.ads_grid', g)}
+                                  data-testid={`screen-grid-${g}`}
+                                >
+                                  <span
+                                    className="grid-pick__thumb"
+                                    style={{
+                                      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                                      gridTemplateRows: `repeat(${rows}, 1fr)`,
+                                    }}
+                                    aria-hidden
+                                  >
+                                    {Array.from({ length: cols * rows }, (_, i) => (
+                                      <i key={i} />
+                                    ))}
+                                  </span>
+                                  <span className="grid-pick__label">
+                                    <b>{cols * rows}</b>
+                                    <small>
+                                      {cols} × {rows}
+                                    </small>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Field>
+                    )}
+                    {current['client.ads_layout'] === 'full' && (
+                      <Field label={t('settings.client.caption')} className="span-2">
+                        {() => (
+                          <Segmented
+                            value={current['client.ads_caption']}
+                            options={CLIENT_ADS_CAPTIONS.map((v) => ({
+                              value: v,
+                              label: t(`settings.client.captions.${v}`),
+                            }))}
+                            onChange={(v) => !ro && set('client.ads_caption', v)}
+                            testId="screen-caption"
+                          />
+                        )}
+                      </Field>
+                    )}
+                    <Field
+                      label={t('settings.client.adsStyle')}
+                      hint={t('settings.client.adsStyleHint')}
+                      className="span-2"
+                    >
+                      {() => (
+                        <Segmented
+                          value={current['client.ads_style']}
+                          options={CLIENT_ADS_STYLES.map((v) => ({
+                            value: v,
+                            label: t(`ads.styles.${v}`),
+                          }))}
+                          onChange={(v) => !ro && set('client.ads_style', v)}
+                          testId="screen-style"
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label={t('settings.client.imageFit')}
+                      hint={t('settings.client.imageFitHint')}
+                    >
+                      {() => (
+                        <Segmented
+                          value={current['client.ads_image_fit']}
+                          options={CLIENT_ADS_IMAGE_FITS.map((v) => ({
+                            value: v,
+                            label: t(`settings.client.fits.${v}`),
+                          }))}
+                          onChange={(v) => !ro && set('client.ads_image_fit', v)}
+                          testId="screen-fit"
+                        />
+                      )}
+                    </Field>
+                    <div className="span-2 toggle-grid">
+                      <div>{bool('client.ads_show_price', t('settings.client.adsShowPrice'))}</div>
+                      <div data-testid="screen-show-category">
+                        {bool('client.ads_show_category', t('settings.client.showCategory'))}
+                      </div>
+                      <div data-testid="screen-motion">
+                        {bool(
+                          'client.ads_motion',
+                          t('settings.client.motion'),
+                          t('settings.client.motionHint'),
+                        )}
+                      </div>
+                      <div data-testid="screen-promo-countdown">
+                        {bool(
+                          'client.ads_promo_countdown',
+                          t('settings.client.adsPromoCountdown'),
+                          t('settings.client.adsPromoCountdownHint'),
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div data-testid="screen-fullscreen">
+                    {bool(
+                      'client.ads_fullscreen',
+                      t('settings.client.fullscreen'),
+                      t('settings.client.fullscreenHint'),
+                    )}
+                  </div>
+                  <div className="toggle-grid">
+                    <div data-testid="screen-show-clock">
+                      {bool('client.ads_show_clock', t('settings.client.showClock'))}
+                    </div>
+                    <div data-testid="screen-show-brand">
+                      {bool('client.ads_show_brand', t('settings.client.showBrand'))}
+                    </div>
+                    <div data-testid="screen-show-station">
+                      {bool('client.ads_show_station', t('settings.client.showStation'))}
+                    </div>
+                    <div data-testid="screen-show-status">
+                      {bool('client.ads_show_status', t('settings.client.showStatus'))}
+                    </div>
+                    <div data-testid="screen-show-progress">
+                      {bool('client.ads_show_progress', t('settings.client.showProgress'))}
+                    </div>
+                  </div>
+                  <Field
+                    label={t('settings.client.ticker')}
+                    hint={t('settings.client.tickerHint')}
+                    error={errors['client.ads_ticker_text']}
+                  >
+                    {(id, invalid) => (
+                      <Input
+                        id={id}
+                        value={current['client.ads_ticker_text']}
+                        maxLength={200}
+                        placeholder={t('settings.client.tickerPlaceholder')}
+                        onChange={(e) => set('client.ads_ticker_text', e.target.value)}
+                        aria-invalid={invalid}
+                        disabled={ro}
+                        data-testid="screen-ticker"
                       />
                     )}
                   </Field>
-                  <div className="span-2 toggle-grid">
-                    <div>{bool('client.ads_show_price', t('settings.client.adsShowPrice'))}</div>
-                    <div data-testid="screen-show-category">
-                      {bool('client.ads_show_category', t('settings.client.showCategory'))}
-                    </div>
-                    <div data-testid="screen-motion">
-                      {bool(
-                        'client.ads_motion',
-                        t('settings.client.motion'),
-                        t('settings.client.motionHint'),
-                      )}
-                    </div>
-                    <div data-testid="screen-shuffle">
-                      {bool(
-                        'client.ads_shuffle',
-                        t('settings.client.adsShuffle'),
-                        t('settings.client.adsShuffleHint'),
-                      )}
-                    </div>
-                    <div data-testid="screen-promo-countdown">
-                      {bool(
-                        'client.ads_promo_countdown',
-                        t('settings.client.adsPromoCountdown'),
-                        t('settings.client.adsPromoCountdownHint'),
-                      )}
-                    </div>
-                  </div>
                 </div>
-              </div>
-            </Card>
-            <Card
-              title={t('settings.client.screenTitle')}
-              subtitle={t('settings.client.screenHint')}
-              testId="screen-card"
-            >
-              <div className="stack">
-                <div data-testid="screen-fullscreen">
-                  {bool(
-                    'client.ads_fullscreen',
-                    t('settings.client.fullscreen'),
-                    t('settings.client.fullscreenHint'),
-                  )}
-                </div>
-                <div className="toggle-grid">
-                  <div data-testid="screen-show-clock">
-                    {bool('client.ads_show_clock', t('settings.client.showClock'))}
-                  </div>
-                  <div data-testid="screen-show-brand">
-                    {bool('client.ads_show_brand', t('settings.client.showBrand'))}
-                  </div>
-                  <div data-testid="screen-show-station">
-                    {bool('client.ads_show_station', t('settings.client.showStation'))}
-                  </div>
-                  <div data-testid="screen-show-status">
-                    {bool('client.ads_show_status', t('settings.client.showStatus'))}
-                  </div>
-                  <div data-testid="screen-show-progress">
-                    {bool('client.ads_show_progress', t('settings.client.showProgress'))}
-                  </div>
-                </div>
-                <Field
-                  label={t('settings.client.background')}
-                  hint={t('settings.client.backgroundHint')}
-                >
-                  {() => (
-                    <div className="ad-themes" role="radiogroup" data-testid="screen-backgrounds">
-                      {AD_THEMES.map((theme) => {
-                        const on = current['client.ads_background'] === theme;
-                        return (
-                          <button
-                            key={theme}
-                            type="button"
-                            role="radio"
-                            aria-checked={on}
-                            className={`ad-theme ${on ? 'is-on' : ''}`}
-                            title={t(`ads.themes.${theme}`)}
-                            onClick={() => !ro && set('client.ads_background', theme)}
-                            data-testid={`screen-background-${theme}`}
-                          >
-                            <span className="ad-theme__swatch" style={themeStyle(theme)}>
-                              {on && <Check size={14} />}
-                            </span>
-                            <span className="ad-theme__label">{t(`ads.themes.${theme}`)}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Field>
-                <Field
-                  label={t('settings.client.ticker')}
-                  hint={t('settings.client.tickerHint')}
-                  error={errors['client.ads_ticker_text']}
-                >
-                  {(id, invalid) => (
-                    <Input
-                      id={id}
-                      value={current['client.ads_ticker_text']}
-                      maxLength={200}
-                      placeholder={t('settings.client.tickerPlaceholder')}
-                      onChange={(e) => set('client.ads_ticker_text', e.target.value)}
-                      aria-invalid={invalid}
-                      disabled={ro}
-                      data-testid="screen-ticker"
-                    />
-                  )}
-                </Field>
-              </div>
+              </details>
             </Card>
           </div>
           <div className="client-screen__preview">

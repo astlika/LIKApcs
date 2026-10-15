@@ -388,7 +388,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     });
     // Validation happens on the server, field by field.
     const bad = await call<{ error: { code: string } }>(owner.token, 'PATCH', '/settings', {
-      'client.ads_grid': '5x5',
+      'client.ads_grid': '5x4',
     });
     expect(bad.status).toBe(400);
     expect(bad.body.error.code).toBe('validation_error');
@@ -833,7 +833,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect((await call(cashier.token, 'POST', '/ads/albums', { name: 'X' })).status).toBe(403);
     expect((await call(owner.token, 'POST', '/ads/albums', { name: '' })).status).toBe(400);
     expect(
-      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', grid: '5x5' })).status,
+      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', grid: '5x4' })).status,
     ).toBe(400);
     expect(
       (await call(owner.token, 'POST', '/ads/albums', { name: 'X', intervalSeconds: 1 })).status,

@@ -128,7 +128,14 @@ export function AdsSlideshow({
     ({
       '--cols': album.grid.cols,
       '--rows': album.grid.rows,
-      '--cell-scale': album.grid.cols >= 4 ? 0.68 : album.grid.cols === 3 ? 0.82 : 1,
+      '--cell-scale':
+        album.grid.cols >= 5
+          ? 0.56
+          : album.grid.cols >= 4
+            ? 0.68
+            : album.grid.cols === 3
+              ? 0.82
+              : 1,
     }) as CSSProperties;
   const frameClass = (album: AlbumPlan | null) =>
     [

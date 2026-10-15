@@ -1316,6 +1316,15 @@ export const sq: Dictionary = {
         red: 'E kuqe',
         blue: 'Blu',
       },
+      adsMore: 'Opsione të tjera',
+      views: {
+        title: 'Pamje të gatshme të ekranit',
+        hint: "Dhjetë pamje nga 800 × 600 deri në 4K. Aplikoje e ngarkon në formë; shtyp Ruaj që t'i dërgohet PC-ve.",
+        photo: 'Foto',
+        text: 'Listë teksti',
+        products: 'produkte',
+        apply: 'Apliko',
+      },
       presets: {
         title: 'Presetet e paraqitjes',
         hint: 'Grupe të emërtuara të widget-it, reklamave dhe ekranit të kyçjes. Zbato një preset, pastaj shtyp Ruaj: shkon te çdo PC me një hap.',
