@@ -1,11 +1,11 @@
 {
-  "version": "0.19.2",
-  "notes": "### Added\n\n- Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under \"More options\".\n- Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.\n- Ads grid 5×5 (up to 25 products per screen).\n- Stations: a \"Gift minutes\" button on the PC (only for users with the gift permission). It opens the add-time dialog in gift mode.\n- Stations map: at small icon sizes each PC is one line (status dot, code, timer or state).\n\n### Changed\n\n- Settings → POS & Printing: the sales switches (hide out-of-stock, off-inventory items, PC time, installments, card payments, credit days, wallet) are in their own \"Sales (POS)\" card. Receipt options stay under Receipts.\n\n### Security\n\n- Build tool: `esbuild` used by the server build bumped from 0.27.7 to 0.28.2 (fixes GHSA-g7r4-m6w7-qqqr, a low-severity dev-server file read on Windows). Build-time only; the shipped app does not run esbuild.",
-  "pub_date": "2026-10-15T18:05:17.374Z",
+  "version": "0.19.3",
+  "notes": "### Changed\n\n- Ads (customer screens, PCs and the counter's customer display): only slides inside an enabled album are shown. A slide with no album never shows, and neither does a slide in a switched-off album. Slides with no album stay in Admin › Ads, marked \"No album\", until they are moved into an album.\n- Ads: a product with stock tracked at zero (or less) leaves every screen by itself and comes back when it is restocked. Admin › Ads shows it as \"Out of stock\". Products that do not track stock are unaffected.\n- Ads on the PCs refresh at least every 60 seconds (was 10 minutes), and the counter's customer display every 60 seconds (was 5 minutes), so a sold-out product leaves the screens within about a minute.",
+  "pub_date": "2026-10-15T20:41:20.705Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelNtczdVeEhpNUZ4QlA1NXV5NUtYNDdQeTRXcW5lWWVxK05nU3ZpbXpGS2pENWJxbzBlbEdQT0NiZlFZWXczQWFheEVwTFA0WWRodlNmWUdyQW1Mcnc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDg3Mjk5CWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS4yX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjIKRnVGeTBUMXl5cmJqUDlLcmNtYkwxK1lwUHFwUGJhMXZkUG5jZC9aS0dPZHNoSlRVcEZNL2ZBdE43R2xpaUZRdzZsWEUyaC9tNDhhWnhnRE5UbXRFRGc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.2/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelZXaGxQaFJzWnlSZGU2ZXZpcjdiZjhBd1FDd2hVbGxTV2l6djRpYmVSMjFmTERTNTV4Ty96R0h0OWdFQjhkOHBWUTNSOXk5TEw2Z1YyMVJGdVMvelFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDk2NDUwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjMKQnYycG9hdVFzeTVFSXZjWC9jdDEreWRtZGUyekozQXc3REJiZlUzdzdOZWc1eEpuUVo2bkErRWNkVFBxL2NMTmR1cUxEb2tHazRkNHk4Y0lFcFNtQ3c9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.3/LIKApcs-Client-Setup.exe"
     }
   }
 }
