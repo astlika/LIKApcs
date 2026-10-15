@@ -6982,3 +6982,59 @@ button.ads-album .ads-album__meta {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* 0.19.1 (item 4): at small icon sizes a PC is one line — status dot, code, timer or state. */
+.pc-tile--line {
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  font-size: 12px;
+  min-height: 0;
+}
+.pc-tile--line .pc-tile__code {
+  font-weight: 700;
+  font-size: 13px;
+}
+.pc-tile--line .pc-tile__line-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+.pc-tile--line .pc-tile__line-state[data-warn] {
+  color: #f59e0b;
+  font-weight: 600;
+  opacity: 1;
+}
+.pc-tile__pip {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--glass, #2a313d);
+}
+.pc-tile--line[data-status='available'] {
+  --glass: #1f9d55;
+}
+.pc-tile--line[data-status='occupied'] {
+  --glass: #2f7bff;
+}
+.pc-tile--line[data-status='expiring'] {
+  --glass: #f59e0b;
+}
+.pc-tile--line[data-status='paused'],
+.pc-tile--line[data-status='maintenance'] {
+  --glass: #d97706;
+}
+.pc-tile--line[data-status='locked'] {
+  --glass: #7c3aed;
+}
+.pc-tile--line[data-status='updating'] {
+  --glass: #0ea5e9;
+}
+.pc-tile--line[data-status='error'] {
+  --glass: #dc2626;
+}

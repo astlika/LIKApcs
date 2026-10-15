@@ -163,7 +163,7 @@ export function StationTile({
   const compact = size < 88;
   return (
     <div
-      className="pc-tile"
+      className={compact ? 'pc-tile pc-tile--line' : 'pc-tile'}
       data-id={station.id}
       data-status={status}
       data-archived={station.archived ? 'true' : undefined}
@@ -196,74 +196,110 @@ export function StationTile({
         }
       }}
     >
-      <PcIcon status={status} number={station.number} size={size} />
-      {station.pendingRequest && (
-        <span
-          className="pc-tile__request"
-          title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
-          data-testid="tile-request"
-        >
-          <Bell size={10} />
-          {compact ? '' : t('requests.tile')}
-        </span>
-      )}
-      {station.awaitingPayment.count > 0 && (
-        <span
-          className="pc-tile__awaiting"
-          title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
-          data-testid="tile-awaiting"
-        >
-          <Hourglass size={10} />
-          {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
-        </span>
-      )}
-      <div className="pc-tile__code">{station.code}</div>
-      {!compact && station.name !== station.code && (
-        <div className="pc-tile__name">{station.name}</div>
-      )}
-      {live && projected ? (
+      {!compact && (
         <>
-          <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
-            {projected.remaining !== null
-              ? formatHms(projected.remaining)
-              : formatHms(projected.elapsed)}
-          </div>
-          {!compact && (
-            <div className="pc-tile__meta">
-              <span className="num">{fmt.money(live.currentPriceCents)}</span>
-              {live.customerName && <span className="pc-tile__customer">{live.customerName}</span>}
-            </div>
+          <PcIcon status={status} number={station.number} size={size} />
+          {station.pendingRequest && (
+            <span
+              className="pc-tile__request"
+              title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
+              data-testid="tile-request"
+            >
+              <Bell size={10} />
+              {compact ? '' : t('requests.tile')}
+            </span>
           )}
-          {fraction !== null && (
-            <div className="pc-tile__bar" aria-hidden>
-              <span style={{ width: `${fraction * 100}%` }} />
+          {station.awaitingPayment.count > 0 && (
+            <span
+              className="pc-tile__awaiting"
+              title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
+              data-testid="tile-awaiting"
+            >
+              <Hourglass size={10} />
+              {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
+            </span>
+          )}
+          <div className="pc-tile__code">{station.code}</div>
+          {!compact && station.name !== station.code && (
+            <div className="pc-tile__name">{station.name}</div>
+          )}
+          {live && projected ? (
+            <>
+              <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
+                {projected.remaining !== null
+                  ? formatHms(projected.remaining)
+                  : formatHms(projected.elapsed)}
+              </div>
+              {!compact && (
+                <div className="pc-tile__meta">
+                  <span className="num">{fmt.money(live.currentPriceCents)}</span>
+                  {live.customerName && (
+                    <span className="pc-tile__customer">{live.customerName}</span>
+                  )}
+                </div>
+              )}
+              {fraction !== null && (
+                <div className="pc-tile__bar" aria-hidden>
+                  <span style={{ width: `${fraction * 100}%` }} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="pc-tile__state">
+              {station.archived
+                ? t('stations.archived')
+                : td(
+                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
+                    station.status,
+                  )}
+              {station.isEnabled &&
+                station.status === 'available' &&
+                !station.device &&
+                !compact && <span className="faint"> · {t('stations.noDevice')}</span>}
+              {station.status === 'maintenance' && station.maintenance && !compact && (
+                <span className="faint">
+                  {' '}
+                  · {station.maintenance.byName ?? '—'} ·{' '}
+                  {formatHms(
+                    Math.max(
+                      0,
+                      Math.round(
+                        (new Date(station.maintenance.until).getTime() - Date.now()) / 1000,
+                      ),
+                    ),
+                  )}
+                </span>
+              )}
             </div>
           )}
         </>
-      ) : (
-        <div className="pc-tile__state">
-          {station.archived
-            ? t('stations.archived')
-            : td(
-                `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
-                station.status,
-              )}
-          {station.isEnabled && station.status === 'available' && !station.device && !compact && (
-            <span className="faint"> · {t('stations.noDevice')}</span>
+      )}
+      {compact && (
+        <>
+          {/* 0.19.1 (item 4): at small icon sizes the tile is one line: dot, code, timer or state. */}
+          <span className="pc-tile__pip" data-status={status} aria-hidden />
+          <span className="pc-tile__code">{station.code}</span>
+          <span className="pc-tile__line-state num" data-warn={status === 'expiring' || undefined}>
+            {live && projected
+              ? formatHms(projected.remaining !== null ? projected.remaining : projected.elapsed)
+              : station.archived
+                ? t('stations.archived')
+                : td(
+                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
+                    station.status,
+                  )}
+          </span>
+          {station.pendingRequest && (
+            <Bell size={10} aria-label={t('requests.tile')} data-testid="tile-request" />
           )}
-          {station.status === 'maintenance' && station.maintenance && !compact && (
-            <span className="faint">
-              {' '}
-              · {station.maintenance.byName ?? '—'} ·{' '}
-              {formatHms(
-                Math.max(
-                  0,
-                  Math.round((new Date(station.maintenance.until).getTime() - Date.now()) / 1000),
-                ),
-              )}
-            </span>
+          {station.awaitingPayment.count > 0 && (
+            <Hourglass
+              size={10}
+              aria-label={t('sessions.awaiting.title')}
+              data-testid="tile-awaiting"
+            />
           )}
-        </div>
+        </>
       )}
     </div>
   );
