@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-10-15
+
 ### Added
 
 - Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under "More options".
