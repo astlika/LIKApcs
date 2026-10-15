@@ -1067,6 +1067,7 @@ export const en = {
     nSelected: '{n} PCs selected',
     nPcs: '{n} PCs',
     clearSelection: 'Clear selection',
+    selectAll: 'Select all PCs',
     multiHint: 'Actions apply to every selected PC.',
     singleOnly: 'Select a single PC for this action',
     bulkTitle: '+ minutes on {n} PCs',

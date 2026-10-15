@@ -1077,6 +1077,7 @@ export const sq: Dictionary = {
     nSelected: '{n} PC të zgjedhur',
     nPcs: '{n} PC',
     clearSelection: 'Pastro zgjedhjen',
+    selectAll: 'Zgjidh të gjitha PC-të',
     multiHint: 'Veprimet zbatohen në çdo PC të zgjedhur.',
     singleOnly: 'Zgjidh vetëm një PC për këtë veprim',
     bulkTitle: '+ minuta në {n} PC',

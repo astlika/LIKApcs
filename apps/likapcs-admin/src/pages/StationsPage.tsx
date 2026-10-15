@@ -617,6 +617,20 @@ export function StationsPage() {
             <span className="muted">{t('map.selectShort')}</span>
           )}
         </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="select-all-pcs"
+          disabled={displayOrder.length === 0 || selectedIds.length === displayOrder.length}
+          onClick={() => {
+            // Every PC on the map (the same list Ctrl+A uses), so the bar actions apply to all.
+            setSelectedIds(displayOrder.map((s) => s.id));
+            setAnchorId(displayOrder[0]?.id ?? null);
+            setMenu(null);
+          }}
+        >
+          {t('map.selectAll')}
+        </Button>
         <MapHelp />
         <div className="map-actions__buttons">
           {actions
