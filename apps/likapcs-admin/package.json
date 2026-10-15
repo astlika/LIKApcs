@@ -1,6 +1,6 @@
 {
   "name": "@likapcs/admin",
-  "version": "0.19.3",
+  "version": "0.19.4",
   "private": true,
   "description": "LIKApcs Admin — POS, ERP and Gaming Station control desktop application",
   "type": "module",

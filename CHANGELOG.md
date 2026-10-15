@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-10-16
+
 ### Added
 
 - Stations map: a visible "Select all PCs" button on the toolbar (Ctrl+A already did this).
