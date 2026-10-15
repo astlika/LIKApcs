@@ -112,6 +112,8 @@ const STATE_TONE: Record<
   unavailable: 'danger',
   off_hours: 'info',
   album_off: 'default',
+  out_of_stock: 'danger',
+  no_album: 'default',
 };
 
 /** Album filter of the list: every slide, the slides in no album, or one album. */

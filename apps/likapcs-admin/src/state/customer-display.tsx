@@ -164,8 +164,8 @@ export function CustomerDisplayProvider({ children }: { children: ReactNode }) {
     queryKey: ['display', 'feed'],
     queryFn: () => api<CustomerDisplayFeed>('/ads/feed'),
     enabled: active,
-    staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   // Push on every change; answer a display's hello with the full picture.

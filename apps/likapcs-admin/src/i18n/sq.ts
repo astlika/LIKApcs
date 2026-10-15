@@ -2208,6 +2208,8 @@ export const sq: Dictionary = {
       unavailable: 'Jo në dispozicion',
       off_hours: 'Jashtë orarit',
       album_off: 'Albumi i fikur',
+      out_of_stock: 'Pa stok',
+      no_album: 'Pa album',
     },
     stateHint: {
       disabled: 'E fikur — ndize çelësin që të kthehet në ekrane.',
@@ -2218,14 +2220,17 @@ export const sq: Dictionary = {
       off_hours: 'Jashtë ditëve / orarit të vet — kthehet vetë kur hapet dritarja.',
       album_off:
         'Albumi i tij është i fikur — ndize albumin që të kthehet i gjithë albumi në ekrane.',
+      out_of_stock: 'Produkti nuk ka stok — kthehet vetë në ekrane sapo të rimbushet stoku.',
+      no_album:
+        'Nuk është në album — nuk shfaqet kurrë në ekrane. Vendose në një album që të shfaqet.',
     },
     previewTitle: 'Pamja paraprake',
     previewHint: 'Si duket sllajdi i zgjedhur në një kompjuter (pamja kartelë).',
     howTitle: 'Si funksionon',
     how1: 'Çmimi promocional llogaritet automatikisht në arkë sa kohë reklama është aktive — rafti, ekrani dhe kuponi përputhen gjithmonë.',
-    how2: 'Produktet e arkivuara zhduken vetë nga ekranet; ato pa stok mbeten (shënohen këtu) që ekranet të mos mbeten kurrë bosh.',
+    how2: 'Produktet e arkivuara dhe ato pa stok zhduken vetë nga ekranet (pronari i sheh akoma këtu, të shënuara).',
     how3: 'Ndryshimet arrijnë në çdo kompjuter brenda një sekonde — pa rinisje.',
-    how4: 'Albumet luhen njëri pas tjetrit — albumi 1 i plotë, pastaj albumi 2, … — secili me pamjen e vet; sllajdet pa album luhen të parat, me pamjen nga Cilësimet.',
+    how4: 'Albumet luhen njëri pas tjetrit — albumi 1 i plotë, pastaj albumi 2, … — secili me pamjen e vet; vetëm sllajdet brenda një albumi shfaqen — sllajdi pa album nuk shfaqet kurrë.',
     deleted: 'Reklama u hoq.',
     saved: 'Reklama u ruajt.',
     deleteTitle: 'Ta heqim këtë reklamë?',

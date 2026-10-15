@@ -199,7 +199,8 @@ const UPDATE_FIRST_CHECK_MS = 2 * 60_000;
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const UPDATE_RETRY_MS = 30 * 60_000;
 /** Safety net behind the `server.display` push (a missed push must not keep stale ads for long). */
-const ADS_REFRESH_MS = 10 * 60_000;
+// 0.19.3: 60 s, so a product that runs out of stock leaves the screen within a minute.
+const ADS_REFRESH_MS = 60_000;
 /** How long "Order #3 accepted" stays in the widget. */
 const ORDER_FLASH_MS = 8000;
 
@@ -1511,6 +1512,8 @@ export class Agent {
   private onTick(): void {
     const now = this.clock.now();
     const { state } = this.snapshot;
+    // 0.19.3: keep the lock-screen ads fresh (stock changes do not push to PCs).
+    if (state.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();
     let next = state;
     if (state.session && sessionView(state.session, now).expired) {
       next = { ...state, mode: 'locked', session: null };

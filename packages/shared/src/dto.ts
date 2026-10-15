@@ -2950,6 +2950,10 @@ export const AD_STATES = [
   'off_hours',
   /** 0.12.0: the slide's album is switched off. */
   'album_off',
+  /** 0.19.3: a product slide whose stock is tracked and at zero — hidden from every screen. */
+  'out_of_stock',
+  /** 0.19.3: a slide in no album — never shown on a screen. */
+  'no_album',
 ] as const;
 export type AdState = (typeof AD_STATES)[number];
 

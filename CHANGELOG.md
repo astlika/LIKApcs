@@ -6,6 +6,14 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-10-15
+
+### Changed
+
+- Ads (customer screens, PCs and the counter's customer display): only slides inside an enabled album are shown. A slide with no album never shows, and neither does a slide in a switched-off album. Slides with no album stay in Admin › Ads, marked "No album", until they are moved into an album.
+- Ads: a product with stock tracked at zero (or less) leaves every screen by itself and comes back when it is restocked. Admin › Ads shows it as "Out of stock". Products that do not track stock are unaffected.
+- Ads on the PCs refresh at least every 60 seconds (was 10 minutes), and the counter's customer display every 60 seconds (was 5 minutes), so a sold-out product leaves the screens within about a minute.
+
 ## [0.19.2] - 2026-10-15
 
 ### Added
