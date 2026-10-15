@@ -13,6 +13,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import {
   ArrowLeft,
   Clock,
+  Gift,
   Info,
   Lock,
   LockOpen,
@@ -75,6 +76,7 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'gift'
   | 'cancel'
   | 'lock'
   | 'unlock'
@@ -113,7 +115,7 @@ type BulkOutcome = BulkOutcomeOf<StationSummary>;
 type Flow =
   | { kind: 'start' }
   | { kind: 'end'; sessionId: string }
-  | { kind: 'extend'; sessionId: string }
+  | { kind: 'extend'; sessionId: string; gift?: boolean }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
@@ -470,6 +472,20 @@ export function useStationActions(
         enabled: canControl && !!live && live.billingMode !== 'postpaid',
         hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
+      ...(canGift
+        ? [
+            {
+              // 0.19.1 (item 3): gift minutes get their own button, not only inside "+ time".
+              id: 'gift' as const,
+              label: t('map.gift'),
+              icon: Gift,
+              bar: true,
+              enabled: canControl && !!live && live.billingMode !== 'postpaid',
+              tone: 'primary' as const,
+              hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+            },
+          ]
+        : []),
       {
         // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
         // on the server). In maintenance or during a session the action locks the screen.
@@ -588,6 +604,9 @@ export function useStationActions(
           if (multi) setFlow({ kind: 'bulk-minutes' });
           else if (live) setFlow({ kind: 'extend', sessionId: live.id });
           break;
+        case 'gift':
+          if (live) setFlow({ kind: 'extend', sessionId: live.id, gift: true });
+          break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
           break;
@@ -671,6 +690,7 @@ export function useStationActions(
               busy={sessionAct.isPending}
               onClose={close}
               canGift={canGift}
+              initialGift={!!flow.gift}
               onConfirm={(body, action) =>
                 sessionAct.mutate({ sessionId: s.id, action: action ?? 'extend', body })
               }

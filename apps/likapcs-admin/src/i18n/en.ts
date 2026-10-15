@@ -1033,6 +1033,7 @@ export const en = {
     start: 'Start',
     stop: 'Stop',
     addTime: 'Add time',
+    gift: 'Gift minutes',
     addTimePostpaid: 'Open-time sessions are billed when they stop.',
     startEndPay: 'Start · pay at the end',
     message: 'Message',

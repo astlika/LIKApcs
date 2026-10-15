@@ -1043,6 +1043,7 @@ export const sq: Dictionary = {
     start: 'Nis',
     stop: 'Ndalo',
     addTime: 'Shto kohë',
+    gift: 'Minuta dhuratë',
     addTimePostpaid: 'Seancat me kohë të hapur faturohen kur ndalen.',
     startEndPay: 'Nis · paguan në fund',
     message: 'Mesazh',
