@@ -11,6 +11,8 @@ All notable changes to LIKApcs are documented here. The format follows
 - Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under "More options".
 - Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.
 - Ads grid 5×5 (up to 25 products per screen).
+- Stations: a "Gift minutes" button on the PC (only for users with the gift permission). It opens the add-time dialog in gift mode.
+- Stations map: at small icon sizes each PC is one line (status dot, code, timer or state).
 
 ### Changed
 
