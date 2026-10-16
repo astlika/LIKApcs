@@ -1,11 +1,11 @@
 {
-  "version": "0.19.5",
-  "notes": "### Added\n\n- Admin, \"To collect\" strip: a single \"Collect all (n)\" button collects every waiting bill at every PC in one step, when bills wait at two or more PCs. One tender covers them all (cash, card or split); each bill keeps its own receipt. If the tender does not cover every bill, nothing is taken. Endpoint: `POST /sessions/collect-all`. The per-PC \"Collect all at PC (n)\" button stays as it was.",
-  "pub_date": "2026-10-16T01:19:09.893Z",
+  "version": "0.19.6",
+  "notes": "### Fixed\n\n- PC client (Windows): a staff notice, the \"5 min / 1 min left\" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. Not yet tested on a Windows PC running a game: test before rolling out widely.",
+  "pub_date": "2026-10-16T17:23:32.687Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelpib084V1FNYk45MEZjVExseTJrUlZTK0wyTUlWR2V6UG1ocjVaQy9hQ1JKN0x2eGpUNy9JQjlUZ3NhQnN2RWRoOEhZM3I2cVlRTmgzdnFyN0VrZ2d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTEzNDc1CWZpbGU6TElLQXBjc18wLjE5LjVfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMTkuNQpSbzNaMElyVk5tYXR4NU5yeW9Tc1NCM1laajhxWmJRUkFsbjc1N1dvY0NPSlNBOVIwaGtvRTRjd253NTIxWkNlc2dWVTQxbS9MVGE3ZUljSmp2YVVCZz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.5/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemV2SEJ4Y0RMVWNobGhiNFgwejFMdXZLbmFEUlgxY0VVZW96S05NTGY3MHdWYkhqbUFQN3NMUHRqOW5ud1lMcHdGWUhlcEd0UXZ5VXoxOS9vN0VsdmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTcxMzQ4CWZpbGU6TElLQXBjc18wLjE5LjZfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMTkuNgpGTTJEUG1tZ0VXZW1EbkhSVWcxQzJueThLTkxPc3VTRmhWYmRPSSt5RjRGSktXVEd3amZ4VkdHaGxTWDVSNzlOVU12WUZUanQ3SmFPcEppSHdkejZEZz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.6/LIKApcs-Setup.exe"
     }
   }
 }
