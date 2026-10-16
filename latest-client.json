@@ -1,11 +1,11 @@
 {
-  "version": "0.19.3",
-  "notes": "### Changed\n\n- Ads (customer screens, PCs and the counter's customer display): only slides inside an enabled album are shown. A slide with no album never shows, and neither does a slide in a switched-off album. Slides with no album stay in Admin › Ads, marked \"No album\", until they are moved into an album.\n- Ads: a product with stock tracked at zero (or less) leaves every screen by itself and comes back when it is restocked. Admin › Ads shows it as \"Out of stock\". Products that do not track stock are unaffected.\n- Ads on the PCs refresh at least every 60 seconds (was 10 minutes), and the counter's customer display every 60 seconds (was 5 minutes), so a sold-out product leaves the screens within about a minute.",
-  "pub_date": "2026-10-15T20:41:20.705Z",
+  "version": "0.19.4",
+  "notes": "### Added\n\n- Stations map: a visible \"Select all PCs\" button on the toolbar (Ctrl+A already did this).\n- Stations: \"Stop\" works for a selection of PCs. One confirmation stops every running session at once and reports each PC. Nothing is charged at that moment: postpaid and pay-at-the-end bills wait at the desk (\"Pay all\" on the PC), prepaid time was already paid, and open orders stay open. Endpoint: `POST /sessions/bulk-end`.",
+  "pub_date": "2026-10-16T00:24:51.822Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelZXaGxQaFJzWnlSZGU2ZXZpcjdiZjhBd1FDd2hVbGxTV2l6djRpYmVSMjFmTERTNTV4Ty96R0h0OWdFQjhkOHBWUTNSOXk5TEw2Z1YyMVJGdVMvelFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDk2NDUwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjMKQnYycG9hdVFzeTVFSXZjWC9jdDEreWRtZGUyekozQXc3REJiZlUzdzdOZWc1eEpuUVo2bkErRWNkVFBxL2NMTmR1cUxEb2tHazRkNHk4Y0lFcFNtQ3c9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.3/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelF0Y1M4TElnNFk1eXBoRDJxWHBoM1U2SGRaOHlsd0xNYmZvNnF2MHJCREFlRkxFeU9pRUtKSW1obmVJcnJqaWZHUm5zV0hadkgwMXV4bVBzNmlYUUE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTEwMDgyCWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS40X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjQKaFlkMDdOalFBc2V5T21DV00zeVBCNEJzVm9jNTZLQ2VRZEVubW83UXNMWkp4VzVJTzJwZjR2UmQ1eDY3UndFOFkvTk92dVBiK3VwWWdzcTZmTDZ4QlE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.4/LIKApcs-Client-Setup.exe"
     }
   }
 }
