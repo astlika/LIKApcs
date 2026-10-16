@@ -351,18 +351,26 @@ fn reassert(window: &WebviewWindow, apply: impl Fn(&WebviewWindow) + Send + 'sta
     }
 }
 
-fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
+/// `already_widget`: the window was already the countdown widget before this call (a design,
+/// size or notice change while a customer plays). Then only the geometry is updated: leaving
+/// fullscreen and taking focus would drop a running game (CS2) from the screen and bring the
+/// mouse cursor back, on every staff notice, order flash or time warning.
+fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout, already_widget: bool) {
     let (width, height) = layout.dimensions();
-    let _ = window.set_fullscreen(false);
-    let _ = window.set_decorations(false);
-    let _ = window.set_resizable(false);
-    let _ = window.set_skip_taskbar(true);
+    if !already_widget {
+        let _ = window.set_fullscreen(false);
+        let _ = window.set_decorations(false);
+        let _ = window.set_resizable(false);
+        let _ = window.set_skip_taskbar(true);
+    }
     let _ = window.set_always_on_top(true);
     let _ = window.set_size(LogicalSize::new(width, height));
     position_overlay(window, layout.position, width, height);
     let _ = window.show();
     let _ = window.unminimize();
-    let _ = window.set_focus();
+    if !already_widget {
+        let _ = window.set_focus();
+    }
     // Leaving fullscreen is asynchronous on Windows (11 restores the window's old "normal" rect
     // after this returns): re-apply the widget geometry and the topmost flag once the transition
     // settles, or the countdown widget ends up off-screen / behind the shell — invisible.
@@ -371,7 +379,9 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout) {
         position_overlay(w, layout.position, width, height);
         let _ = w.set_always_on_top(true);
         let _ = w.show();
-        let _ = w.unminimize();
+        if !already_widget {
+            let _ = w.unminimize();
+        }
     });
 }
 
@@ -522,7 +532,6 @@ async fn widget_check(
         let _ = window.set_always_on_top(true);
         let _ = window.show();
         let _ = window.unminimize();
-        let _ = window.set_focus();
         let still = !window.is_visible().unwrap_or(false);
         let detail = if still {
             "hidden-after-heal".to_string()
@@ -673,7 +682,8 @@ async fn set_widget_layout(
     *state.layout.lock().map_err(|_| "widget state poisoned")? = layout;
     if state.overlay.load(Ordering::SeqCst) {
         if let Some(window) = app.get_webview_window("main") {
-            apply_overlay(&window, layout);
+            // Already the widget: a geometry change must not steal focus from the game.
+            apply_overlay(&window, layout, true);
         }
     }
     Ok(())
@@ -798,7 +808,7 @@ async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("main window missing")?;
     let locked = app.state::<KioskState>().locked.clone();
     let widget = app.state::<WidgetState>();
-    widget.overlay.store(mode == "overlay", Ordering::SeqCst);
+    let was_widget = widget.overlay.swap(mode == "overlay", Ordering::SeqCst);
     match mode.as_str() {
         "locked" => {
             locked.store(true, Ordering::SeqCst);
@@ -811,7 +821,7 @@ async fn set_window_mode(app: AppHandle, mode: String) -> Result<(), String> {
             kiosk::set_enabled(false);
             update_covers(&app, false);
             let layout = *widget.layout.lock().map_err(|_| "widget state poisoned")?;
-            apply_overlay(&window, layout);
+            apply_overlay(&window, layout, was_widget);
         }
         "panel" => {
             locked.store(false, Ordering::SeqCst);
