@@ -6,6 +6,19 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.7] - 2026-10-16
+
+### Added
+
+- Countdown widget: a new, plainest look "Only the time" (only the minutes left, no bar, no amount, no PC code).
+- Countdown widget: two new corners, "Middle left" and "Middle right" (vertically centred on the edge of the screen).
+- Settings → Client screen: "Hide in games" (on by default). While a fullscreen game (for example CS2) runs on the PC, the countdown is hidden and it comes back when the game closes. Switch it off to keep the countdown visible over games.
+
+### Fixed
+
+- The countdown widget no longer counts a desktop or taskbar as a game when deciding to hide.
+- PC client (Windows): a staff notice, the "5 min / 1 min left" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. (This was meant for 0.19.6, which did not publish.)
+
 ## [0.19.6] - 2026-10-16
 
 ### Fixed
