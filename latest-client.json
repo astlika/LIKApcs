@@ -1,11 +1,11 @@
 {
-  "version": "0.19.6",
-  "notes": "### Fixed\n\n- PC client (Windows): a staff notice, the \"5 min / 1 min left\" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. Not yet tested on a Windows PC running a game: test before rolling out widely.",
-  "pub_date": "2026-10-16T17:23:32.718Z",
+  "version": "0.19.7",
+  "notes": "### Added\n\n- Countdown widget: a new, plainest look \"Only the time\" (only the minutes left, no bar, no amount, no PC code).\n- Countdown widget: two new corners, \"Middle left\" and \"Middle right\" (vertically centred on the edge of the screen).\n- Settings → Client screen: \"Hide in games\" (on by default). While a fullscreen game (for example CS2) runs on the PC, the countdown is hidden and it comes back when the game closes. Switch it off to keep the countdown visible over games.\n\n### Fixed\n\n- The countdown widget no longer counts a desktop or taskbar as a game when deciding to hide.\n- PC client (Windows): a staff notice, the \"5 min / 1 min left\" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. (This was meant for 0.19.6, which did not publish.)",
+  "pub_date": "2026-10-16T21:46:38.419Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelRvT1VoWVRNaG9KRy9oUkROMTlkaWZ2WFpzc2J2TEFWNUNWYk5IbjM1Vnhhb1JRd3BONUtFWkFnZlh5ME1vVUdyeUZtV0lpdVZlc1JzekxuZ0VBV2dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTcxMTY2CWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS42X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjYKQ1ViRjhNMU5yS2JMcm10d2ozMTZvVlk3eVdrZVUwRS9uK1NCNThmNnJMaGduOGxFcytCQWIzYXplUmFlUkFBTEo5TDAvQjh5bXdIcXJwTm1kY3RZQVE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.6/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemFBckFYTzhhTnF2OXJwbXJIS0pVOTNpVTdaYjdIWVRxeStLd0VGOEtYYXhNQWJsd0FQRnBLNjk0d0lJcGl6c0RpQWNVK21OM1NQajk3T21LNTNWcXdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTg3MTE3CWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS43X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjcKNm1ramU3bUVPWWVFeEYrK2hPQVVVQ0Q5K3FrU2N1VHpnSXpsaks0WXNzbnlXRWJXOWxXTEdXbUpzMmdxbXRsajRaS0tKb21pdTB4anlQb2xKbFJNQmc9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.7/LIKApcs-Client-Setup.exe"
     }
   }
 }
