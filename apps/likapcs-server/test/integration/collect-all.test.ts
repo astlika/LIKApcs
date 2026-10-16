@@ -248,4 +248,62 @@ describe('pay all: the bills waiting at one PC, in one step', () => {
     expect(res.status).toBe(409);
     expect(await counts()).toEqual(before);
   });
+
+  it('0.19.5 — collect all PCs: the bills of every PC in one step; a short tender takes nothing', async () => {
+    // Earlier tests left PC 3's bill waiting (75). PC 5 and PC 6 end together with bills too.
+    setClock(plusMinutes(600));
+    const pc5 = (await post<StationSummary>('/stations', { number: 5, name: 'Arena 5' })).body;
+    const pc6 = (await post<StationSummary>('/stations', { number: 6, name: 'Arena 6' })).body;
+    const a = await startEndpay(pc5, 30); // 75
+    const c = await startEndpay(pc6, 30); // 75
+    setClock(plusMinutes(631));
+    await expireDue();
+    const b = await startEndpay(pc5, 60); // 150, starts after a has run out
+    setClock(plusMinutes(692));
+    await expireDue();
+    expect(await awaitingAt(pc5)).toBe(2);
+    expect(await awaitingAt(pc6)).toBe(1);
+    expect(await awaitingAt(pc3)).toBe(1);
+
+    // Four bills in all: 75 + 150 + 75 + 75 = 375.
+    const before = await counts();
+    const short = await post('/sessions/collect-all', {
+      paymentMethod: 'cash',
+      payments: [{ method: 'cash', amountCents: 374 }],
+    });
+    expect(short.status).toBe(400);
+    expect(await counts()).toEqual(before);
+    expect((await sessionOf(a.id)).billedAt).toBeNull();
+    expect((await sessionOf(c.id)).billedAt).toBeNull();
+
+    const paid = await post<{
+      stationId: string | null;
+      totalCents: number;
+      collected: { sessionId: string; totalCents: number }[];
+    }>('/sessions/collect-all', {
+      paymentMethod: 'cash',
+      payments: [{ method: 'cash', amountCents: 375 }],
+    });
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200);
+    expect(paid.body.stationId).toBeNull();
+    expect(paid.body.totalCents).toBe(375);
+    expect(paid.body.collected).toHaveLength(4);
+    const ids = paid.body.collected.map((x) => x.sessionId);
+    expect(ids).toEqual(expect.arrayContaining([a.id, b.id, c.id]));
+    expect((await counts()).total - before.total).toBe(375);
+    expect((await sessionOf(a.id)).billedAt).not.toBeNull();
+    expect((await sessionOf(c.id)).billedAt).not.toBeNull();
+    expect(await awaitingAt(pc5)).toBe(0);
+    expect(await awaitingAt(pc6)).toBe(0);
+    expect(await awaitingAt(pc3)).toBe(0);
+
+    // Nothing left anywhere: refused, and no tender is taken.
+    const settled = await counts();
+    const again = await post<{ error: { message: string } }>('/sessions/collect-all', {
+      paymentMethod: 'cash',
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.error.message).toBe('No bill is waiting at any PC');
+    expect(await counts()).toEqual(settled);
+  });
 });

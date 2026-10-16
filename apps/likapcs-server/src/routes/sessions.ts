@@ -121,6 +121,16 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       actorOf(request),
     ),
   );
+  /**
+   * 0.19.5 — collect all PCs: every bill waiting at any PC, in one tender step (one transaction).
+   * Same permission as collecting a single bill; a tender that does not cover them refuses all.
+   */
+  app.post('/sessions/collect-all', control, async (request) =>
+    services.sessions.collectAllPcs(
+      collectStationSchema.parse(request.body ?? {}),
+      actorOf(request),
+    ),
+  );
   /** Receipt of the session's bill — for the "paid" dialog after a prepaid start / extension or a
    * postpaid end. Needs stations.control only: whoever may take the money may print its receipt. */
   app.get('/sessions/:id/receipt', control, async (request) => {

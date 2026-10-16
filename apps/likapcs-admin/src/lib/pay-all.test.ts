@@ -1,6 +1,12 @@
 import type { SessionSummary } from '@likapcs/shared';
 import { describe, expect, it } from 'vitest';
-import { awaitingAmountCents, multiBillPcs, payAllTotalCents } from './pay-all';
+import {
+  allPcsBills,
+  awaitingAmountCents,
+  multiBillPcs,
+  pcGroups,
+  payAllTotalCents,
+} from './pay-all';
 
 function bill(
   id: string,
@@ -44,6 +50,32 @@ describe('multiBillPcs', () => {
 
   it('returns nothing when every PC has a single bill', () => {
     expect(multiBillPcs([bill('a', 's1', 'PC 1'), bill('b', 's2', 'PC 2')])).toEqual([]);
+  });
+});
+
+describe('pcGroups and allPcsBills (0.19.5: collect all PCs)', () => {
+  it('groups every PC with a bill, single-bill PCs included, in strip order', () => {
+    const groups = pcGroups([
+      bill('a', 's1', 'PC 1'),
+      bill('b', 's2', 'PC 2'),
+      bill('c', 's1', 'PC 1'),
+      bill('d', null, 'PC ?'),
+    ]);
+    expect(groups.map((g) => [g.code, g.bills.length])).toEqual([
+      ['PC 1', 2],
+      ['PC 2', 1],
+    ]);
+  });
+
+  it('the all-PCs group holds every bill that has a PC and no station id', () => {
+    const all = allPcsBills([
+      bill('a', 's1', 'PC 1'),
+      bill('b', 's2', 'PC 2'),
+      bill('d', null, 'PC ?'),
+    ]);
+    expect(all.stationId).toBeNull();
+    expect(all.bills.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(payAllTotalCents(all.bills)).toBe(2000);
   });
 });
 

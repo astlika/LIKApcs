@@ -24,8 +24,10 @@ import { useEnterSubmits } from '../../lib/enter-submit';
 import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
 import {
+  allPcsBills,
   awaitingAmountCents,
   multiBillPcs,
+  pcGroups,
   payAllTotalCents,
   type PcBills,
 } from '../../lib/pay-all';
@@ -86,6 +88,16 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           </span>
           <span className="muted num">· {fmt.money(total)}</span>
           <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>
+          {canCollect && pcGroups(items).length >= 2 && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setCollectingAll(allPcsBills(items))}
+              data-testid={`${testId}-collect-everything`}
+            >
+              <Wallet size={13} /> {t('sessions.awaiting.collectEverything', { n: items.length })}
+            </Button>
+          )}
           {canCollect &&
             multiBillPcs(items).map((group) => (
               <Button
@@ -154,7 +166,7 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
 /**
  * 0.21.0 — pay all: the bills of one PC in one tender step (cash, card or split; no pay-later,
  * which needs one customer). The server settles every bill in one transaction, each with its own
- * receipt, or refuses the whole step.
+ * receipt, or refuses the whole step. 0.19.5: `group.stationId` null means every PC at once.
  */
 export function CollectStationDialog({
   group,
@@ -172,19 +184,25 @@ export function CollectStationDialog({
   const queryClient = useQueryClient();
   const total = payAllTotalCents(group.bills);
   const tender = useTender({ totalCents: total, customer: null, allowCredit: false });
+  const everyPc = group.stationId === null;
   const collectAll = useMutation({
     mutationFn: () =>
-      api<{ totalCents: number; collected: CollectStationResponse['collected'] }>(
-        `/stations/${group.stationId}/collect-all`,
+      api<CollectStationResponse>(
+        everyPc ? '/sessions/collect-all' : `/stations/${group.stationId}/collect-all`,
         { method: 'POST', body: { paymentMethod: 'cash', payments: tender.payments } },
       ),
     onSuccess: (result) => {
       toast.success(
-        t('sessions.awaiting.collectedAll', {
-          code: group.code,
-          n: result.collected.length,
-          total: fmt.money(result.totalCents),
-        }),
+        everyPc
+          ? t('sessions.awaiting.collectedEverything', {
+              n: result.collected.length,
+              total: fmt.money(result.totalCents),
+            })
+          : t('sessions.awaiting.collectedAll', {
+              code: group.code,
+              n: result.collected.length,
+              total: fmt.money(result.totalCents),
+            }),
       );
       for (const key of [['sessions'], ['stations'], ['cash'], ['dashboard'], ['orders']])
         void queryClient.invalidateQueries({ queryKey: key });
@@ -210,8 +228,16 @@ export function CollectStationDialog({
     <Dialog
       open
       onClose={onClose}
-      title={t('sessions.awaiting.collectAllTitle', { code: group.code })}
-      description={t('sessions.awaiting.collectAllBody')}
+      title={
+        everyPc
+          ? t('sessions.awaiting.collectEverythingTitle')
+          : t('sessions.awaiting.collectAllTitle', { code: group.code })
+      }
+      description={
+        everyPc
+          ? t('sessions.awaiting.collectEverythingBody')
+          : t('sessions.awaiting.collectAllBody')
+      }
       size="md"
       footer={
         <>
@@ -237,6 +263,7 @@ export function CollectStationDialog({
           {group.bills.map((s) => (
             <div className="quote__row" key={s.id}>
               <span className="muted">
+                {everyPc ? `${s.stationCode} · ` : ''}
                 {s.customerName ?? t('pos.walkIn')} · {formatHms(s.billableSeconds)}
               </span>
               <span className="num">{fmt.money(awaitingAmountCents(s))}</span>

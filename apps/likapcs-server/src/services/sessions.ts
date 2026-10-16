@@ -1524,6 +1524,29 @@ export class SessionsService {
     actor: SessionActorContext,
     at: Date = new Date(),
   ): Promise<CollectStationResponse> {
+    return this.collectWaiting(stationId, req, actor, at);
+  }
+
+  /**
+   * 0.19.5 — collect all PCs: the same single tender step and transaction, but over the bills
+   * waiting at EVERY PC (one button for the whole strip when several PCs ended together).
+   */
+  async collectAllPcs(
+    req: CollectStationRequest,
+    actor: SessionActorContext,
+    at: Date = new Date(),
+  ): Promise<CollectStationResponse> {
+    return this.collectWaiting(null, req, actor, at);
+  }
+
+  /** `stationId` null means every PC. */
+  private async collectWaiting(
+    stationId: string | null,
+    req: CollectStationRequest,
+    actor: SessionActorContext,
+    at: Date,
+  ): Promise<CollectStationResponse> {
+    const scopeLabel = stationId ? 'at this PC' : 'at any PC';
     const outcome = await withTransaction(this.pool, async (client) => {
       // Lock the waiting bills in id order, so two desks paying the same PC cannot deadlock.
       const waiting = await client.query<{
@@ -1532,12 +1555,12 @@ export class SessionsService {
         quoted_price_cents: string | number | null;
       }>(
         `SELECT id, final_price_cents, quoted_price_cents FROM gaming_sessions
-          WHERE station_id = $1 AND billing_mode IN ('endpay', 'postpaid') AND billed_at IS NULL
-            AND status IN ('expired', 'completed')
+          WHERE ($1::uuid IS NULL OR station_id = $1) AND billing_mode IN ('endpay', 'postpaid')
+            AND billed_at IS NULL AND status IN ('expired', 'completed')
           ORDER BY id FOR UPDATE`,
         [stationId],
       );
-      if (waiting.rowCount === 0) throw conflict('No bill is waiting at this PC');
+      if (waiting.rowCount === 0) throw conflict(`No bill is waiting ${scopeLabel}`);
       // The same total collect() would bill: the amount due plus the open orders on the session.
       const bills: { sessionId: string; totalCents: number }[] = [];
       for (const row of waiting.rows) {
@@ -1560,7 +1583,7 @@ export class SessionsService {
             bills.map((b) => b.totalCents),
           );
         } catch {
-          throw badRequest('The tenders do not cover the bills waiting at this PC');
+          throw badRequest(`The tenders do not cover the bills waiting ${scopeLabel}`);
         }
       }
       const collected: CollectedBill[] = [];
@@ -1579,7 +1602,12 @@ export class SessionsService {
         action: 'session.collect_all',
         entityType: 'station',
         entityId: stationId,
-        details: { count: bills.length, totalCents: total, method: req.paymentMethod },
+        details: {
+          count: bills.length,
+          totalCents: total,
+          method: req.paymentMethod,
+          scope: stationId ? 'station' : 'all',
+        },
       });
       return { collected, total };
     });

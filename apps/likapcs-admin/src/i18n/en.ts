@@ -597,6 +597,11 @@ export const en = {
       collectAllBody:
         'Every bill waiting at this PC is paid in one step. Each keeps its own receipt; if the tender does not cover them all, nothing is taken.',
       collectedAll: '{code}: {n} bills collected · {total}',
+      collectEverything: 'Collect all ({n})',
+      collectEverythingTitle: 'Collect all bills · all PCs',
+      collectEverythingBody:
+        'Every bill waiting at any PC is paid in one step. Each keeps its own receipt; if the tender does not cover them all, nothing is taken.',
+      collectedEverything: '{n} bills collected · {total}',
       total: 'Total',
     },
     duration: 'Duration',

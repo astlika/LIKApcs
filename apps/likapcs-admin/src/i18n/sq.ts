@@ -607,6 +607,11 @@ export const sq: Dictionary = {
       collectAllBody:
         'Çdo faturë që pret te ky PC paguhet në një hap. Secila mban faturën e vet; nëse pagesa nuk i mbulon të gjitha, nuk merret asnjë.',
       collectedAll: '{code}: u arkëtuan {n} fatura · {total}',
+      collectEverything: 'Thu të gjitha ({n})',
+      collectEverythingTitle: 'Thu të gjitha faturat · të gjitha PC-të',
+      collectEverythingBody:
+        'Çdo faturë që pret në çdo PC paguhet në një hap. Secila mban faturën e vet; nëse pagesa nuk i mbulon të gjitha, nuk merret asnjë.',
+      collectedEverything: 'u arkëtuan {n} fatura · {total}',
       total: 'Totali',
     },
     duration: 'Kohëzgjatja',
