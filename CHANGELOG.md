@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.5] - 2026-10-16
+
+### Added
+
+- Admin, "To collect" strip: a single "Collect all (n)" button collects every waiting bill at every PC in one step, when bills wait at two or more PCs. One tender covers them all (cash, card or split); each bill keeps its own receipt. If the tender does not cover every bill, nothing is taken. Endpoint: `POST /sessions/collect-all`. The per-PC "Collect all at PC (n)" button stays as it was.
+
 ## [0.19.4] - 2026-10-16
 
 ### Added

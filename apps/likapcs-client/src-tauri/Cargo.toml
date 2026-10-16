@@ -1,6 +1,6 @@
 [package]
 name = "likapcs-client"
-version = "0.19.4"
+version = "0.19.5"
 description = "LIKApcs-Client — lock screen, session timer and remote control agent for gaming PCs"
 authors = ["LIKApcs"]
 edition = "2021"
