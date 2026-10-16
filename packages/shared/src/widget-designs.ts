@@ -66,6 +66,16 @@ export const WIDGET_DESIGNS: readonly WidgetDesignSpec[] = [
     footprint: fp([264, 44], [300, 52], [392, 64]),
   },
   {
+    // 0.19.7: the plainest look — only the minutes left, no bar, no amount, no PC code.
+    id: 'simple',
+    text: 'none',
+    transparent: true,
+    money: 'none',
+    station: false,
+    progress: false,
+    footprint: fp([96, 30], [116, 36], [148, 44]),
+  },
+  {
     id: 'minutes',
     text: 'none',
     transparent: false,

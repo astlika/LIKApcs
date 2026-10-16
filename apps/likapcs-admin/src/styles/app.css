@@ -6091,6 +6091,10 @@ button.ads-album .ads-album__meta {
 }
 
 /* ── 6 · pill ── */
+/* 0.19.7: the plain time line is drawn on the desktop, so it gets a soft shadow to stay readable. */
+.wm--simple .wm__mini-time {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
 .wm--pill {
   justify-content: center;
 }

@@ -170,6 +170,16 @@ export async function setWidgetFit(width: number, height: number): Promise<void>
   }
 }
 
+/** 0.19.7: the owner's "hide the widget in games" setting, applied by the native watcher. */
+export async function setWidgetHideInGames(enabled: boolean): Promise<void> {
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('set_widget_hide_in_games', { enabled });
+  } catch {
+    /* an older native shell without the command keeps showing the widget */
+  }
+}
+
 export async function setWindowMode(mode: WindowMode): Promise<void> {
   if (!isDesktopApp()) {
     document.documentElement.dataset.mode = mode;

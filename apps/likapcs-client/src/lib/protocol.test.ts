@@ -462,6 +462,7 @@ describe('reduce()', () => {
         widgetTheme: 'indigo',
         wallpaperUrl: null,
         widgetShowPayment: false,
+        widgetHideInGames: true,
         lockTitle: 'station',
         currency: 'EUR',
         staffLoginUsername: 'admin',

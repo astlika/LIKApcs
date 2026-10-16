@@ -1252,6 +1252,9 @@ export const sq: Dictionary = {
       widgetPosition: 'Këndi i ekranit',
       showPayment: 'Shfaq shumën',
       showPaymentHint: 'Parapagim: sa u pagua. Kohë e hapur: shuma që po rritet për pagesë.',
+      hideInGames: 'Fshih gjatë lojës',
+      hideInGamesHint:
+        'Kur po ecën një lojë në ekran të plotë (p.sh. CS2) në PC, numëruesi fshihet dhe kthehet kur mbyllet loja.',
       design: {
         detailed: {
           name: 'Karta klasike',
@@ -1260,6 +1263,10 @@ export const sq: Dictionary = {
         minimal: {
           name: 'Një rresht',
           desc: '"PC 01 · 23 min · 1.50 €" në një rresht të qetë me një vijë shumë të hollë progresi.',
+        },
+        simple: {
+          name: 'Vetëm koha',
+          desc: 'Vetëm minutat që mbeten, në një rresht. Pa shirit, pa shumë, pa kodin e PC-së: pamja më e thjeshtë.',
         },
         minutes: {
           name: 'Vetëm minutat',
@@ -1312,6 +1319,8 @@ export const sq: Dictionary = {
         'top-center': 'Lart në qendër',
         'bottom-center': 'Poshtë në qendër',
         'top-right': 'Lart djathtas',
+        'middle-left': 'Mesi majtas',
+        'middle-right': 'Mesi djathtas',
         'bottom-left': 'Poshtë majtas',
         'bottom-right': 'Poshtë djathtas',
       },

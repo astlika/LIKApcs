@@ -198,7 +198,12 @@ export function ClientScreenPreview({
   const align = corner.endsWith('center') ? 'center' : corner.endsWith('left') ? 'left' : 'right';
   const cornerStyle: CSSProperties = {
     position: 'absolute',
-    ...(corner.startsWith('top') ? { top: '4%' } : { bottom: '6%' }),
+    // 0.19.7: the middle positions sit on the vertical centre of the left / right edge.
+    ...(corner.startsWith('middle')
+      ? { top: '50%', transform: 'translateY(-50%)' }
+      : corner.startsWith('top')
+        ? { top: '4%' }
+        : { bottom: '6%' }),
     ...(align === 'center'
       ? { left: '50%', transform: 'translateX(-50%)' }
       : align === 'left'

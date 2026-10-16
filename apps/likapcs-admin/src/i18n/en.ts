@@ -1244,6 +1244,9 @@ export const en = {
       widgetPosition: 'Corner of the screen',
       showPayment: 'Show the amount',
       showPaymentHint: 'Prepaid: what was paid. Open time: the running amount to pay.',
+      hideInGames: 'Hide in games',
+      hideInGamesHint:
+        'When a fullscreen game (for example CS2) is running on the PC, the countdown is hidden and it comes back when the game closes.',
       design: {
         detailed: {
           name: 'Classic card',
@@ -1252,6 +1255,10 @@ export const en = {
         minimal: {
           name: 'One line',
           desc: '"PC 01 · 23 min · 1.50 €" on a single calm line with a hair-thin progress bar.',
+        },
+        simple: {
+          name: 'Only the time',
+          desc: 'Just the minutes left, with a single line of time. No bar, no amount, no PC code: the plainest look.',
         },
         minutes: {
           name: 'Minutes only',
@@ -1303,6 +1310,8 @@ export const en = {
         'top-left': 'Top left',
         'top-center': 'Top centre',
         'top-right': 'Top right',
+        'middle-left': 'Middle left',
+        'middle-right': 'Middle right',
         'bottom-left': 'Bottom left',
         'bottom-center': 'Bottom centre',
         'bottom-right': 'Bottom right',

@@ -655,6 +655,13 @@ export function SettingsPage() {
                     t('settings.client.showPaymentHint'),
                   )}
                 </div>
+                <div className="span-2">
+                  {bool(
+                    'client.widget_hide_in_games',
+                    t('settings.client.hideInGames'),
+                    t('settings.client.hideInGamesHint'),
+                  )}
+                </div>
                 <Field
                   label={t('settings.client.widgetTheme')}
                   hint={t('settings.client.widgetThemeHint')}

@@ -62,6 +62,9 @@ enum WidgetPosition {
     BottomLeft,
     BottomCenter,
     BottomRight,
+    /// 0.19.7: vertically centred on the left / right edge of the work area.
+    MiddleLeft,
+    MiddleRight,
 }
 
 #[derive(Clone, Copy)]
@@ -92,6 +95,10 @@ struct WidgetState {
     layout: Mutex<WidgetLayout>,
     /// True while the window is in `overlay` mode (so a layout change re-applies at once).
     overlay: AtomicBool,
+    /// 0.19.7: owner setting `client.widget_hide_in_games` (default on).
+    hide_in_games: AtomicBool,
+    /// 0.19.7: the widget is hidden right now because a fullscreen game is in front.
+    hidden_for_game: AtomicBool,
 }
 
 /// Screen position (physical pixels) of the last left click on the tray icon; the settings
@@ -366,7 +373,7 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout, already_widget: b
     let _ = window.set_always_on_top(true);
     let _ = window.set_size(LogicalSize::new(width, height));
     position_overlay(window, layout.position, width, height);
-    let _ = window.show();
+    show_widget(window);
     let _ = window.unminimize();
     if !already_widget {
         let _ = window.set_focus();
@@ -378,11 +385,67 @@ fn apply_overlay(window: &WebviewWindow, layout: WidgetLayout, already_widget: b
         let _ = w.set_size(LogicalSize::new(width, height));
         position_overlay(w, layout.position, width, height);
         let _ = w.set_always_on_top(true);
-        let _ = w.show();
+        show_widget(w);
         if !already_widget {
             let _ = w.unminimize();
         }
     });
+}
+
+/// Shows the countdown widget unless a fullscreen game currently hides it (0.19.7): a layout
+/// change or a re-apply must not bring the widget back over the game.
+fn show_widget(window: &WebviewWindow) {
+    let hidden = window
+        .app_handle()
+        .state::<WidgetState>()
+        .hidden_for_game
+        .load(Ordering::SeqCst);
+    if !hidden {
+        let _ = window.show();
+    }
+}
+
+/// 0.19.7: whether a fullscreen game is in front (the same check as the widget report).
+#[cfg(windows)]
+fn game_in_front(app: &AppHandle) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    diag::exclusive_fullscreen_foreground(&window).is_some()
+}
+
+#[cfg(not(windows))]
+fn game_in_front(_app: &AppHandle) -> bool {
+    false
+}
+
+/// 0.19.7: hides the countdown widget while a fullscreen game is in front, and shows it again
+/// afterwards (owner setting `client.widget_hide_in_games`, default on). Only hides or shows the
+/// window and never takes focus, so the game keeps its focus and the cursor stays hidden.
+fn widget_watch_tick(app: &AppHandle) {
+    let state = app.state::<WidgetState>();
+    let overlay = state.overlay.load(Ordering::SeqCst);
+    let hidden = state.hidden_for_game.load(Ordering::SeqCst);
+    let want_hidden =
+        overlay && state.hide_in_games.load(Ordering::SeqCst) && game_in_front(app);
+    if want_hidden == hidden {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    state.hidden_for_game.store(want_hidden, Ordering::SeqCst);
+    if want_hidden {
+        let _ = window.hide();
+    } else if overlay {
+        let _ = window.show();
+    }
+}
+
+/// 0.19.7: owner setting `client.widget_hide_in_games`, pushed by the client's settings.
+#[tauri::command]
+fn set_widget_hide_in_games(state: tauri::State<'_, WidgetState>, enabled: bool) {
+    state.hide_in_games.store(enabled, Ordering::SeqCst);
 }
 
 /// Keeps the widget in the chosen corner of the work area (taskbar excluded) of the monitor the
@@ -405,6 +468,10 @@ fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64
             WidgetPosition::BottomLeft => (pos.x + OVERLAY_MARGIN, bottom),
             WidgetPosition::BottomCenter => (centre, bottom),
             WidgetPosition::BottomRight => (right, bottom),
+            WidgetPosition::MiddleLeft => {
+                (pos.x + OVERLAY_MARGIN, pos.y + (size.height - height) / 2.0)
+            }
+            WidgetPosition::MiddleRight => (right, pos.y + (size.height - height) / 2.0),
         };
         x = cx;
         y = cy;
@@ -490,6 +557,13 @@ async fn widget_check(
             detail: "not-overlay".into(),
         });
     }
+    if state.hidden_for_game.load(Ordering::SeqCst) {
+        // Hidden on purpose while a game runs (0.19.7): not a broken widget, so no heal.
+        return Ok(WidgetCheck {
+            ok: true,
+            detail: "hidden-for-game".into(),
+        });
+    }
     let window = app
         .get_webview_window("main")
         .ok_or("main window missing")?;
@@ -562,8 +636,8 @@ async fn widget_check(
 mod diag {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowRect, GWL_STYLE,
-        WS_CAPTION,
+        GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowRect,
+        GWL_STYLE, WS_CAPTION,
     };
 
     /// Title of the foreground window when it covers its whole monitor without a caption — the
@@ -583,6 +657,17 @@ mod diag {
                 if fg as isize == own.0 as isize {
                     return None;
                 }
+            }
+            // The desktop and the shell (wallpaper, taskbar) cover the monitor without a caption
+            // too: they are not games (0.19.7 — the widget now hides on this check).
+            let mut class = [0u16; 64];
+            let class_len = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32);
+            let class_name = String::from_utf16_lossy(&class[..class_len.max(0) as usize]);
+            if matches!(
+                class_name.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            ) {
+                return None;
             }
             let style = GetWindowLongW(fg, GWL_STYLE);
             if style & WS_CAPTION as i32 != 0 {
@@ -668,6 +753,8 @@ async fn set_widget_layout(
         "bottom-left" => WidgetPosition::BottomLeft,
         "bottom-center" => WidgetPosition::BottomCenter,
         "bottom-right" => WidgetPosition::BottomRight,
+        "middle-left" => WidgetPosition::MiddleLeft,
+        "middle-right" => WidgetPosition::MiddleRight,
         other => return Err(format!("unknown widget position {other}")),
     };
     let footprint = match (width, height) {
@@ -1065,6 +1152,8 @@ pub fn run() {
                 footprint: None,
             }),
             overlay: AtomicBool::new(false),
+            hide_in_games: AtomicBool::new(true),
+            hidden_for_game: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             device_identity,
@@ -1073,6 +1162,7 @@ pub fn run() {
             wol_configure,
             end_tasks,
             set_widget_layout,
+            set_widget_hide_in_games,
             widget_fit,
             widget_check,
             update_check_server,
@@ -1088,6 +1178,12 @@ pub fn run() {
             quit_app
         ])
         .setup(move |app| {
+            // 0.19.7: hide the countdown widget while a fullscreen game runs (once a second).
+            let watch = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(1000));
+                widget_watch_tick(&watch);
+            });
             // Keyboard hardening is armed from the start: the client boots locked.
             kiosk::install();
             kiosk::set_enabled(true);

@@ -33,6 +33,8 @@ export const CLIENT_WIDGET_POSITIONS = [
   'top-left',
   'top-center',
   'top-right',
+  'middle-left',
+  'middle-right',
   'bottom-left',
   'bottom-center',
   'bottom-right',
@@ -46,6 +48,7 @@ export const CLIENT_WIDGET_STYLES = [
   'detailed',
   'minimal',
   'minutes',
+  'simple',
   'minutes-money',
   'compact',
   'pill',
@@ -194,6 +197,8 @@ export const SETTING_SCHEMAS = {
   'client.widget_theme': z.enum(CLIENT_WIDGET_THEMES),
   /** Show the paid amount (prepaid) / the running amount owed (postpaid) in the widget. */
   'client.widget_show_payment': z.boolean(),
+  /** 0.19.7: hide the countdown widget while a fullscreen game runs (the PC hides it, not the desk). */
+  'client.widget_hide_in_games': z.boolean(),
   /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
   'client.lock_title': z.enum(CLIENT_LOCK_TITLES),
   /** Lock-screen slideshow of in-stock products with photos. */
@@ -334,6 +339,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_style': 'detailed',
   'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
+  'client.widget_hide_in_games': true,
   'client.lock_title': 'brand',
   'client.ads_enabled': false,
   'client.ads_layout': 'card',
@@ -411,6 +417,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_style',
   'client.widget_theme',
   'client.widget_show_payment',
+  'client.widget_hide_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -480,6 +487,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_style',
   'client.widget_theme',
   'client.widget_show_payment',
+  'client.widget_hide_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -515,6 +523,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetTheme: settings['client.widget_theme'],
     wallpaperUrl: null,
     widgetShowPayment: settings['client.widget_show_payment'],
+    widgetHideInGames: settings['client.widget_hide_in_games'],
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],

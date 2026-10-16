@@ -19,6 +19,7 @@ import {
   isDesktopApp,
   onTrayAction,
   reapplyWidgetWindow,
+  setWidgetHideInGames,
   reportWebviewReady,
   setWidgetLayout,
   widgetWindowSizeOk,
@@ -215,6 +216,11 @@ export function App() {
   useEffect(() => {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
+  // 0.19.7: hide the widget while a fullscreen game runs (default on).
+  const hideInGames = snap.state.display?.widgetHideInGames ?? true;
+  useEffect(() => {
+    void setWidgetHideInGames(hideInGames);
+  }, [hideInGames]);
 
   // Windows can finish the fullscreen → widget transition *after* the native resize landed (11
   // restores the window's old rect), leaving the countdown off-screen: the webview then reports a
