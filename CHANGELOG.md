@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-10-17
+
+### Fixed
+
+- Station dialog, standard view: the PC row and its command buttons no longer touch the edge of the card.
+- Station dialog: the footer buttons wrap onto a second line when there is no room, instead of running out of the dialog.
+
 ## [0.20.4] - 2026-10-17
 
 ### Fixed
