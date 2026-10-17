@@ -13,6 +13,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   PERMISSIONS,
   PROTOCOL_VERSION,
@@ -54,7 +55,12 @@ export function RemotePage() {
   });
   const ids = useMemo(() => (stations.data ?? []).map((s) => s.id), [stations.data]);
   const idKey = ids.join(',');
-  const [focusId, setFocusId] = useState<string | null>(null);
+  // Opened from the Stations page context menu: ?focus=<id> starts in focus view of that PC.
+  const [params, setParams] = useSearchParams();
+  const [focusId, setFocusId] = useState<string | null>(() => params.get('focus'));
+  useEffect(() => {
+    if (params.has('focus')) setParams({}, { replace: true });
+  }, [params, setParams]);
 
   const [link, setLink] = useState<Link>('connecting');
   const [feeds, setFeeds] = useState<Record<string, Feed>>({});

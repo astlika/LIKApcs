@@ -7,6 +7,7 @@ export const en = {
     back: 'Back to all stations',
     live: 'Live',
     offline: 'PC offline',
+    viewScreen: 'View screen',
     denied: 'No permission',
     waiting: 'Waiting for the first frame…',
     connecting: 'Connecting…',

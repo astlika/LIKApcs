@@ -10,6 +10,7 @@ export const sq: Dictionary = {
     back: 'Kthehu te të gjitha stacionet',
     live: 'Live',
     offline: 'PC jashtë linje',
+    viewScreen: 'Shiko ekranin',
     denied: 'Nuk ke leje',
     waiting: 'Po pres kornizën e parë…',
     connecting: 'Po lidhet…',

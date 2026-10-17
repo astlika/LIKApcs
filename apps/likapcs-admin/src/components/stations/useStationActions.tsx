@@ -9,6 +9,7 @@
  * pause/resume) stay single-PC: each one has its own amount and payment.
  */
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -18,6 +19,7 @@ import {
   Lock,
   LockOpen,
   MessageSquare,
+  MonitorPlay,
   OctagonX,
   Pause,
   Play,
@@ -86,6 +88,7 @@ export type StationActionId =
   | 'shutdown'
   | 'wake'
   | 'tasks'
+  | 'remote'
   | 'details';
 
 /** Offline PC with a MAC on record — the only kind a magic packet can help. */
@@ -151,6 +154,8 @@ export function useStationActions(
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
+  const canRemote = can(PERMISSIONS.REMOTE_VIEW);
+  const navigate = useNavigate();
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),
     [targets, station],
@@ -548,6 +553,19 @@ export function useStationActions(
             ? undefined
             : t('stations.wake.noMac'),
       },
+      // Context menu only (not in the bar): opens this PC in the live screens, focus view.
+      ...(canRemote
+        ? [
+            {
+              id: 'remote' as const,
+              label: t('remote.viewScreen'),
+              icon: MonitorPlay,
+              bar: false,
+              enabled: online,
+              hint: online ? undefined : t('remote.offline'),
+            },
+          ]
+        : []),
       {
         id: 'cancel',
         label: t('sessions.cancel'),
@@ -568,6 +586,7 @@ export function useStationActions(
     wakeable,
     canControl,
     canPower,
+    canRemote,
     t,
     multi,
     group.length,
@@ -647,9 +666,24 @@ export function useStationActions(
         case 'details':
           onDetails(station.id);
           break;
+        case 'remote':
+          navigate(`/remote?focus=${encodeURIComponent(station.id)}`);
+          break;
       }
     },
-    [station, actions, live, sessionAct, command, commandMany, wake, wakeMany, multi, onDetails],
+    [
+      station,
+      actions,
+      live,
+      sessionAct,
+      command,
+      commandMany,
+      wake,
+      wakeMany,
+      multi,
+      onDetails,
+      navigate,
+    ],
   );
 
   const busy =
