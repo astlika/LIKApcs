@@ -2,6 +2,24 @@ import type { Dictionary } from './en';
 
 export const sq: Dictionary = {
   app: { name: 'LIKApcs', tagline: 'Menaxhimi i Stacionit të Lojërave' },
+  remote: {
+    title: 'Ekrane live',
+    subtitle:
+      'Shikim vetëm për lexim i PC-ve të stacioneve. Kornizat shfaqen vetëm kur kjo faqe është e hapur.',
+    grid: 'Stacionet',
+    back: 'Kthehu te të gjitha stacionet',
+    live: 'Live',
+    offline: 'PC jashtë linje',
+    denied: 'Nuk ke leje',
+    waiting: 'Po pres kornizën e parë…',
+    connecting: 'Po lidhet…',
+    disconnected: 'Lidhja u shkëput — po rilidhet…',
+    noStations: 'Ende nuk ka stacione.',
+    focusHint: 'Vetëm shikim · deri në 3 korniza në sekondë',
+    gridHint: 'Miniaturat përditësohen çdo 2–3 sekonda.',
+    updated: 'Përditësuar',
+    noPermission: 'Nuk ke leje për të parë ekranet e stacioneve.',
+  },
   common: {
     save: 'Ruaj',
     saving: 'Duke ruajtur…',
@@ -58,6 +76,7 @@ export const sq: Dictionary = {
     comingSoon: 'Vjen në një fazë të mëvonshme',
   },
   nav: {
+    remote: 'Ekrane live',
     orders: 'Porositë',
     overview: 'Përmbledhje',
     dashboard: 'Paneli',
@@ -518,6 +537,7 @@ export const sq: Dictionary = {
       debts_give: 'Jep borxh — shitje me pagesë më vonë në arkë dhe për seancat',
       debts_write_off: 'Fshi (fal) borxhe të klientëve',
       wallet_topup: 'Merr para paraprakisht në balancën e klientit',
+      remote_view: 'Shiko ekranet live të PC-ve të stacioneve (vetëm lexim)',
       wallet_refund: 'Kthe para nga balanca e klientit (në kesh)',
       users_view: 'Shiko punonjësit',
       users_manage: 'Shto, ndrysho dhe çaktivizo punonjës; ndrysho lejet e roleve',

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { WebSocket } from 'ws';
 import {
+  PERMISSIONS,
   PROTOCOL_VERSION,
   WS_CLOSE_CODES,
   adminMessageSchema,
@@ -9,6 +10,7 @@ import {
   type ServerWelcomeToAdmin,
 } from '@likapcs/shared';
 import type { AdminPresence } from './hub.js';
+import { recordAudit } from '../services/audit.js';
 import { SERVER_VERSION } from '../version.js';
 
 const HELLO_TIMEOUT_MS = 10_000;
@@ -25,7 +27,7 @@ function fail(socket: WebSocket, code: number, errorCode: string, message: strin
 
 /** /ws/admin — live event stream for LIKApcs Admin (station changes, device registrations…). */
 export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
-  const { hub, services } = app;
+  const { hub, services, pool } = app;
 
   app.get('/ws/admin', { websocket: true }, (socket, request) => {
     let presence: AdminPresence | null = null;
@@ -73,6 +75,7 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
             userId: ctx.user.id,
             username: ctx.user.username,
             connectedAt: new Date(),
+            permissions: ctx.permissions,
           };
           hub.attachAdmin(presence);
           const welcome: ServerWelcomeToAdmin = {
@@ -87,6 +90,40 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
         if (message.type === 'admin.ping') {
           const pong: ServerPong = { type: 'server.pong', serverTime: new Date().toISOString() };
           send(socket, pong);
+          return;
+        }
+        if (message.type === 'admin.stream_start' || message.type === 'admin.stream_stop') {
+          const { stationId } = message;
+          if (!presence.permissions.has(PERMISSIONS.REMOTE_VIEW)) {
+            send(socket, { type: 'server.stream_status', stationId, state: 'denied' });
+            return;
+          }
+          const actor = { userId: presence.userId, label: presence.username };
+          // One audit row per viewing session of a station (not per thumbnail refresh or per
+          // switch between grid and focus).
+          if (message.type === 'admin.stream_start') {
+            const isNew = !hub.remote.isViewing(stationId, presence);
+            const online = hub.remote.start(stationId, presence, message.mode);
+            if (isNew) {
+              await recordAudit(pool, actor, {
+                action: 'remote.view_started',
+                entityType: 'station',
+                entityId: stationId,
+                details: { online, mode: message.mode },
+              });
+            }
+          } else {
+            const wasViewing = hub.remote.isViewing(stationId, presence);
+            hub.remote.stop(stationId, presence);
+            if (wasViewing) {
+              await recordAudit(pool, actor, {
+                action: 'remote.view_ended',
+                entityType: 'station',
+                entityId: stationId,
+                details: { reason: 'closed' },
+              });
+            }
+          }
         }
       })().catch((err: unknown) => {
         request.log.error({ err }, 'admin socket handler failed');
@@ -96,7 +133,18 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
 
     socket.on('close', () => {
       clearTimeout(helloTimer);
-      if (presence) hub.detachAdmin(presence);
+      if (presence) {
+        const actor = { userId: presence.userId, label: presence.username };
+        for (const stationId of hub.remote.detachAdmin(presence)) {
+          recordAudit(pool, actor, {
+            action: 'remote.view_ended',
+            entityType: 'station',
+            entityId: stationId,
+            details: { reason: 'connection_closed' },
+          }).catch((err: unknown) => request.log.warn({ err }, 'remote view audit failed'));
+        }
+        hub.detachAdmin(presence);
+      }
     });
     socket.on('error', (err) => request.log.warn({ err }, 'admin socket error'));
   });

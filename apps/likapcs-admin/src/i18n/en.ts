@@ -1,5 +1,22 @@
 export const en = {
   app: { name: 'LIKApcs', tagline: 'Gaming Station Management' },
+  remote: {
+    title: 'Live screens',
+    subtitle: 'Read-only view of the station PCs. Frames are shown only while this page is open.',
+    grid: 'Stations',
+    back: 'Back to all stations',
+    live: 'Live',
+    offline: 'PC offline',
+    denied: 'No permission',
+    waiting: 'Waiting for the first frame…',
+    connecting: 'Connecting…',
+    disconnected: 'Connection lost — reconnecting…',
+    noStations: 'No stations yet.',
+    focusHint: 'Read-only · up to 3 frames per second',
+    gridHint: 'Thumbnails refresh about every 2–3 seconds.',
+    updated: 'Updated',
+    noPermission: 'You do not have permission to watch station screens.',
+  },
   common: {
     save: 'Save',
     saving: 'Saving…',
@@ -56,6 +73,7 @@ export const en = {
     comingSoon: 'Available in a later phase',
   },
   nav: {
+    remote: 'Live screens',
     orders: 'Orders',
     overview: 'Overview',
     dashboard: 'Dashboard',
@@ -506,6 +524,7 @@ export const en = {
       debts_give: 'Give debt — sell on credit ("pay later") at the POS and for sessions',
       debts_write_off: 'Write off customer debts',
       wallet_topup: 'Take money in advance onto a customer balance',
+      remote_view: 'View the live screens of station PCs (read-only)',
       wallet_refund: 'Pay a customer balance back out in cash',
       users_view: 'View employees',
       users_manage: 'Add, edit and deactivate employees; edit role permissions',

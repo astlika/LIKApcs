@@ -44,6 +44,18 @@ export async function deviceIdentity(): Promise<DeviceIdentity> {
   return { machineId: null, hostname: 'browser-dev', osInfo: navigator.userAgent.slice(0, 120) };
 }
 
+/** Live screen (remote view): one JPEG of the primary screen. Desktop app only. */
+export async function captureScreenFrame(
+  maxWidth: number,
+  quality: number,
+): Promise<{ width: number; height: number; jpeg: string }> {
+  if (!isDesktopApp()) throw new Error('live screen is only available in the desktop app');
+  return invoke<{ width: number; height: number; jpeg: string }>('capture_screen_frame', {
+    maxWidth,
+    quality,
+  });
+}
+
 export async function secretGet(name: string): Promise<string | null> {
   if (isDesktopApp()) return invoke<string | null>('secret_get', { name });
   return window.localStorage.getItem(LS_PREFIX + name);

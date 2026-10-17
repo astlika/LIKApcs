@@ -53,6 +53,7 @@ import {
   secretGet,
   secretSet,
   setWindowMode,
+  captureScreenFrame,
   sha256Hex,
   trayUpdate,
   wolConfigure,
@@ -62,6 +63,7 @@ import {
   type WindowMode,
   widgetCheck,
 } from './native';
+import { RemoteStreamer } from './remote-stream';
 import {
   Clock,
   CommandGuard,
@@ -263,6 +265,11 @@ export class Agent {
   private heartbeatIntervalMs = 10_000;
   private started = false;
   private stopped = false;
+  /** Live screen (remote view): sends frames only while the server asks for them. */
+  private readonly remoteStreamer = new RemoteStreamer({
+    capture: captureScreenFrame,
+    send: (frame) => this.send(frame),
+  });
   private wake: (() => void) | null = null;
   private readonly startedAt = Date.now();
   private tick: ReturnType<typeof setInterval> | null = null;
@@ -913,6 +920,9 @@ export class Agent {
             this.clock.sync(message.serverTime);
             this.lastAckAt = Date.now();
             break;
+          case 'server.stream':
+            this.remoteStreamer.apply(message);
+            break;
           case 'server.display':
             this.setState(applyDisplay(this.snapshot.state, this.withWallpaper(message)));
             void secretSet(KEYS.language, message.language);
@@ -933,6 +943,7 @@ export class Agent {
 
       socket.onclose = (ev) => {
         clearTimeout(connectTimer);
+        this.remoteStreamer.stop();
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
         if (this.socket === socket) this.socket = null;

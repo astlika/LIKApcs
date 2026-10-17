@@ -163,11 +163,25 @@ export const widgetReportPayloadSchema = z.object({
 });
 export type WidgetReportPayload = z.infer<typeof widgetReportPayloadSchema>;
 
+// ─── Live screen (remote view, phase 1) ───────────────────────────────────────
+/** Largest JPEG frame accepted from a PC, as base64 characters (about 450 KB of JPEG). */
+export const REMOTE_FRAME_MAX_BASE64 = 600_000;
+
+export const clientFrameSchema = z.object({
+  type: z.literal('client.frame'),
+  width: z.number().int().min(1).max(4096),
+  height: z.number().int().min(1).max(4096),
+  jpeg: z.string().min(16).max(REMOTE_FRAME_MAX_BASE64),
+  ts: z.string().datetime({ offset: true }),
+});
+export type ClientFrame = z.infer<typeof clientFrameSchema>;
+
 export const clientMessageSchema = z.discriminatedUnion('type', [
   clientHelloSchema,
   clientHeartbeatSchema,
   clientAckSchema,
   clientEventSchema,
+  clientFrameSchema,
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -179,7 +193,18 @@ export const adminHelloSchema = z.object({
 });
 export const adminPingSchema = z.object({ type: z.literal('admin.ping') });
 
-export const adminMessageSchema = z.discriminatedUnion('type', [adminHelloSchema, adminPingSchema]);
+export const adminStreamSchema = z.object({
+  type: z.enum(['admin.stream_start', 'admin.stream_stop']),
+  stationId: z.string().uuid(),
+  /** `thumb` for the grid (about one frame every 2–3 s), `focus` for one PC in full (up to 3 fps). */
+  mode: z.enum(['thumb', 'focus']).default('focus'),
+});
+
+export const adminMessageSchema = z.discriminatedUnion('type', [
+  adminHelloSchema,
+  adminPingSchema,
+  adminStreamSchema,
+]);
 export type AdminMessage = z.infer<typeof adminMessageSchema>;
 
 // ─── Server → Client ───────────────────────────────────────────────────────────
@@ -468,6 +493,16 @@ export interface ServerCustomerUpdate {
   customer: ClientCustomerInfo | null;
 }
 
+/** Server → client: stream frames while `active` (the grid or a focused PC is open in Admin). */
+export interface ServerStream {
+  type: 'server.stream';
+  active: boolean;
+  /** Frames per second to send (0.25–5 in phase 1; the grid uses a fraction of a frame per second). */
+  fps: number;
+  /** Widest frame the PC should send, in pixels; the PC keeps the aspect ratio. */
+  maxWidth: number;
+}
+
 export type ServerToClientMessage =
   | ServerWelcomeToClient
   | ServerHeartbeatAck
@@ -476,6 +511,7 @@ export type ServerToClientMessage =
   | ServerRequestUpdate
   | ServerOrderUpdate
   | ServerCustomerUpdate
+  | ServerStream
   | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
@@ -517,4 +553,22 @@ export interface ServerPong {
   serverTime: string;
 }
 
-export type ServerToAdminMessage = ServerWelcomeToAdmin | ServerEvent | ServerPong | ServerError;
+/** Server → Admin: one live frame of a station PC. */
+export interface ServerFrame {
+  type: 'server.frame';
+  stationId: string;
+  width: number;
+  height: number;
+  jpeg: string;
+  ts: string;
+}
+
+/** Server → Admin: whether the PC can send frames right now. */
+export interface ServerStreamStatus {
+  type: 'server.stream_status';
+  stationId: string;
+  state: 'live' | 'offline' | 'denied';
+}
+
+export type ServerToAdminMessage =
+  ServerWelcomeToAdmin | ServerEvent | ServerPong | ServerError | ServerFrame | ServerStreamStatus;

@@ -49,6 +49,8 @@ export const PERMISSIONS = {
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_MANAGE: 'customers.manage',
   DEBTS_GIVE: 'debts.give',
+  /** Watch the live screen of a station PC (read-only). Owner, admin and manager by default. */
+  REMOTE_VIEW: 'remote.view',
   DEBTS_WRITE_OFF: 'debts.write_off',
   WALLET_TOPUP: 'wallet.topup',
   WALLET_REFUND: 'wallet.refund',

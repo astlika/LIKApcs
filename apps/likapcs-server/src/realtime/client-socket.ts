@@ -219,6 +219,11 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             send(socket, ack);
             break;
           }
+          case 'client.frame': {
+            // Live screen (remote view): relayed to the Admin sessions watching this PC, never stored.
+            hub.remote.onFrame(presence.stationId, message);
+            break;
+          }
           case 'client.ack': {
             const known = hub.resolveAck(presence.deviceId, message.commandId, {
               ok: message.ok,

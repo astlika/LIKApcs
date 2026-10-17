@@ -9,6 +9,7 @@ All notable changes to LIKApcs are documented here. The format follows
 ### Added
 
 - Settings → Client screen: "Block the Windows key in Steam games" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.
+- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.
 
 ## [0.19.9] - 2026-10-17
 

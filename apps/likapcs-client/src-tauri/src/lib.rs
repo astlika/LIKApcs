@@ -8,6 +8,7 @@
 
 mod hardware;
 mod kiosk;
+mod screen;
 mod secrets;
 mod tasks;
 mod wol;
@@ -1170,6 +1171,7 @@ pub fn run() {
             set_widget_layout,
             set_widget_hide_in_games,
             set_block_win_in_games,
+            screen::capture_screen_frame,
             widget_fit,
             widget_check,
             update_check_server,

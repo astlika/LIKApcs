@@ -36,6 +36,7 @@ import {
   WifiOff,
   HandCoins,
   Megaphone,
+  MonitorPlay,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -179,6 +180,12 @@ export function AppShell() {
           label: t('nav.stations'),
           permission: PERMISSIONS.STATIONS_VIEW,
           badge: pendingDevices.data?.length,
+        },
+        {
+          to: '/remote',
+          icon: MonitorPlay,
+          label: t('nav.remote'),
+          permission: PERMISSIONS.REMOTE_VIEW,
         },
         {
           to: '/pos',

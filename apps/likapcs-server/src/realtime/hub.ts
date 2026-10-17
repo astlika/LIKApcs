@@ -12,6 +12,7 @@ import {
   type WidgetReportPayload,
 } from '@likapcs/shared';
 import { newId } from '../security/tokens.js';
+import { RemoteViewers } from './remote.js';
 
 /**
  * In-memory registry of live WebSocket connections.
@@ -49,6 +50,8 @@ export interface AdminPresence {
   userId: string;
   username: string;
   connectedAt: Date;
+  /** The Admin session's permissions, checked when it asks for a live screen. */
+  permissions: ReadonlySet<string>;
 }
 
 export interface HubEvents {
@@ -58,6 +61,8 @@ export interface HubEvents {
 }
 
 export class RealtimeHub extends EventEmitter<HubEvents> {
+  /** Live screens: which Admin sessions watch which PC (see remote.ts). */
+  readonly remote = new RemoteViewers(this);
   private readonly devices = new Map<string, DevicePresence>();
   private readonly admins = new Set<AdminPresence>();
   /**
@@ -229,6 +234,12 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
   }
 
   // ─── Admins ──────────────────────────────────────────────────────────────────
+  /** The PC of a station, if it is online. */
+  deviceForStation(stationId: string): DevicePresence | null {
+    for (const device of this.devices.values()) if (device.stationId === stationId) return device;
+    return null;
+  }
+
   attachAdmin(presence: AdminPresence): void {
     this.admins.add(presence);
   }
