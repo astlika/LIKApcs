@@ -76,17 +76,62 @@ mod policy {
     use std::process::{Command, Stdio};
 
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    /// The same key without the hive name, for the registry API (which takes the hive apart).
+    const POLICY_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Policies\System";
 
     pub fn task_manager(allow: bool) {
-        let mut cmd = Command::new("reg");
         if allow {
-            cmd.args(["delete", KEY, "/v", "DisableTaskMgr", "/f"]);
-        } else {
-            cmd.args(["add", KEY, "/v", "DisableTaskMgr", "/t", "REG_DWORD", "/d", "1", "/f"]);
+            // The registry API, not reg.exe: this also runs on Exit, while Windows is shutting
+            // the session down, and starting a process then fails (0xc0000142).
+            delete_task_manager_policy();
+            return;
         }
-        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut cmd = Command::new("reg");
+        cmd.args([
+            "add",
+            KEY,
+            "/v",
+            "DisableTaskMgr",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
+            "/f",
+        ]);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         crate::hide_console(&mut cmd);
         let _ = cmd.status();
+    }
+
+    /// Removes `DisableTaskMgr` without starting any process. Missing key or value is fine.
+    fn delete_task_manager_policy() {
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+        };
+        let subkey: Vec<u16> = POLICY_SUBKEY
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let value: Vec<u16> = "DisableTaskMgr"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut hkey: HKEY = std::ptr::null_mut();
+        unsafe {
+            if RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                KEY_SET_VALUE,
+                &mut hkey,
+            ) == 0
+            {
+                RegDeleteValueW(hkey, value.as_ptr());
+                RegCloseKey(hkey);
+            }
+        }
     }
 
     /// Without this, Windows holds Run-key autostart apps back for ~10 s after logon — long
@@ -104,7 +149,9 @@ mod policy {
             "0",
             "/f",
         ]);
-        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         crate::hide_console(&mut cmd);
         let _ = cmd.status();
     }
@@ -153,11 +200,11 @@ mod policy {
 #[cfg(windows)]
 mod imp {
     use super::ENABLED;
+    use super::{BLOCK_WIN_IN_GAMES, GAME_IN_FRONT};
     use std::sync::atomic::Ordering;
+    use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use super::{BLOCK_WIN_IN_GAMES, GAME_IN_FRONT};
-    use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
