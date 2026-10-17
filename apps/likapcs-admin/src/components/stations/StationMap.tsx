@@ -5,7 +5,7 @@
  * action, right-click opens the action menu. Rubber-band selection lives in the page (it needs
  * the scrolling canvas).
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Bell, Hourglass } from 'lucide-react';
 import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
 import { formatHms, projectSession } from '../../lib/session-time';
@@ -126,18 +126,23 @@ export function StationTile({
   onSelect,
   onPrimary,
   onMenu,
+  onHover,
 }: {
   station: StationSummary;
   fetchedAt: number;
   selected: boolean;
   size: number;
   onSelect: (mods: SelectModifiers) => void;
+  /** Mouse rests on the tile (after a short delay): the tile's rectangle; null when it leaves. */
+  onHover?: (rect: DOMRect | null) => void;
   onPrimary: () => void;
   onMenu: (x: number, y: number) => void;
 }) {
   const { t, td } = useI18n();
   const fmt = useFormat();
   const now = useNow();
+  const hoverTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
   const live = station.activeSession;
   const projected = live
     ? projectSession(
@@ -174,6 +179,16 @@ export function StationTile({
       aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
       style={compact ? undefined : { width: size + 24 }}
       onClick={(e) => onSelect(modifiersOf(e))}
+      onMouseEnter={(e) => {
+        if (!onHover) return;
+        const el = e.currentTarget;
+        window.clearTimeout(hoverTimer.current);
+        hoverTimer.current = window.setTimeout(() => onHover(el.getBoundingClientRect()), 300);
+      }}
+      onMouseLeave={() => {
+        window.clearTimeout(hoverTimer.current);
+        onHover?.(null);
+      }}
       onDoubleClick={(e) => {
         e.preventDefault();
         if (e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -314,6 +329,7 @@ export function StationMap({
   onSelect,
   onPrimary,
   onMenu,
+  onHover,
 }: {
   stations: StationSummary[];
   fetchedAt: number;
@@ -323,6 +339,7 @@ export function StationMap({
   onSelect: (id: string, mods: SelectModifiers) => void;
   onPrimary: (id: string) => void;
   onMenu: (id: string, x: number, y: number) => void;
+  onHover?: (id: string, rect: DOMRect | null) => void;
 }) {
   const { t } = useI18n();
   const groups = useMemo(
@@ -352,6 +369,7 @@ export function StationMap({
                 onSelect={(mods) => onSelect(s.id, mods)}
                 onPrimary={() => onPrimary(s.id)}
                 onMenu={(x, y) => onMenu(s.id, x, y)}
+                onHover={onHover ? (rect) => onHover(s.id, rect) : undefined}
               />
             ))}
           </div>

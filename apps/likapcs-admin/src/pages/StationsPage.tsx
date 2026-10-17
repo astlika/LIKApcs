@@ -52,6 +52,7 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
 import { StationMap, type SelectModifiers } from '../components/stations/StationMap';
+import { LivePreviewCard, useLivePreview } from '../components/stations/LivePreview';
 import {
   intersects,
   mapOrder,
@@ -211,6 +212,18 @@ export function StationsPage() {
     setAnchorId(id);
   }, []);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // Hover preview: the PC under the mouse (after a short pause). Needs remote.view.
+  const [hover, setHover] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [previewArmed, setPreviewArmed] = useState(false);
+  const canPreview = can(PERMISSIONS.REMOTE_VIEW);
+  const preview = useLivePreview(hover?.id ?? null, canPreview && previewArmed);
+  // The card is positioned once; a scroll moves the tile, so the card goes.
+  useEffect(() => {
+    if (!hover) return;
+    const hide = () => setHover(null);
+    window.addEventListener('scroll', hide, true);
+    return () => window.removeEventListener('scroll', hide, true);
+  }, [hover]);
   const [marquee, setMarquee] = useState<{
     left: number;
     top: number;
@@ -719,9 +732,21 @@ export function StationsPage() {
             onMenu={(id, x, y) => {
               // selectTile() already handled the selection (keeps a group the tile is in).
               if (!selectedSet.has(id)) setSelectedId(id);
+              setHover(null);
               setMenu({ x, y });
             }}
+            onHover={(id, rect) => {
+              if (rect) setPreviewArmed(true);
+              setHover(rect ? { id, rect } : null);
+            }}
           />
+          {hover && canPreview && (
+            <HoverCard
+              hover={hover}
+              station={visible.find((s) => s.id === hover.id)}
+              feed={preview}
+            />
+          )}
           {marquee && (
             <div
               className="map-marquee"
@@ -2006,4 +2031,18 @@ function DeviceCommands({
       )}
     </div>
   );
+}
+
+/** The hover preview card, when the hovered PC is in the list. */
+function HoverCard({
+  hover,
+  station,
+  feed,
+}: {
+  hover: { id: string; rect: DOMRect };
+  station: StationSummary | undefined;
+  feed: ReturnType<typeof useLivePreview>;
+}) {
+  if (!station) return null;
+  return <LivePreviewCard station={station} rect={hover.rect} feed={feed} />;
 }
