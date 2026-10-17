@@ -1,11 +1,11 @@
 {
-  "version": "0.20.1",
-  "notes": "### Added\n\n- Live control (remote control, phase 2): in the focus view of a PC, \"Control PC\" sends the mouse and the keyboard to that PC. Owner and admin only (permission remote.control). Control stops when you leave the focus view, when the page closes, or when the session on the PC ends, and any key or button still held down is released. Each control on and off is written to the audit log.\n- Live screens stop when the session on that PC ends: the view shows \"Session ended\".\n\n### Added\n\n- Settings → Client screen: \"Block the Windows key in Steam games\" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.\n- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.",
-  "pub_date": "2026-10-17T02:36:45.557Z",
+  "version": "0.20.2",
+  "notes": "### Added\n\n- Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.",
+  "pub_date": "2026-10-17T03:57:14.370Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemVTdExyUGNqY0xvaHY4WW5weFJtdUVZRW9aYmM1L2YzU1NvT2dOMm0vWUlQS0d4SVBRVGJCTUJBbUplUjBxSUg2OWZtNUh3WDltQzVhRUJMQWZ6b2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA0NTQxCWZpbGU6TElLQXBjc18wLjIwLjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMQpKeFRYYzJidjJoejMzNW92NEFDd2h5RXhKZEhPdUFsWWFRMjU1YlIrb1ZEdkxHWHNySUxSRjQ0V3R0dUQrdy84b3loOEtzN1U3V2tROHY2QnczcStDUT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.1/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJwUGNYT1l5Y1hxNDIwejk0enplc0l1WGtRRDJSUHVoL3VFdGM1dW5oelRBOVp0bEdlNGgwL2NxNytVTlBnYUIzSjcyYTRPMU1UMSs1L3BRUzdEQnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA5MzAyCWZpbGU6TElLQXBjc18wLjIwLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMgorZllxVDdMZy9aa0M2WjE4Y016cVl2YWttMjRvYjNqVmdrMlZ0Qm9La3VxdER2QWFrTzcwbFBFeFFwQStlVXdCaUdmeXlXVzI1MW5zZEJUeU5iSGZEUT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.2/LIKApcs-Setup.exe"
     }
   }
 }
