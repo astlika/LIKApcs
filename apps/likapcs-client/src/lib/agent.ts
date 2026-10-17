@@ -54,6 +54,7 @@ import {
   secretSet,
   setWindowMode,
   captureScreenFrame,
+  sendRemoteInput,
   sha256Hex,
   trayUpdate,
   wolConfigure,
@@ -922,6 +923,11 @@ export class Agent {
             break;
           case 'server.stream':
             this.remoteStreamer.apply(message);
+            break;
+          case 'server.input':
+            // Live control: the Admin is controlling this PC. A refused event (UAC, lock screen) is
+            // dropped; the Admin sees nothing else.
+            void sendRemoteInput(message.event).catch(() => undefined);
             break;
           case 'server.display':
             this.setState(applyDisplay(this.snapshot.state, this.withWallpaper(message)));

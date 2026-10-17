@@ -51,6 +51,8 @@ export const PERMISSIONS = {
   DEBTS_GIVE: 'debts.give',
   /** Watch the live screen of a station PC (read-only). Owner, admin and manager by default. */
   REMOTE_VIEW: 'remote.view',
+  /** Send mouse and keyboard to a station PC from the focus view (phase 2). Owner and admin only by default. */
+  REMOTE_CONTROL: 'remote.control',
   DEBTS_WRITE_OFF: 'debts.write_off',
   WALLET_TOPUP: 'wallet.topup',
   WALLET_REFUND: 'wallet.refund',

@@ -6,7 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.20.0] - 2026-10-17
+## [0.20.1] - 2026-10-17
+
+### Added
+
+- Live control (remote control, phase 2): in the focus view of a PC, "Control PC" sends the mouse and the keyboard to that PC. Owner and admin only (permission remote.control). Control stops when you leave the focus view, when the page closes, or when the session on the PC ends, and any key or button still held down is released. Each control on and off is written to the audit log.
+- Live screens stop when the session on that PC ends: the view shows "Session ended".
 
 ### Added
 

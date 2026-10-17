@@ -2218,6 +2218,26 @@ export class SessionsService {
 
   private async broadcast(session: SessionSummary): Promise<void> {
     this.hub.broadcastToAdmins('session.changed', session);
+    // The session on this PC is over: any live view or control of it stops (remote.ts).
+    if (session.status !== 'active' && session.status !== 'paused') {
+      for (const view of this.hub.remote.endStation(session.stationId)) {
+        const actor = { userId: view.admin.userId, label: view.admin.username };
+        if (view.wasControlling) {
+          void recordAudit(this.pool, actor, {
+            action: 'remote.control_ended',
+            entityType: 'station',
+            entityId: view.stationId,
+            details: { reason: 'session_ended' },
+          }).catch(() => undefined);
+        }
+        void recordAudit(this.pool, actor, {
+          action: 'remote.view_ended',
+          entityType: 'station',
+          entityId: view.stationId,
+          details: { reason: 'session_ended' },
+        }).catch(() => undefined);
+      }
+    }
     await this.stations.broadcastStation(session.stationId);
   }
 }

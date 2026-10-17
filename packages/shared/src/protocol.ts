@@ -200,10 +200,37 @@ export const adminStreamSchema = z.object({
   mode: z.enum(['thumb', 'focus']).default('focus'),
 });
 
+/** One input event, in the frame's own coordinates (0–1) for the pointer. */
+export const remoteInputEventSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('move'), x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
+  z.object({
+    kind: z.literal('button'),
+    button: z.enum(['left', 'right', 'middle']),
+    down: z.boolean(),
+  }),
+  z.object({ kind: z.literal('wheel'), delta: z.number().int().min(-1200).max(1200) }),
+  z.object({ kind: z.literal('key'), code: z.string().min(1).max(32), down: z.boolean() }),
+]);
+export type RemoteInputEvent = z.infer<typeof remoteInputEventSchema>;
+
+export const adminControlSchema = z.object({
+  type: z.literal('admin.control'),
+  stationId: z.string().uuid(),
+  on: z.boolean(),
+});
+
+export const adminInputSchema = z.object({
+  type: z.literal('admin.input'),
+  stationId: z.string().uuid(),
+  event: remoteInputEventSchema,
+});
+
 export const adminMessageSchema = z.discriminatedUnion('type', [
   adminHelloSchema,
   adminPingSchema,
   adminStreamSchema,
+  adminControlSchema,
+  adminInputSchema,
 ]);
 export type AdminMessage = z.infer<typeof adminMessageSchema>;
 
@@ -503,6 +530,12 @@ export interface ServerStream {
   maxWidth: number;
 }
 
+/** Server → PC: one input event from the Admin who is controlling this PC (phase 2). */
+export interface ServerInput {
+  type: 'server.input';
+  event: RemoteInputEvent;
+}
+
 export type ServerToClientMessage =
   | ServerWelcomeToClient
   | ServerHeartbeatAck
@@ -512,6 +545,7 @@ export type ServerToClientMessage =
   | ServerOrderUpdate
   | ServerCustomerUpdate
   | ServerStream
+  | ServerInput
   | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
@@ -567,7 +601,8 @@ export interface ServerFrame {
 export interface ServerStreamStatus {
   type: 'server.stream_status';
   stationId: string;
-  state: 'live' | 'offline' | 'denied';
+  /** `ended`: the session on this PC ended, so the view was closed by the server. */
+  state: 'live' | 'offline' | 'denied' | 'ended';
 }
 
 export type ServerToAdminMessage =

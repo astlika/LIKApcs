@@ -1,6 +1,6 @@
 # Plan: remote view and control of gaming PCs (LAN)
 
-Status: planned, not started. Decisions taken with the owner:
+Status: phases 1 and 2 are built in 0.20.1 (view, control, session end). Not tested on a real PC yet. Not built: the notice setting (client.remote_notice), the recording setting (client.remote_recording), an end-to-end test over a real connection, and phase 3 (H.264).
 
 - Scope: all phases, including games (H.264 video).
 - Access: LAN only (the server and the gaming PCs are in the café network).

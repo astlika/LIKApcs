@@ -16,6 +16,10 @@ export const en = {
     gridHint: 'Thumbnails refresh about every 2–3 seconds.',
     updated: 'Updated',
     noPermission: 'You do not have permission to watch station screens.',
+    control: 'Control PC',
+    controlStop: 'Stop control',
+    controlHint: 'Control is on: the mouse and keyboard go to this PC.',
+    ended: 'Session ended',
   },
   common: {
     save: 'Save',

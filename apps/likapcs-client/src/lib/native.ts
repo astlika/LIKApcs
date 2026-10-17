@@ -3,7 +3,12 @@
  * fallback (localStorage secrets, no window control, no power actions) so the agent logic can be
  * exercised against a real server without the native app.
  */
-import type { ClientMetrics, HardwareInfo, HealthResponse } from '@likapcs/shared';
+import type {
+  ClientMetrics,
+  HardwareInfo,
+  HealthResponse,
+  RemoteInputEvent,
+} from '@likapcs/shared';
 import { widgetDesign, widgetFootprint } from '@likapcs/shared';
 
 export interface DeviceIdentity {
@@ -42,6 +47,12 @@ const LS_PREFIX = 'likapcs-client.secret.';
 export async function deviceIdentity(): Promise<DeviceIdentity> {
   if (isDesktopApp()) return invoke<DeviceIdentity>('device_identity');
   return { machineId: null, hostname: 'browser-dev', osInfo: navigator.userAgent.slice(0, 120) };
+}
+
+/** Live control (phase 2): sends one input event to this PC. Desktop app only. */
+export async function sendRemoteInput(event: RemoteInputEvent): Promise<void> {
+  if (!isDesktopApp()) return;
+  await invoke<void>('send_remote_input', { event });
 }
 
 /** Live screen (remote view): one JPEG of the primary screen. Desktop app only. */

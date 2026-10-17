@@ -10,6 +10,8 @@ import {
   type ServerWelcomeToAdmin,
 } from '@likapcs/shared';
 import type { AdminPresence } from './hub.js';
+import type { DbPool } from '../db/pool.js';
+import type { ReleasedView } from './remote.js';
 import { recordAudit } from '../services/audit.js';
 import { SERVER_VERSION } from '../version.js';
 
@@ -17,6 +19,35 @@ const HELLO_TIMEOUT_MS = 10_000;
 
 function send(socket: WebSocket, message: unknown): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+}
+
+function sendError(socket: WebSocket, code: string, message: string): void {
+  send(socket, { type: 'server.error', code, message } satisfies ServerError);
+}
+
+/** Records the end of each released view, and of each control that was on. */
+async function recordReleased(
+  pool: DbPool,
+  released: ReleasedView[],
+  reason: string,
+): Promise<void> {
+  for (const view of released) {
+    const actor = { userId: view.admin.userId, label: view.admin.username };
+    if (view.wasControlling) {
+      await recordAudit(pool, actor, {
+        action: 'remote.control_ended',
+        entityType: 'station',
+        entityId: view.stationId,
+        details: { reason },
+      });
+    }
+    await recordAudit(pool, actor, {
+      action: 'remote.view_ended',
+      entityType: 'station',
+      entityId: view.stationId,
+      details: { reason },
+    });
+  }
 }
 
 function fail(socket: WebSocket, code: number, errorCode: string, message: string): void {
@@ -113,16 +144,43 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
               });
             }
           } else {
-            const wasViewing = hub.remote.isViewing(stationId, presence);
-            hub.remote.stop(stationId, presence);
-            if (wasViewing) {
-              await recordAudit(pool, actor, {
-                action: 'remote.view_ended',
+            const released = hub.remote.stop(stationId, presence);
+            if (released) await recordReleased(pool, [released], 'closed');
+          }
+          return;
+        }
+        if (message.type === 'admin.control') {
+          const { stationId, on } = message;
+          if (!presence.permissions.has(PERMISSIONS.REMOTE_CONTROL)) {
+            sendError(socket, 'forbidden', 'no permission to control station PCs');
+            return;
+          }
+          const change = hub.remote.setControl(stationId, presence, on);
+          if (change === 'refused') {
+            sendError(socket, 'not_focused', 'open the PC in focus view before controlling it');
+            return;
+          }
+          if (change === 'started' || change === 'ended') {
+            await recordAudit(
+              pool,
+              { userId: presence.userId, label: presence.username },
+              {
+                action: change === 'started' ? 'remote.control_started' : 'remote.control_ended',
                 entityType: 'station',
-                entityId: stationId,
-                details: { reason: 'closed' },
-              });
-            }
+                entityId: message.stationId,
+                details: {},
+              },
+            );
+          }
+          return;
+        }
+        if (message.type === 'admin.input') {
+          if (!presence.permissions.has(PERMISSIONS.REMOTE_CONTROL)) {
+            sendError(socket, 'forbidden', 'no permission to control station PCs');
+            return;
+          }
+          if (!hub.remote.relayInput(message.stationId, presence, message.event)) {
+            sendError(socket, 'not_controlling', 'this PC is not under your control right now');
           }
         }
       })().catch((err: unknown) => {
@@ -134,15 +192,9 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
     socket.on('close', () => {
       clearTimeout(helloTimer);
       if (presence) {
-        const actor = { userId: presence.userId, label: presence.username };
-        for (const stationId of hub.remote.detachAdmin(presence)) {
-          recordAudit(pool, actor, {
-            action: 'remote.view_ended',
-            entityType: 'station',
-            entityId: stationId,
-            details: { reason: 'connection_closed' },
-          }).catch((err: unknown) => request.log.warn({ err }, 'remote view audit failed'));
-        }
+        void recordReleased(pool, hub.remote.detachAdmin(presence), 'connection_closed').catch(
+          (err: unknown) => request.log.warn({ err }, 'remote view audit failed'),
+        );
         hub.detachAdmin(presence);
       }
     });

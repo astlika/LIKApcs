@@ -19,6 +19,10 @@ export const sq: Dictionary = {
     gridHint: 'Miniaturat përditësohen çdo 2–3 sekonda.',
     updated: 'Përditësuar',
     noPermission: 'Nuk ke leje për të parë ekranet e stacioneve.',
+    control: 'Kontrollo PC-në',
+    controlStop: 'Ndalo kontrollin',
+    controlHint: 'Kontrolli është aktiv: miu dhe tastiera shkojnë te kjo PC.',
+    ended: 'Seanca përfundoi',
   },
   common: {
     save: 'Ruaj',

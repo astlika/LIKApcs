@@ -159,3 +159,105 @@ describe('RemoteViewers', () => {
     expect(framesFor(grid.socket)).toBe(2);
   });
 });
+
+describe('RemoteViewers control (phase 2)', () => {
+  const keyDown = { kind: 'key', code: 'KeyA', down: true } as const;
+  const inputsTo = (hub: { commands: Array<{ message: unknown }> }) =>
+    hub.commands
+      .map((c) => c.message as { type: string; event?: unknown })
+      .filter((m) => m.type === 'server.input')
+      .map((m) => m.event);
+
+  it('control needs a focused view: grid thumbnails cannot control', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'thumb');
+    expect(remote.setControl('s1', a, true)).toBe('refused');
+    expect(remote.relayInput('s1', a, keyDown)).toBe(false);
+  });
+
+  it('relays input only while controlling, and says when control starts and ends', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus');
+    expect(remote.relayInput('s1', a, keyDown)).toBe(false);
+    expect(remote.setControl('s1', a, true)).toBe('started');
+    expect(remote.setControl('s1', a, true)).toBe('unchanged');
+    expect(remote.relayInput('s1', a, keyDown)).toBe(true);
+    expect(inputsTo(hub)).toEqual([keyDown]);
+    expect(remote.setControl('s1', a, false)).toBe('ended');
+    expect(remote.relayInput('s1', a, keyDown)).toBe(false);
+  });
+
+  it('releases keys still held when control stops, so none stays stuck on the PC', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus');
+    remote.setControl('s1', a, true);
+    remote.relayInput('s1', a, keyDown);
+    remote.setControl('s1', a, false);
+    expect(inputsTo(hub)).toContainEqual({ kind: 'key', code: 'KeyA', down: false });
+  });
+
+  it('going back to the grid ends control and releases held keys', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus');
+    remote.setControl('s1', a, true);
+    remote.relayInput('s1', a, keyDown);
+    remote.start('s1', a, 'thumb');
+    expect(remote.isControlling('s1', a)).toBe(false);
+    expect(inputsTo(hub)).toContainEqual({ kind: 'key', code: 'KeyA', down: false });
+  });
+
+  it('when the session on the PC ends, every view stops, control is released and the Admins are told', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const controller = admin();
+    const watcher = admin();
+    remote.start('s1', controller, 'focus');
+    remote.setControl('s1', controller, true);
+    remote.relayInput('s1', controller, keyDown);
+    remote.start('s1', watcher, 'thumb');
+
+    const released = remote.endStation('s1');
+    expect(released.map((r) => [r.admin, r.wasControlling])).toEqual([
+      [controller, true],
+      [watcher, false],
+    ]);
+    expect(controller.socket.sent.at(-1)).toEqual({
+      type: 'server.stream_status',
+      stationId: 's1',
+      state: 'ended',
+    });
+    expect(watcher.socket.sent.at(-1)).toEqual({
+      type: 'server.stream_status',
+      stationId: 's1',
+      state: 'ended',
+    });
+    expect(remote.isWatched('s1')).toBe(false);
+    expect(hub.commands.some((c) => (c.message as { active?: boolean }).active === false)).toBe(
+      true,
+    );
+    expect(remote.relayInput('s1', controller, keyDown)).toBe(false);
+  });
+
+  it('reports what was released when an Admin disconnects while controlling', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus');
+    remote.setControl('s1', a, true);
+    expect(remote.detachAdmin(a)).toEqual([{ admin: a, stationId: 's1', wasControlling: true }]);
+  });
+});

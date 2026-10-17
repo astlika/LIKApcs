@@ -8,6 +8,7 @@
 
 mod hardware;
 mod kiosk;
+mod remote_input;
 mod screen;
 mod secrets;
 mod tasks;
@@ -1172,6 +1173,7 @@ pub fn run() {
             set_widget_hide_in_games,
             set_block_win_in_games,
             screen::capture_screen_frame,
+            remote_input::send_remote_input,
             widget_fit,
             widget_check,
             update_check_server,
