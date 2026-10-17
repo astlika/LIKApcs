@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-10-17
+
+### Added
+
+- Station right-click menu: "View screen" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.
+- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.
+
+### Changed
+
+- Live screens is no longer in the side menu. Open it from the station right-click menu.
+
 ## [0.20.2] - 2026-10-17
 
 ### Added
