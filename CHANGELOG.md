@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-17
+
 ### Added
 
 - Settings → Client screen: "Block the Windows key in Steam games" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.
