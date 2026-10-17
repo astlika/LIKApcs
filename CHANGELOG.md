@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-10-17
+
 ### Added
 
 - Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.
