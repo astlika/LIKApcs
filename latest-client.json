@@ -1,11 +1,11 @@
 {
-  "version": "0.19.8",
-  "notes": "### Changed\n\n- Till: \"Sell off-inventory items\" and \"Installments on pay-later sales\" are now on by default for new installations. Existing installations keep their current value: turn them on in Settings → Printing & POS.",
-  "pub_date": "2026-10-17T00:48:06.606Z",
+  "version": "0.19.9",
+  "notes": "### Added\n\n- Debts: an installment plan has its own parts. Each part shows its amount, its due date (monthly, same day, last day of short months), what was paid and whether it is overdue. The amount is split in cents: 10.00 in 3 parts is 3.34 + 3.33 + 3.33.\n- Debts: a payment can be booked to one part (\"Part to pay\" in the payment dialog). Without a choice, the oldest unpaid part is paid first.\n- Debts: the list shows the items of the sale, so each debt can be told apart.\n- Debts: rescheduling a plan dates its unpaid parts again from the new date, monthly.\n- Debts with installments that had no repayment yet get the schedule when the server is updated. Debts that already had repayments keep their old display.\n\n### Changed\n\n- Installments count the parts that are fully paid. A part that is partly paid is shown as the next part, with what it still owes.",
+  "pub_date": "2026-10-17T01:24:17.887Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemRESlVWUVNGYlVaNWMwbWhkcWQxcjdGNFRvOGFoUEkzdllKcHlyZzZaMGxtL25EWTUyU0M4UnFOb25vbkVQblk0TG13U0FmVWFlRmJnb3JTMmZFSUEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTk3OTQzCWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS44X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjgKRDdpVUdHUVMzbnlHVGNxck91M0RVVnlEZExnL2FNc1NCckxwc2ZIcUJRVmRneUNLMnJIdERVQWg2eXFyM2RObEJCbnBXK1pMSFJpVFQyclFrMnliQWc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.8/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemVYTCszcGIrR0wvQkFGdHdsMlhKaGVwTEt2YkxOdG5OMWUvdm9aVFlSUVloV3JPaldvYzYvblNjclNTMHp3L1J1WitoVVI2MWY3Nlh3UmVvUkh5TXdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjAwMDkzCWZpbGU6TElLQXBjcy1DbGllbnRfMC4xOS45X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjE5LjkKbzBwM09zcnM0Tng4Sy9RaW52b0lOU29qQVF5WnpYWlM3Qk5Ed08zWjBIMm9Ob0hmOStGMXQ3UmlTZlk5a2VXV3plUU5mam1DV3J5Z1RqMFIwQkRoQ0E9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.19.9/LIKApcs-Client-Setup.exe"
     }
   }
 }
