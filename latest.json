@@ -1,11 +1,11 @@
 {
-  "version": "0.20.2",
-  "notes": "### Added\n\n- Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.",
-  "pub_date": "2026-10-17T03:57:14.370Z",
+  "version": "0.20.3",
+  "notes": "### Added\n\n- Station right-click menu: \"View screen\" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.\n- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.\n\n### Changed\n\n- Live screens is no longer in the side menu. Open it from the station right-click menu.",
+  "pub_date": "2026-10-17T16:24:56.078Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJwUGNYT1l5Y1hxNDIwejk0enplc0l1WGtRRDJSUHVoL3VFdGM1dW5oelRBOVp0bEdlNGgwL2NxNytVTlBnYUIzSjcyYTRPMU1UMSs1L3BRUzdEQnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA5MzAyCWZpbGU6TElLQXBjc18wLjIwLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMgorZllxVDdMZy9aa0M2WjE4Y016cVl2YWttMjRvYjNqVmdrMlZ0Qm9La3VxdER2QWFrTzcwbFBFeFFwQStlVXdCaUdmeXlXVzI1MW5zZEJUeU5iSGZEUT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.2/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemYrejUwRUJwV3B6ajJtQjZ6c3ZMdEpVdFIwZWtpYjR5NlNUanFwYVd2UFQwcGFYam5ab09nL3U5QmpQUHpMRXpHOFJ4WC9teVVLYmdmOEtqQ2xYWlFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjU0MjMwCWZpbGU6TElLQXBjc18wLjIwLjNfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMwp6N3R1b0ExL3hxMGdKM0M0c1NqS3ZkUzI4bW5VY3FjR2pMYXlQNFhqcVRmYWs4OTN0L1pUa2lxZEhkRHdCaDdxbC9sdWRLZ2trYkxIZUowbkFpdThBZz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.3/LIKApcs-Setup.exe"
     }
   }
 }

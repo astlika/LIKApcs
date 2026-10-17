@@ -1,11 +1,11 @@
 {
-  "version": "0.20.2",
-  "notes": "### Added\n\n- Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.",
-  "pub_date": "2026-10-17T03:57:14.410Z",
+  "version": "0.20.3",
+  "notes": "### Added\n\n- Station right-click menu: \"View screen\" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.\n- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.\n\n### Changed\n\n- Live screens is no longer in the side menu. Open it from the station right-click menu.",
+  "pub_date": "2026-10-17T16:24:56.118Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemZWY1JWeHh5VVU4WXVwek43RkNmb2FCVWVzOUErMmRubUxFeVVtTVdDeFZpdFEyQkw3MWhhRXhaUXF6eHhXUnpwcjJpZ0w2MUYwc3FQTDZmd05TY0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA5Mzg0CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4yX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjIKRTFCSktWdUNDNlFudVNWdGxKb2dsNDFadVdNanBVY2laalhxM2tEdElkUlV5K0xTQ3FSQjgzNWFxei9sbG9TMmszVVBmSDBPL3YzRFZBYWhMcHBBRHc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.2/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhellMejNITHN6RnVodldlY01uUExhWDVjWGZ0TUlIUVJob2dhdUVKVlpTNklvcDZyNVVWYlhyUzJUSVZmY0RDenFqUXpSRERuTmRqTFBhSk4xZUtZYUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjU0MDA3CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjMKSitCS3ErM2YrOXNWYkw0bHR0cmxlVHpoa0FQWjhxV21CV1lRd1hTV2ZsR0owUWtoTm1Xa2U2RElvNHBKTHhPNkF3UXViZkJ0dU96dHlib25FVkxrQWc9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.3/LIKApcs-Client-Setup.exe"
     }
   }
 }
