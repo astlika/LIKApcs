@@ -370,9 +370,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.card_payments': false,
   'pos.credit_default_days': 7,
   'pos.hide_out_of_stock': true,
-  'pos.off_inventory_items': false,
+  'pos.off_inventory_items': true,
   'pos.time_items': false,
-  'pos.installments': false,
+  'pos.installments': true,
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',

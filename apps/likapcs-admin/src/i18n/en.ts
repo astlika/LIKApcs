@@ -1471,13 +1471,13 @@ export const en = {
         'After a payment the screen shows the change due with Print / Finish and then moves on by itself. 0 waits for the cashier.',
       offInventory: 'Sell off-inventory items at the till',
       offInventoryHint:
-        'Off by default. Shows "Free item" in the POS cart: phones, computers or other things that are not in stock.',
+        'On by default. Shows "Free item" in the POS cart: phones, computers or other things that are not in stock.',
       timeItems: 'Sell PC time at the till',
       timeItemsHint:
         'Off by default. Shows "PC time" in the POS cart: sell minutes now, the PC starts later.',
       installments: 'Installments on pay-later sales',
       installmentsHint:
-        'Off by default. Shows the installments field in the payment panel for pay-later sales.',
+        'On by default. Shows the installments field in the payment panel for pay-later sales. Up to 24 parts, no interest, no deposit.',
       cardPayments: 'Accept card payments',
       cardPaymentsHint:
         'Off: every payment in the app is cash — card is not offered at the POS, for sessions, refunds, purchases or expenses.',

@@ -1479,13 +1479,13 @@ export const sq: Dictionary = {
         'Pas pagesës ekrani tregon kusurin me Printo / Përfundo dhe pastaj vazhdon vetë. 0 pret kasierin.',
       offInventory: 'Shit artikuj jashtë stokut në arkë',
       offInventoryHint:
-        'Çaktivizuar si parazgjedhje. Shfaq "Artikull i lirë" në shportën e POS-it: telefona, kompjuterë ose gjëra që nuk janë në stok.',
+        'Aktivizuar si parazgjedhje. Shfaq "Artikull i lirë" në shportën e POS-it: telefona, kompjuterë ose gjëra që nuk janë në stok.',
       timeItems: 'Shit kohë PC-je në arkë',
       timeItemsHint:
         'Çaktivizuar si parazgjedhje. Shfaq "Kohë PC" në shportën e POS-it: shit minuta tani, PC-ja nis më vonë.',
       installments: 'Këste për shitjet me pagesë më vonë',
       installmentsHint:
-        'Çaktivizuar si parazgjedhje. Shfaq fushën e kësteve në panelin e pagesës për shitjet me pagesë më vonë.',
+        'Aktivizuar si parazgjedhje. Shfaq fushën e kësteve në panelin e pagesës për shitjet me pagesë më vonë. Deri në 24 pjesë, pa interes, pa depozitë.',
       cardPayments: 'Prano pagesa me kartë',
       cardPaymentsHint:
         'Çaktivizuar: çdo pagesë në aplikacion është me para në dorë — karta nuk ofrohet në arkë, për seanca, kthime, blerje apo shpenzime.',
