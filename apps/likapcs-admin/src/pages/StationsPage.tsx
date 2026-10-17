@@ -1457,7 +1457,7 @@ function StationDetailDialog({
                 approveRequestId={approveRequestId}
               />
             </Card>
-            <Card flush testId="station-device">
+            <Card testId="station-device">
               {device ? (
                 <div className="st-device">
                   <div className="st-device__row" data-testid="station-device-row">
