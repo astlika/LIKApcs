@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.8] - 2026-10-17
+
+### Changed
+
+- Till: "Sell off-inventory items" and "Installments on pay-later sales" are now on by default for new installations. Existing installations keep their current value: turn them on in Settings → Printing & POS.
+
 ## [0.19.7] - 2026-10-16
 
 ### Added
