@@ -194,11 +194,14 @@ export class AdsService {
 
   private stateOf(row: AdRow, now: Date): AdState {
     if (!row.enabled) return 'disabled';
-    if (row.album_id && row.album_enabled === false) return 'album_off';
+    // 0.19.3: only slides inside an enabled album show.
+    if (!row.album_id) return 'no_album';
+    if (row.album_enabled === false) return 'album_off';
     if (row.starts_at && row.starts_at > now) return 'scheduled';
     if (row.ends_at && row.ends_at <= now) return 'expired';
-    // Archived products leave the screens by themselves; out of stock is only flagged in Admin.
+    // Archived products leave the screens by themselves; so do products with no stock (0.19.3).
     if (row.kind === 'product' && !row.product_active) return 'unavailable';
+    if (row.kind === 'product' && row.product_in_stock === false) return 'out_of_stock';
     if (!withinSchedule(row, now)) return 'off_hours';
     return 'live';
   }
@@ -264,11 +267,12 @@ export class AdsService {
   }
 
   /**
-   * What one PC shows, in order. Only `live` ads (enabled, in a switched-on album or none, inside
+   * 0.19.3: what one PC shows, in order. Only slides that belong to an album that is switched on
+   * (slides with no album never show), and product slides only while the product is active and in
+   * stock (a product with no stock disappears from every screen). Otherwise: enabled, inside
    * their date range *and* weekly schedule, targeted at this station or at all); a promo only
    * counts while below the price. `items` is the flat list (album by album) for pre-0.12 clients;
-   * `albums` the same slides grouped — slides without an album first (`id: null`), then every
-   * album that has something to show, in the albums' order. `nextChangeAt` tells the PC when the
+   * `albums` the same slides grouped — every album that has something to show, in the albums' order. `nextChangeAt` tells the PC when the
    * weekly schedule next flips a slide on/off, so it can refetch at exactly that minute.
    */
   async clientFeed(stationId: string | null = null, limit = 150): Promise<ClientAdsFeed> {
@@ -277,10 +281,11 @@ export class AdsService {
       `${AD_SELECT.replace('FROM ads a', ', c.name AS category_name FROM ads a')}
        LEFT JOIN categories c ON c.id = p.category_id
        WHERE a.enabled
-         AND (a.album_id IS NULL OR al.enabled)
+         AND a.album_id IS NOT NULL AND al.enabled
          AND (a.starts_at IS NULL OR a.starts_at <= now())
          AND (a.ends_at IS NULL OR a.ends_at > now())
-         AND (a.kind = 'custom' OR p.is_active)
+         AND (a.kind = 'custom'
+              OR (p.is_active AND (NOT p.track_stock OR p.stock_milli > 0)))
          AND (a.station_ids IS NULL OR $2::uuid IS NULL OR $2::uuid = ANY(a.station_ids))
        ${AD_ORDER} LIMIT $1`,
       [limit * 3, stationId],

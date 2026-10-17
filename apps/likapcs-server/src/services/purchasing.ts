@@ -42,6 +42,9 @@ import type { CashService } from './cash.js';
 import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 
+/** Category of the expense booked for a stock-less purchase line (0.19.1). */
+const STOCKLESS_EXPENSE_CATEGORY = 'other';
+
 // ─── Row types ───────────────────────────────────────────────────────────────
 
 interface SupplierRow {
@@ -597,10 +600,13 @@ export class PurchasingService {
     input: ReceivePurchaseRequest,
     actor: AuditActor,
   ): Promise<void> {
-    const p = await client.query<{ status: PurchaseStatus; reference_no: string }>(
-      'SELECT status, reference_no FROM purchases WHERE id = $1 FOR UPDATE',
-      [purchaseId],
-    );
+    const p = await client.query<{
+      status: PurchaseStatus;
+      reference_no: string;
+      supplier_id: string;
+    }>('SELECT status, reference_no, supplier_id FROM purchases WHERE id = $1 FOR UPDATE', [
+      purchaseId,
+    ]);
     if (!p.rows[0]) throw notFound('Purchase');
     if (p.rows[0].status === 'cancelled') throw conflict('This purchase is cancelled');
     if (p.rows[0].status === 'received') throw conflict('Everything was already received');
@@ -652,11 +658,42 @@ export class PurchasingService {
         stock_milli: string;
         average_cost_cents: string;
         allow_negative_stock: boolean;
+        track_stock: boolean;
       }>(
-        'SELECT stock_milli::text, average_cost_cents::text, allow_negative_stock FROM products WHERE id = $1 FOR UPDATE',
+        'SELECT stock_milli::text, average_cost_cents::text, allow_negative_stock, track_stock FROM products WHERE id = $1 FOR UPDATE',
         [item.product_id],
       );
       const pr = product.rows[0]!;
+      if (!pr.track_stock) {
+        // 0.19.1: a stock-less line is an expense, not inventory. It is booked once, here, with
+        // the receipt line as its link; no stock moves and the product's cost is not changed.
+        const receiptItem = await client.query<{ id: string }>(
+          `INSERT INTO purchase_receipt_items (receipt_id, purchase_item_id, quantity_milli, unit_cost_cents, inventory_movement_id)
+           VALUES ($1, $2, $3, $4, NULL) RETURNING id::text`,
+          [receiptId, w.purchaseItemId, w.quantityMilli, unitCost],
+        );
+        const amount = multiplyByQuantity(unitCost, w.quantityMilli);
+        if (amount > 0) {
+          await client.query(
+            `INSERT INTO expenses (expense_date, category_code, amount_cents, payment_method, description,
+                                   supplier_id, created_by, purchase_receipt_item_id)
+             VALUES (CURRENT_DATE, $1, $2, 'other', $3, $4, $5, $6)`,
+            [
+              STOCKLESS_EXPENSE_CATEGORY,
+              amount,
+              `${p.rows[0].reference_no} · ${item.description} × ${w.quantityMilli / 1000}`,
+              p.rows[0].supplier_id,
+              actor.userId ?? null,
+              Number(receiptItem.rows[0]!.id),
+            ],
+          );
+        }
+        await client.query(
+          `UPDATE purchase_items SET quantity_received_milli = quantity_received_milli + $2 WHERE id = $1`,
+          [w.purchaseItemId, w.quantityMilli],
+        );
+        continue;
+      }
       const newAverage = weightedAverageCost(
         Number(pr.stock_milli),
         Number(pr.average_cost_cents),

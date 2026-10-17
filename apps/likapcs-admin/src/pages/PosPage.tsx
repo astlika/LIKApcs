@@ -18,6 +18,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
+  Clock,
   Minus,
   PauseCircle,
   Plus,
@@ -40,18 +41,26 @@ import {
   type SalesListResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
+import { usePosFlags } from '../lib/pos-flags';
 import {
+  addFreeItem,
+  addTimeItem,
   addToCart,
   cartItemCount,
   cartToRequest,
   cartTotals,
   emptyCart,
+  lineKey,
+  lineName,
   removeLine,
   setLineDiscount,
   setQuantity,
   type Cart,
   unitPriceOf,
 } from '../lib/cart';
+import { FreeItemDialog } from '../components/pos/FreeItemDialog';
+import { AddonDialog } from '../components/pos/AddonDialog';
+import { TimeItemDialog } from '../components/pos/TimeItemDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -100,7 +109,14 @@ export function PosPage() {
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
-  const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | null>(null);
+  const [dialog, setDialog] = useState<
+    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
+  >(null);
+  // 0.19.1: a product with extras opens the extras dialog before it is added to the cart.
+  const [addonPick, setAddonPick] = useState<{
+    product: ProductSummary;
+    quantityMilli: number;
+  } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
@@ -121,11 +137,14 @@ export function PosPage() {
     const h = setTimeout(() => setGridSearch(search.trim()), 180);
     return () => clearTimeout(h);
   }, [search]);
+  const flags = usePosFlags();
   const settings = useQuery({
     queryKey: ['settings', 'all'],
     queryFn: () => api<SettingsMap>('/settings'),
     staleTime: 60_000,
   });
+  /** 0.19.0: off-inventory lines take the default tax rate, shown the same as the server computes. */
+  const defaultTaxBp = settings.data?.['tax.default_rate_bp'] ?? 0;
   const products = useQuery({
     queryKey: ['products', 'pos', categoryId, gridSearch],
     queryFn: () =>
@@ -156,6 +175,10 @@ export function PosPage() {
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      if (product.addons?.length) {
+        setAddonPick({ product, quantityMilli });
+        return;
+      }
       setCart((c) => addToCart(c, product, quantityMilli));
       focusSearch();
     },
@@ -213,10 +236,30 @@ export function PosPage() {
     void api<SaleDetail>(`/sales/${id}`).then(async (sale) => {
       let next = emptyCart();
       for (const item of sale.items) {
-        if (!item.productId) continue;
+        if (!item.productId) {
+          // Off-inventory line (0.19.0): it has no product row to reload — its snapshot is enough.
+          next = addFreeItem(next, {
+            name: item.description,
+            unitPriceCents: item.unitPriceCents,
+            taxRateBp: item.taxRateBp,
+            quantityMilli: item.quantityMilli,
+          });
+          if (item.discountCents)
+            next = setLineDiscount(
+              next,
+              lineKey(next.lines[next.lines.length - 1]!),
+              item.discountCents,
+            );
+          continue;
+        }
         const product = await api<ProductSummary>(`/products/${item.productId}`);
-        next = addToCart(next, product, item.quantityMilli);
-        if (item.discountCents) next = setLineDiscount(next, product.id, item.discountCents);
+        next = addToCart(next, product, item.quantityMilli, item.addonIds ?? []);
+        if (item.discountCents)
+          next = setLineDiscount(
+            next,
+            lineKey(next.lines[next.lines.length - 1]!),
+            item.discountCents,
+          );
       }
       // A parked sale's discount may be the customer's default one (applied by the server); do
       // not resend it as an explicit discount, the server re-applies it on completion.
@@ -433,6 +476,26 @@ export function PosPage() {
             {resumedId && <Badge tone="warning">{t('sales.status.suspended')}</Badge>}
           </h2>
           <span className="muted">{t('pos.items', { n: cartItemCount(cart) })}</span>
+          {flags.offInventory && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDialog('freeItem')}
+              data-testid="pos-free-item"
+            >
+              <Plus size={14} /> {t('pos.freeItem')}
+            </Button>
+          )}
+          {flags.timeItems && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDialog('timeItem')}
+              data-testid="pos-time-item"
+            >
+              <Clock size={14} /> {t('pos.timeItem')}
+            </Button>
+          )}
         </div>
         <div className="pos__customer">
           <CustomerPicker
@@ -448,46 +511,58 @@ export function PosPage() {
           {cart.lines.length === 0 && <div className="pos__empty">{t('pos.emptyCart')}</div>}
           {cart.lines.map((line, i) => {
             const computed = totals.lines[i]!;
+            const key = lineKey(line);
+            const unit = line.kind === 'product' ? unitPriceOf(line.product) : line.unitPriceCents;
             return (
-              <div key={line.product.id} className="pos-line">
+              <div key={key} className="pos-line">
                 <div className="pos-line__main">
-                  <div className="pos-line__name">{line.product.name}</div>
+                  <div className="pos-line__name">
+                    {lineName(line)}
+                    {line.kind === 'free' && (
+                      <span className="faint"> · {t('pos.freeItemTag')}</span>
+                    )}
+                    {line.kind === 'time' && (
+                      <span className="faint"> · {t('pos.timeItemTag')}</span>
+                    )}
+                  </div>
                   <div className="pos-line__price faint num">
-                    {fmt.money(unitPriceOf(line.product))} × {line.quantityMilli / 1000}
-                    {unitPriceOf(line.product) < line.product.sellingPriceCents && (
+                    {fmt.money(unit)} × {line.quantityMilli / 1000}
+                    {line.kind === 'product' && unit < line.product.sellingPriceCents && (
                       <span className="text-success"> · {t('pos.promo')}</span>
                     )}
                   </div>
                 </div>
                 <div className="pos-line__qty">
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli - 1000))
-                    }
-                    aria-label="−"
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <QtyInput
-                    quantityMilli={line.quantityMilli}
-                    label={t('pos.qty')}
-                    onCommit={(milli) => {
-                      setCart((c) => setQuantity(c, line.product.id, milli));
-                      focusSearch();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli + 1000))
-                    }
-                    aria-label="+"
-                  >
-                    <Plus size={14} />
-                  </button>
+                  {line.kind === 'time' ? (
+                    <span className="faint num">1</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
+                        aria-label="−"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <QtyInput
+                        quantityMilli={line.quantityMilli}
+                        label={t('pos.qty')}
+                        onCommit={(milli) => {
+                          setCart((c) => setQuantity(c, key, milli));
+                          focusSearch();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
+                        aria-label="+"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
@@ -500,7 +575,7 @@ export function PosPage() {
                       defaultValue={line.discountCents ? (line.discountCents / 100).toFixed(2) : ''}
                       onBlur={(e) => {
                         const cents = e.target.value.trim() ? parseMoneyInput(e.target.value) : 0;
-                        if (cents !== null) setCart(setLineDiscount(cart, line.product.id, cents));
+                        if (cents !== null) setCart(setLineDiscount(cart, key, cents));
                       }}
                       aria-label={t('pos.lineDiscount')}
                     />
@@ -509,7 +584,7 @@ export function PosPage() {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  onClick={() => setCart(removeLine(cart, line.product.id))}
+                  onClick={() => setCart(removeLine(cart, key))}
                   aria-label={t('common.delete')}
                 >
                   <Trash2 size={14} />
@@ -567,7 +642,12 @@ export function PosPage() {
             {canSuspend && (
               <>
                 <Button
-                  disabled={cart.lines.length === 0}
+                  disabled={cart.lines.length === 0 || cart.lines.some((l) => l.kind === 'time')}
+                  title={
+                    cart.lines.some((l) => l.kind === 'time')
+                      ? t('pos.timeItemNotParkable')
+                      : undefined
+                  }
                   loading={suspend.isPending}
                   onClick={() => suspend.mutate()}
                 >
@@ -650,6 +730,47 @@ export function PosPage() {
         confirmLabel={t('pos.newSale')}
         danger
       />
+      {addonPick && (
+        <AddonDialog
+          product={addonPick.product}
+          onClose={() => {
+            setAddonPick(null);
+            focusSearch();
+          }}
+          onAdd={(addonIds) => {
+            const { product, quantityMilli } = addonPick;
+            setCart((c) => addToCart(c, product, quantityMilli, addonIds));
+            setAddonPick(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'freeItem' && (
+        <FreeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onAdd={(item) => {
+            setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'timeItem' && (
+        <TimeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onAdd={(item) => {
+            setCart((c) => addTimeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
       {dialog === 'suspended' && (
         <Dialog
           open

@@ -6,9 +6,228 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-10-17
+
+### Fixed
+
+- Station dialog, standard view: the PC row and its command buttons no longer touch the edge of the card.
+- Station dialog: the footer buttons wrap onto a second line when there is no room, instead of running out of the dialog.
+
+## [0.20.4] - 2026-10-17
+
+### Fixed
+
+- Live picture froze when a new size or rate arrived while a frame was being captured on the PC. The PC now follows the newest order.
+- A focus view started from a grid thumbnail waited up to 2.5 s for its first frame. The new rate now starts at once.
+
+## [0.20.3] - 2026-10-17
+
 ### Added
 
-_(nothing yet)_
+- Station right-click menu: "View screen" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.
+- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.
+
+### Changed
+
+- Live screens is no longer in the side menu. Open it from the station right-click menu.
+
+## [0.20.2] - 2026-10-17
+
+### Added
+
+- Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.
+
+## [0.20.1] - 2026-10-17
+
+### Added
+
+- Live control (remote control, phase 2): in the focus view of a PC, "Control PC" sends the mouse and the keyboard to that PC. Owner and admin only (permission remote.control). Control stops when you leave the focus view, when the page closes, or when the session on the PC ends, and any key or button still held down is released. Each control on and off is written to the audit log.
+- Live screens stop when the session on that PC ends: the view shows "Session ended".
+
+### Added
+
+- Settings → Client screen: "Block the Windows key in Steam games" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.
+- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.
+
+## [0.19.9] - 2026-10-17
+
+### Added
+
+- Debts: an installment plan has its own parts. Each part shows its amount, its due date (monthly, same day, last day of short months), what was paid and whether it is overdue. The amount is split in cents: 10.00 in 3 parts is 3.34 + 3.33 + 3.33.
+- Debts: a payment can be booked to one part ("Part to pay" in the payment dialog). Without a choice, the oldest unpaid part is paid first.
+- Debts: the list shows the items of the sale, so each debt can be told apart.
+- Debts: rescheduling a plan dates its unpaid parts again from the new date, monthly.
+- Debts with installments that had no repayment yet get the schedule when the server is updated. Debts that already had repayments keep their old display.
+
+### Changed
+
+- Installments count the parts that are fully paid. A part that is partly paid is shown as the next part, with what it still owes.
+
+## [0.19.8] - 2026-10-17
+
+### Changed
+
+- Till: "Sell off-inventory items" and "Installments on pay-later sales" are now on by default for new installations. Existing installations keep their current value: turn them on in Settings → Printing & POS.
+
+## [0.19.7] - 2026-10-16
+
+### Added
+
+- Countdown widget: a new, plainest look "Only the time" (only the minutes left, no bar, no amount, no PC code).
+- Countdown widget: two new corners, "Middle left" and "Middle right" (vertically centred on the edge of the screen).
+- Settings → Client screen: "Hide in games" (on by default). While a fullscreen game (for example CS2) runs on the PC, the countdown is hidden and it comes back when the game closes. Switch it off to keep the countdown visible over games.
+
+### Fixed
+
+- The countdown widget no longer counts a desktop or taskbar as a game when deciding to hide.
+- PC client (Windows): a staff notice, the "5 min / 1 min left" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. (This was meant for 0.19.6, which did not publish.)
+
+## [0.19.6] - 2026-10-16
+
+### Fixed
+
+- PC client (Windows): a staff notice, the "5 min / 1 min left" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. Not yet tested on a Windows PC running a game: test before rolling out widely.
+
+## [0.19.5] - 2026-10-16
+
+### Added
+
+- Admin, "To collect" strip: a single "Collect all (n)" button collects every waiting bill at every PC in one step, when bills wait at two or more PCs. One tender covers them all (cash, card or split); each bill keeps its own receipt. If the tender does not cover every bill, nothing is taken. Endpoint: `POST /sessions/collect-all`. The per-PC "Collect all at PC (n)" button stays as it was.
+
+## [0.19.4] - 2026-10-16
+
+### Added
+
+- Stations map: a visible "Select all PCs" button on the toolbar (Ctrl+A already did this).
+- Stations: "Stop" works for a selection of PCs. One confirmation stops every running session at once and reports each PC. Nothing is charged at that moment: postpaid and pay-at-the-end bills wait at the desk ("Pay all" on the PC), prepaid time was already paid, and open orders stay open. Endpoint: `POST /sessions/bulk-end`.
+
+## [0.19.3] - 2026-10-15
+
+### Changed
+
+- Ads (customer screens, PCs and the counter's customer display): only slides inside an enabled album are shown. A slide with no album never shows, and neither does a slide in a switched-off album. Slides with no album stay in Admin › Ads, marked "No album", until they are moved into an album.
+- Ads: a product with stock tracked at zero (or less) leaves every screen by itself and comes back when it is restocked. Admin › Ads shows it as "Out of stock". Products that do not track stock are unaffected.
+- Ads on the PCs refresh at least every 60 seconds (was 10 minutes), and the counter's customer display every 60 seconds (was 5 minutes), so a sold-out product leaves the screens within about a minute.
+
+## [0.19.2] - 2026-10-15
+
+### Added
+
+- Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under "More options".
+- Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.
+- Ads grid 5×5 (up to 25 products per screen).
+- Stations: a "Gift minutes" button on the PC (only for users with the gift permission). It opens the add-time dialog in gift mode.
+- Stations map: at small icon sizes each PC is one line (status dot, code, timer or state).
+
+### Changed
+
+- Settings → POS & Printing: the sales switches (hide out-of-stock, off-inventory items, PC time, installments, card payments, credit days, wallet) are in their own "Sales (POS)" card. Receipt options stay under Receipts.
+
+### Security
+
+- Build tool: `esbuild` used by the server build bumped from 0.27.7 to 0.28.2 (fixes GHSA-g7r4-m6w7-qqqr, a low-severity dev-server file read on Windows). Build-time only; the shipped app does not run esbuild.
+
+## [0.19.1] - 2026-10-15
+
+### Added
+
+- **Product extras with their own price (0.19.1).** A product can have extras (e.g. *Tost* with
+  *Kackavall* +0.50), set in Admin › Products under *Extras* (its own Save). At the till, a product
+  with extras opens a dialog to tick them; each combination is its own sale line, named
+  `Tost + Kackavall`. An extra adds its price and never moves stock. The chosen extras are kept on
+  the sale line (`sale_items.addons`, migration `0037_product_addons.sql`), so past receipts do not
+  change when an extra is edited, and a parked sale resumes with its extras.
+
+### Fixed
+
+- **\"+ minutes\" on several PCs says what happened (0.19.1).** The dialog lists the PCs that will
+  get the minutes and those that will be skipped, with the reason (no running session, or postpaid).
+  After the step, a toast names each PC that was not changed. Before, only a count was shown.
+
+### Changed
+
+- **Ads have their own settings tab (0.19.1).** Settings › Ads holds the ad settings and the
+  screen options that go with them (with a preview). Settings › Client screen keeps the customer
+  display options only. The settings are the same; only where they are edited changed.
+- **Widget colours: six more (0.19.1).** Teal, orange, fuchsia, lime, red and blue, next to the
+  six existing ones.
+- **Widget centre positions (0.19.1).** The countdown widget can sit at the top centre or the
+  bottom centre of the screen, in addition to the four corners.
+- **Stock-less purchase lines are expenses (0.19.1).** A purchase line for a product that does not
+  track stock (a service, a consumable not kept in stock) is booked automatically as an expense
+  (category *Other*, payment *Other*, the supplier linked) when it is received; a partial receipt
+  books the received part. A stock product still goes into inventory as before. Migration
+  `0038_stockless_purchase_expenses.sql`. Purchases received before this change are not
+  converted; they stay as they were.
+- **Managers can give free minutes (0.19.1).** `stations.gift` is granted to the manager role too
+  (migration `0036_stations_gift_manager.sql`). Owner and admin keep it; every gift is audited.
+
+## [0.19.0] - 2026-10-14
+
+### Added
+
+- **Optional till features, all off by default (0.19).** Settings › Printing & POS now has three
+  switches: *Sell off-inventory items at the till* (the "Free item" button), *Sell PC time at the
+  till* (the "PC time" button) and *Installments on pay-later sales* (the installments field).
+  While a switch is off, its button or field is hidden in the POS and the payment panel.
+  Existing data is not changed.
+- **Off-inventory "free item" lines at the till (0.19).** The POS cart has a
+  "Free item" button: a name and a price typed in (a service, a repair, a one-off), quantity 1–999.
+  It takes the default tax rate and its price includes tax, like a catalogue product. No stock
+  moves and no cost is booked, so the margin is the whole price. The line survives suspend/resume,
+  appears on the receipt and can be refunded (restocking is a no-op for it). Each completed sale
+  with free lines is audited with the typed names and prices (`sale.completed` → `freeItems`).
+- **Cart stations: sell PC time now, the PC starts later (0.19).** The POS has a
+  "PC time" button: pick a PC and minutes; the price is that PC's own quote, and the server
+  quotes it again when the sale is made. Completing the sale creates a *time credit* for that PC
+  (migration `0031_time_credits.sql`). Starting the PC from its station screen then uses it
+  ("Use PC time (paid at the till)", all remaining minutes): no new sale and no second payment.
+  Extending a session can also redeem a credit (`creditId`, minutes only). A credit is bound to
+  its PC and used whole-request only: asking for more minutes than remain is refused.
+  Refunding a PC-time line cancels its credit, but only while none of its minutes were used.
+  Parking a sale that holds PC time is refused — it is completed or removed.
+  Migration `0032_time_credit_sessions.sql` lets a credit-started session be billed without a
+  sale of its own, with `time_credit_id` recording which credit paid for it.
+- **Simple installments on a pay-later sale (0.19).** The "Pay later" tender has an
+  optional *Installments* count (2–24). The debt records it (migration `0033_debt_installments.sql`),
+  each repayment counts as one part, and the debt shows "N of M paid · next part X". No dates are
+  scheduled — the due date still applies. Installments are refused on any tender but pay-later.
+  Combined with the off-inventory item, this sells a PC build or service paid in parts.
+- **Product variants — size, colour… (0.19).** A variant is a product of its own: its
+  own barcode, selling price and stock. In Products, a product can be a *variant of* a main product
+  and carries a label ("M", "42", "Red"); the main product lists its variant count. One level only:
+  a variant cannot have variants, and a main product with variants cannot become one. Selling a
+  variant moves only its stock. A main product with variants cannot be deleted (archive it instead).
+  Migration `0034_product_variants.sql`.
+- **Per-PC look and wallpaper (0.20).** Stations › *Look & wallpaper* sets one PC's
+  own widget size, position, design, colour and ads on/off; *House setting* leaves a value to
+  Settings › Client screen. Each PC can also have its own lock-screen wallpaper (JPEG, PNG, WebP or
+  GIF, scaled down before upload). A change reaches only the PCs it touches, live. Migration
+  `0035_station_looks.sql`.
+- **Widget colour (0.20).** Settings › Client screen has a *Widget colour* for the
+  countdown widget's accent (Indigo, Emerald, Sky, Amber, Rose, Violet, Mono). A PC can override it.
+- **Layout presets (0.20).** Settings › Client screen › *Layout presets* saves the
+  current widget, ads and lock-screen layout under a name. *Apply* loads it into the form and
+  *Save* sends it to every PC in one step. Only customer-screen layout keys are stored.
+- **Pay all: every bill waiting at one PC in one step (0.21).** When a PC has two or
+  more bills waiting (pay-at-the-end sessions that ran out or ended), the *To collect* strip shows
+  *Collect all at PC n (count)*. One tender step (cash, card or split; no pay-later) covers them
+  all, in one transaction: each bill gets its own sale and receipt, open order lines included. A
+  tender that does not cover every bill is refused and nothing is written; other PCs are not
+  touched. Endpoint `POST /stations/:id/collect-all`, audited as `session.collect_all`. A PC with
+  nothing waiting gets 409.
+- **Cash book per shift (0.21).** Reports has a *Cash book*: one row per cash shift in
+  the range (opening, cash in, cash out, expected, counted, difference). Open a row to see its drawer
+  movements. Totals cover all shifts; counted and difference only the closed ones. The export
+  kind *Cash book (one row per shift)* writes the same rows as CSV, with local times. Endpoint
+  `GET /reports/cash-book`. The older *Cash shifts* table is replaced by this card.
+- **Reports redesign (0.21).** Same numbers, new layout. A result card at the top
+  (net sales minus expenses, with sales split by source). Titled sections: Sales (columns per day and
+  per hour), Payments and sources (share bars with a legend, and the tables), Products, staff and
+  gaming, Money out and cash. The charts are plain CSS, so they need no library and work offline.
+- **Pay all shows every receipt (0.21).** After a pay-all step, the same *Payment recorded* dialog
+  opens for each bill in turn, with its receipt number, change and Print. The collect response
+  carries each bill's receipt payment (`collected[].payment`).
 
 ## [0.18.1] - 2026-10-14
 

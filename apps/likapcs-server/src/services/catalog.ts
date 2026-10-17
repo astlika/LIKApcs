@@ -28,6 +28,7 @@ import { ProductImageStore } from './product-images.js';
 import type { SettingsService } from './settings.js';
 
 interface ProductRow {
+  addons: { id: string; name: string; price_cents: string | number }[] | null;
   id: string;
   name: string;
   sku: string;
@@ -54,6 +55,10 @@ interface ProductRow {
   is_active: boolean;
   client_menu: boolean;
   client_menu_order: number;
+  parent_id: string | null;
+  parent_name: string | null;
+  variant_label: string | null;
+  variant_count: string;
   created_at: Date;
   updated_at: Date;
   promo_price_cents: string | null;
@@ -68,14 +73,20 @@ const PRODUCT_SELECT = `
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
          p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
+         p.parent_id, pp.name AS parent_name, p.variant_label,
+         (SELECT count(*) FROM products v WHERE v.parent_id = p.id)::text AS variant_count,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
-            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes
+            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes,
+         (SELECT json_agg(json_build_object('id', a.id, 'name', a.name, 'price_cents', a.price_cents)
+                          ORDER BY a.sort_order, a.created_at)
+            FROM product_addons a WHERE a.product_id = p.id) AS addons
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
-    LEFT JOIN units_of_measure u ON u.code = p.unit_code`;
+    LEFT JOIN units_of_measure u ON u.code = p.unit_code
+    LEFT JOIN products pp ON pp.id = p.parent_id`;
 
 export class CatalogService {
   constructor(
@@ -266,12 +277,21 @@ export class CatalogService {
       isActive: row.is_active,
       clientMenu: row.client_menu,
       clientMenuOrder: row.client_menu_order,
+      parentId: row.parent_id,
+      parentName: row.parent_name,
+      variantLabel: row.variant_label,
+      variantCount: Number(row.variant_count),
       imageUrl: ProductImageStore.urlFor(row.image_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
         barcode: b.barcode,
         isPrimary: b.is_primary,
         quantityMilli: Number(b.quantity_milli),
+      })),
+      addons: (row.addons ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        priceCents: Number(a.price_cents),
       })),
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
@@ -393,14 +413,15 @@ export class CatalogService {
 
   async createProduct(input: ProductInput, actor: AuditActor): Promise<ProductSummary> {
     return withTransaction(this.pool, async (client) => {
+      await checkVariant(client, null, input.parentId, input.variantLabel);
       const sku = input.sku?.trim() || (await nextSku(client));
       const r = await client
         .query<{ id: string }>(
           `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
                                  average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
                                  allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
-                                 client_menu)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+                                 client_menu, parent_id, variant_label)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
           [
             input.name,
             sku,
@@ -420,6 +441,8 @@ export class CatalogService {
             input.isActive,
             actor.userId ?? null,
             input.clientMenu,
+            input.parentId,
+            input.variantLabel,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -481,8 +504,29 @@ export class CatalogService {
       storageLocation: 'storage_location',
       isActive: 'is_active',
       clientMenu: 'client_menu',
+      parentId: 'parent_id',
+      variantLabel: 'variant_label',
     };
     return withTransaction(this.pool, async (client) => {
+      if ('parentId' in patch || 'variantLabel' in patch) {
+        const current = await client.query<{
+          parent_id: string | null;
+          variant_label: string | null;
+        }>('SELECT parent_id, variant_label FROM products WHERE id = $1 FOR UPDATE', [id]);
+        const row = current.rows[0];
+        if (!row) throw notFound('Product');
+        const parentId = 'parentId' in patch ? (patch.parentId ?? null) : row.parent_id;
+        const label = parentId
+          ? 'variantLabel' in patch
+            ? (patch.variantLabel ?? null)
+            : row.variant_label
+          : null;
+        await checkVariant(client, id, parentId, label);
+        // Un-linking a variant clears its label too (the pair is kept together).
+        if (parentId === null) {
+          patch = { ...patch, variantLabel: null };
+        }
+      }
       const sets: string[] = [];
       const values: unknown[] = [];
       for (const [key, column] of Object.entries(map)) {
@@ -586,6 +630,15 @@ export class CatalogService {
         });
         return { archived: true, imagePath: null };
       }
+      // 0.19.0: variants point at this product; it is archived instead (it stays in the family).
+      const variants = await client.query<{ n: string }>(
+        'SELECT count(*)::text AS n FROM products WHERE parent_id = $1',
+        [id],
+      );
+      if (Number(variants.rows[0]!.n) > 0)
+        throw conflict('This product has variants — archive it instead of deleting it', {
+          code: 'HAS_VARIANTS',
+        });
       const r = await client.query<{ image_path: string | null }>(
         'DELETE FROM products WHERE id = $1 RETURNING image_path',
         [id],
@@ -628,6 +681,40 @@ export class CatalogService {
           );
         throw err;
       });
+  }
+
+  /** 0.19.1: replaces the product's extras. Existing sales keep their snapshot. */
+  async setAddons(
+    productId: string,
+    input: { addons: { name: string; priceCents: number }[] },
+    actor: AuditActor,
+  ): Promise<ProductSummary> {
+    return withTransaction(this.pool, async (client) => {
+      const exists = await client.query('SELECT 1 FROM products WHERE id = $1', [productId]);
+      if (!exists.rowCount) throw notFound('Product');
+      // An extra saved again under the same name keeps its id, so a parked sale still resolves it.
+      const current = await client.query<{ id: string; name: string }>(
+        'SELECT id, name FROM product_addons WHERE product_id = $1',
+        [productId],
+      );
+      const byName = new Map(current.rows.map((r) => [r.name, r.id]));
+      await client.query('DELETE FROM product_addons WHERE product_id = $1', [productId]);
+      for (const [i, a] of input.addons.entries()) {
+        const name = a.name.trim();
+        await client.query(
+          `INSERT INTO product_addons (id, product_id, name, price_cents, sort_order)
+           VALUES (COALESCE($5::uuid, gen_random_uuid()), $1, $2, $3, $4)`,
+          [productId, name, a.priceCents, i, byName.get(name) ?? null],
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'catalog.product.addons',
+        entityType: 'product',
+        entityId: productId,
+        details: { count: input.addons.length },
+      });
+      return this.getProduct(productId, client);
+    });
   }
 
   async addBarcode(
@@ -797,6 +884,47 @@ export class CatalogService {
 }
 
 /** Generated SKUs: `SKU-000001`, continuous (no yearly reset). */
+/**
+ * 0.19.0: a variant points at one parent (one level only) and has a label. A product that has
+ * variants cannot itself become a variant. `selfId` is null when the product is being created.
+ */
+async function checkVariant(
+  client: DbClient,
+  selfId: string | null,
+  parentId: string | null,
+  label: string | null,
+): Promise<void> {
+  if (!parentId) {
+    if (label) throw badRequest('A variant label needs a parent product', { field: 'parentId' });
+    return;
+  }
+  if (!label || !label.trim())
+    throw badRequest('A variant needs a label (for example its size or colour)', {
+      field: 'variantLabel',
+    });
+  if (parentId === selfId)
+    throw badRequest('A product cannot be a variant of itself', { field: 'parentId' });
+  const parent = await client.query<{ parent_id: string | null }>(
+    'SELECT parent_id FROM products WHERE id = $1',
+    [parentId],
+  );
+  if (!parent.rows[0]) throw notFound('Parent product');
+  if (parent.rows[0].parent_id)
+    throw badRequest('A variant cannot have variants — choose the main product', {
+      field: 'parentId',
+    });
+  if (selfId) {
+    const kids = await client.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM products WHERE parent_id = $1',
+      [selfId],
+    );
+    if (Number(kids.rows[0]!.n) > 0)
+      throw conflict('This product has variants, so it cannot become a variant', {
+        field: 'parentId',
+      });
+  }
+}
+
 export async function nextSku(client: DbClient): Promise<string> {
   const r = await client.query<{ next_value: string }>(
     `INSERT INTO document_sequences (kind, period, prefix, next_value) VALUES ('sku', '', 'SKU', 2)

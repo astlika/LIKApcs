@@ -1149,6 +1149,7 @@ button.stat:hover {
 }
 .dialog__footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 20px;
@@ -3176,6 +3177,167 @@ tr:hover .debt-cell .btn,
   transition: width 0.3s ease;
 }
 .bars__value {
+  text-align: right;
+}
+
+/* Reports (0.21.0 redesign): a result hero, titled sections, column charts and share bars. */
+.rep-hero {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(260px, 1.6fr);
+  gap: 24px;
+  align-items: center;
+  padding: 20px 22px;
+  background: linear-gradient(135deg, var(--accent-soft), transparent 60%), var(--bg-surface);
+}
+.rep-hero__label,
+.rep-hero__split-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.rep-hero__value {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 6px 0;
+  color: var(--text);
+}
+.rep-hero__value.is-good {
+  color: var(--success);
+}
+.rep-hero__value.is-bad {
+  color: var(--danger);
+}
+.rep-hero__hint {
+  font-size: 13px;
+}
+.rep-hero__split {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+@media (max-width: 760px) {
+  .rep-hero {
+    grid-template-columns: 1fr;
+  }
+}
+.rep-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rep-section__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rep-section__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.rep-section__hint {
+  margin: 0;
+  font-size: 12.5px;
+}
+.rep-cols {
+  display: grid;
+  gap: 4px;
+  align-items: end;
+  padding-top: 4px;
+}
+.rep-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.rep-col__value,
+.rep-col__track,
+.rep-col__label {
+  width: 100%;
+  max-width: 56px;
+}
+.rep-col__value {
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rep-col__track {
+  height: 160px;
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--border);
+}
+.rep-col__bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+  transition:
+    height 0.3s ease,
+    filter var(--t-fast);
+}
+.rep-col__bar[data-empty] {
+  background: var(--bg-hover);
+}
+.rep-col:hover .rep-col__bar {
+  filter: brightness(1.15);
+}
+.rep-col__label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rep-comp {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.rep-comp__bar {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+.rep-comp__bar > span {
+  height: 100%;
+  min-width: 3px;
+  border-radius: 2px;
+}
+.rep-comp__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.rep-comp__legend li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 48px;
+  align-items: center;
+  gap: 8px;
+}
+.rep-comp__legend i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.rep-comp__legend .num {
   text-align: right;
 }
 
@@ -5930,6 +6092,10 @@ button.ads-album .ads-album__meta {
 }
 
 /* ── 6 · pill ── */
+/* 0.19.7: the plain time line is drawn on the desktop, so it gets a soft shadow to stay readable. */
+.wm--simple .wm__mini-time {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
 .wm--pill {
   justify-content: center;
 }
@@ -6804,4 +6970,74 @@ button.ads-album .ads-album__meta {
 }
 .import-report td.danger {
   color: var(--danger);
+}
+
+/* ─── 0.20.0: per-PC wallpaper preview (Stations › Look & wallpaper) ───────── */
+.look-wallpaper {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #0b0f17, #111826);
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 0.19.1 (item 4): at small icon sizes a PC is one line — status dot, code, timer or state. */
+.pc-tile--line {
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  font-size: 12px;
+  min-height: 0;
+}
+.pc-tile--line .pc-tile__code {
+  font-weight: 700;
+  font-size: 13px;
+}
+.pc-tile--line .pc-tile__line-state {
+  flex: none;
+  opacity: 0.85;
+}
+.pc-tile--line .pc-tile__line-state[data-warn] {
+  color: #f59e0b;
+  font-weight: 600;
+  opacity: 1;
+}
+.pc-tile__pip {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--glass, #2a313d);
+}
+.pc-tile--line[data-status='available'] {
+  --glass: #1f9d55;
+}
+.pc-tile--line[data-status='occupied'] {
+  --glass: #2f7bff;
+}
+.pc-tile--line[data-status='expiring'] {
+  --glass: #f59e0b;
+}
+.pc-tile--line[data-status='paused'],
+.pc-tile--line[data-status='maintenance'] {
+  --glass: #d97706;
+}
+.pc-tile--line[data-status='locked'] {
+  --glass: #7c3aed;
+}
+.pc-tile--line[data-status='updating'] {
+  --glass: #0ea5e9;
+}
+.pc-tile--line[data-status='error'] {
+  --glass: #dc2626;
 }

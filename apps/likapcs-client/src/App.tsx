@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type FormEvent,
 } from 'react';
 import { formatMoney, type ClientRequestOptions, type SessionRequest } from '@likapcs/shared';
@@ -18,6 +19,8 @@ import {
   isDesktopApp,
   onTrayAction,
   reapplyWidgetWindow,
+  setWidgetHideInGames,
+  setBlockWinInGames,
   reportWebviewReady,
   setWidgetLayout,
   widgetWindowSizeOk,
@@ -29,6 +32,16 @@ import { PausedScreen } from './PausedScreen';
 import { Overlay, effectiveWidgetStyle } from './Overlay';
 import { OrderPanel, ORDER_STATUS_KEY } from './OrderPanel';
 import { AdsSlideshow } from './AdsSlideshow';
+
+/** 0.20.0: this PC's wallpaper behind the lock screen (a dark wash keeps the text readable). */
+function wallpaperStyle(url: string | null): CSSProperties | undefined {
+  if (!url) return undefined;
+  return {
+    backgroundImage: `linear-gradient(180deg, rgba(5, 7, 12, 0.55), rgba(5, 7, 12, 0.78)), url("${url}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+}
 
 function useAgent(): AgentSnapshot {
   return useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
@@ -204,6 +217,16 @@ export function App() {
   useEffect(() => {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
+  // 0.19.7: hide the widget while a fullscreen game runs (default on).
+  const hideInGames = snap.state.display?.widgetHideInGames ?? true;
+  useEffect(() => {
+    void setWidgetHideInGames(hideInGames);
+  }, [hideInGames]);
+  // The Windows keys do nothing while a Steam game runs in front (default on).
+  const blockWinInGames = snap.state.display?.blockWinInGames ?? true;
+  useEffect(() => {
+    void setBlockWinInGames(blockWinInGames);
+  }, [blockWinInGames]);
 
   // Windows can finish the fullscreen → widget transition *after* the native resize landed (11
   // restores the window's old rect), leaving the countdown off-screen: the webview then reports a
@@ -369,7 +392,7 @@ export function App() {
       data-testid="lock-screen"
       data-fullscreen={fullscreen ? 'true' : undefined}
     >
-      <div className="lock__bg" />
+      <div className="lock__bg" style={wallpaperStyle(display?.wallpaperUrl ?? null)} />
       {fullscreen && slideshow}
       <header className="lock__header">
         {showBrand ? (

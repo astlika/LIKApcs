@@ -3,7 +3,12 @@
  * fallback (localStorage secrets, no window control, no power actions) so the agent logic can be
  * exercised against a real server without the native app.
  */
-import type { ClientMetrics, HardwareInfo, HealthResponse } from '@likapcs/shared';
+import type {
+  ClientMetrics,
+  HardwareInfo,
+  HealthResponse,
+  RemoteInputEvent,
+} from '@likapcs/shared';
 import { widgetDesign, widgetFootprint } from '@likapcs/shared';
 
 export interface DeviceIdentity {
@@ -42,6 +47,26 @@ const LS_PREFIX = 'likapcs-client.secret.';
 export async function deviceIdentity(): Promise<DeviceIdentity> {
   if (isDesktopApp()) return invoke<DeviceIdentity>('device_identity');
   return { machineId: null, hostname: 'browser-dev', osInfo: navigator.userAgent.slice(0, 120) };
+}
+
+/** Live control (phase 2): sends one input event to this PC. Desktop app only. */
+export async function sendRemoteInput(event: RemoteInputEvent): Promise<void> {
+  if (!isDesktopApp()) return;
+  await invoke<void>('send_remote_input', { event });
+}
+
+/** Live screen (remote view): one JPEG of the primary screen. Desktop app only. */
+export async function captureScreenFrame(
+  maxWidth: number,
+  maxHeight: number,
+  quality: number,
+): Promise<{ width: number; height: number; jpeg: string }> {
+  if (!isDesktopApp()) throw new Error('live screen is only available in the desktop app');
+  return invoke<{ width: number; height: number; jpeg: string }>('capture_screen_frame', {
+    maxWidth,
+    maxHeight,
+    quality,
+  });
 }
 
 export async function secretGet(name: string): Promise<string | null> {
@@ -167,6 +192,26 @@ export async function setWidgetFit(width: number, height: number): Promise<void>
     await invoke<void>('widget_fit', { width, height });
   } catch {
     /* an older native shell keeps the design footprint */
+  }
+}
+
+/** The owner's "block the Windows key in Steam games" setting, applied by the keyboard hook. */
+export async function setBlockWinInGames(enabled: boolean): Promise<void> {
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('set_block_win_in_games', { enabled });
+  } catch {
+    /* an older native shell without the command keeps the Windows key working */
+  }
+}
+
+/** 0.19.7: the owner's "hide the widget in games" setting, applied by the native watcher. */
+export async function setWidgetHideInGames(enabled: boolean): Promise<void> {
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('set_widget_hide_in_games', { enabled });
+  } catch {
+    /* an older native shell without the command keeps showing the widget */
   }
 }
 

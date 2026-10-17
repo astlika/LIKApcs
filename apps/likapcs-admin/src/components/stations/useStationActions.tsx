@@ -9,14 +9,17 @@
  * pause/resume) stay single-PC: each one has its own amount and payment.
  */
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Clock,
+  Gift,
   Info,
   Lock,
   LockOpen,
   MessageSquare,
+  MonitorPlay,
   OctagonX,
   Pause,
   Play,
@@ -42,6 +45,7 @@ import {
   type StationCommandResponse,
   type StationSummary,
   type StationWakeResponse,
+  type TimeCreditSummary,
   type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
@@ -57,6 +61,7 @@ import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
+import { BulkStopDialog } from '../sessions/BulkStopDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
@@ -74,6 +79,7 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'gift'
   | 'cancel'
   | 'lock'
   | 'unlock'
@@ -82,6 +88,7 @@ export type StationActionId =
   | 'shutdown'
   | 'wake'
   | 'tasks'
+  | 'remote'
   | 'details';
 
 /** Offline PC with a MAC on record — the only kind a magic packet can help. */
@@ -112,10 +119,11 @@ type BulkOutcome = BulkOutcomeOf<StationSummary>;
 type Flow =
   | { kind: 'start' }
   | { kind: 'end'; sessionId: string }
-  | { kind: 'extend'; sessionId: string }
+  | { kind: 'extend'; sessionId: string; gift?: boolean }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
+  | { kind: 'bulk-end' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -146,6 +154,8 @@ export function useStationActions(
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
+  const canRemote = can(PERMISSIONS.REMOTE_VIEW);
+  const navigate = useNavigate();
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),
     [targets, station],
@@ -356,12 +366,14 @@ export function useStationActions(
           hint: groupStartable === 0 ? t('map.noneStartable') : undefined,
         },
         {
+          // 0.19.4: "Ndalo" works for the whole selection (one confirm, nothing charged now).
           id: 'end',
-          label: t('map.stop'),
+          label: `${t('map.stop')} (${groupWithSession})`,
           icon: Square,
           bar: true,
-          enabled: false,
-          hint: singleOnly,
+          enabled: canControl && groupWithSession > 0,
+          tone: 'danger',
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
           // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
@@ -469,6 +481,20 @@ export function useStationActions(
         enabled: canControl && !!live && live.billingMode !== 'postpaid',
         hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
+      ...(canGift
+        ? [
+            {
+              // 0.19.1 (item 3): gift minutes get their own button, not only inside "+ time".
+              id: 'gift' as const,
+              label: t('map.gift'),
+              icon: Gift,
+              bar: true,
+              enabled: canControl && !!live && live.billingMode !== 'postpaid',
+              tone: 'primary' as const,
+              hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+            },
+          ]
+        : []),
       {
         // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
         // on the server). In maintenance or during a session the action locks the screen.
@@ -527,6 +553,19 @@ export function useStationActions(
             ? undefined
             : t('stations.wake.noMac'),
       },
+      // Context menu only (not in the bar): opens this PC in the live screens, focus view.
+      ...(canRemote
+        ? [
+            {
+              id: 'remote' as const,
+              label: t('remote.viewScreen'),
+              icon: MonitorPlay,
+              bar: false,
+              enabled: online,
+              hint: online ? undefined : t('remote.offline'),
+            },
+          ]
+        : []),
       {
         id: 'cancel',
         label: t('sessions.cancel'),
@@ -547,6 +586,7 @@ export function useStationActions(
     wakeable,
     canControl,
     canPower,
+    canRemote,
     t,
     multi,
     group.length,
@@ -581,11 +621,16 @@ export function useStationActions(
           setFlow({ kind: 'start' });
           break;
         case 'end':
-          if (live) setFlow({ kind: 'end', sessionId: live.id });
+          // 0.19.4: several PCs → one confirm, every running session stopped, nothing charged now.
+          if (multi) setFlow({ kind: 'bulk-end' });
+          else if (live) setFlow({ kind: 'end', sessionId: live.id });
           break;
         case 'extend':
           if (multi) setFlow({ kind: 'bulk-minutes' });
           else if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          break;
+        case 'gift':
+          if (live) setFlow({ kind: 'extend', sessionId: live.id, gift: true });
           break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
@@ -621,9 +666,24 @@ export function useStationActions(
         case 'details':
           onDetails(station.id);
           break;
+        case 'remote':
+          navigate(`/remote?focus=${encodeURIComponent(station.id)}`);
+          break;
       }
     },
-    [station, actions, live, sessionAct, command, commandMany, wake, wakeMany, multi, onDetails],
+    [
+      station,
+      actions,
+      live,
+      sessionAct,
+      command,
+      commandMany,
+      wake,
+      wakeMany,
+      multi,
+      onDetails,
+      navigate,
+    ],
   );
 
   const busy =
@@ -670,12 +730,31 @@ export function useStationActions(
               busy={sessionAct.isPending}
               onClose={close}
               canGift={canGift}
+              initialGift={!!flow.gift}
               onConfirm={(body, action) =>
                 sessionAct.mutate({ sessionId: s.id, action: action ?? 'extend', body })
               }
             />
           )}
         </SessionFlow>
+      )}
+      {flow.kind === 'bulk-end' && (
+        <BulkStopDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.ended === 0) toast.toast('info', t('map.stopNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.stopResult', { ended: result.ended }));
+            else
+              toast.toast(
+                'warning',
+                t('map.stopPartial', { ended: result.ended, failed: result.failed }),
+              );
+          }}
+        />
       )}
       {flow.kind === 'bulk-minutes' && (
         <BulkMinutesDialog
@@ -697,6 +776,21 @@ export function useStationActions(
                       total: fmt.money(result.totalCents),
                     }),
               );
+            // Name the PCs that did not get the minutes, and why (not just a count).
+            if (skipped > 0) {
+              const list = result.skipped
+                .map((s) => {
+                  const why =
+                    s.reason === 'not_extendable'
+                      ? t('map.skipPostpaid')
+                      : s.reason === 'error'
+                        ? (s.detail ?? t('map.skipError'))
+                        : t('map.skipNoSession');
+                  return `${s.code} (${why})`;
+                })
+                .join(', ');
+              toast.toast('info', t('map.bulkSkippedList', { list }));
+            }
             refresh();
           }}
         />
@@ -833,6 +927,14 @@ export function QuickStartDialog({
   );
   const bulk = others.length > 0;
 
+  // 0.19.0: PC time sold at the till for this PC, not yet used (a single start only).
+  const credits = useQuery({
+    queryKey: ['time-credits', station.id],
+    queryFn: () =>
+      api<{ credits: TimeCreditSummary[] }>('/time-credits', { query: { stationId: station.id } }),
+    enabled: !others.length,
+    staleTime: 0,
+  });
   const packages = useQuery({
     queryKey: ['pricing', 'packages', 'available', station.id],
     queryFn: () =>
@@ -1060,6 +1162,26 @@ export function QuickStartDialog({
         </div>
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
         <div className="start-grid">
+          {(credits.data?.credits ?? []).map((cr) => (
+            <button
+              key={cr.id}
+              type="button"
+              className="start-tile"
+              disabled={start.isPending || quoting}
+              onClick={() =>
+                start.mutate({
+                  body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
+                })
+              }
+              data-testid="start-use-credit"
+            >
+              <Timer size={22} />
+              <span className="start-tile__title">{t('map.useCredit')}</span>
+              <span className="start-tile__sub">
+                {t('map.useCreditSub', { n: cr.minutesRemaining })}
+              </span>
+            </button>
+          ))}
           <button
             type="button"
             className="start-tile start-tile--open"

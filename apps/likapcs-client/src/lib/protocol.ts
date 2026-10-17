@@ -233,6 +233,19 @@ export function applyWelcome(state: ClientState, welcome: ServerWelcomeToClient)
 }
 
 /** `server.display`: the owner changed a customer-screen setting (or renamed the business). */
+/**
+ * 0.20.0: the server sends this PC's wallpaper as a path under its own address (`/api/v1/...`);
+ * the PC needs the full URL, like the ads' pictures.
+ */
+export function withAbsoluteWallpaper(
+  display: ClientDisplayConfig,
+  serverUrl: string,
+): ClientDisplayConfig {
+  const url = display.wallpaperUrl;
+  if (!url || !url.startsWith('/')) return display;
+  return { ...display, wallpaperUrl: `${serverUrl}${url}` };
+}
+
 export function applyDisplay(state: ClientState, message: ServerDisplay): ClientState {
   return {
     ...state,

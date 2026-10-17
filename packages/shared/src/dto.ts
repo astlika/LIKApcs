@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
 import { ALL_ROLE_CODES } from './permissions.js';
+import type { StationLook } from './client-look.js';
 import type {
   ClientAdsFeed,
   ClientDisplayConfig,
@@ -294,6 +295,10 @@ export interface StationSummary {
   awaitingPayment: { count: number; amountCents: number };
   /** Archive PC (0.17.0): set once the station left the floor; it keeps its money history. */
   archived: StationArchive | null;
+  /** 0.20.0: this PC's own look overrides (null = house setting). */
+  look: StationLook;
+  /** 0.20.0: this PC's lock-screen wallpaper (a server path under /api/v1), or null. */
+  wallpaperUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -679,6 +684,8 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   clientRequestId: z.string().min(8).max(64).optional(),
   /** Approving a customer's request: it is marked approved in the same transaction (once). */
   requestId: z.string().uuid().optional(),
+  /** 0.19.0: start with minutes from a time credit sold for this PC (prepaid, minutes only). */
+  creditId: z.string().uuid().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
 
@@ -695,6 +702,8 @@ export const extendSessionSchema = z
     clientRequestId: z.string().min(8).max(64).optional(),
     /** Approving a customer's extension request (see startSessionSchema.requestId). */
     requestId: z.string().uuid().optional(),
+    /** 0.19.0: extend with minutes from a time credit sold for this PC (minutes only). */
+    creditId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
@@ -715,6 +724,26 @@ export type SessionGiftRequest = z.infer<typeof sessionGiftSchema>;
  * prepaid bills (`allocatePayments`); end-pay sessions add their time to the bill at the end and
  * take nothing now; gift takes nothing at all.
  */
+/**
+ * 0.19.4: "Ndalo" for every selected PC in one step. Each running session is stopped and nothing is
+ * charged now (see `endSessionSchema.parkForDesk`); one failing session does not stop the others.
+ */
+export const bulkEndSessionsSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+});
+export type BulkEndSessionsRequest = z.infer<typeof bulkEndSessionsSchema>;
+
+export interface BulkEndSessionsResult {
+  ended: number;
+  failed: number;
+  results: {
+    sessionId: string;
+    stationId: string | null;
+    ok: boolean;
+    error: string | null;
+  }[];
+}
+
 export const bulkMinutesSchema = z
   .object({
     stationIds: z.array(z.string().uuid()).min(1).max(60),
@@ -785,6 +814,11 @@ export const endSessionSchema = z.object({
    * `SESSION_STOP_CLOCK_GRACE_SECONDS`.
    */
   stoppedSecondsAgo: z.number().int().min(0).max(86_400).optional(),
+  /**
+   * 0.19.4: bulk stop — the time is priced now, nothing is charged, and the bill waits at the desk
+   * (postpaid and pay-at-the-end) or the open orders stay open (prepaid). Used by `/sessions/bulk-end`.
+   */
+  parkForDesk: z.boolean().optional(),
   /** Attach the customer at checkout (a walk-in session that ends with "pay later"). */
   customerId: z.string().uuid().optional(),
   ...sessionTenders,
@@ -872,6 +906,24 @@ export const collectSessionSchema = z.object({
   notes: z.string().trim().max(500).optional(),
 });
 export type CollectSessionRequest = z.infer<typeof collectSessionSchema>;
+
+/** 0.21.0 — pay all: the bills waiting at one PC, paid in one tender step (cash by default). */
+export const collectStationSchema = z.object({ ...sessionTenders });
+export type CollectStationRequest = z.infer<typeof collectStationSchema>;
+
+/** One bill settled by a pay-all step; each keeps its own sale and receipt. */
+export interface CollectStationResponse {
+  /** The PC the bills were waiting at; null when the step covered every PC (0.19.5). */
+  stationId: string | null;
+  /** One entry per bill paid; `payment` carries the receipt the desk prints for it. */
+  collected: {
+    sessionId: string;
+    receiptNo: string;
+    totalCents: number;
+    payment: SessionPaymentSummary | null;
+  }[];
+  totalCents: number;
+}
 
 /** Outcome of the command mirrored to the PC after a session transition. */
 export interface ClientAckSummary {
@@ -997,6 +1049,9 @@ export const productSchema = z.object({
   /** Offered on the PC menu (orders from the seat, 0.10.0). */
   clientMenu: z.boolean().default(false),
   barcodes: z.array(productBarcodeSchema).max(20).default([]),
+  /** 0.19.0: this product is a variant of `parentId` (e.g. size M of a T-shirt). Both or neither. */
+  parentId: z.string().uuid().nullable().default(null),
+  variantLabel: z.string().trim().min(1).max(40).nullable().default(null),
   /** Opening stock recorded as an `initial` movement when the product is created. */
   initialStockMilli: z.number().int().min(0).max(1_000_000_000).optional(),
 });
@@ -1047,9 +1102,16 @@ export interface ProductSummary {
   /** Offered on the PC menu (customers can order it from their seat, 0.10.0). */
   clientMenu: boolean;
   clientMenuOrder: number;
+  /** 0.19.0: the parent product this one is a variant of, its label, and how many variants it has. */
+  parentId: string | null;
+  parentName: string | null;
+  variantLabel: string | null;
+  variantCount: number;
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
   barcodes: ProductBarcodeSummary[];
+  /** 0.19.1: extras with their own price (see `productAddonsSchema`). */
+  addons: ProductAddonSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1163,12 +1225,78 @@ export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
  */
 export const REFUND_METHODS = ['cash', 'card', 'bank_transfer', 'other', 'wallet'] as const;
 
-export const saleItemInputSchema = z.object({
+/** A catalogue product: stock, tax and price come from the product row. */
+export const productSaleItemSchema = z.object({
   productId: z.string().uuid(),
   quantityMilli: z.number().int().min(1).max(1_000_000_000),
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
+  /** 0.19.1: extras chosen for this line (ids from the product's `addons`). Each adds its price. */
+  addonIds: z.array(z.string().uuid()).max(20).default([]),
 });
+
+/** 0.19.1: the extras of a product (Toast → cheese +0.50). Replaces the whole list on save. */
+export const productAddonsSchema = z.object({
+  addons: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        priceCents: z.number().int().min(0).max(100_000_000),
+      }),
+    )
+    .max(30),
+});
+export interface ProductAddonSummary {
+  id: string;
+  name: string;
+  priceCents: number;
+}
+
+/**
+ * 0.19.0: an off-inventory line ("free item") — a service or any sale without a product row:
+ * a name and a price typed at the till. No stock moves, no cost is booked (COGS 0), and the line
+ * is priced like the default-tax products (price includes tax).
+ */
+export const freeSaleItemSchema = z.object({
+  description: z.string().trim().min(1).max(120),
+  unitPriceCents: z.number().int().min(0).max(100_000_00),
+  quantityMilli: z.number().int().min(1).max(1_000_000_000),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+});
+
+/**
+ * 0.19.0: prepaid PC time sold at the till — "PC 3 · 60 min". The price is the station's own
+ * quote (the server prices it); the line creates a time credit that the desk redeems at that PC.
+ */
+export const timeSaleItemSchema = z.object({
+  stationId: z.string().uuid(),
+  minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+  discountCents: z.number().int().min(0).max(100_000_000).default(0),
+});
+
+export const saleItemInputSchema = z.union([
+  productSaleItemSchema,
+  freeSaleItemSchema,
+  timeSaleItemSchema,
+]);
+export type ProductSaleItemInput = z.infer<typeof productSaleItemSchema>;
+export type FreeSaleItemInput = z.infer<typeof freeSaleItemSchema>;
+export type TimeSaleItemInput = z.infer<typeof timeSaleItemSchema>;
 export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
+
+/** 0.19.0: an open prepaid-time credit at a PC (see `GET /time-credits`). */
+export interface TimeCreditSummary {
+  id: string;
+  stationId: string;
+  stationCode: string;
+  minutesTotal: number;
+  minutesRemaining: number;
+  saleId: string;
+  createdAt: string;
+}
 
 export const salePaymentInputSchema = z.object({
   method: z.enum(SALE_PAYMENT_METHODS),
@@ -1176,6 +1304,8 @@ export const salePaymentInputSchema = z.object({
   reference: z.string().trim().max(80).optional(),
   /** `credit` only: when the customer promised to pay (defaults to `pos.credit_default_days`). */
   dueDate: isoDate.optional(),
+  /** `credit` only (0.19.0): pay the debt in this many parts — no dates are scheduled. */
+  installments: z.number().int().min(2).max(24).optional(),
 });
 export type SalePaymentInput = z.infer<typeof salePaymentInputSchema>;
 
@@ -1234,6 +1364,8 @@ export interface SaleItemSummary {
   taxCents: number;
   lineTotalCents: number;
   refundedMilli: number;
+  /** 0.19.1: the extras chosen on a product line (ids of the product's extras at the time). */
+  addonIds: string[];
 }
 
 export interface SalePaymentSummary {
@@ -1934,12 +2066,47 @@ export interface SalesReport {
   generatedAt: string;
 }
 
+/**
+ * 0.21.0 — the cash book: one row per cash shift that overlaps the range. Money is integer cents;
+ * `cashInCents` and `cashOutCents` are magnitudes (every drawer movement except the opening float),
+ * so `expectedCashCents = openingCents + cashInCents − cashOutCents`. Counted and difference are
+ * null while the shift is open.
+ */
+export interface CashBookRow {
+  shift: CashShiftSummary;
+  cashInCents: number;
+  cashOutCents: number;
+  expectedCashCents: number;
+  movements: CashMovementSummary[];
+}
+
+export interface CashBookTotals {
+  shiftsCount: number;
+  openShiftsCount: number;
+  openingCents: number;
+  cashInCents: number;
+  cashOutCents: number;
+  expectedCashCents: number;
+  /** Closed shifts only: the counted cash and the difference, summed. */
+  countedCashCents: number;
+  differenceCents: number;
+}
+
+export interface CashBookReport {
+  from: string;
+  to: string;
+  rows: CashBookRow[];
+  totals: CashBookTotals;
+  generatedAt: string;
+}
+
 export const REPORT_EXPORT_KINDS = [
   'sales',
   'sale_items',
   'expenses',
   'sessions',
   'shifts',
+  'cash_book',
 ] as const;
 export type ReportExportKind = (typeof REPORT_EXPORT_KINDS)[number];
 export const reportExportQuerySchema = reportRangeSchema.extend({
@@ -2440,6 +2607,12 @@ export interface DebtSummary {
   dueDate: string;
   /** Days past the due date for open debts (0 when not yet due). */
   overdueDays: number;
+  /** What was bought: the item names of the originating sale (null for debts opened by hand). */
+  itemsText: string | null;
+  /** 0.19.0: planned installments (null = a plain debt). 0.19.8: parts fully paid, and what is left of the next unpaid part. */
+  installmentCount: number | null;
+  installmentsPaid: number;
+  installmentCents: number | null;
   notes: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -2455,8 +2628,23 @@ export interface DebtPaymentSummary {
   receivedByName: string | null;
 }
 
+/** 0.19.8: one part of an installment plan. */
+export interface DebtInstallment {
+  seq: number;
+  amountCents: number;
+  paidCents: number;
+  remainingCents: number;
+  /** YYYY-MM-DD */
+  dueDate: string;
+  status: 'open' | 'partial' | 'paid';
+  /** Days past the due date while the part is unpaid (0 otherwise). */
+  overdueDays: number;
+}
+
 export interface DebtDetail extends DebtSummary {
   payments: DebtPaymentSummary[];
+  /** Empty for a plain debt. */
+  installments: DebtInstallment[];
   writtenOffReason: string | null;
   /** Lines of the originating sale, for the "what was it" question at the counter. */
   items: { description: string; quantityMilli: number; lineTotalCents: number }[];
@@ -2494,6 +2682,8 @@ export const debtPaymentSchema = z.object({
   tenderedCents: z.number().int().min(0).max(100_000_000).optional(),
   reference: z.string().trim().max(80).optional(),
   notes: z.string().trim().max(300).optional(),
+  /** 0.19.8: pay this installment part only (single debt). Omitted = oldest unpaid parts first. */
+  installmentSeq: z.number().int().min(1).max(24).optional(),
 });
 export type DebtPaymentRequest = z.infer<typeof debtPaymentSchema>;
 
@@ -2805,6 +2995,10 @@ export const AD_STATES = [
   'off_hours',
   /** 0.12.0: the slide's album is switched off. */
   'album_off',
+  /** 0.19.3: a product slide whose stock is tracked and at zero — hidden from every screen. */
+  'out_of_stock',
+  /** 0.19.3: a slide in no album — never shown on a screen. */
+  'no_album',
 ] as const;
 export type AdState = (typeof AD_STATES)[number];
 

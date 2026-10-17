@@ -972,11 +972,14 @@ export function ExtendSessionDialog({
   onConfirm,
   request = null,
   canGift = false,
+  initialGift = false,
 }: {
   session: SessionSummary;
   busy: boolean;
   onClose: () => void;
   onConfirm: (body: Record<string, unknown>, action?: 'extend' | 'gift') => void;
+  /** 0.19.1: open straight in gift mode (the station's "Gift" button). */
+  initialGift?: boolean;
   /** Approving a customer's extension request: duration pre-filled, `requestId` sent along. */
   request?: StationPendingRequest | null;
   /** 0.18.0: `stations.gift` — free minutes with a party on the PC (not for postpaid sessions). */
@@ -988,7 +991,7 @@ export function ExtendSessionDialog({
   const [minutes, setMinutes] = useState(
     request && !request.packageId ? String(request.durationMinutes) : '30',
   );
-  const [gift, setGift] = useState(false);
+  const [gift, setGift] = useState(initialGift);
   const [reason, setReason] = useState('');
   const giftPossible = canGift && !request && session.billingMode !== 'postpaid';
   const useGift = gift && giftPossible;

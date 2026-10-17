@@ -30,6 +30,7 @@ import { useFormat } from '../../lib/format';
 import { suggestTenders } from '../../lib/tender';
 import { useAppSettings } from '../../state/app-settings';
 import { useAuth } from '../../state/auth';
+import { usePosFlags } from '../../lib/pos-flags';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { Alert, Field, Input } from '../ui/primitives';
 
@@ -73,6 +74,9 @@ export interface Tender {
   setReference: (v: string) => void;
   dueDate: string;
   setDueDate: (v: string) => void;
+  /** 0.19.0: pay-later installments as typed (empty = a plain debt). */
+  installmentsText: string;
+  setInstallmentsText: (v: string) => void;
   /** Balance mode: the part taken from the customer's wallet (text as typed). */
   walletText: string;
   setWalletText: (v: string) => void;
@@ -97,6 +101,7 @@ export interface Tender {
     | 'walletNeedsCustomer'
     | 'walletEmpty'
     | 'walletOver'
+    | 'installmentsInvalid'
     | null;
   customer: CustomerSummary | null;
 }
@@ -127,6 +132,7 @@ export function useTender({
   const [walletText, setWalletText] = useState('');
   const [reference, setReference] = useState('');
   const [dueDate, setDueDate] = useState(() => dueDateFromToday(defaultDays));
+  const [installmentsText, setInstallmentsText] = useState('');
   // The total can move while the panel is open (a session quote re-priced, a discount typed).
   // An untouched exact amount follows it; an amount the cashier typed is left alone.
   const [seenTotal, setSeenTotal] = useState(totalCents);
@@ -182,7 +188,20 @@ export function useTender({
     const cashNow = Math.max(0, Math.min(cashCents ?? 0, totalCents));
     creditCents = totalCents - cashNow;
     if (cashNow > 0) payments.push({ method: 'cash', amountCents: cashNow });
-    if (creditCents > 0) payments.push({ method: 'credit', amountCents: creditCents, dueDate });
+    // Installments (0.19.0): a count of parts (2–24); empty means a plain debt.
+    const installments = installmentsText.trim() ? Number(installmentsText.trim()) : null;
+    if (
+      installments !== null &&
+      (!Number.isInteger(installments) || installments < 2 || installments > 24)
+    )
+      problem = 'installmentsInvalid';
+    if (creditCents > 0)
+      payments.push({
+        method: 'credit',
+        amountCents: creditCents,
+        dueDate,
+        ...(installments !== null && installments >= 2 ? { installments } : {}),
+      });
     if (creditCents > 0 && !customer) problem = 'creditNeedsCustomer';
     else if (
       creditCents > 0 &&
@@ -231,6 +250,8 @@ export function useTender({
     setReference,
     dueDate,
     setDueDate,
+    installmentsText,
+    setInstallmentsText,
     walletText,
     setWalletText,
     cashCents,
@@ -264,6 +285,7 @@ export function TenderPanel({
   testId?: string;
 }) {
   const { t } = useI18n();
+  const flags = usePosFlags();
   const fmt = useFormat();
   const cashRef = useRef<HTMLInputElement>(null);
   const { mode, customer } = tender;
@@ -478,6 +500,20 @@ export function TenderPanel({
           ) : (
             <Alert tone="warning">{t('pos.payLaterNeedsCustomer')}</Alert>
           )}
+          {flags.installments && (
+            <Field label={t('pos.installments')} optional hint={t('pos.installmentsHint')}>
+              {(id) => (
+                <Input
+                  id={id}
+                  inputMode="numeric"
+                  placeholder="—"
+                  value={tender.installmentsText}
+                  onChange={(e) => tender.setInstallmentsText(e.target.value.slice(0, 2))}
+                  data-testid={`${testId}-installments`}
+                />
+              )}
+            </Field>
+          )}
           <div className="grid grid--2">
             <Field label={t('pos.payLaterDue')}>
               {(id) => (
@@ -597,6 +633,9 @@ export function TenderPanel({
         <Alert tone="danger">{t('pos.payLaterOverLimit')}</Alert>
       )}
       {tender.problem === 'walletOver' && <Alert tone="danger">{t('pos.walletOver')}</Alert>}
+      {tender.problem === 'installmentsInvalid' && (
+        <Alert tone="danger">{t('pos.installmentsInvalid')}</Alert>
+      )}
       {!tender.covered &&
         tender.problem === null &&
         tender.paidCents > 0 &&
