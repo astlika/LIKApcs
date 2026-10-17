@@ -6,7 +6,8 @@ const order = (over: Partial<ServerStream> = {}): ServerStream => ({
   type: 'server.stream',
   active: true,
   fps: 3,
-  maxWidth: 960,
+  maxWidth: 1280,
+  maxHeight: 720,
   ...over,
 });
 
@@ -22,7 +23,7 @@ describe('RemoteStreamer', () => {
 
     streamer.apply(order());
     await vi.advanceTimersByTimeAsync(1000);
-    expect(capture).toHaveBeenCalledWith(960, 60);
+    expect(capture).toHaveBeenCalledWith(1280, 720, 60);
     expect(send.mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(send.mock.calls.length).toBeLessThanOrEqual(4);
     expect(send.mock.calls[0]?.[0]).toMatchObject({

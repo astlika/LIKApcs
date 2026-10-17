@@ -8,6 +8,11 @@
  * events are relayed to the PC only while it is on, the view is focused and the session allows it.
  */
 import type { WebSocket } from 'ws';
+import {
+  REMOTE_DEFAULT_RESOLUTION,
+  REMOTE_RESOLUTION_HEIGHT,
+  type RemoteResolution,
+} from '@likapcs/shared';
 import type {
   ClientFrame,
   RemoteInputEvent,
@@ -21,8 +26,18 @@ import type { AdminPresence, DevicePresence, RealtimeHub } from './hub.js';
 
 export type RemoteMode = 'thumb' | 'focus';
 
-const FOCUS_ORDER = { fps: 3, maxWidth: 960 } as const;
-const THUMB_ORDER = { fps: 0.4, maxWidth: 320 } as const;
+/** Focus view: 3 frames/s at the chosen height (16:9 width). Kept at 3 so the PC's load stays low. */
+function focusOrder(resolution: RemoteResolution): {
+  fps: number;
+  maxWidth: number;
+  maxHeight: number;
+} {
+  const height = REMOTE_RESOLUTION_HEIGHT[resolution];
+  return { fps: 3, maxWidth: Math.round((height * 16) / 9), maxHeight: height };
+}
+const THUMB_ORDER = { fps: 0.4, maxWidth: 320, maxHeight: 180 } as const;
+/** What a PC is told when nobody watches it any more (the rate does not matter while inactive). */
+const IDLE_ORDER = { active: false, ...focusOrder(REMOTE_DEFAULT_RESOLUTION) } as const;
 /** A grid thumbnail is refreshed at most this often, whatever the PC sends. */
 export const THUMB_INTERVAL_MS = 2_500;
 /** A viewer whose socket is this far behind drops frames instead of growing a queue. */
@@ -31,6 +46,8 @@ const MAX_BUFFERED_BYTES = 2_000_000;
 interface Viewer {
   admin: AdminPresence;
   mode: RemoteMode;
+  /** Focus view only: the height the Admin asked for. */
+  resolution: RemoteResolution;
   lastSentAt: number;
   controlling: boolean;
   /** Keys and buttons currently held down on the PC by this control, released if control ends. */
@@ -84,7 +101,12 @@ export class RemoteViewers {
    * An Admin opened this PC (or switched between grid and focus). Returns false when the PC is
    * offline, so nothing can be watched. Leaving focus also ends control.
    */
-  start(stationId: string, admin: AdminPresence, mode: RemoteMode): boolean {
+  start(
+    stationId: string,
+    admin: AdminPresence,
+    mode: RemoteMode,
+    resolution: RemoteResolution = REMOTE_DEFAULT_RESOLUTION,
+  ): boolean {
     let set = this.viewers.get(stationId);
     if (!set) {
       set = new Map();
@@ -94,6 +116,7 @@ export class RemoteViewers {
     set.set(admin, {
       admin,
       mode,
+      resolution,
       lastSentAt: existing?.lastSentAt ?? Number.NEGATIVE_INFINITY,
       controlling: mode === 'focus' && (existing?.controlling ?? false),
       heldKeys: existing?.heldKeys ?? new Set(),
@@ -120,7 +143,7 @@ export class RemoteViewers {
     if (set.size === 0) {
       this.viewers.delete(stationId);
       this.orders.delete(stationId);
-      if (device) this.sendOrder(device, { active: false, ...FOCUS_ORDER });
+      if (device) this.sendOrder(device, IDLE_ORDER);
     } else if (device) {
       this.updateOrder(device);
     }
@@ -205,7 +228,7 @@ export class RemoteViewers {
     this.viewers.delete(stationId);
     this.orders.delete(stationId);
     const device = this.hub.deviceForStation(stationId);
-    if (device) this.sendOrder(device, { active: false, ...FOCUS_ORDER });
+    if (device) this.sendOrder(device, IDLE_ORDER);
     const released: ReleasedView[] = [];
     for (const viewer of set.values()) {
       this.releaseHeld(stationId, viewer);
@@ -239,25 +262,30 @@ export class RemoteViewers {
     }
   }
 
-  /** The rate the PC should use now: focus if anyone has a focused view, otherwise thumbnails. */
-  private desiredOrder(stationId: string): { active: true; fps: number; maxWidth: number } {
-    const modes = [...(this.viewers.get(stationId)?.values() ?? [])].map((v) => v.mode);
-    const order = modes.includes('focus') ? FOCUS_ORDER : THUMB_ORDER;
-    return { active: true, ...order };
+  /**
+   * What the PC should send now: the largest size any focused view asked for, or the grid
+   * thumbnails when nobody has a focused view.
+   */
+  private desiredOrder(stationId: string): Omit<ServerStream, 'type'> & { active: true } {
+    const focused = [...(this.viewers.get(stationId)?.values() ?? [])].filter(
+      (v) => v.mode === 'focus',
+    );
+    if (focused.length === 0) return { active: true, ...THUMB_ORDER };
+    const top = focused.reduce((a, b) =>
+      REMOTE_RESOLUTION_HEIGHT[b.resolution] > REMOTE_RESOLUTION_HEIGHT[a.resolution] ? b : a,
+    );
+    return { active: true, ...focusOrder(top.resolution) };
   }
 
   private updateOrder(device: DevicePresence): void {
     const order = this.desiredOrder(device.stationId);
-    const key = `${order.fps}/${order.maxWidth}`;
+    const key = `${order.fps}/${order.maxWidth}x${order.maxHeight}`;
     if (this.orders.get(device.stationId) === key) return;
     this.orders.set(device.stationId, key);
     this.sendOrder(device, order);
   }
 
-  private sendOrder(
-    device: DevicePresence,
-    order: Pick<ServerStream, 'active' | 'fps' | 'maxWidth'>,
-  ): void {
+  private sendOrder(device: DevicePresence, order: Omit<ServerStream, 'type'>): void {
     const message: ServerStream = { type: 'server.stream', ...order };
     this.hub.sendToDevice(device.deviceId, message);
   }

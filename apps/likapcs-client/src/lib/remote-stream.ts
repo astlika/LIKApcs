@@ -15,7 +15,7 @@ export interface CapturedFrame {
 }
 
 export interface RemoteStreamDeps {
-  capture: (maxWidth: number, quality: number) => Promise<CapturedFrame>;
+  capture: (maxWidth: number, maxHeight: number, quality: number) => Promise<CapturedFrame>;
   send: (frame: {
     type: 'client.frame';
     width: number;
@@ -56,7 +56,7 @@ export class RemoteStreamer {
     const now = this.deps.now ?? Date.now;
     const started = now();
     try {
-      const frame = await this.deps.capture(order.maxWidth, REMOTE_JPEG_QUALITY);
+      const frame = await this.deps.capture(order.maxWidth, order.maxHeight, REMOTE_JPEG_QUALITY);
       // Only send if the same order is still active (a stop or a new order may have arrived).
       if (this.order === order) {
         this.deps.send({

@@ -134,7 +134,7 @@ export const adminSocketRoutes: FastifyPluginAsync = async (app) => {
           // switch between grid and focus).
           if (message.type === 'admin.stream_start') {
             const isNew = !hub.remote.isViewing(stationId, presence);
-            const online = hub.remote.start(stationId, presence, message.mode);
+            const online = hub.remote.start(stationId, presence, message.mode, message.resolution);
             if (isNew) {
               await recordAudit(pool, actor, {
                 action: 'remote.view_started',

@@ -58,11 +58,13 @@ export async function sendRemoteInput(event: RemoteInputEvent): Promise<void> {
 /** Live screen (remote view): one JPEG of the primary screen. Desktop app only. */
 export async function captureScreenFrame(
   maxWidth: number,
+  maxHeight: number,
   quality: number,
 ): Promise<{ width: number; height: number; jpeg: string }> {
   if (!isDesktopApp()) throw new Error('live screen is only available in the desktop app');
   return invoke<{ width: number; height: number; jpeg: string }>('capture_screen_frame', {
     maxWidth,
+    maxHeight,
     quality,
   });
 }

@@ -59,7 +59,7 @@ describe('RemoteViewers', () => {
     expect(hub.commands).toEqual([
       {
         deviceId: 'dev-s1',
-        message: { type: 'server.stream', active: true, fps: 3, maxWidth: 960 },
+        message: { type: 'server.stream', active: true, fps: 3, maxWidth: 1280, maxHeight: 720 },
       },
     ]);
 
@@ -136,15 +136,17 @@ describe('RemoteViewers', () => {
     const grid = admin();
     remote.start('s1', grid, 'thumb');
     expect(hub.commands.at(-1)).toMatchObject({
-      message: { active: true, fps: 0.4, maxWidth: 320 },
+      message: { active: true, fps: 0.4, maxWidth: 320, maxHeight: 180 },
     });
 
     const focus = admin();
     remote.start('s1', focus, 'focus');
-    expect(hub.commands.at(-1)).toMatchObject({ message: { active: true, fps: 3, maxWidth: 960 } });
+    expect(hub.commands.at(-1)).toMatchObject({
+      message: { active: true, fps: 3, maxWidth: 1280, maxHeight: 720 },
+    });
     remote.stop('s1', focus);
     expect(hub.commands.at(-1)).toMatchObject({
-      message: { active: true, fps: 0.4, maxWidth: 320 },
+      message: { active: true, fps: 0.4, maxWidth: 320, maxHeight: 180 },
     });
 
     const framesFor = (a: FakeSocket) =>
@@ -259,5 +261,56 @@ describe('RemoteViewers control (phase 2)', () => {
     remote.start('s1', a, 'focus');
     remote.setControl('s1', a, true);
     expect(remote.detachAdmin(a)).toEqual([{ admin: a, stationId: 's1', wasControlling: true }]);
+  });
+});
+
+describe('RemoteViewers resolution', () => {
+  const lastOrder = (hub: { commands: Array<{ message: unknown }> }) =>
+    (hub.commands.at(-1)?.message ?? {}) as {
+      active?: boolean;
+      maxWidth?: number;
+      maxHeight?: number;
+    };
+
+  it('sends the picture size each focused view asked for, 16:9 width, 3 frames per second', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus', '480p');
+    expect(lastOrder(hub)).toMatchObject({ active: true, maxWidth: 853, maxHeight: 480 });
+    remote.start('s1', a, 'focus', '1080p');
+    expect(lastOrder(hub)).toMatchObject({ active: true, maxWidth: 1920, maxHeight: 1080 });
+    remote.start('s1', a, 'focus', '520p');
+    expect(lastOrder(hub)).toMatchObject({ active: true, maxWidth: 924, maxHeight: 520 });
+  });
+
+  it('uses the largest size among focused views of the same PC, and keeps the control on change', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const low = admin();
+    const high = admin();
+    remote.start('s1', low, 'focus', '480p');
+    remote.start('s1', high, 'focus', '1080p');
+    expect(lastOrder(hub)).toMatchObject({ maxHeight: 1080 });
+    remote.stop('s1', high);
+    expect(lastOrder(hub)).toMatchObject({ maxHeight: 480 });
+
+    remote.setControl('s1', low, true);
+    remote.start('s1', low, 'focus', '720p');
+    expect(remote.isControlling('s1', low)).toBe(true);
+    expect(lastOrder(hub)).toMatchObject({ maxHeight: 720 });
+  });
+
+  it('does not send a new order when the picture size is unchanged', () => {
+    const hub = fakeHub();
+    hub.devices.set('d1', device('s1'));
+    const remote = new RemoteViewers(hub as never);
+    const a = admin();
+    remote.start('s1', a, 'focus', '720p');
+    const before = hub.commands.length;
+    remote.start('s1', a, 'focus', '720p');
+    expect(hub.commands.length).toBe(before);
   });
 });

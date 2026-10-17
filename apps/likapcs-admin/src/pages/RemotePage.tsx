@@ -16,6 +16,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   PERMISSIONS,
   PROTOCOL_VERSION,
+  REMOTE_DEFAULT_RESOLUTION,
+  REMOTE_RESOLUTIONS,
+  type RemoteResolution,
   type ServerToAdminMessage,
   type StationSummary,
 } from '@likapcs/shared';
@@ -60,8 +63,9 @@ export function RemotePage() {
   const [controlError, setControlError] = useState<string | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
-  /** What this page has asked the server for, per station (so only changes are sent). */
-  const askedRef = useRef<Map<string, Mode>>(new Map());
+  /** What this page has asked the server for, per station: `thumb` or `focus:<resolution>`. */
+  const askedRef = useRef<Map<string, string>>(new Map());
+  const [resolution, setResolution] = useState<RemoteResolution>(REMOTE_DEFAULT_RESOLUTION);
   /** Keys and buttons this page has pressed on the PC; released when control stops. */
   const heldKeysRef = useRef<Set<string>>(new Set());
   const heldButtonsRef = useRef<Set<number>>(new Set());
@@ -175,18 +179,28 @@ export function RemotePage() {
     const socket = socketRef.current;
     if (link !== 'connected' || !socket || socket.readyState !== socket.OPEN) return;
     const asked = askedRef.current;
-    const want = new Map<string, Mode>(ids.map((id) => [id, id === focusId ? 'focus' : 'thumb']));
-    for (const [stationId, mode] of want) {
-      if (asked.get(stationId) === mode) continue;
-      socket.send(JSON.stringify({ type: 'admin.stream_start', stationId, mode }));
-      asked.set(stationId, mode);
+    const want = new Map<string, string>(
+      ids.map((id) => [id, id === focusId ? `focus:${resolution}` : 'thumb']),
+    );
+    for (const [stationId, key] of want) {
+      if (asked.get(stationId) === key) continue;
+      const [mode, res] = key.split(':') as [Mode, RemoteResolution | undefined];
+      socket.send(
+        JSON.stringify({
+          type: 'admin.stream_start',
+          stationId,
+          mode,
+          ...(res ? { resolution: res } : {}),
+        }),
+      );
+      asked.set(stationId, key);
     }
     for (const stationId of [...asked.keys()]) {
       if (want.has(stationId)) continue;
       socket.send(JSON.stringify({ type: 'admin.stream_stop', stationId }));
       asked.delete(stationId);
     }
-  }, [idKey, focusId, link, ids]);
+  }, [idKey, focusId, link, ids, resolution]);
 
   // Keyboard while controlling: every key goes to the PC, and the browser's own shortcuts are off.
   useEffect(() => {
@@ -259,6 +273,31 @@ export function RemotePage() {
           <p className="muted" style={{ margin: '0 0 8px' }}>
             {stateLabel(focusedState, t)} · {t('remote.focusHint')}
           </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              margin: '0 0 8px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <label htmlFor="remote-resolution" className="muted">
+              {t('remote.resolution')}
+            </label>
+            <select
+              id="remote-resolution"
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value as RemoteResolution)}
+            >
+              {REMOTE_RESOLUTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            {resolution === '1080p' && <span className="muted">{t('remote.heavy')}</span>}
+          </div>
           {canControl && (
             <div
               style={{

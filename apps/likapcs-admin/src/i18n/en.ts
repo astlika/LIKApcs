@@ -16,6 +16,8 @@ export const en = {
     gridHint: 'Thumbnails refresh about every 2–3 seconds.',
     updated: 'Updated',
     noPermission: 'You do not have permission to watch station screens.',
+    resolution: 'Picture size',
+    heavy: 'Higher picture sizes use more CPU on the PC being watched.',
     control: 'Control PC',
     controlStop: 'Stop control',
     controlHint: 'Control is on: the mouse and keyboard go to this PC.',

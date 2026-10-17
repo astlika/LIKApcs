@@ -193,11 +193,24 @@ export const adminHelloSchema = z.object({
 });
 export const adminPingSchema = z.object({ type: z.literal('admin.ping') });
 
+/** Resolutions the focus view can ask for. Height in pixels; width follows 16:9 (the PC keeps its aspect). */
+export const REMOTE_RESOLUTIONS = ['480p', '520p', '720p', '1080p'] as const;
+export type RemoteResolution = (typeof REMOTE_RESOLUTIONS)[number];
+export const REMOTE_RESOLUTION_HEIGHT: Record<RemoteResolution, number> = {
+  '480p': 480,
+  '520p': 520,
+  '720p': 720,
+  '1080p': 1080,
+};
+export const REMOTE_DEFAULT_RESOLUTION: RemoteResolution = '720p';
+
 export const adminStreamSchema = z.object({
   type: z.enum(['admin.stream_start', 'admin.stream_stop']),
   stationId: z.string().uuid(),
   /** `thumb` for the grid (about one frame every 2–3 s), `focus` for one PC in full (up to 3 fps). */
   mode: z.enum(['thumb', 'focus']).default('focus'),
+  /** Only for `focus`: the picture size the PC should send. */
+  resolution: z.enum(REMOTE_RESOLUTIONS).default(REMOTE_DEFAULT_RESOLUTION),
 });
 
 /** One input event, in the frame's own coordinates (0–1) for the pointer. */
@@ -526,8 +539,10 @@ export interface ServerStream {
   active: boolean;
   /** Frames per second to send (0.25–5 in phase 1; the grid uses a fraction of a frame per second). */
   fps: number;
-  /** Widest frame the PC should send, in pixels; the PC keeps the aspect ratio. */
+  /** Widest frame the PC should send, in pixels. */
   maxWidth: number;
+  /** Tallest frame the PC should send, in pixels. The PC keeps the screen's aspect ratio inside both. */
+  maxHeight: number;
 }
 
 /** Server → PC: one input event from the Admin who is controlling this PC (phase 2). */
