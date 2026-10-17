@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-10-17
+
+### Fixed
+
+- Live picture froze when a new size or rate arrived while a frame was being captured on the PC. The PC now follows the newest order.
+- A focus view started from a grid thumbnail waited up to 2.5 s for its first frame. The new rate now starts at once.
+
 ## [0.20.3] - 2026-10-17
 
 ### Added
