@@ -6,6 +6,18 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Debts: an installment plan has its own parts. Each part shows its amount, its due date (monthly, same day, last day of short months), what was paid and whether it is overdue. The amount is split in cents: 10.00 in 3 parts is 3.34 + 3.33 + 3.33.
+- Debts: a payment can be booked to one part (\"Part to pay\" in the payment dialog). Without a choice, the oldest unpaid part is paid first.
+- Debts: the list shows the items of the sale, so each debt can be told apart.
+- Debts: rescheduling a plan dates its unpaid parts again from the new date, monthly.
+- Debts with installments that had no repayment yet get the schedule when the server is updated. Debts that already had repayments keep their old display.
+
+### Changed
+
+- Installments count the parts that are fully paid. A part that is partly paid is shown as the next part, with what it still owes.
+
 ## [0.19.8] - 2026-10-17
 
 ### Changed

@@ -1,15 +1,17 @@
 /**
- * 0.19.0 — simple installments: a pay-later sale can be paid in N parts. No dates are scheduled
- * (the due date still applies); the debt shows the planned count, the parts paid so far (each
- * repayment is one part) and the next part. Only the pay-later tender can carry installments.
+ * Installments on a pay-later sale (0.19.0, schedule since 0.19.8). The debt is split into N parts
+ * with their own amount and due date (monthly). A repayment goes to the part it names, or else to
+ * the oldest unpaid part. Only the pay-later tender can carry installments.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type {
-  CustomerSummary,
-  DebtSummary,
-  LoginResponse,
-  Paginated,
-  SaleDetail,
+import {
+  installmentDueDate,
+  type CustomerSummary,
+  type DebtDetail,
+  type DebtSummary,
+  type LoginResponse,
+  type Paginated,
+  type SaleDetail,
 } from '@likapcs/shared';
 import { authHeader, createTestContext, runSetup, type TestContext } from '../helpers.js';
 
@@ -77,7 +79,7 @@ describe('simple installments on pay-later sales', () => {
     });
   });
 
-  it('each repayment is a part: the next part is what is left over the parts still to pay', async () => {
+  it('a part that is only partly paid is not counted: the next part is what it still owes', async () => {
     const sale = await sellOnTab(3);
     const debt = await debtOf(sale.body.id);
     const paid = await call('POST', `/debts/${debt.id}/pay`, {
@@ -88,10 +90,145 @@ describe('simple installments on pay-later sales', () => {
     const after = (await call<DebtSummary>('GET', `/debts/${debt.id}`)).body;
     expect(after).toMatchObject({
       remainingCents: 50_000,
-      installmentsPaid: 1,
-      // 500.00 left over the 2 parts still to pay.
-      installmentCents: 25_000,
+      installmentsPaid: 0,
+      // Part 1 still owes 100.00.
+      installmentCents: 10_000,
     });
+  });
+
+  it('the plan lists its parts: equal amounts, the first on the debt date, then monthly', async () => {
+    const sale = await sellOnTab(3);
+    const debt = await debtOf(sale.body.id);
+    const detail = (await call<DebtDetail>('GET', `/debts/${debt.id}`)).body;
+    expect(detail.installments.map((p) => [p.seq, p.amountCents, p.status])).toEqual([
+      [1, 20_000, 'open'],
+      [2, 20_000, 'open'],
+      [3, 20_000, 'open'],
+    ]);
+    expect(detail.installments[0]!.dueDate).toBe(debt.dueDate);
+    expect(detail.installments[1]!.dueDate).toBe(installmentDueDate(debt.dueDate, 1));
+    expect(detail.installments[2]!.dueDate).toBe(installmentDueDate(debt.dueDate, 2));
+    expect(detail.itemsText).toBe('PC build');
+  });
+
+  it('an amount that does not split evenly: the first parts take the extra cents', async () => {
+    const sale = await call<SaleDetail>('POST', '/sales', {
+      customerId: customer.id,
+      items: [
+        { description: 'Cable', unitPriceCents: 1000, quantityMilli: 1000, discountCents: 0 },
+      ],
+      payments: [{ method: 'credit', amountCents: 1000, installments: 3 }],
+    });
+    expect(sale.status).toBe(201);
+    const debt = await debtOf(sale.body.id);
+    const detail = (await call<DebtDetail>('GET', `/debts/${debt.id}`)).body;
+    expect(detail.installments.map((p) => p.amountCents)).toEqual([334, 333, 333]);
+  });
+
+  it('paying one part by number pays that part only', async () => {
+    const sale = await sellOnTab(3);
+    const debt = await debtOf(sale.body.id);
+    const paid = await call<{ debts: DebtDetail[] }>('POST', `/debts/${debt.id}/pay`, {
+      amountCents: 20_000,
+      method: 'cash',
+      installmentSeq: 2,
+    });
+    expect(paid.status).toBe(200);
+    const detail = (await call<DebtDetail>('GET', `/debts/${debt.id}`)).body;
+    expect(detail.installments.map((p) => [p.seq, p.status])).toEqual([
+      [1, 'open'],
+      [2, 'paid'],
+      [3, 'open'],
+    ]);
+    expect(detail).toMatchObject({ installmentsPaid: 1, installmentCents: 20_000 });
+    // The debt's due date is now the first part that is still unpaid.
+    expect(detail.dueDate).toBe(detail.installments[0]!.dueDate);
+    // The payment is recorded against that part.
+    expect(detail.payments).toHaveLength(1);
+  });
+
+  it('a payment without a part goes to the oldest unpaid parts first', async () => {
+    const sale = await sellOnTab(3);
+    const debt = await debtOf(sale.body.id);
+    expect(
+      (
+        await call('POST', `/debts/${debt.id}/pay`, {
+          amountCents: 25_000,
+          method: 'cash',
+        })
+      ).status,
+    ).toBe(200);
+    const detail = (await call<DebtDetail>('GET', `/debts/${debt.id}`)).body;
+    expect(detail.installments.map((p) => [p.paidCents, p.status])).toEqual([
+      [20_000, 'paid'],
+      [5_000, 'partial'],
+      [0, 'open'],
+    ]);
+    expect(detail).toMatchObject({ installmentsPaid: 1, installmentCents: 15_000 });
+  });
+
+  it('a part cannot take more than it owes, and a paid part is refused', async () => {
+    const sale = await sellOnTab(3);
+    const debt = await debtOf(sale.body.id);
+    const over = await call('POST', `/debts/${debt.id}/pay`, {
+      amountCents: 25_000,
+      method: 'cash',
+      installmentSeq: 1,
+    });
+    expect(over.status).toBe(400);
+    expect(over.body).toMatchObject({ error: { details: { code: 'OVERPAY_INSTALLMENT' } } });
+
+    expect(
+      (
+        await call('POST', `/debts/${debt.id}/pay`, {
+          amountCents: 20_000,
+          method: 'cash',
+          installmentSeq: 1,
+        })
+      ).status,
+    ).toBe(200);
+    const again = await call('POST', `/debts/${debt.id}/pay`, {
+      amountCents: 1_000,
+      method: 'cash',
+      installmentSeq: 1,
+    });
+    expect(again.status).toBe(409);
+
+    const unknown = await call('POST', `/debts/${debt.id}/pay`, {
+      amountCents: 1_000,
+      method: 'cash',
+      installmentSeq: 9,
+    });
+    expect(unknown.status).toBe(404);
+  });
+
+  it('a customer-level payment cannot name a part (pick the debt first)', async () => {
+    const r = await call('POST', `/customers/${customer.id}/debts/pay`, {
+      amountCents: 1_000,
+      method: 'cash',
+      installmentSeq: 1,
+    });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ error: { details: { code: 'INSTALLMENT_NEEDS_DEBT' } } });
+  });
+
+  it('rescheduling a plan dates its unpaid parts again from the new date, monthly', async () => {
+    const sale = await sellOnTab(3);
+    const debt = await debtOf(sale.body.id);
+    expect(
+      (
+        await call('POST', `/debts/${debt.id}/reschedule`, {
+          dueDate: '2026-12-01',
+        })
+      ).status,
+    ).toBe(200);
+    const detail = (await call<DebtDetail>('GET', `/debts/${debt.id}`)).body;
+    expect(detail.dueDate).toBe('2026-12-01');
+    expect(detail.installments.map((p) => p.dueDate)).toEqual([
+      '2026-12-01',
+      '2027-01-01',
+      '2027-02-01',
+    ]);
   });
 
   it('a plain pay-later sale has no installment plan', async () => {

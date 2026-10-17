@@ -2324,6 +2324,15 @@ export const sq: Dictionary = {
   },
   debts: {
     installments: 'Këste: {paid} nga {count} të paguara · kësti tjetër {next}',
+    partsTitle: 'Këstet',
+    partN: 'Kësti {n}',
+    partAuto: 'Kësti më i vjetër i papaguar',
+    partPay: 'Kësti për t’u paguar',
+    partPaid: 'Paguar',
+    partPartial: 'Pjesërisht',
+    partOpen: 'Pa paguar',
+    partOverdue: 'Me vonesë {days} ditë',
+    partOption: '{label} · {amount} · afati {date}',
     title: 'Borxhet',
     subtitle: 'Kush paguan më vonë, sa dhe deri kur. Të vonuarat së pari.',
     disabledHint:

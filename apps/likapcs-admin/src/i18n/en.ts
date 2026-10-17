@@ -2315,6 +2315,15 @@ export const en = {
   },
   debts: {
     installments: 'Installments: {paid} of {count} paid · next part {next}',
+    partsTitle: 'Installments',
+    partN: 'Part {n}',
+    partAuto: 'Oldest unpaid part first',
+    partPay: 'Part to pay',
+    partPaid: 'Paid',
+    partPartial: 'Partly paid',
+    partOpen: 'Not paid',
+    partOverdue: 'Overdue {days} d',
+    partOption: '{label} · {amount} · due {date}',
     title: 'Debts',
     subtitle: 'Who pays later, how much and until when. Overdue first.',
     disabledHint:

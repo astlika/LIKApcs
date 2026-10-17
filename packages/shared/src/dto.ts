@@ -2607,7 +2607,9 @@ export interface DebtSummary {
   dueDate: string;
   /** Days past the due date for open debts (0 when not yet due). */
   overdueDays: number;
-  /** 0.19.0: planned installments (null = a plain debt), repayments made so far, and the next part. */
+  /** What was bought: the item names of the originating sale (null for debts opened by hand). */
+  itemsText: string | null;
+  /** 0.19.0: planned installments (null = a plain debt). 0.19.8: parts fully paid, and what is left of the next unpaid part. */
   installmentCount: number | null;
   installmentsPaid: number;
   installmentCents: number | null;
@@ -2626,8 +2628,23 @@ export interface DebtPaymentSummary {
   receivedByName: string | null;
 }
 
+/** 0.19.8: one part of an installment plan. */
+export interface DebtInstallment {
+  seq: number;
+  amountCents: number;
+  paidCents: number;
+  remainingCents: number;
+  /** YYYY-MM-DD */
+  dueDate: string;
+  status: 'open' | 'partial' | 'paid';
+  /** Days past the due date while the part is unpaid (0 otherwise). */
+  overdueDays: number;
+}
+
 export interface DebtDetail extends DebtSummary {
   payments: DebtPaymentSummary[];
+  /** Empty for a plain debt. */
+  installments: DebtInstallment[];
   writtenOffReason: string | null;
   /** Lines of the originating sale, for the "what was it" question at the counter. */
   items: { description: string; quantityMilli: number; lineTotalCents: number }[];
@@ -2665,6 +2682,8 @@ export const debtPaymentSchema = z.object({
   tenderedCents: z.number().int().min(0).max(100_000_000).optional(),
   reference: z.string().trim().max(80).optional(),
   notes: z.string().trim().max(300).optional(),
+  /** 0.19.8: pay this installment part only (single debt). Omitted = oldest unpaid parts first. */
+  installmentSeq: z.number().int().min(1).max(24).optional(),
 });
 export type DebtPaymentRequest = z.infer<typeof debtPaymentSchema>;
 
