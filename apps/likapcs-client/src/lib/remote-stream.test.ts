@@ -70,3 +70,44 @@ describe('RemoteStreamer', () => {
     streamer.stop();
   });
 });
+
+describe('RemoteStreamer order changes', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps streaming when a new order arrives while a capture is running', async () => {
+    const frame: CapturedFrame = { width: 1, height: 1, jpeg: 'AAAAAAAAAAAAAAAAAAAA' };
+    let release: (() => void) | undefined;
+    const capture = vi
+      .fn<() => Promise<CapturedFrame>>()
+      .mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(frame))))
+      .mockResolvedValue(frame);
+    const send = vi.fn();
+    const streamer = new RemoteStreamer({ capture, send });
+
+    streamer.apply(order());
+    await vi.advanceTimersByTimeAsync(10);
+    streamer.apply(order({ maxWidth: 853, maxHeight: 480 }));
+    release?.();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(capture.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(capture).toHaveBeenLastCalledWith(853, 480, 60);
+    streamer.stop();
+  });
+
+  it('starts the new rate at once instead of waiting out the old, slower delay', async () => {
+    const frame: CapturedFrame = { width: 1, height: 1, jpeg: 'AAAAAAAAAAAAAAAAAAAA' };
+    const capture = vi.fn(async () => frame);
+    const streamer = new RemoteStreamer({ capture, send: vi.fn() });
+
+    streamer.apply(order({ fps: 0.4, maxWidth: 320, maxHeight: 180 }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(capture).toHaveBeenCalledTimes(1);
+    // The thumbnail loop is now waiting ~2.5 s. A focus view arrives meanwhile.
+    streamer.apply(order({ fps: 3, maxWidth: 853, maxHeight: 480 }));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenLastCalledWith(853, 480, 60);
+    streamer.stop();
+  });
+});

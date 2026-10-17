@@ -39,8 +39,20 @@ export class RemoteStreamer {
       this.stop();
       return;
     }
+    const previous = this.order;
     this.order = order;
-    if (!this.busy && this.timer === null) void this.tick();
+    // A capture is running: it schedules the next frame itself, at the rate of the newest order.
+    if (this.busy) return;
+    const changed =
+      !previous ||
+      previous.fps !== order.fps ||
+      previous.maxWidth !== order.maxWidth ||
+      previous.maxHeight !== order.maxHeight;
+    if (!changed && this.timer !== null) return;
+    // The rate or size changed while waiting: the next frame comes now, not after the old delay.
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    void this.tick();
   }
 
   stop(): void {
@@ -58,7 +70,7 @@ export class RemoteStreamer {
     try {
       const frame = await this.deps.capture(order.maxWidth, order.maxHeight, REMOTE_JPEG_QUALITY);
       // Only send if the same order is still active (a stop or a new order may have arrived).
-      if (this.order === order) {
+      if (this.order !== null) {
         this.deps.send({
           type: 'client.frame',
           width: frame.width,
@@ -71,8 +83,10 @@ export class RemoteStreamer {
       // A failed capture just skips this frame; the next one is scheduled as usual.
     } finally {
       this.busy = false;
-      if (this.order === order) {
-        const interval = 1000 / Math.min(5, Math.max(0.25, order.fps));
+      // Still streaming: the next frame follows the newest order (it may have changed meanwhile).
+      const current = this.order;
+      if (current) {
+        const interval = 1000 / Math.min(5, Math.max(0.25, current.fps));
         const delay = Math.max(0, interval - (now() - started));
         this.timer = setTimeout(() => {
           this.timer = null;
