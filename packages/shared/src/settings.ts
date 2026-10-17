@@ -199,6 +199,8 @@ export const SETTING_SCHEMAS = {
   'client.widget_show_payment': z.boolean(),
   /** 0.19.7: hide the countdown widget while a fullscreen game runs (the PC hides it, not the desk). */
   'client.widget_hide_in_games': z.boolean(),
+  /** The Windows keys do nothing while a Steam game runs in front (so a press cannot close it). */
+  'client.block_win_in_games': z.boolean(),
   /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
   'client.lock_title': z.enum(CLIENT_LOCK_TITLES),
   /** Lock-screen slideshow of in-stock products with photos. */
@@ -340,6 +342,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
   'client.widget_hide_in_games': true,
+  'client.block_win_in_games': true,
   'client.lock_title': 'brand',
   'client.ads_enabled': false,
   'client.ads_layout': 'card',
@@ -418,6 +421,7 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_theme',
   'client.widget_show_payment',
   'client.widget_hide_in_games',
+  'client.block_win_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -488,6 +492,7 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_theme',
   'client.widget_show_payment',
   'client.widget_hide_in_games',
+  'client.block_win_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -524,6 +529,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     wallpaperUrl: null,
     widgetShowPayment: settings['client.widget_show_payment'],
     widgetHideInGames: settings['client.widget_hide_in_games'],
+    blockWinInGames: settings['client.block_win_in_games'],
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],

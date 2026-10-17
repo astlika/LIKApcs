@@ -170,6 +170,16 @@ export async function setWidgetFit(width: number, height: number): Promise<void>
   }
 }
 
+/** The owner's "block the Windows key in Steam games" setting, applied by the keyboard hook. */
+export async function setBlockWinInGames(enabled: boolean): Promise<void> {
+  if (!isDesktopApp()) return;
+  try {
+    await invoke<void>('set_block_win_in_games', { enabled });
+  } catch {
+    /* an older native shell without the command keeps the Windows key working */
+  }
+}
+
 /** 0.19.7: the owner's "hide the widget in games" setting, applied by the native watcher. */
 export async function setWidgetHideInGames(enabled: boolean): Promise<void> {
   if (!isDesktopApp()) return;

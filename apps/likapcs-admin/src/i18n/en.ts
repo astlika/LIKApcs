@@ -1247,6 +1247,9 @@ export const en = {
       hideInGames: 'Hide in games',
       hideInGamesHint:
         'When a fullscreen game (for example CS2) is running on the PC, the countdown is hidden and it comes back when the game closes.',
+      blockWin: 'Block the Windows key in Steam games',
+      blockWinHint:
+        'While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.',
       design: {
         detailed: {
           name: 'Classic card',

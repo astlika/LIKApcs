@@ -20,6 +20,7 @@ import {
   onTrayAction,
   reapplyWidgetWindow,
   setWidgetHideInGames,
+  setBlockWinInGames,
   reportWebviewReady,
   setWidgetLayout,
   widgetWindowSizeOk,
@@ -221,6 +222,11 @@ export function App() {
   useEffect(() => {
     void setWidgetHideInGames(hideInGames);
   }, [hideInGames]);
+  // The Windows keys do nothing while a Steam game runs in front (default on).
+  const blockWinInGames = snap.state.display?.blockWinInGames ?? true;
+  useEffect(() => {
+    void setBlockWinInGames(blockWinInGames);
+  }, [blockWinInGames]);
 
   // Windows can finish the fullscreen → widget transition *after* the native resize landed (11
   // restores the window's old rect), leaving the countdown off-screen: the webview then reports a

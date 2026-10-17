@@ -662,6 +662,13 @@ export function SettingsPage() {
                     t('settings.client.hideInGamesHint'),
                   )}
                 </div>
+                <div className="span-2">
+                  {bool(
+                    'client.block_win_in_games',
+                    t('settings.client.blockWin'),
+                    t('settings.client.blockWinHint'),
+                  )}
+                </div>
                 <Field
                   label={t('settings.client.widgetTheme')}
                   hint={t('settings.client.widgetThemeHint')}

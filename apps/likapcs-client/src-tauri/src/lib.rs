@@ -448,6 +448,12 @@ fn set_widget_hide_in_games(state: tauri::State<'_, WidgetState>, enabled: bool)
     state.hide_in_games.store(enabled, Ordering::SeqCst);
 }
 
+/// The owner's `client.block_win_in_games` setting, pushed by the client's settings.
+#[tauri::command]
+fn set_block_win_in_games(enabled: bool) {
+    kiosk::set_win_block_in_games(enabled);
+}
+
 /// Keeps the widget in the chosen corner of the work area (taskbar excluded) of the monitor the
 /// window is on — after every resize, or a grown card would drift away from its corner.
 fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64, height: f64) {
@@ -1163,6 +1169,7 @@ pub fn run() {
             end_tasks,
             set_widget_layout,
             set_widget_hide_in_games,
+            set_block_win_in_games,
             widget_fit,
             widget_check,
             update_check_server,

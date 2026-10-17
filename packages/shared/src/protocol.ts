@@ -289,6 +289,8 @@ export interface ClientDisplayConfig {
   widgetShowPayment: boolean;
   /** 0.19.7: hide the countdown widget while a fullscreen game runs. */
   widgetHideInGames: boolean;
+  /** The Windows keys are blocked while a Steam game runs in front. */
+  blockWinInGames: boolean;
   lockTitle: ClientLockTitle;
   currency: string;
   /** Pre-filled username of the staff login that a left click on the locked screen opens. */

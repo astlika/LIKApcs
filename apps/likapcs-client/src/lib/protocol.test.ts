@@ -463,6 +463,7 @@ describe('reduce()', () => {
         wallpaperUrl: null,
         widgetShowPayment: false,
         widgetHideInGames: true,
+        blockWinInGames: true,
         lockTitle: 'station',
         currency: 'EUR',
         staffLoginUsername: 'admin',
