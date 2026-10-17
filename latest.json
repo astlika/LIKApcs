@@ -1,11 +1,11 @@
 {
-  "version": "0.20.4",
-  "notes": "### Fixed\n\n- Live picture froze when a new size or rate arrived while a frame was being captured on the PC. The PC now follows the newest order.\n- A focus view started from a grid thumbnail waited up to 2.5 s for its first frame. The new rate now starts at once.",
-  "pub_date": "2026-10-17T17:20:05.677Z",
+  "version": "0.20.5",
+  "notes": "### Fixed\n\n- Station dialog, standard view: the PC row and its command buttons no longer touch the edge of the card.\n- Station dialog: the footer buttons wrap onto a second line when there is no room, instead of running out of the dialog.",
+  "pub_date": "2026-10-17T19:07:01.109Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemIvQkJoOXVidSs3VG96b1NxbTN5OVVtdG1UWXl5ck8zOUU0akF3RThZdTZJU1cwcTQ2d1Uzd2ZwYms3M1VUTEcyZ21CVzljSUFVTkpCNjJDT242aEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjU3NDQ0CWZpbGU6TElLQXBjc18wLjIwLjRfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNAp0MU52V0RGaVlKTGRwSGdBQk5vNUlWR01EV3dGRzlXLzZUNTdCWVprdS9yT2dzZElWVVg5ZFduQ3hFbHBaU01NQUpyN0lhUTFwamM2dDNzQ1FmT0NDdz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.4/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelVnL3lYNk0rNGJxdFFISEZJenFLRWk4cXZZaVp3Vm9icERWVGFpODk1cmV2L3A5RzBKcE9JbWlmajlnNmhwV01vSGptb0dVVXp3NHQ4SjVMQTlvT1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjYzOTc4CWZpbGU6TElLQXBjc18wLjIwLjVfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNQpJMm85VVF4VHFtODk2ZFNYUFV2cnFjMnlkNkZ6TmRHeHlON1BzU0lJaGF5aS9MTW1lb1BTWUE5K1FGeEI1MURybHIwWW9NYlBOblc5eitqNkV1cEVDQT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.5/LIKApcs-Setup.exe"
     }
   }
 }
