@@ -1,11 +1,11 @@
 {
-  "version": "0.20.3",
-  "notes": "### Added\n\n- Station right-click menu: \"View screen\" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.\n- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.\n\n### Changed\n\n- Live screens is no longer in the side menu. Open it from the station right-click menu.",
-  "pub_date": "2026-10-17T16:24:56.118Z",
+  "version": "0.20.4",
+  "notes": "### Fixed\n\n- Live picture froze when a new size or rate arrived while a frame was being captured on the PC. The PC now follows the newest order.\n- A focus view started from a grid thumbnail waited up to 2.5 s for its first frame. The new rate now starts at once.",
+  "pub_date": "2026-10-17T17:20:05.719Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhellMejNITHN6RnVodldlY01uUExhWDVjWGZ0TUlIUVJob2dhdUVKVlpTNklvcDZyNVVWYlhyUzJUSVZmY0RDenFqUXpSRERuTmRqTFBhSk4xZUtZYUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjU0MDA3CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjMKSitCS3ErM2YrOXNWYkw0bHR0cmxlVHpoa0FQWjhxV21CV1lRd1hTV2ZsR0owUWtoTm1Xa2U2RElvNHBKTHhPNkF3UXViZkJ0dU96dHlib25FVkxrQWc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.3/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelF4MzNRampwL0N2eFJ5MzNPMW45SU95UmdjMitTL2xxUDBqU003UXZ3VUR6aTdCOEJ1RzVDRk1oUUFWWnJpeGgwWExpSDVEQ2sxZGtkdzZnQ25BcUEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjU3NTU2CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC40X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjQKY09TVkZLSW1kUFZQYytBNURTNU0zVUNaNWNoSzcvVURYT2QvRm1lMWVlNU1OQnZyTm1XT3U3T1dZWk1JWDdSNDFHUXlYbUhWWXJ4THNheElVWU96QlE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.4/LIKApcs-Client-Setup.exe"
     }
   }
 }
