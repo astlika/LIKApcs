@@ -1,11 +1,11 @@
 {
-  "version": "0.20.0",
-  "notes": "### Added\n\n- Settings → Client screen: \"Block the Windows key in Steam games\" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.\n- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.",
-  "pub_date": "2026-10-17T02:06:53.783Z",
+  "version": "0.20.1",
+  "notes": "### Added\n\n- Live control (remote control, phase 2): in the focus view of a PC, \"Control PC\" sends the mouse and the keyboard to that PC. Owner and admin only (permission remote.control). Control stops when you leave the focus view, when the page closes, or when the session on the PC ends, and any key or button still held down is released. Each control on and off is written to the audit log.\n- Live screens stop when the session on that PC ends: the view shows \"Session ended\".\n\n### Added\n\n- Settings → Client screen: \"Block the Windows key in Steam games\" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.\n- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.",
+  "pub_date": "2026-10-17T02:36:45.557Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemZTb2tYWEZPeG5lczdKeFkwQldJSWY0dm5RbC9Dd3BJdUY4RWFzSjVTem9lZU1QN1lEUkNXNnJlYjVDczJ2ZGdUNlJTeGVsVHZjTEMvcnpXemo5T0FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjAyNzQ4CWZpbGU6TElLQXBjc18wLjIwLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMApqRk9WQ0NoUk12cUp1NUJyK1IzTVhFRUpUZVdCamNtRTlKYlpDdlY4VGF2U2ptYVdrd29FeVJmbUVVeDZFWkE0dkRmcjBHWUhnYXQ0TmgzMkp6K3NBQT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.0/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemVTdExyUGNqY0xvaHY4WW5weFJtdUVZRW9aYmM1L2YzU1NvT2dOMm0vWUlQS0d4SVBRVGJCTUJBbUplUjBxSUg2OWZtNUh3WDltQzVhRUJMQWZ6b2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA0NTQxCWZpbGU6TElLQXBjc18wLjIwLjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuMQpKeFRYYzJidjJoejMzNW92NEFDd2h5RXhKZEhPdUFsWWFRMjU1YlIrb1ZEdkxHWHNySUxSRjQ0V3R0dUQrdy84b3loOEtzN1U3V2tROHY2QnczcStDUT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.1/LIKApcs-Setup.exe"
     }
   }
 }
