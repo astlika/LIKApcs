@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-10-17
+
+### Fixed
+
+- PC shutdown no longer shows a "reg.exe - Application Error (0xc0000142)" box. The client removes its Task Manager policy through the registry API instead of starting reg.exe while Windows is shutting down.
+
 ## [0.20.5] - 2026-10-17
 
 ### Fixed
