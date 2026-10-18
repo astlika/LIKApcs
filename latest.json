@@ -1,11 +1,11 @@
 {
-  "version": "0.20.5",
-  "notes": "### Fixed\n\n- Station dialog, standard view: the PC row and its command buttons no longer touch the edge of the card.\n- Station dialog: the footer buttons wrap onto a second line when there is no room, instead of running out of the dialog.",
-  "pub_date": "2026-10-17T19:07:01.109Z",
+  "version": "0.20.6",
+  "notes": "### Fixed\n\n- PC shutdown no longer shows a \"reg.exe - Application Error (0xc0000142)\" box. The client removes its Task Manager policy through the registry API instead of starting reg.exe while Windows is shutting down.",
+  "pub_date": "2026-10-18T00:31:24.407Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelVnL3lYNk0rNGJxdFFISEZJenFLRWk4cXZZaVp3Vm9icERWVGFpODk1cmV2L3A5RzBKcE9JbWlmajlnNmhwV01vSGptb0dVVXp3NHQ4SjVMQTlvT1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjYzOTc4CWZpbGU6TElLQXBjc18wLjIwLjVfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNQpJMm85VVF4VHFtODk2ZFNYUFV2cnFjMnlkNkZ6TmRHeHlON1BzU0lJaGF5aS9MTW1lb1BTWUE5K1FGeEI1MURybHIwWW9NYlBOblc5eitqNkV1cEVDQT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.5/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJVeUsrdjZxY2RlUGRrRlRwVmozZkRJdjltZlkvT3RYSElSOWdETUZLMDBQekNoWjVIQnJScUFKdTdNMXhBUGNFVDRMTFB5UzFlZVZUM2xEMzJzTFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjgzNDMxCWZpbGU6TElLQXBjc18wLjIwLjZfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNgpPTmtUaEh0eGFzWFpnU1VRRXR1NCtyREk0MjlTdDI2enByWlVQZjBRZnd3eVNNUDM1WDUzdFJkKzlxWGFDLytTRmRPVWZZa2hsNUhSMHUvZXpJcnJEQT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.6/LIKApcs-Setup.exe"
     }
   }
 }
