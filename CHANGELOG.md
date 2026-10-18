@@ -6,7 +6,19 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.20.7] - 2026-10-19
+## [0.20.8] - 2026-10-19
+
+### Added
+
+- PC time can be sold at the till without choosing a PC. The sale is for a name: the customer's name, a typed name, or "Klient". The price is the pricing rule for all PCs (no PC selected) at that hour; if there is none, the till says so and asks for one under Pricing.
+- A 4-digit PIN is printed once with that sale (on the done dialog and the receipt). At any PC the customer chooses "Use prepaid PC time (no PC chosen)" on the lock screen, types the name and the PIN, and the PC starts with the minutes left. Wrong names and PINs get the same answer; five wrong tries lock the credit for 10 minutes.
+- Sales list: "PC time" and "Refunds" filters. The totals show the PC minutes sold and used.
+
+### Changed
+
+- A PC-time credit made at a PC still works as before; desk staff can start a credit that belongs to no PC on any PC.
+
+
 
 ### Added
 
