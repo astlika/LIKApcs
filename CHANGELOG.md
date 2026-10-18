@@ -6,6 +6,18 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-10-19
+
+### Added
+
+- Staff purchase ("Blerje e stafit") in the POS current sale: items are charged at their purchase cost, PC time is free, no discount and no customer. No money is taken; the stock goes out and the sale is recorded as a staff outflow with the user, date and time.
+- Sales list: a "Staff purchases" filter.
+- Payment without the mouse: ↑/↓ or 1–9 choose the method, Enter confirms, Esc closes. F2 moves to the customer field.
+
+### Changed
+
+- The POS current sale has a calmer header, a clear totals block and a larger pay button.
+
 ## [0.20.6] - 2026-10-17
 
 ### Fixed
