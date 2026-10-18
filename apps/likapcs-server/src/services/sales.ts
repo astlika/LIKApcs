@@ -30,6 +30,7 @@ import {
   type SaleSummary,
   type SalesListResponse,
   type SuspendSaleRequest,
+  type ClaimPin,
 } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -52,14 +53,16 @@ export interface TimeLineQuoter {
 
 /** A prepaid PC-time line, priced by the server: by sale-item index. */
 interface TimeLine {
-  stationId: string;
-  stationCode: string;
+  /** null: sold without a PC; the minutes are used at any PC by name + PIN (0.20.8). */
+  stationId: string | null;
+  stationCode: string | null;
+  holderName: string | null;
   minutes: number;
   priceCents: number;
 }
 type TimeLines = Map<number, TimeLine>;
 
-const isTimeItem = (i: SaleItemInput): i is TimeSaleItemInput => 'stationId' in i;
+const isTimeItem = (i: SaleItemInput): i is TimeSaleItemInput => 'minutes' in i;
 
 /** Product ids of a sale request — off-inventory ("free") lines have none (0.19.0). */
 const productIdsOf = (items: readonly SaleItemInput[]): string[] =>
@@ -326,6 +329,17 @@ export class SalesService {
     }));
   }
 
+  /** The price of PC time bought without a PC: the rule for every PC, at this moment (0.20.8). */
+  async quoteTime(minutes: number) {
+    const q = await this.sessions.quote({ stationId: '', billingMode: 'prepaid', minutes });
+    return {
+      minutes,
+      priceCents: q.priceCents,
+      rule: q.rule?.name ?? null,
+      rateCentsPerHour: q.rule?.rateCentsPerHour ?? null,
+    };
+  }
+
   async list(query: SaleListQuery): Promise<SalesListResponse> {
     const where: string[] = [];
     const values: unknown[] = [];
@@ -347,6 +361,11 @@ export class SalesService {
       values.push(query.customerId);
       where.push(`s.customer_id = $${values.length}`);
     }
+    if (query.kind === 'time') {
+      where.push('EXISTS (SELECT 1 FROM time_credits tk WHERE tk.sale_id = s.id)');
+    } else if (query.kind === 'refund') {
+      where.push('s.refunded_cents > 0');
+    }
     if (query.tender === 'staff') {
       where.push(
         "EXISTS (SELECT 1 FROM payments sp WHERE sp.sale_id = s.id AND sp.method = 'staff')",
@@ -365,10 +384,20 @@ export class SalesService {
       where.push(`COALESCE(s.completed_at, s.created_at) <= $${values.length}`);
     }
     const clause = `WHERE ${where.join(' AND ')}`;
-    const summary = await this.pool.query<{ n: string; total: string; refunded: string }>(
+    const summary = await this.pool.query<{
+      n: string;
+      total: string;
+      refunded: string;
+      minutes_sold: string;
+      minutes_used: string;
+    }>(
       `SELECT count(*)::text AS n,
               COALESCE(sum(CASE WHEN s.status <> 'suspended' THEN s.total_cents ELSE 0 END), 0)::text AS total,
-              COALESCE(sum(s.refunded_cents), 0)::text AS refunded
+              COALESCE(sum(s.refunded_cents), 0)::text AS refunded,
+              COALESCE(sum((SELECT COALESCE(sum(tc.minutes_total), 0) FROM time_credits tc
+                             WHERE tc.sale_id = s.id AND tc.cancelled_at IS NULL)), 0)::text AS minutes_sold,
+              COALESCE(sum((SELECT COALESCE(sum(tc.minutes_total - tc.minutes_remaining), 0) FROM time_credits tc
+                             WHERE tc.sale_id = s.id AND tc.cancelled_at IS NULL)), 0)::text AS minutes_used
          FROM sales s ${clause}`,
       values,
     );
@@ -387,6 +416,8 @@ export class SalesService {
         count: Number(summary.rows[0]!.n),
         totalCents: Number(summary.rows[0]!.total),
         refundedCents: Number(summary.rows[0]!.refunded),
+        minutesSold: Number(summary.rows[0]!.minutes_sold),
+        minutesUsed: Number(summary.rows[0]!.minutes_used),
       },
     };
   }
@@ -466,6 +497,7 @@ export class SalesService {
     // deadlocking on the receipt number.
     await lockCustomers(client, input.customerId);
     const saleId = await this.insertSaleShell(client, input, actor, 'completed');
+    const claimPins: ClaimPin[] = [];
     await this.fillAndComplete(
       client,
       saleId,
@@ -474,8 +506,10 @@ export class SalesService {
       actor,
       opts.fixedPrices,
       input.staff,
+      claimPins,
     );
-    return this.getById(saleId, client);
+    const sale = await this.getById(saleId, client);
+    return claimPins.length > 0 ? { ...sale, claimPins } : sale;
   }
 
   /** Parks a sale (no stock change, no payment, no receipt number) to be completed later. */
@@ -911,7 +945,9 @@ export class SalesService {
       const unitCost = p ? Number(p.average_cost_cents) || Number(p.purchase_cost_cents) : 0;
       const extras = p && 'addonIds' in item ? resolveAddons(p, item.addonIds) : [];
       const description = time
-        ? `${time.stationCode} · ${time.minutes} min`
+        ? time.stationCode
+          ? `${time.stationCode} · ${time.minutes} min`
+          : `PC time · ${time.minutes} min${time.holderName ? ` · ${time.holderName}` : ''}`
         : p
           ? [p.name, ...extras.map((a) => a.name)].join(' + ')
           : (item as FreeSaleItemInput).description;
@@ -951,6 +987,21 @@ export class SalesService {
     const out: TimeLines = new Map();
     for (const [idx, item] of items.entries()) {
       if (!isTimeItem(item)) continue;
+      if (!item.stationId) {
+        // No PC chosen (0.20.8): the rule that applies to every PC, at this moment.
+        const quote = await this.sessions.quote(
+          { stationId: '', billingMode: 'prepaid', minutes: item.minutes },
+          at,
+        );
+        out.set(idx, {
+          stationId: null,
+          stationCode: null,
+          holderName: item.holderName ?? null,
+          minutes: item.minutes,
+          priceCents: quote.priceCents,
+        });
+        continue;
+      }
       const st = await client.query<{ code: string }>('SELECT code FROM stations WHERE id = $1', [
         item.stationId,
       ]);
@@ -962,6 +1013,7 @@ export class SalesService {
       out.set(idx, {
         stationId: item.stationId,
         stationCode: st.rows[0].code,
+        holderName: null,
         minutes: item.minutes,
         priceCents: quote.priceCents,
       });
@@ -977,6 +1029,7 @@ export class SalesService {
     actor: SaleActor,
     fixedPrices?: Map<string, number>,
     staff = false,
+    claimPins: ClaimPin[] = [],
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
@@ -1021,15 +1074,33 @@ export class SalesService {
     }
     const saleItemIds = await this.writeLines(client, saleId, input, products, totals, timeLines);
     // PC time sold: one credit per time line, redeemed at that PC later (0.19.0).
+    // The name the minutes belong to: the one typed for the line, else the customer's, else "Klient".
+    const customerName = input.customerId
+      ? ((
+          await client.query<{ name: string }>('SELECT name FROM customers WHERE id = $1', [
+            input.customerId,
+          ])
+        ).rows[0]?.name ?? null)
+      : null;
     for (const [idx, time] of timeLines) {
-      await this.timeCredits.create(client, {
+      const created = await this.timeCredits.create(client, {
         saleId,
         saleItemId: saleItemIds.get(idx)!,
         stationId: time.stationId,
+        holderName: time.stationId === null ? (time.holderName ?? customerName ?? 'Klient') : null,
+        customerId: input.customerId,
         minutes: time.minutes,
         priceCents: totals.lines[idx]!.lineTotalCents,
         actor,
       });
+      if (created.pin !== null) {
+        claimPins.push({
+          creditId: created.creditId,
+          holderName: time.holderName ?? customerName ?? 'Klient',
+          minutes: time.minutes,
+          pin: created.pin,
+        });
+      }
     }
     // Stock: aggregate per product (the same product may appear on several lines).
     const perProduct = new Map<string, number>();

@@ -1269,7 +1269,10 @@ export const freeSaleItemSchema = z.object({
  * quote (the server prices it); the line creates a time credit that the desk redeems at that PC.
  */
 export const timeSaleItemSchema = z.object({
-  stationId: z.string().uuid(),
+  /** Optional since 0.20.8: without a PC the minutes belong to `holderName` and any PC can use them. */
+  stationId: z.string().uuid().optional(),
+  /** The name the PIN belongs to: the customer's, or a generic one such as "Klient". */
+  holderName: z.string().trim().min(1).max(80).optional(),
   minutes: z
     .number()
     .int()
@@ -1291,13 +1294,30 @@ export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
 /** 0.19.0: an open prepaid-time credit at a PC (see `GET /time-credits`). */
 export interface TimeCreditSummary {
   id: string;
-  stationId: string;
-  stationCode: string;
+  /** null: the minutes can be used at any PC (0.20.8). */
+  stationId: string | null;
+  stationCode: string | null;
+  holderName: string | null;
   minutesTotal: number;
   minutesRemaining: number;
   saleId: string;
   createdAt: string;
 }
+
+/** A PIN printed once on the sale, so the customer can start the minutes at any PC. */
+export interface ClaimPin {
+  creditId: string;
+  holderName: string;
+  minutes: number;
+  pin: string;
+}
+
+/** The PC side: the name and the PIN the customer types (0.20.8). */
+export const timeClaimSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  pin: z.string().regex(/^\d{4}$/),
+});
+export type TimeClaimRequest = z.infer<typeof timeClaimSchema>;
 
 export const salePaymentInputSchema = z.object({
   method: z.enum(SALE_PAYMENT_METHODS),
@@ -1349,6 +1369,8 @@ export const saleListQuerySchema = z.object({
   source: z.enum(['retail', 'gaming', 'mixed']).optional(),
   cashierId: z.string().uuid().optional(),
   customerId: z.string().uuid().optional(),
+  /** `time` (0.20.8): sales with prepaid PC time; `refund`: sales with a refund. */
+  kind: z.enum(['time', 'refund']).optional(),
   /** `staff`: only staff purchases (0.20.7). */
   tender: z.enum(['staff']).optional(),
   q: z.string().trim().max(40).optional(),
@@ -1424,6 +1446,8 @@ export interface SaleSummary {
 }
 
 export interface SaleDetail extends SaleSummary {
+  /** Only on the response that completed a sale with prepaid PC time: the PINs to print (0.20.8). */
+  claimPins?: ClaimPin[];
   items: SaleItemSummary[];
   payments: SalePaymentSummary[];
   refunds: RefundSummary[];
@@ -1443,11 +1467,20 @@ export interface SalesListResponse {
   page: number;
   pageSize: number;
   /** Totals over the whole filtered set (not just the page). */
-  summary: { count: number; totalCents: number; refundedCents: number };
+  summary: {
+    count: number;
+    totalCents: number;
+    refundedCents: number;
+    /** PC minutes sold on these sales, and how many of them are used (0.20.8). */
+    minutesSold: number;
+    minutesUsed: number;
+  };
 }
 
 /** Everything needed to render a receipt (business header from settings + the sale). */
 export interface ReceiptData {
+  /** PC time sold without a PC (0.20.8): name + PIN, given once with the sale. */
+  claimPins?: ClaimPin[];
   business: {
     name: string;
     legalName: string;

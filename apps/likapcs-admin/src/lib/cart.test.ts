@@ -267,4 +267,19 @@ describe('ScanBuffer', () => {
     // a line without extras sends the plain request shape
     expect(cartToRequest(addToCart(emptyCart(), tost)).items[0]).not.toHaveProperty('addonIds');
   });
+  it('0.20.8: PC time with no PC is sent as minutes + the name (no stationId); the line says so', () => {
+    let cart = addTimeItem(
+      emptyCart(),
+      { holderName: 'Arben', minutes: 45, unitPriceCents: 450, taxRateBp: 0 },
+      () => 'n',
+    );
+    expect(lineName(cart.lines[0]!)).toBe('PC time · 45 min · Arben');
+    expect(cartToRequest(cart).items[0]).toEqual({
+      holderName: 'Arben',
+      minutes: 45,
+      discountCents: 0,
+    });
+    cart = addTimeItem(emptyCart(), { minutes: 30, unitPriceCents: 300, taxRateBp: 0 }, () => 'm');
+    expect(cartToRequest(cart).items[0]).toEqual({ minutes: 30, discountCents: 0 });
+  });
 });

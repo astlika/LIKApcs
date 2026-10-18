@@ -752,7 +752,7 @@ export function PosPage() {
           }}
           onCompleted={(sale, receiptData) => {
             setDialog(null);
-            setReceipt(receiptData);
+            setReceipt({ ...receiptData, claimPins: sale.claimPins });
             display.setDone({
               receiptNo: sale.receiptNo,
               totalCents: 0,
@@ -780,7 +780,7 @@ export function PosPage() {
           }}
           onCompleted={(sale, receiptData) => {
             setDialog(null);
-            setReceipt(receiptData);
+            setReceipt({ ...receiptData, claimPins: sale.claimPins });
             // Customer display: "thank you" with what was paid / put on the tab.
             const paymentsNow = sale.payments.filter((p) => p.kind === 'sale');
             const creditCents = paymentsNow
@@ -853,6 +853,7 @@ export function PosPage() {
             setDialog(null);
             focusSearch();
           }}
+          customerName={customer?.name ?? null}
           onAdd={(item) => {
             setCart((c) => addTimeItem(c, { ...item, taxRateBp: defaultTaxBp }));
             setDialog(null);

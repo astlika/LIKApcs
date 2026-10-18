@@ -126,6 +126,15 @@ export function Receipt({ data }: { data: ReceiptData }) {
           </div>
         )}
       </div>
+      {data.claimPins && data.claimPins.length > 0 && (
+        <div className="receipt__totals" data-testid="receipt-claim-pins">
+          {data.claimPins.map((p) => (
+            <div key={p.creditId} className="receipt__line-note">
+              {t('receipt.claimPin', { name: p.holderName, minutes: p.minutes, pin: p.pin })}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="receipt__foot">
         <div>{business.footer || t('receipt.thanks')}</div>
       </div>

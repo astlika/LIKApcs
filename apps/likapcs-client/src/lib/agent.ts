@@ -155,6 +155,7 @@ export type CustomerActionError =
   | 'not_paired'
   | 'network'
   | 'rate_limited'
+  | 'bad_request'
   | 'invalid_credentials'
   | 'locked'
   | 'login_disabled'
@@ -1292,6 +1293,7 @@ export class Agent {
       if (code === 'unauthorized' && init.customer) this.set({ customer: null });
       const known: CustomerActionError[] = [
         'rate_limited',
+        'bad_request',
         'invalid_credentials',
         'locked',
         'login_disabled',
@@ -1344,6 +1346,18 @@ export class Agent {
       request: res.body.pending ?? this.snapshot.request,
     });
     return { ok: true, customer: res.body.customer, pending: res.body.pending };
+  }
+
+  /** 0.20.8: starts the PC time bought without a PC — the name and the PIN from the receipt. */
+  async claimTimeCredit(
+    name: string,
+    pin: string,
+  ): Promise<{ ok: true; minutes: number } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<{ ok: true; minutes: number }>(
+      '/client/time-credit/claim',
+      { method: 'POST', body: { name: name.trim(), pin } },
+    );
+    return res.ok ? { ok: true, minutes: res.body.minutes } : res;
   }
 
   async customerLogout(): Promise<void> {

@@ -41,8 +41,11 @@ export interface TimeLine {
   kind: 'time';
   /** Stable key of this line: each addition is its own line (two PCs, or two bookings). */
   key: string;
-  stationId: string;
-  stationCode: string;
+  /** Null: sold without a PC (0.20.8) — the name holds the minutes, a PIN starts them at any PC. */
+  stationId: string | null;
+  stationCode: string | null;
+  /** The name the minutes belong to (sold without a PC). */
+  holderName: string | null;
   minutes: number;
   /** Gross price as quoted for the PC right now (includes tax, like the catalogue). */
   unitPriceCents: number;
@@ -117,7 +120,10 @@ export const lineName = (l: CartLine): string => {
       ? [l.product.name, ...extras.map((a) => a.name)].join(' + ')
       : l.product.name;
   }
-  if (l.kind === 'time') return `${l.stationCode} · ${l.minutes} min`;
+  if (l.kind === 'time')
+    return l.stationCode
+      ? `${l.stationCode} · ${l.minutes} min`
+      : `PC time · ${l.minutes} min${l.holderName ? ` · ${l.holderName}` : ''}`;
   return l.name;
 };
 
@@ -174,8 +180,9 @@ export function addFreeItem(
 export function addTimeItem(
   cart: Cart,
   input: {
-    stationId: string;
-    stationCode: string;
+    stationId?: string | null;
+    stationCode?: string | null;
+    holderName?: string | null;
     minutes: number;
     unitPriceCents: number;
     taxRateBp: number;
@@ -185,8 +192,9 @@ export function addTimeItem(
   const line: TimeLine = {
     kind: 'time',
     key: `time:${newKey()}`,
-    stationId: input.stationId,
-    stationCode: input.stationCode,
+    stationId: input.stationId ?? null,
+    stationCode: input.stationCode ?? null,
+    holderName: input.holderName ?? null,
     minutes: input.minutes,
     unitPriceCents: input.unitPriceCents,
     taxRateBp: input.taxRateBp,
@@ -296,7 +304,12 @@ export function cartToRequest(cart: Cart) {
         };
       }
       if (l.kind === 'time') {
-        return { stationId: l.stationId, minutes: l.minutes, discountCents: l.discountCents };
+        return {
+          ...(l.stationId ? { stationId: l.stationId } : {}),
+          ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
+          minutes: l.minutes,
+          discountCents: l.discountCents,
+        };
       }
       return {
         description: l.name,

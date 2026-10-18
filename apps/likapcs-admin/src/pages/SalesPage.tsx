@@ -74,6 +74,8 @@ export function SalesPage() {
   const [source, setSource] = useState<'' | 'retail' | 'gaming' | 'mixed'>('');
   // 0.20.7: the staff-purchase report (who, when, at what cost), a filter on the same list.
   const [tender, setTender] = useState<'' | 'staff'>('');
+  // 0.20.8: PC time sold (with its minutes) or sales with refunds; the totals follow the filter.
+  const [kind, setKind] = useState<'' | 'time' | 'refund'>('');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState(todayLocal());
   const [to, setTo] = useState(todayLocal());
@@ -86,13 +88,14 @@ export function SalesPage() {
       status: status || undefined,
       source: source || undefined,
       tender: tender || undefined,
+      kind: kind || undefined,
       q: q.trim() || undefined,
       from: dayBound(from, false),
       to: dayBound(to, true),
       page,
       pageSize: PAGE_SIZE,
     }),
-    [status, source, tender, q, from, to, page],
+    [status, source, tender, kind, q, from, to, page],
   );
   const sales = useQuery({
     queryKey: ['sales', 'list', query],
@@ -166,6 +169,18 @@ export function SalesPage() {
           <option value="">{t('common.all')}</option>
           <option value="staff">{t('pos.staffReport')}</option>
         </Select>
+        <Select
+          value={kind}
+          onChange={(e) => {
+            setKind(e.target.value as '' | 'time' | 'refund');
+            setPage(1);
+          }}
+          aria-label={t('sales.kindLabel')}
+        >
+          <option value="">{t('common.all')}</option>
+          <option value="time">{t('sales.kindTime')}</option>
+          <option value="refund">{t('sales.kindRefund')}</option>
+        </Select>
         <label className="row" style={{ gap: 6 }}>
           <span className="muted">{t('sales.from')}</span>
           <Input
@@ -197,6 +212,8 @@ export function SalesPage() {
             label={t('sales.refunded')}
             value={fmt.money(sales.data.summary.refundedCents)}
           />
+          <StatTile label={t('sales.minutesSold')} value={String(sales.data.summary.minutesSold)} />
+          <StatTile label={t('sales.minutesUsed')} value={String(sales.data.summary.minutesUsed)} />
         </div>
       )}
       {sales.isLoading && <Loading />}

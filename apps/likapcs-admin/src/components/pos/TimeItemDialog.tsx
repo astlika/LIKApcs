@@ -1,70 +1,64 @@
 /**
- * 0.19.0: PC time sold now at the till ("cart stations"). The desk picks a PC and minutes; the price
- * is the station's own quote (the server quotes it again when the sale is made). The PC starts later
- * from its station screen, redeeming this sale's credit — no second payment.
+ * PC time sold at the till to a name, with no PC chosen (0.20.8). The name is the customer's (or
+ * typed; empty means "Klient"). The price is the rule that applies to every PC right now — the
+ * server quotes it again when the sale is made. After the sale a 4-digit PIN is shown once: at any
+ * PC the customer types the name and the PIN, and the minutes start there.
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Clock } from 'lucide-react';
-import type { SessionQuoteResponse, StationSummary } from '@likapcs/shared';
 import { api } from '../../lib/api';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
-import { Button, Dialog, Field, Input, Kbd, Select } from '../ui/primitives';
+import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
 
 export interface TimeItemPick {
-  stationId: string;
-  stationCode: string;
+  /** Null: the name is the customer's, else "Klient" (decided by the server). */
+  holderName: string | null;
   minutes: number;
   unitPriceCents: number;
+}
+
+interface TimeQuote {
+  minutes: number;
+  priceCents: number;
+  rule: string | null;
+  rateCentsPerHour: number | null;
 }
 
 const PRESETS = [30, 60, 90, 120];
 
 export function TimeItemDialog({
+  customerName,
   onClose,
   onAdd,
 }: {
+  customerName?: string | null;
   onClose: () => void;
   onAdd: (item: TimeItemPick) => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
-  const [stationPick, setStationPick] = useState('');
+  const [nameText, setNameText] = useState(customerName ?? '');
   const [minutesText, setMinutesText] = useState('60');
   const [error, setError] = useState<string | null>(null);
-
-  const stations = useQuery({
-    queryKey: ['stations'],
-    queryFn: () => api<StationSummary[]>('/stations'),
-  });
-  const choices = (stations.data ?? []).filter((s) => s.isEnabled && !s.archived);
-  const stationId = choices.some((s) => s.id === stationPick)
-    ? stationPick
-    : (choices[0]?.id ?? '');
-  const station = choices.find((s) => s.id === stationId) ?? null;
 
   const minutes = Number.parseInt(minutesText, 10);
   const valid = Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
 
   const quote = useQuery({
-    queryKey: ['pos', 'time-quote', stationId, minutes],
-    queryFn: () =>
-      api<SessionQuoteResponse>('/sessions/quote', {
-        method: 'POST',
-        body: { stationId, billingMode: 'prepaid', minutes },
-      }),
-    enabled: Boolean(stationId) && valid,
+    queryKey: ['pos', 'time-quote', minutes],
+    queryFn: () => api<TimeQuote>('/sales/time-quote', { query: { minutes } }),
+    enabled: valid,
     staleTime: 15_000,
     retry: false,
   });
 
   const submit = () => {
-    if (!station || !valid) return setError(t('pos.timeItemInvalid'));
+    if (!valid) return setError(t('pos.timeItemInvalid'));
     if (!quote.data) return;
     onAdd({
-      stationId: station.id,
-      stationCode: station.code,
+      holderName: nameText.trim() || null,
       minutes,
       unitPriceCents: quote.data.priceCents,
     });
@@ -94,7 +88,7 @@ export function TimeItemDialog({
           <Button
             variant="primary"
             onClick={submit}
-            disabled={!station || !valid || !quote.data}
+            disabled={!valid || !quote.data}
             data-testid="time-item-add"
           >
             <Clock size={14} /> {t('pos.timeItemAdd')} <Kbd>Enter</Kbd>
@@ -103,26 +97,20 @@ export function TimeItemDialog({
       }
     >
       <div className="stack">
-        {choices.length === 0 && !stations.isPending && (
-          <div className="muted">{t('pos.timeItemNoStations')}</div>
-        )}
-        <Field label={t('pos.timeItemStation')}>
+        <Field label={t('pos.timeItemName')}>
           {(id) => (
-            <Select
+            <Input
               id={id}
-              value={stationId}
+              value={nameText}
+              maxLength={80}
+              placeholder={t('pos.timeItemNameHint')}
               onChange={(e) => {
-                setStationPick(e.target.value);
+                setNameText(e.target.value);
                 setError(null);
               }}
-              data-testid="time-item-station"
-            >
-              {choices.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} · {s.name}
-                </option>
-              ))}
-            </Select>
+              onKeyDown={onEnter}
+              data-testid="time-item-name"
+            />
           )}
         </Field>
         <Field label={t('pos.timeItemMinutes')} error={error ?? undefined}>
@@ -161,8 +149,8 @@ export function TimeItemDialog({
             {quote.data
               ? fmt.money(quote.data.priceCents)
               : quoteError
-                ? quoteError
-                : valid && stationId
+                ? t('pos.timeItemNoRule')
+                : valid
                   ? '…'
                   : '—'}
           </span>
