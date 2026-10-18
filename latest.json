@@ -1,11 +1,11 @@
 {
-  "version": "0.20.6",
-  "notes": "### Fixed\n\n- PC shutdown no longer shows a \"reg.exe - Application Error (0xc0000142)\" box. The client removes its Task Manager policy through the registry API instead of starting reg.exe while Windows is shutting down.",
-  "pub_date": "2026-10-18T00:31:24.407Z",
+  "version": "0.20.7",
+  "notes": "### Added\n\n- Staff purchase (\"Blerje e stafit\") in the POS current sale: items are charged at their purchase cost, PC time is free, no discount and no customer. No money is taken; the stock goes out and the sale is recorded as a staff outflow with the user, date and time.\n- Sales list: a \"Staff purchases\" filter.\n- Payment without the mouse: ↑/↓ or 1–9 choose the method, Enter confirms, Esc closes. F2 moves to the customer field.\n\n### Changed\n\n- The POS current sale has a calmer header, a clear totals block and a larger pay button.",
+  "pub_date": "2026-10-18T22:59:01.284Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJVeUsrdjZxY2RlUGRrRlRwVmozZkRJdjltZlkvT3RYSElSOWdETUZLMDBQekNoWjVIQnJScUFKdTdNMXhBUGNFVDRMTFB5UzFlZVZUM2xEMzJzTFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjgzNDMxCWZpbGU6TElLQXBjc18wLjIwLjZfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNgpPTmtUaEh0eGFzWFpnU1VRRXR1NCtyREk0MjlTdDI2enByWlVQZjBRZnd3eVNNUDM1WDUzdFJkKzlxWGFDLytTRmRPVWZZa2hsNUhSMHUvZXpJcnJEQT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.6/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemZlUzJBNHZmVHM4UTlqamREWlFLeE1UZmpXTThVU1dJaXNtdnRpM1BzRGVuYzZKZW9icmxnNlA2empWRE13ekt1K3haWDNLQlhrc2NMOWNxRUk1UGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzY0MjkzCWZpbGU6TElLQXBjc18wLjIwLjdfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuNwo2SW4xK2FaQXg5M25VT3oyTk45aE9NL3R1a0trRHl0eklRY2hNbmx2Qm9XajJaSW5DbktUTlJLZXZqR1RGWFFqa3k3S293TFl0VXJNV2pDdFJtUWRDdz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.7/LIKApcs-Setup.exe"
     }
   }
 }

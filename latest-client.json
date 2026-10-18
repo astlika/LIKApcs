@@ -1,11 +1,11 @@
 {
-  "version": "0.20.6",
-  "notes": "### Fixed\n\n- PC shutdown no longer shows a \"reg.exe - Application Error (0xc0000142)\" box. The client removes its Task Manager policy through the registry API instead of starting reg.exe while Windows is shutting down.",
-  "pub_date": "2026-10-18T00:31:24.515Z",
+  "version": "0.20.7",
+  "notes": "### Added\n\n- Staff purchase (\"Blerje e stafit\") in the POS current sale: items are charged at their purchase cost, PC time is free, no discount and no customer. No money is taken; the stock goes out and the sale is recorded as a staff outflow with the user, date and time.\n- Sales list: a \"Staff purchases\" filter.\n- Payment without the mouse: ↑/↓ or 1–9 choose the method, Enter confirms, Esc closes. F2 moves to the customer field.\n\n### Changed\n\n- The POS current sale has a calmer header, a clear totals block and a larger pay button.",
+  "pub_date": "2026-10-18T22:59:01.326Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemVHSVpYamVDS2tvWFNNa3NScThZTnVoZDZONzd1QU54TjE2TUNycW1uc0RLWGRjb1MvNkFlSHFtc2l1ZU5YQjJrV0s3ekJpM2xlR1RxK1g2d1hzSlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjgzMzY1CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC42X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjYKanhkM3hFQ2tsaXppdDNpYTJuUEZ4WTA0QlloZzNaazJ3Z1ZnMUJjalNwV3NHTXZoR08vNUQ1QTF6TDkyTnh6VWVnVGp6cVhxdFVyeWhNaTNGMU82Qmc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.6/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemR4aFp0S29xaFpDMU03VEJjRXZQMEEyYmR6by9hRFc5c1FvdGJIMVcwdktJRVhWb3FTL0hrTUdCQjRWbFZDb0FaZnV0c2IwNDRWUURuWW0zbkF0bXc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzY0MjQyCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC43X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjcKWXlZTUExVFV1NVc5cksxRTAyaWxKMk5JMjhCQmZQd3UybzFXKzU3eFVKbHlCc1gwTGh6TlVVVk5OR0JnOHN1b0N0QmgrUlJuWFJzcEdwQUc1ZHk4QUE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.7/LIKApcs-Client-Setup.exe"
     }
   }
 }
