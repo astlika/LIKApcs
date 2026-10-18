@@ -783,7 +783,7 @@ export const sq: Dictionary = {
   },
   pos: {
     title: 'Arka (POS)',
-    searchPlaceholder: 'Skano barkodin ose kërko produkte…  (F2)',
+    searchPlaceholder: 'Skano barkodin ose kërko produkte…',
     allCategories: 'Të gjitha',
     noProducts: 'Ende nuk ka produkte. Shtoni produkte së pari.',
     noMatches: 'Asnjë produkt nuk përputhet.',
@@ -816,6 +816,23 @@ export const sq: Dictionary = {
     timeItemInvalid: 'Zgjidhni një PC dhe një numër të plotë minutash nga 1 deri në 1440.',
     timeItemNotParkable:
       'Kohës së PC-së nuk i bëhet parkim. Përfundoni shitjen ose hiqni rreshtin e kohës.',
+    staffPurchase: 'Blerje e stafit',
+    staffTag: 'Staf',
+    staffBannerTitle: 'Blerje e stafit',
+    staffBanner:
+      'Artikujt me çmim blerjeje, koha e PC-së falas, pa pagesë me para. Stoku del dhe regjistrohet si dalje.',
+    staffNoFreeItems:
+      'Hiqni më parë artikujt e lirë: blerja e stafit merr vetëm artikuj nga stoku dhe kohë PC-je.',
+    staffFree: 'falas',
+    staffCostTotal: 'Totali me çmim blerjeje',
+    staffConfirmTitle: 'Blerje e stafit',
+    staffConfirmHint:
+      'Asnjë pagesë me para. Stoku del dhe blerja regjistrohet si dalje për këtë përdorues, me datën dhe orën.',
+    staffRecord: 'Regjistro daljen',
+    staffNoPark: 'Blerja e stafit nuk mund të mbahet në pritje. Regjistroni ose hiqni.',
+    staffRecorded: 'Blerja e stafit u regjistrua',
+    staffReport: 'Blerjet e stafit',
+    paymentKeys: '↑ ↓ zgjidh metodën · 1–9 metoda · Enter konfirmo · F2 klienti · Esc mbyll',
 
     qty: 'Sasia',
     lineDiscount: 'Zbritje në rresht',
@@ -862,7 +879,7 @@ export const sq: Dictionary = {
     print: 'Printo',
     done: 'Mbaroi',
     notes: 'Shënim',
-    shortcuts: 'F2 kërko · F4 shitje e re · Enter pagesa / përfundo · Esc mbyll',
+    shortcuts: 'F2 klienti · F4 shitje e re · Enter pagesa / përfundo · Esc mbyll',
     customer: 'Klienti',
     walkIn: 'Klient i rastit',
     customerPlaceholder: 'Klienti (opsional) — emri, telefoni ose kodi',

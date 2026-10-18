@@ -72,6 +72,8 @@ export function SalesPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'' | SaleStatus>('');
   const [source, setSource] = useState<'' | 'retail' | 'gaming' | 'mixed'>('');
+  // 0.20.7: the staff-purchase report (who, when, at what cost), a filter on the same list.
+  const [tender, setTender] = useState<'' | 'staff'>('');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState(todayLocal());
   const [to, setTo] = useState(todayLocal());
@@ -83,13 +85,14 @@ export function SalesPage() {
     () => ({
       status: status || undefined,
       source: source || undefined,
+      tender: tender || undefined,
       q: q.trim() || undefined,
       from: dayBound(from, false),
       to: dayBound(to, true),
       page,
       pageSize: PAGE_SIZE,
     }),
-    [status, source, q, from, to, page],
+    [status, source, tender, q, from, to, page],
   );
   const sales = useQuery({
     queryKey: ['sales', 'list', query],
@@ -151,6 +154,17 @@ export function SalesPage() {
               {t(`sales.source.${s}` as 'sales.source.retail')}
             </option>
           ))}
+        </Select>
+        <Select
+          value={tender}
+          onChange={(e) => {
+            setTender(e.target.value as '' | 'staff');
+            setPage(1);
+          }}
+          aria-label={t('pos.staffReport')}
+        >
+          <option value="">{t('common.all')}</option>
+          <option value="staff">{t('pos.staffReport')}</option>
         </Select>
         <label className="row" style={{ gap: 6 }}>
           <span className="muted">{t('sales.from')}</span>

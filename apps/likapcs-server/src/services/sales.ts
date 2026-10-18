@@ -347,6 +347,11 @@ export class SalesService {
       values.push(query.customerId);
       where.push(`s.customer_id = $${values.length}`);
     }
+    if (query.tender === 'staff') {
+      where.push(
+        "EXISTS (SELECT 1 FROM payments sp WHERE sp.sale_id = s.id AND sp.method = 'staff')",
+      );
+    }
     if (query.q) {
       values.push(`%${query.q.toUpperCase()}%`);
       where.push(`upper(COALESCE(s.receipt_no, '')) LIKE $${values.length}`);
@@ -461,7 +466,15 @@ export class SalesService {
     // deadlocking on the receipt number.
     await lockCustomers(client, input.customerId);
     const saleId = await this.insertSaleShell(client, input, actor, 'completed');
-    await this.fillAndComplete(client, saleId, input, input.payments, actor, opts.fixedPrices);
+    await this.fillAndComplete(
+      client,
+      saleId,
+      input,
+      input.payments,
+      actor,
+      opts.fixedPrices,
+      input.staff,
+    );
     return this.getById(saleId, client);
   }
 
@@ -556,6 +569,12 @@ export class SalesService {
       if (sale.rows[0].status !== 'completed' && sale.rows[0].status !== 'partially_refunded') {
         throw conflict('This sale cannot be refunded');
       }
+      // A staff purchase took no money, so there is no money to give back (0.20.7).
+      const staffSale = await client.query(
+        "SELECT 1 FROM payments WHERE sale_id = $1 AND method = 'staff' LIMIT 1",
+        [saleId],
+      );
+      if (staffSale.rows[0]) throw conflict('A staff purchase cannot be refunded');
       const lines = await client.query<{
         id: string;
         product_id: string | null;
@@ -784,17 +803,22 @@ export class SalesService {
     customer: CustomerTerms | null,
     fixedPrices: Map<string, number> | undefined,
     timeLines: TimeLines,
+    staff = false,
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
+    if (staff && hasDiscount) {
+      throw badRequest('A staff purchase cannot carry a discount', { code: 'STAFF_DISCOUNT' });
+    }
     if (hasDiscount && !actor.permissions.has('pos.discount')) {
       throw forbidden('Discounts require the pos.discount permission');
     }
-    if (fixedPrices) customer = null;
+    if (fixedPrices || staff) customer = null;
     const lines = input.items.map((i, idx) => {
       if (isTimeItem(i)) {
-        // PC time: the station's quoted price (tax included, default rate), one unit.
+        // PC time: the station's quoted price (tax included, default rate), one unit. Free for
+        // staff (0.20.7).
         return {
-          unitPriceCents: timeLines.get(idx)!.priceCents,
+          unitPriceCents: staff ? 0 : timeLines.get(idx)!.priceCents,
           quantityMilli: 1000,
           discountCents: i.discountCents,
           taxRateBp: defaultRate,
@@ -802,6 +826,9 @@ export class SalesService {
         };
       }
       if (!('productId' in i)) {
+        // A staff purchase is priced at cost, so it can only take stock items (0.20.7).
+        if (staff)
+          throw badRequest('A staff purchase takes stock items only', { code: 'STAFF_ITEMS' });
         // Off-inventory line: the typed price, the default tax, prices include tax.
         return {
           unitPriceCents: i.unitPriceCents,
@@ -812,7 +839,18 @@ export class SalesService {
         };
       }
       const p = products.get(i.productId)!;
-      const extrasCents = resolveAddons(p, i.addonIds).reduce((sum, a) => sum + a.priceCents, 0);
+      const addonsCents = resolveAddons(p, i.addonIds).reduce((sum, a) => sum + a.priceCents, 0);
+      if (staff) {
+        // Staff pay the purchase cost, with no add-ons and no promo (0.20.7).
+        return {
+          unitPriceCents: Number(p.purchase_cost_cents),
+          quantityMilli: i.quantityMilli,
+          discountCents: 0,
+          taxRateBp: p.tax_rate_bp ?? defaultRate,
+          priceIncludesTax: p.price_includes_tax,
+        };
+      }
+      const extrasCents = addonsCents;
       return {
         unitPriceCents:
           (fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents)) +
@@ -935,14 +973,21 @@ export class SalesService {
     client: DbClient,
     saleId: string,
     input: SuspendSaleRequest,
-    payments: CreateSaleRequest['payments'],
+    givenPayments: CreateSaleRequest['payments'],
     actor: SaleActor,
     fixedPrices?: Map<string, number>,
+    staff = false,
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
+    if (!staff && givenPayments.some((p) => p.method === 'staff')) {
+      throw badRequest('The staff tender is only for a staff purchase', { code: 'PAYMENT' });
+    }
+    if (staff && givenPayments.length > 0) {
+      throw badRequest('A staff purchase takes no payment', { code: 'STAFF_PAYMENT' });
+    }
     // 0.19.0: installments are a way of paying a debt, so they only mean something on pay-later.
-    if (payments.some((p) => p.installments && p.method !== 'credit')) {
+    if (givenPayments.some((p) => p.installments && p.method !== 'credit')) {
       throw badRequest('Installments apply to pay-later (on the tab) only', {
         code: 'INSTALLMENTS_CREDIT_ONLY',
       });
@@ -955,7 +1000,18 @@ export class SalesService {
       await this.customerTerms(client, input.customerId),
       fixedPrices,
       timeLines,
+      staff,
     );
+    // A staff purchase is settled by the server: the whole total on the `staff` tender (nothing
+    // when it is free), so the drawer and the customer's tab are never touched.
+    const payments: CreateSaleRequest['payments'] = staff
+      ? totals.totalCents > 0
+        ? [{ method: 'staff', amountCents: totals.totalCents }]
+        : []
+      : givenPayments;
+    if (!staff && payments.length === 0 && totals.totalCents > 0) {
+      throw badRequest('A payment is required', { code: 'PAYMENT' });
+    }
     let settled: { paidCents: number; changeCents: number };
     try {
       settled = settlePayments(totals.totalCents, payments);

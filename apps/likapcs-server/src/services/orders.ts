@@ -683,6 +683,7 @@ export class OrdersService implements SessionOrdersHook {
         customerId,
         notes: `${row.station_code} · order #${row.number}`,
         clientRequestId: `order:${row.id}`,
+        staff: false,
         payments: total > 0 ? payments : [],
       },
       actor,

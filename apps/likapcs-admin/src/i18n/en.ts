@@ -772,7 +772,7 @@ export const en = {
   },
   pos: {
     title: 'Point of Sale',
-    searchPlaceholder: 'Scan a barcode or search products…  (F2)',
+    searchPlaceholder: 'Scan a barcode or search products…',
     allCategories: 'All',
     noProducts: 'No products yet. Add products first.',
     noMatches: 'No products match.',
@@ -804,6 +804,23 @@ export const en = {
     timeItemNoStations: 'No PC is available.',
     timeItemInvalid: 'Choose a PC and a whole number of minutes from 1 to 1440.',
     timeItemNotParkable: 'PC time cannot be parked. Complete the sale or remove the PC time line.',
+    staffPurchase: 'Staff purchase',
+    staffTag: 'Staff',
+    staffBannerTitle: 'Staff purchase',
+    staffBanner:
+      'Items at purchase cost, PC time free, no money taken. The stock goes out and it is recorded as an outflow.',
+    staffNoFreeItems:
+      'Remove the free items first: a staff purchase takes stock items and PC time only.',
+    staffFree: 'free',
+    staffCostTotal: 'Total at cost',
+    staffConfirmTitle: 'Staff purchase',
+    staffConfirmHint:
+      'No money is taken. The stock goes out and the purchase is recorded as an outflow for this user, with the date and time.',
+    staffRecord: 'Record outflow',
+    staffNoPark: 'A staff purchase cannot be parked. Record it or remove it.',
+    staffRecorded: 'Staff purchase recorded',
+    staffReport: 'Staff purchases',
+    paymentKeys: '↑ ↓ choose method · 1–9 method · Enter confirm · F2 customer · Esc close',
 
     qty: 'Qty',
     lineDiscount: 'Line discount',
@@ -851,7 +868,7 @@ export const en = {
     print: 'Print',
     done: 'Done',
     notes: 'Note',
-    shortcuts: 'F2 search · F4 new sale · Enter payment / complete · Esc close',
+    shortcuts: 'F2 customer · F4 new sale · Enter payment / complete · Esc close',
     customer: 'Customer',
     walkIn: 'Walk-in customer',
     customerPlaceholder: 'Customer (optional) — name, phone or code',

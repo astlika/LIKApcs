@@ -61,6 +61,11 @@ export interface Cart {
   notes: string;
   /** Idempotency key sent with the sale; regenerated when the cart is cleared. */
   clientRequestId: string;
+  /**
+   * Staff purchase (0.20.7): products at purchase cost, PC time free, no discounts or customer,
+   * recorded as a stock outflow with no money taken. Undefined / false on a normal sale.
+   */
+  staff?: boolean;
 }
 
 export const newRequestId = (): string =>
@@ -233,15 +238,29 @@ export function cartTotals(
   cart: Cart,
   memberDiscountBp = 0,
 ): SaleTotals & { memberDiscount: boolean } {
+  const staff = cart.staff === true;
   const lines = cart.lines.map((l) => {
     if (l.kind === 'free' || l.kind === 'time') {
-      const gross = Math.round((l.unitPriceCents * l.quantityMilli) / 1000);
+      // Staff: PC time is free; a free item cannot be on a staff purchase (the toggle refuses it).
+      const unit = staff && l.kind === 'time' ? 0 : l.unitPriceCents;
+      const gross = Math.round((unit * l.quantityMilli) / 1000);
       return {
-        unitPriceCents: l.unitPriceCents,
+        unitPriceCents: unit,
         quantityMilli: l.quantityMilli,
-        discountCents: Math.min(l.discountCents, gross),
+        discountCents: staff ? 0 : Math.min(l.discountCents, gross),
         taxRateBp: l.taxRateBp,
         priceIncludesTax: true,
+      };
+    }
+    if (staff) {
+      // Staff pay the purchase cost: no promo, no add-ons, no discount.
+      const unit = l.product.purchaseCostCents;
+      return {
+        unitPriceCents: unit,
+        quantityMilli: l.quantityMilli,
+        discountCents: 0,
+        taxRateBp: l.product.taxRateBp,
+        priceIncludesTax: l.product.priceIncludesTax,
       };
     }
     const unit = unitPriceOf(l.product) + addonsCents(l.product, l.addonIds);
@@ -255,8 +274,8 @@ export function cartTotals(
     };
   });
   const subtotal = computeSale(lines, 0).subtotalCents;
-  const explicit = Math.min(cart.discountCents, subtotal);
-  const member = customerDiscountCents(subtotal, memberDiscountBp, explicit);
+  const explicit = staff ? 0 : Math.min(cart.discountCents, subtotal);
+  const member = staff ? 0 : customerDiscountCents(subtotal, memberDiscountBp, explicit);
   return { ...computeSale(lines, member > 0 ? member : explicit), memberDiscount: member > 0 };
 }
 

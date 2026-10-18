@@ -1217,6 +1217,7 @@ export const SALE_PAYMENT_METHODS = [
   'other',
   'credit',
   'wallet',
+  'staff',
 ] as const;
 export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
 /**
@@ -1318,7 +1319,13 @@ const saleBody = {
 };
 export const createSaleSchema = z.object({
   ...saleBody,
-  payments: z.array(salePaymentInputSchema).min(1).max(10),
+  /**
+   * Staff purchase (0.20.7): the items are priced at their purchase cost, the PC time is free,
+   * nothing is taken in money, and the stock goes out. The server sets the payment itself, so
+   * `payments` must be empty for a staff purchase.
+   */
+  staff: z.boolean().default(false),
+  payments: z.array(salePaymentInputSchema).max(10),
 });
 export type CreateSaleRequest = z.infer<typeof createSaleSchema>;
 export const suspendSaleSchema = z.object(saleBody);
@@ -1342,6 +1349,8 @@ export const saleListQuerySchema = z.object({
   source: z.enum(['retail', 'gaming', 'mixed']).optional(),
   cashierId: z.string().uuid().optional(),
   customerId: z.string().uuid().optional(),
+  /** `staff`: only staff purchases (0.20.7). */
+  tender: z.enum(['staff']).optional(),
   q: z.string().trim().max(40).optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),

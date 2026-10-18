@@ -7041,3 +7041,107 @@ button.ads-album .ads-album__meta {
 .pc-tile--line[data-status='error'] {
   --glass: #dc2626;
 }
+
+/* ── POS current sale (0.20.7): calmer header, clear totals, staff purchase mode ─────────── */
+.pos__cart-head {
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.pos__cart-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pos__cart-title h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.pos__count {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pos__cart-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.pos__staff-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #2f7bff) 40%, transparent);
+  background: color-mix(in srgb, var(--accent, #2f7bff) 10%, transparent);
+  font-size: 12.5px;
+}
+.pos__staff-banner strong {
+  font-size: 13px;
+}
+.pos__cart--staff {
+  box-shadow: inset 3px 0 0 var(--accent, #2f7bff);
+}
+.pos-line {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding: 9px 8px;
+  border-radius: 8px;
+  border-bottom: 0;
+  transition: background 0.12s ease;
+}
+.pos-line:hover {
+  background: color-mix(in srgb, var(--text-faint) 12%, transparent);
+}
+.pos-line__remove {
+  opacity: 0.5;
+}
+.pos-line:hover .pos-line__remove {
+  opacity: 1;
+}
+.pos__totals {
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--text-faint) 8%, transparent);
+  border-top: 1px solid var(--border);
+}
+.pos__tax {
+  font-size: 12px;
+}
+.pos__grand {
+  font-size: 24px;
+  border-top: 1px solid var(--border);
+}
+.pos__actions {
+  padding: 10px 16px 6px;
+  border-top: 1px solid var(--border);
+}
+.pos__pay {
+  height: 54px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.pos-staff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pos-staff-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pos-staff-hint {
+  margin: 0;
+  font-size: 13px;
+}
+.pos-pay-keys {
+  margin: 0 0 8px;
+  font-size: 12px;
+}

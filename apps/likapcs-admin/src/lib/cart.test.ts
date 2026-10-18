@@ -93,6 +93,32 @@ describe('cart', () => {
   });
 });
 
+describe('staff purchase (0.20.7)', () => {
+  it('prices products at purchase cost, PC time at zero, and ignores discounts and promos', () => {
+    let cart = addToCart(
+      emptyCart(),
+      product({ sellingPriceCents: 150, purchaseCostCents: 90, promoPriceCents: 100 }),
+      2000,
+    );
+    cart = addToCart(
+      cart,
+      product({ id: 'p2', name: 'Chips', sellingPriceCents: 120, purchaseCostCents: 70 }),
+    );
+    cart = { ...cart, staff: true, discountCents: 50 };
+    cart = setLineDiscount(cart, lineKey(cart.lines[0]!), 30);
+    const totals = cartTotals(cart, 1000);
+    expect(totals.subtotalCents).toBe(2 * 90 + 70);
+    expect(totals.discountCents).toBe(0);
+    expect(totals.totalCents).toBe(250);
+  });
+
+  it('is the normal price again when the flag is off', () => {
+    const cart = addToCart(emptyCart(), product({ sellingPriceCents: 150, purchaseCostCents: 90 }));
+    expect(cartTotals(cart).totalCents).toBe(150);
+    expect(cartTotals({ ...cart, staff: false }).totalCents).toBe(150);
+  });
+});
+
 describe('ScanBuffer', () => {
   it('recognises a fast burst ending with Enter as a scan', () => {
     const buf = new ScanBuffer(40, 4);
