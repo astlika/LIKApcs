@@ -3470,6 +3470,69 @@ tr:hover .debt-cell .btn,
   background: var(--bg-hover);
   color: var(--text);
 }
+/* 0.20.8: the debt and the balance sit right after the name, on one row; the name gives way first. */
+.customer-chip--account {
+  height: auto;
+  min-height: 38px;
+  flex-wrap: nowrap;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.customer-chip--account .customer-chip__name {
+  flex: 0 1 auto;
+  min-width: 40px;
+}
+.cust-balances {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+}
+.cust-balance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cust-balance__k {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.cust-balance--debt.is-due {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  font-weight: 600;
+}
+.cust-balance--debt.is-over {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.cust-balance--wallet.is-funded {
+  color: var(--success);
+  border-color: var(--success);
+  background: var(--success-soft);
+  font-weight: 600;
+}
+.pos__tab {
+  width: 100%;
+  justify-content: center;
+}
+.tender-credit__after {
+  display: block;
+  margin-top: 2px;
+  font-weight: 600;
+}
 .pos__customer {
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);

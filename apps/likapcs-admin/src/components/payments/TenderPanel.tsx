@@ -49,6 +49,8 @@ export interface TenderInput {
   totalCents: number;
   /** Customer attached to the sale / session (required for "pay later"). */
   customer: CustomerSummary | null;
+  /** The mode the dialog opens in (0.20.8: "Add to debt" opens on pay later). */
+  initialMode?: TenderMode;
   /** Hide "pay later" even for cashiers who may give it (contexts without a customer concept). */
   allowCredit?: boolean;
   /** Hide the balance tender (contexts without a customer concept). */
@@ -114,6 +116,7 @@ export function walletCoverCents(customer: CustomerSummary | null, totalCents: n
 export function useTender({
   totalCents,
   customer,
+  initialMode = 'cash',
   allowCredit = true,
   allowWallet = true,
   allowEndPay = false,
@@ -124,10 +127,12 @@ export function useTender({
   const creditEnabled = allowCredit && can(PERMISSIONS.DEBTS_GIVE);
   const walletEnabled = allowWallet && settings['wallet.enabled'];
   const defaultDays = settings['pos.credit_default_days'];
-  const [mode, setMode] = useState<TenderMode>('cash');
+  const [mode, setMode] = useState<TenderMode>(initialMode);
   // Pre-filled with the exact amount (selected on focus, so typing replaces it): an exact cash
-  // sale is Enter → Enter.
-  const [cashText, setCashText] = useState((totalCents / 100).toFixed(2));
+  // sale is Enter → Enter. Opened on pay later the cash stays empty: the whole sale goes on the tab.
+  const [cashText, setCashText] = useState(() =>
+    initialMode === 'credit' ? '' : (totalCents / 100).toFixed(2),
+  );
   const [cardText, setCardText] = useState('');
   const [walletText, setWalletText] = useState('');
   const [reference, setReference] = useState('');
@@ -482,6 +487,13 @@ export function TenderPanel({
                   {customer.creditLimitCents > 0 &&
                     ` · ${t('pos.payLaterLimit', { amount: fmt.money(customer.creditLimitCents) })}`}
                 </span>
+                {tender.creditCents > 0 && (
+                  <span className="tender-credit__after num" data-testid={`${testId}-credit-after`}>
+                    {t('pos.payLaterAfter', {
+                      amount: fmt.money(customer.balanceDueCents + tender.creditCents),
+                    })}
+                  </span>
+                )}
               </div>
             </div>
           ) : onCustomerChange ? (

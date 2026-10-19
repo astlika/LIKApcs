@@ -2,7 +2,8 @@
  * Point of sale. Keyboard-first and Enter-driven: scan or tap the products, **Enter** opens the
  * payment, **Enter** completes it (the exact amount is pre-filled, a tendered amount can be typed
  * or tapped), Enter / auto-finish starts the next sale. F2 focuses the search/scan field, F4
- * starts a new sale, Esc closes dialogs (F6 / F8 still work as silent aliases for old habits).
+ * starts a new sale, F7 puts the sale on the customer's tab (pay later), Esc closes dialogs
+ * (F6 / F8 still work as silent aliases for old habits).
  * USB barcode scanners act as keyboards — a fast burst ending in Enter is picked up anywhere on
  * the page (`useBarcodeScanner`), whatever has the focus, and is never mistaken for the Enter
  * that opens the payment; slower typing in the search field searches by name.
@@ -27,6 +28,7 @@ import {
   Trash2,
   X,
   Users,
+  CalendarClock,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -111,6 +113,8 @@ export function PosPage() {
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
+  // The payment dialog's first mode: "Add to debt" (F7) opens it on pay later (0.20.8).
+  const [payStart, setPayStart] = useState<TenderMode>('cash');
   const [dialog, setDialog] = useState<
     'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
   >(null);
@@ -165,6 +169,17 @@ export function PosPage() {
   });
 
   const totals = useMemo(() => cartTotals(cart, customer?.discountBp ?? 0), [cart, customer]);
+  const canGiveDebt = can(PERMISSIONS.DEBTS_GIVE);
+  // The customer as the server has him now: his debt and balance move with every sale, so the cart
+  // never shows the numbers from when he was picked (0.20.8).
+  const liveCustomer = useQuery({
+    queryKey: ['customers', 'pos', customer?.id ?? null],
+    queryFn: () => api<CustomerSummary>(`/customers/${customer!.id}`),
+    enabled: !!customer,
+    staleTime: 0,
+  });
+  const shownCustomer =
+    customer && liveCustomer.data?.id === customer.id ? liveCustomer.data : customer;
   const resetCart = useCallback(() => {
     setCart(emptyCart());
     setCustomer(null);
@@ -325,6 +340,13 @@ export function PosPage() {
         e.preventDefault();
         if (cart.lines.length) setDialog('confirmNew');
         else resetCart();
+      } else if (e.key === 'F7') {
+        // Add to debt (0.20.8): the whole sale goes on the customer's tab, the payment opens on pay later.
+        e.preventDefault();
+        if (cart.staff || !cart.lines.length || receipt || dialog || !customer || !canGiveDebt)
+          return;
+        setPayStart('credit');
+        setDialog('payment');
       } else if (e.key === 'Enter' || e.key === 'F6') {
         if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
         const target = e.target instanceof Element ? e.target : null;
@@ -338,13 +360,14 @@ export function PosPage() {
           // The payment dialog mounts synchronously (discrete event): stop the same Enter from
           // reaching its own listener and completing the sale in one go.
           e.stopPropagation();
+          setPayStart('cash');
           setDialog('payment');
         }
       }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [cart.lines.length, cart.staff, receipt, dialog, resetCart]);
+  }, [cart.lines.length, cart.staff, receipt, dialog, resetCart, customer, canGiveDebt]);
 
   // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
   // them first): a code is looked up exactly, otherwise the single visible match is added.
@@ -547,12 +570,13 @@ export function PosPage() {
         {!cart.staff && (
           <div className="pos__customer" id="pos-cart-customer">
             <CustomerPicker
-              value={customer}
+              value={shownCustomer}
               onChange={(c) => {
                 setCustomer(c);
                 setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
               }}
               placeholder={t('pos.customerPlaceholder')}
+              showAccount
             />
           </div>
         )}
@@ -727,12 +751,30 @@ export function PosPage() {
               </>
             )}
           </div>
+          {!cart.staff && canGiveDebt && (
+            <Button
+              size="lg"
+              className="pos__tab"
+              disabled={cart.lines.length === 0 || !customer}
+              title={customer ? undefined : t('pos.addToTabNoCustomer')}
+              onClick={() => {
+                setPayStart('credit');
+                setDialog('payment');
+              }}
+              data-testid="pos-add-to-tab"
+            >
+              <CalendarClock size={14} /> {t('pos.addToTab')} <Kbd>F7</Kbd>
+            </Button>
+          )}
           <Button
             variant="primary"
             size="lg"
             className="pos__pay"
             disabled={cart.lines.length === 0}
-            onClick={() => setDialog('payment')}
+            onClick={() => {
+              setPayStart('cash');
+              setDialog('payment');
+            }}
             data-testid="pos-pay"
           >
             {cart.staff ? <Users size={16} /> : <Banknote size={16} />}{' '}
@@ -753,6 +795,8 @@ export function PosPage() {
           onCompleted={(sale, receiptData) => {
             setDialog(null);
             setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // The customer's debt and balance moved: every view of them refetches.
+            void queryClient.invalidateQueries({ queryKey: ['customers'] });
             display.setDone({
               receiptNo: sale.receiptNo,
               totalCents: 0,
@@ -769,7 +813,8 @@ export function PosPage() {
           cart={cart}
           resumedId={resumedId}
           totalCents={totals.totalCents}
-          customer={customer}
+          customer={shownCustomer}
+          startMode={payStart}
           onCustomerChange={(c) => {
             setCustomer(c);
             setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
@@ -781,6 +826,8 @@ export function PosPage() {
           onCompleted={(sale, receiptData) => {
             setDialog(null);
             setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // The customer's debt and balance moved: every view of them refetches.
+            void queryClient.invalidateQueries({ queryKey: ['customers'] });
             // Customer display: "thank you" with what was paid / put on the tab.
             const paymentsNow = sale.payments.filter((p) => p.kind === 'sale');
             const creditCents = paymentsNow
@@ -1104,6 +1151,7 @@ function PaymentDialog({
   onCustomerChange,
   onClose,
   onCompleted,
+  startMode = 'cash',
 }: {
   cart: Cart;
   resumedId: string | null;
@@ -1113,17 +1161,22 @@ function PaymentDialog({
   onCustomerChange: (customer: CustomerSummary | null) => void;
   onClose: () => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
+  /** 0.20.8: the first mode of the dialog ("Add to debt" opens on pay later). */
+  startMode?: TenderMode;
 }) {
   const { t } = useI18n();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  const tender = useTender({ totalCents, customer });
+  const tender = useTender({ totalCents, customer, initialMode: startMode });
   const display = useCustomerDisplay();
+  // `setTender` is stable; the `display` object is not (it changes whenever the tender does), so the
+  // effects below depend on the setter only — depending on `display` looped on every render.
+  const { setTender: reportTender } = display;
 
   // Customer display: what is being counted, live (cleared when the dialog closes).
   const { mode, paidCents, cashCents, walletCents, creditCents, changeCents, covered } = tender;
   useEffect(() => {
-    display.setTender({
+    reportTender({
       mode,
       paidCents,
       cashCents: cashCents ?? 0,
@@ -1133,7 +1186,7 @@ function PaymentDialog({
       covered,
     });
   }, [
-    display,
+    reportTender,
     mode,
     paidCents,
     cashCents,
@@ -1143,7 +1196,7 @@ function PaymentDialog({
     covered,
     totalCents,
   ]);
-  useEffect(() => () => display.setTender(null), [display]);
+  useEffect(() => () => reportTender(null), [reportTender]);
 
   const complete = useMutation({
     mutationFn: async () => {
