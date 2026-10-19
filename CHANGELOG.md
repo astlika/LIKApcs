@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.9] - 2026-10-19
+
+### Added
+
+- POS: "Add to debt" (F7, or the button next to Payment) puts the whole current sale on the customer's tab. The payment dialog opens on "Pay later", so instalments and a cash part can be set from the keyboard. Needs a customer and the "give debts" permission.
+- POS: with a customer attached, the current sale shows his debt and balance right after his name. Both are read live from the server, so they update after every sale.
+
+### Fixed
+
+- POS: the payment dialog no longer loops ("Maximum update depth exceeded") when the customer display is connected.
+
 ## [0.20.8] - 2026-10-19
 
 ### Added
