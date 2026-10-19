@@ -1,11 +1,11 @@
 {
-  "version": "0.20.8",
-  "notes": "### Added\n\n- PC time can be sold at the till without choosing a PC. The sale is for a name: the customer's name, a typed name, or \"Klient\". The price is the pricing rule for all PCs (no PC selected) at that hour; if there is none, the till says so and asks for one under Pricing.\n- A 4-digit PIN is printed once with that sale (on the done dialog and the receipt). At any PC the customer chooses \"Use prepaid PC time (no PC chosen)\" on the lock screen, types the name and the PIN, and the PC starts with the minutes left. Wrong names and PINs get the same answer; five wrong tries lock the credit for 10 minutes.\n- Sales list: \"PC time\" and \"Refunds\" filters. The totals show the PC minutes sold and used.\n\n### Changed\n\n- A PC-time credit made at a PC still works as before; desk staff can start a credit that belongs to no PC on any PC.\n\n\n\n### Added\n\n- Staff purchase (\"Blerje e stafit\") in the POS current sale: items are charged at their purchase cost, PC time is free, no discount and no customer. No money is taken; the stock goes out and the sale is recorded as a staff outflow with the user, date and time.\n- Sales list: a \"Staff purchases\" filter.\n- Payment without the mouse: ↑/↓ or 1–9 choose the method, Enter confirms, Esc closes. F2 moves to the customer field.\n\n### Changed\n\n- The POS current sale has a calmer header, a clear totals block and a larger pay button.",
-  "pub_date": "2026-10-19T00:08:53.717Z",
+  "version": "0.20.9",
+  "notes": "### Added\n\n- POS: \"Add to debt\" (F7, or the button next to Payment) puts the whole current sale on the customer's tab. The payment dialog opens on \"Pay later\", so instalments and a cash part can be set from the keyboard. Needs a customer and the \"give debts\" permission.\n- POS: with a customer attached, the current sale shows his debt and balance right after his name. Both are read live from the server, so they update after every sale.\n\n### Fixed\n\n- POS: the payment dialog no longer loops (\"Maximum update depth exceeded\") when the customer display is connected.",
+  "pub_date": "2026-10-19T00:29:06.908Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemFMNE1tajArV1RJN00yU2NZNUtzMHhTUHVKMFF2bTdpSG5GVGg2cGxwSWd0Znc1ZjdjLzUySnQ0R3Nxa28zcUFNd0NkNjBmci9WUnlYbTU2Nmh3QlFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzY4NDY4CWZpbGU6TElLQXBjc18wLjIwLjhfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuOApydzgvYTl1T2lueVhMdXAvbFJBZW9PbmdLVncxeVUwdS9sRWRSRGY2Y1lhRU5pNHU1QkQ2TFRHci9RMVJiWnNXcHVsd2Z0TXBEU3ExM1JBcmJRcnRDZz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.8/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelpGNjI0NytzRDdXTUZFQjVtTWh4U0FRS2xldzRxakpvSlpueE44aDFsdm1tb0tkSmJjRlFlcHZIbjhja0UvQkk4ZGd4S2tTMXpSWnZGWmp1bksyNWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzY5Njk1CWZpbGU6TElLQXBjc18wLjIwLjlfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjAuOQpqc0M2SHlTcHQ4dEdwWU16RXBmcDQ1bXNkTzVhR1IvM0xpOHp6dXQ3eVBkS2UyZWFFYmJWYlFqTW5wTHBGMDNkZTYyZm0xY3JJY1Q2aE1rVk5qYnBBUT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.9/LIKApcs-Setup.exe"
     }
   }
 }
