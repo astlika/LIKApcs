@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.10] - 2026-10-20
+
+### Added
+
+- Stations: when several PCs are selected, the PC time sold at the till is shown for each PC, and each PC starts with its own credit ("Start N PC(s) with their PC time"). A credit sold for a PC goes to that PC; a credit sold without a PC goes to the first free PC. No payment is taken again: the minutes were paid at the till. PCs without a credit keep the usual start options.
+
 ## [0.20.9] - 2026-10-19
 
 ### Added
