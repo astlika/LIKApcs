@@ -1,11 +1,11 @@
 {
-  "version": "0.20.10",
-  "notes": "### Added\n\n- Stations: when several PCs are selected, the PC time sold at the till is shown for each PC, and each PC starts with its own credit (\"Start N PC(s) with their PC time\"). A credit sold for a PC goes to that PC; a credit sold without a PC goes to the first free PC. No payment is taken again: the minutes were paid at the till. PCs without a credit keep the usual start options.",
-  "pub_date": "2026-10-20T15:00:23.719Z",
+  "version": "0.20.11",
+  "notes": "### Added\n\n- Stations: \"Remove time\" (−) next to \"Add time\" (+) for one PC with a running prepaid or pay-at-the-end session. Steps of 5 minutes or quick picks; the session always keeps at least one minute. No money moves: a prepaid session keeps what was paid, a pay-at-the-end session gets a smaller reservation. Recorded as a correction and in the audit log (`session.remove_time`).\n\n### Changed\n\n- Pricing: the page now leads with fixed-price packages (the simple way to sell time) and calls the rules \"Hourly rates\". Rounding, minimums, validity, time windows, priority and happy hour move under a collapsible \"Advanced\" section in the rule and package dialogs; it opens by itself when a value there is non-default or invalid. No data or price changes.",
+  "pub_date": "2026-10-20T23:21:14.942Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemNhVzNzbmw1aVprcnlkcTFLdmd5dnZqMEdRY3NkWUtUMnE2QUphU3pCd0dZN1dlZFBvbXhHN2llY3pKeHh0eGNIVElWTjRlZVYrMk1weURVWEdxTndjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTA4MzUxCWZpbGU6TElLQXBjc18wLjIwLjEwX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjEwCnlkbmc0VzVYTnFtaFR0dndMZkF2cDBIQ1hBWW9YVVdDNXg3VEx6bVd4Q2w3RWt4a0ZYTFR1NCtxbWsxZ2trSVJRTWR4cFZDdlZSZmQ3UENJdktET0NBPT0K",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.10/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelM2QlpBQkhJelI3U0JSM3lUa3k3SU1zandwVU4yeHprU2IxS29Yc25JQTZ6U0xpN2FibERYUGM3WTU2dnFCMEsrbXN1U0FURTZzdGtKVzRpb0VadndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTM4NDE0CWZpbGU6TElLQXBjc18wLjIwLjExX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjExCm0zbmRuc2Vua1V0RDJzdzBHQ1RrbzJDWGY2QTdQYWwydU1UUjMwRVhKNk1OeHBtODZ2dUp5Zm9DbE1HRFRITmx6azVKZS9NMmE3NDBLZVBCclVkL0R3PT0K",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.11/LIKApcs-Setup.exe"
     }
   }
 }
