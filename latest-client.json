@@ -1,11 +1,11 @@
 {
-  "version": "0.20.9",
-  "notes": "### Added\n\n- POS: \"Add to debt\" (F7, or the button next to Payment) puts the whole current sale on the customer's tab. The payment dialog opens on \"Pay later\", so instalments and a cash part can be set from the keyboard. Needs a customer and the \"give debts\" permission.\n- POS: with a customer attached, the current sale shows his debt and balance right after his name. Both are read live from the server, so they update after every sale.\n\n### Fixed\n\n- POS: the payment dialog no longer loops (\"Maximum update depth exceeded\") when the customer display is connected.",
-  "pub_date": "2026-10-19T00:29:06.950Z",
+  "version": "0.20.10",
+  "notes": "### Added\n\n- Stations: when several PCs are selected, the PC time sold at the till is shown for each PC, and each PC starts with its own credit (\"Start N PC(s) with their PC time\"). A credit sold for a PC goes to that PC; a credit sold without a PC goes to the first free PC. No payment is taken again: the minutes were paid at the till. PCs without a credit keep the usual start options.",
+  "pub_date": "2026-10-20T15:00:23.750Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemR1dndZaGUrMXN2WitqOFNtSmRoem5rREcva0cvMXJ6U3Y0cElIelNiMzgvVkY2WHFVaFJzMXdBNTJEU0dhREUrdGJocHVrTzVKQ3M1aWppQzhZbVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzY5NTI3CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC45X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIwLjkKM3hZNGdCd0tJbis0WVQ3QTFsS3NRd0dibDFORXgvTWlkWmE0akRoWkk2aFNtUUVxZGFnZDhJTDBFblA3aWdNWHhkSjlNamx2Q0p1emF2RElwU2dwQlE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.9/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBheldaalZDNWZLT3hkcTdMV2FmeXVQZVk3NE5paHlmZzNxYXZRVXRvQ0YvZ1QwanBodk85WXROZHJIZTRWQVdtQ2sva0d4c2piUW5lSEx2K3Evd0I5cHdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTA4MjYwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4xMF94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4yMC4xMApZbHhPUjV1bGY4RzJuM0VxU1FCb1hjOSs0OUhkVytjeWpIT2FaVWlOVjNUUDBwRXp6MkNGTW84aUJmbWZkbVdJVDFLMDdodUhBWUxRY3RUUk5kQ1FBZz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.10/LIKApcs-Client-Setup.exe"
     }
   }
 }
