@@ -711,6 +711,20 @@ export const extendSessionSchema = z
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
 
+/**
+ * 0.20.11: take minutes off a running prepaid or pay-at-the-end session. No money moves: a prepaid
+ * session keeps what was paid, a pay-at-the-end session gets a smaller reservation.
+ */
+export const removeSessionTimeSchema = z.object({
+  minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+  clientRequestId: z.string().min(8).max(64).optional(),
+});
+export type RemoveSessionTimeRequest = z.infer<typeof removeSessionTimeSchema>;
+
 /** 0.18.0: free minutes for a running session (`sessions.gift`) — no sale, no money, full audit. */
 export const sessionGiftSchema = z.object({
   minutes: z.number().int().min(1).max(600),

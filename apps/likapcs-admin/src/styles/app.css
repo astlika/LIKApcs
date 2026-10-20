@@ -7233,3 +7233,35 @@ button.ads-album .ads-album__meta {
   margin: 0 0 8px;
   font-size: 12px;
 }
+
+/* Collapsible "Advanced" group inside pricing dialogs. */
+.adv__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.adv__title {
+  font-weight: 600;
+}
+.adv__hint {
+  font-size: 13px;
+}
+.adv__chev {
+  flex: none;
+  transition: transform 0.15s ease;
+}
+.adv__chev--open {
+  transform: rotate(180deg);
+}
+.adv__body {
+  margin-top: 12px;
+}

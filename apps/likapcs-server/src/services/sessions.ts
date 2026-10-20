@@ -32,6 +32,7 @@ import {
   PERMISSIONS,
   endSessionSchema,
   type ExtendSessionRequest,
+  type RemoveSessionTimeRequest,
   type SessionGiftRequest,
   type BulkMinutesRequest,
   type BulkMinutesResult,
@@ -887,6 +888,88 @@ export class SessionsService {
     );
     await this.broadcast(session);
     return { session, client: ack, payment };
+  }
+
+  /**
+   * 0.20.11: take minutes off a running prepaid or pay-at-the-end session. No money moves: a prepaid
+   * session keeps what was paid (the minutes are simply not used); a pay-at-the-end session gets a
+   * smaller reservation, by the price of those minutes. Postpaid sessions run until stopped. At
+   * least one minute must stay, so a session is never ended by this action (use stop for that).
+   * Recorded as a `correction` event and an audit row (`session.remove_time`).
+   */
+  async removeTime(
+    id: string,
+    req: RemoveSessionTimeRequest,
+    actor: SessionActorContext,
+  ): Promise<SessionMutationResult> {
+    const now = new Date();
+    const session = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      if (row.billing_mode === 'postpaid')
+        throw conflict('Postpaid sessions run until stopped; there is no time to remove');
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict(`Session is ${row.status}`);
+      if (!row.ends_at) throw conflict('Session has no end time');
+      if (req.clientRequestId) {
+        const dup = await client.query(
+          `SELECT 1 FROM session_events WHERE session_id = $1 AND event_type = 'correction'
+             AND payload->>'kind' = 'time_removed' AND payload->>'clientRequestId' = $2`,
+          [id, req.clientRequestId],
+        );
+        if (dup.rowCount) return this.getById(id, client);
+      }
+      // A paused session counts its remaining time from the moment it was paused.
+      const from = row.status === 'paused' && row.paused_at ? row.paused_at : now;
+      const remainingSeconds = Math.floor((row.ends_at.getTime() - from.getTime()) / 1000);
+      const maxMinutes = Math.floor((remainingSeconds - 1) / 60);
+      if (req.minutes > maxMinutes)
+        throw conflict(
+          maxMinutes > 0
+            ? `At most ${maxMinutes} minutes can be removed; the session keeps at least one`
+            : 'No minutes can be removed from this session',
+          { code: 'TIME_INSUFFICIENT', maxMinutes },
+        );
+      const removeSeconds = req.minutes * 60;
+      // Pay at the end: the reservation shrinks by what those minutes were worth (never below 0).
+      let priceCents = 0;
+      if (row.billing_mode === 'endpay') {
+        const quote = await this.quote(
+          { stationId: row.station_id, billingMode: 'prepaid', minutes: req.minutes },
+          now,
+        );
+        priceCents = Math.min(quote.priceCents, Number(row.quoted_price_cents ?? 0));
+      }
+      await client.query(
+        `UPDATE gaming_sessions SET planned_seconds = GREATEST(planned_seconds - $2, 0),
+           ends_at = ends_at - make_interval(secs => $2),
+           quoted_price_cents = quoted_price_cents - $3, final_price_cents = final_price_cents - $3,
+           version = version + 1
+         WHERE id = $1`,
+        [id, removeSeconds, priceCents],
+      );
+      await this.addEvent(client, id, 'correction', actor, {
+        kind: 'time_removed',
+        minutes: req.minutes,
+        priceCents,
+        clientRequestId: req.clientRequestId ?? null,
+      });
+      await recordAudit(client, actor, {
+        action: 'session.remove_time',
+        entityType: 'gaming_session',
+        entityId: id,
+        details: { minutes: req.minutes, priceCents },
+      });
+      return this.getById(id, client);
+    });
+    this.warned.forEach((k) => k.startsWith(`${id}:`) && this.warned.delete(k));
+    const ack = await this.mirror(
+      session,
+      'session.extend',
+      { sessionId: id, endsAt: session.endsAt, billing: clientBillingOf(session) },
+      actor,
+    );
+    await this.broadcast(session);
+    return { session, client: ack, payment: null };
   }
 
   /**

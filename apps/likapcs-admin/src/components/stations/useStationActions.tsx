@@ -23,6 +23,7 @@ import {
   OctagonX,
   Pause,
   Play,
+  Minus,
   Plus,
   Power,
   RotateCcw,
@@ -68,6 +69,7 @@ import {
   CancelSessionDialog,
   EndSessionDialog,
   ExtendSessionDialog,
+  RemoveTimeDialog,
   notifyClientAck,
   paidFrom,
   useNow,
@@ -80,6 +82,7 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'remove-time'
   | 'gift'
   | 'cancel'
   | 'lock'
@@ -121,6 +124,7 @@ type Flow =
   | { kind: 'start' }
   | { kind: 'end'; sessionId: string }
   | { kind: 'extend'; sessionId: string; gift?: boolean }
+  | { kind: 'remove-time'; sessionId: string }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
@@ -188,6 +192,7 @@ export function useStationActions(
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
+        'remove-time': t('sessions.timeRemoved'),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
               total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
@@ -482,6 +487,15 @@ export function useStationActions(
         enabled: canControl && !!live && live.billingMode !== 'postpaid',
         hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
+      {
+        // 0.20.11: the "−" beside "+ Add time" — minutes come off a running prepaid / end-pay session.
+        id: 'remove-time' as const,
+        label: t('sessions.removeTime'),
+        icon: Minus,
+        bar: true,
+        enabled: canControl && !!live && live.billingMode !== 'postpaid',
+        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+      },
       ...(canGift
         ? [
             {
@@ -633,6 +647,9 @@ export function useStationActions(
         case 'gift':
           if (live) setFlow({ kind: 'extend', sessionId: live.id, gift: true });
           break;
+        case 'remove-time':
+          if (live) setFlow({ kind: 'remove-time', sessionId: live.id });
+          break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
           break;
@@ -734,6 +751,20 @@ export function useStationActions(
               initialGift={!!flow.gift}
               onConfirm={(body, action) =>
                 sessionAct.mutate({ sessionId: s.id, action: action ?? 'extend', body })
+              }
+            />
+          )}
+        </SessionFlow>
+      )}
+      {flow.kind === 'remove-time' && (
+        <SessionFlow sessionId={flow.sessionId} onClose={close}>
+          {(s) => (
+            <RemoveTimeDialog
+              session={s}
+              busy={sessionAct.isPending}
+              onClose={close}
+              onConfirm={(body) =>
+                sessionAct.mutate({ sessionId: s.id, action: 'remove-time', body })
               }
             />
           )}

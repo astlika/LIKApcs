@@ -8,6 +8,7 @@ import {
   collectStationSchema,
   endSessionSchema,
   extendSessionSchema,
+  removeSessionTimeSchema,
   sessionGiftSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
@@ -62,6 +63,13 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   app.post('/sessions/:id/resume', control, async (request) =>
     services.sessions.resume(idParams.parse(request.params).id, actorOf(request)),
+  );
+  app.post('/sessions/:id/remove-time', control, async (request) =>
+    services.sessions.removeTime(
+      idParams.parse(request.params).id,
+      removeSessionTimeSchema.parse(request.body),
+      actorOf(request),
+    ),
   );
   app.post('/sessions/:id/extend', control, async (request) =>
     services.sessions.extend(
