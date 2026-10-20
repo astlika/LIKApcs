@@ -6,6 +6,16 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.11] - 2026-10-21
+
+### Added
+
+- Stations: "Remove time" (−) next to "Add time" (+) for one PC with a running prepaid or pay-at-the-end session. Steps of 5 minutes or quick picks; the session always keeps at least one minute. No money moves: a prepaid session keeps what was paid, a pay-at-the-end session gets a smaller reservation. Recorded as a correction and in the audit log (`session.remove_time`).
+
+### Changed
+
+- Pricing: the page now leads with fixed-price packages (the simple way to sell time) and calls the rules "Hourly rates". Rounding, minimums, validity, time windows, priority and happy hour move under a collapsible "Advanced" section in the rule and package dialogs; it opens by itself when a value there is non-default or invalid. No data or price changes.
+
 ## [0.20.10] - 2026-10-20
 
 ### Added
