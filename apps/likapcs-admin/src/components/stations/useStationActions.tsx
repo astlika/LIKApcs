@@ -52,6 +52,7 @@ import { api, ApiError } from '../../lib/api';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
+import { assignCredits } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -927,14 +928,21 @@ export function QuickStartDialog({
   );
   const bulk = others.length > 0;
 
-  // 0.19.0: PC time sold at the till for this PC, not yet used (a single start only).
+  // 0.19.0: PC time sold at the till and not yet used. One PC: what it can take (its own credits
+  // and the any-PC ones). Several PCs (0.20.9): every open credit, so each PC can get its own.
   const credits = useQuery({
-    queryKey: ['time-credits', station.id],
+    queryKey: ['time-credits', bulk ? 'all' : station.id],
     queryFn: () =>
-      api<{ credits: TimeCreditSummary[] }>('/time-credits', { query: { stationId: station.id } }),
-    enabled: !others.length,
+      api<{ credits: TimeCreditSummary[] }>(
+        '/time-credits',
+        bulk ? {} : { query: { stationId: station.id } },
+      ),
     staleTime: 0,
   });
+  const bulkCredits = useMemo(
+    () => (bulk ? assignCredits(startTargets, credits.data?.credits ?? []) : []),
+    [bulk, startTargets, credits.data],
+  );
   const packages = useQuery({
     queryKey: ['pricing', 'packages', 'available', station.id],
     queryFn: () =>
@@ -988,27 +996,36 @@ export function QuickStartDialog({
     body: Record<string, unknown>;
     /** Bulk + paid now: the tenders of each target, split from the one amount handed over. */
     perTarget?: SalePaymentInput[][];
+    /** Bulk + PC time credits (0.20.9): each PC's own body; only the PCs listed here start. */
+    targetBodies?: Record<string, Record<string, unknown>>;
     /** Bulk + cash: what goes back to the customer (shown in the toast). */
     changeCents?: number;
   };
   const start = useMutation({
-    mutationFn: async ({ body, perTarget }: StartVars) => {
+    mutationFn: async ({ body, perTarget, targetBodies }: StartVars) => {
       if (!bulk) return { single: await startOne(station, body), outcomes: [] as BulkOutcome[] };
       const outcomes = await Promise.all(
-        startTargets.map(async (s, i): Promise<BulkOutcome> => {
-          try {
-            await startOne(s, perTarget ? { ...body, payments: perTarget[i] ?? [] } : body);
-            return { station: s, ok: true };
-          } catch (err) {
-            // A missing cash shift stops the whole batch: onError offers to open one and retries.
-            if (isShiftRequired(err)) throw err;
-            return {
-              station: s,
-              ok: false,
-              error: err instanceof ApiError ? err.message : String(err),
-            };
-          }
-        }),
+        startTargets
+          .flatMap((s, i) => {
+            const own = targetBodies?.[s.id];
+            if (targetBodies && !own) return [];
+            return [{ s, i, own }];
+          })
+          .map(async ({ s, i, own }): Promise<BulkOutcome> => {
+            try {
+              const b = own ?? body;
+              await startOne(s, perTarget ? { ...b, payments: perTarget[i] ?? [] } : b);
+              return { station: s, ok: true };
+            } catch (err) {
+              // A missing cash shift stops the whole batch: onError offers to open one and retries.
+              if (isShiftRequired(err)) throw err;
+              return {
+                station: s,
+                ok: false,
+                error: err instanceof ApiError ? err.message : String(err),
+              };
+            }
+          }),
       );
       return { single: null, outcomes };
     },
@@ -1043,6 +1060,20 @@ export function QuickStartDialog({
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
+  // Several PCs with PC time from the till (0.20.9): each assigned PC starts with its own credit.
+  // The minutes were paid at the till, so there is no bill and no tender here.
+  const creditTargets = bulkCredits.filter((a) => a.credit);
+  const startWithCredits = () => {
+    const targetBodies: Record<string, Record<string, unknown>> = {};
+    for (const a of creditTargets) {
+      targetBodies[a.target.id] = {
+        billingMode: 'prepaid',
+        minutes: a.credit!.minutesRemaining,
+        creditId: a.credit!.id,
+      };
+    }
+    start.mutate({ body: {}, targetBodies });
+  };
   const noPricing = openQuote && !openQuote.rule;
   /**
    * A tile was chosen: open time and free time start right away; paid time goes to the tender
@@ -1161,27 +1192,58 @@ export function QuickStartDialog({
           />
         </div>
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
-        <div className="start-grid">
-          {(credits.data?.credits ?? []).map((cr) => (
-            <button
-              key={cr.id}
-              type="button"
-              className="start-tile"
-              disabled={start.isPending || quoting}
-              onClick={() =>
-                start.mutate({
-                  body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
-                })
-              }
-              data-testid="start-use-credit"
+        {bulk && bulkCredits.length > 0 && (
+          <section className="bulk-credits" data-testid="bulk-credits">
+            <p className="bulk-credits__title">{t('map.bulkCreditsTitle')}</p>
+            <ul className="bulk-bills">
+              {bulkCredits.map((a) => (
+                <li key={a.target.id} data-testid="bulk-credit-row">
+                  <span>{a.target.code}</span>
+                  <strong>
+                    {a.credit
+                      ? [
+                          a.credit.holderName,
+                          t('map.useCreditSub', { n: a.credit.minutesRemaining }),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
+                      : t('map.bulkCreditNone')}
+                  </strong>
+                </li>
+              ))}
+            </ul>
+            <Button
+              variant="primary"
+              disabled={start.isPending || quoting || creditTargets.length === 0}
+              onClick={startWithCredits}
+              data-testid="bulk-start-credits"
             >
-              <Timer size={22} />
-              <span className="start-tile__title">{t('map.useCredit')}</span>
-              <span className="start-tile__sub">
-                {t('map.useCreditSub', { n: cr.minutesRemaining })}
-              </span>
-            </button>
-          ))}
+              <Timer size={16} /> {t('map.bulkCreditStart', { n: creditTargets.length })}
+            </Button>
+          </section>
+        )}
+        <div className="start-grid">
+          {!bulk &&
+            (credits.data?.credits ?? []).map((cr) => (
+              <button
+                key={cr.id}
+                type="button"
+                className="start-tile"
+                disabled={start.isPending || quoting}
+                onClick={() =>
+                  start.mutate({
+                    body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
+                  })
+                }
+                data-testid="start-use-credit"
+              >
+                <Timer size={22} />
+                <span className="start-tile__title">{t('map.useCredit')}</span>
+                <span className="start-tile__sub">
+                  {t('map.useCreditSub', { n: cr.minutesRemaining })}
+                </span>
+              </button>
+            ))}
           <button
             type="button"
             className="start-tile start-tile--open"

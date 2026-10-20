@@ -3073,6 +3073,31 @@ tr:hover .debt-cell .btn,
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
+/* 0.20.9: PC time sold at the till, one row per PC in the bulk start dialog. */
+.bulk-credits {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.bulk-credits__title {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.bulk-credits .bulk-bills {
+  grid-template-columns: 1fr;
+  max-height: none;
+  overflow: visible;
+  margin: 0;
+}
+.bulk-credits .bulk-bills li {
+  align-items: center;
+  justify-content: flex-start;
+}
+.bulk-credits .bulk-bills li > span {
+  min-width: 44px;
+  font-weight: 600;
+}
 .start-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

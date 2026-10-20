@@ -1101,6 +1101,9 @@ export const sq: Dictionary = {
   map: {
     useCredit: 'Përdor kohën e PC-së (e paguar te arka)',
     useCreditSub: '{n} min gati',
+    bulkCreditsTitle: 'Minutat e shitura te arka: çdo PC nis me kreditin e vet',
+    bulkCreditNone: 'Pa kredi për këtë PC',
+    bulkCreditStart: 'Nis {n} PC me minutat e tyre',
     free: 'të lira',
     inUse: 'në përdorim',
     paused: 'në pauzë',

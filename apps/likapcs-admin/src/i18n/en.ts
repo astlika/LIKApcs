@@ -1090,6 +1090,9 @@ export const en = {
   map: {
     useCredit: 'Use PC time (paid at the till)',
     useCreditSub: '{n} min ready',
+    bulkCreditsTitle: 'PC time sold at the till: each PC starts with its own credit',
+    bulkCreditNone: 'No credit for this PC',
+    bulkCreditStart: 'Start {n} PC(s) with their PC time',
     free: 'free',
     inUse: 'in use',
     paused: 'paused',
