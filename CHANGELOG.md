@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-21
+
 ### Added
 
 - Reports → "Profit & spending" (next to "Sales"): the profit and loss for any period, on the accrual basis. Revenue without VAT, the cost of the goods sold, operating expenses and stock losses (damaged, expired, missing, counted short, adjusted down), with the net profit and margins. Refunded goods that were not put back on the shelf count as a loss. Beside it: the money that actually moved (cash sales and drawer expenses, supplier payments, what is still owed to suppliers), the stock brought in (received from suppliers, opening stock, stock gains) and data checks for products or movements without a cost.
