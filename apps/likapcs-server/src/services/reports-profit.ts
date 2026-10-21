@@ -70,7 +70,7 @@ rows AS (
     JOIN purchases pu ON pu.id = pi.purchase_id
     JOIN suppliers sup ON sup.id = pu.supplier_id
     JOIN products pd ON pd.id = pi.product_id
-   WHERE ${inRange('pr.received_at')}
+   WHERE pri.inventory_movement_id IS NOT NULL AND ${inRange('pr.received_at')}
   UNION ALL
   SELECT m.created_at,
          CASE WHEN m.movement_type = 'initial' THEN 'stock_opening' ELSE 'stock_added' END, 'stock',

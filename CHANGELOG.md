@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Added
+
+- Expenses page: a switch between "Expenses" and "Stock purchases". The stock view lists goods received into stock (supplier, product, quantity, unit cost to 3 decimals, amount, purchase link), with a count and value total, filters (dates, supplier, search) and a CSV export. These rows are information only and are not added to spending: their cost counts in profit when the goods are sold.
+- Payment method label "Staff" / "Stafi" (it used to show the raw translation key).
+
+### Fixed
+
+- The spending report showed stock-less purchase lines twice (as a stock row and as an expense). They are now listed once, as an expense.
+
 ## [0.22.0] - 2026-10-21
 
 ### Added

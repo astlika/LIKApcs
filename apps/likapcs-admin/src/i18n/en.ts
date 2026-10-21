@@ -713,6 +713,7 @@ export const en = {
       wallet: 'Balance',
       credit: 'Pay later',
       other: 'Other',
+      staff: 'Staff',
     },
   },
   pricing: {
@@ -2187,6 +2188,21 @@ export const en = {
   },
   expenses: {
     title: 'Expenses',
+    views: { expenses: 'Expenses', stock: 'Stock purchases' },
+    stock: {
+      note: 'Goods bought for stock are not spending when they arrive. Their cost counts in profit when they are sold. These rows are for information and are not added to the period’s spending.',
+      badge: 'Stock · cost on sale',
+      search: 'Search product, supplier or purchase',
+      supplier: 'Supplier',
+      allSuppliers: 'All suppliers',
+      product: 'Product',
+      quantity: 'Quantity',
+      unitCost: 'Unit cost',
+      purchase: 'Purchase',
+      count: 'Lines',
+      total: 'Stock value (period)',
+      empty: 'No stock purchases in this period',
+    },
     subtitle:
       'Rent, utilities, supplies and other costs. Cash expenses can be taken from the drawer.',
     new: 'New expense',

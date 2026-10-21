@@ -1718,6 +1718,40 @@ export interface ExpenseListResponse extends Paginated<ExpenseSummary> {
   totalCents: number;
 }
 
+/**
+ * Stock purchases: goods received into stock. They are not spending when they arrive (their cost
+ * counts in profit when they are sold), so the Expenses page lists them for information only.
+ */
+const stockPurchaseFilters = {
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  supplierId: uuidSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+};
+export const stockPurchaseListQuerySchema = paginationQuerySchema.extend(stockPurchaseFilters);
+export type StockPurchaseListQuery = z.infer<typeof stockPurchaseListQuerySchema>;
+export const stockPurchaseExportQuerySchema = z.object(stockPurchaseFilters);
+export type StockPurchaseExportQuery = z.infer<typeof stockPurchaseExportQuerySchema>;
+
+export interface StockPurchaseRow {
+  receiptId: string;
+  receivedAt: string;
+  purchaseId: string;
+  purchaseRef: string;
+  supplierId: string;
+  supplierName: string;
+  productId: string;
+  productName: string;
+  quantityMilli: number;
+  unitCostMills: number;
+  amountCents: number;
+  deliveryNoteNo: string | null;
+}
+
+export interface StockPurchaseListResponse extends Paginated<StockPurchaseRow> {
+  totalCents: number;
+}
+
 // Customers
 
 export const CUSTOMER_STATUSES = ['active', 'blocked', 'archived'] as const;

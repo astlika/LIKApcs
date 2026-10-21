@@ -7,6 +7,10 @@
  */
 import type {
   CreateExpenseRequest,
+  StockPurchaseExportQuery,
+  StockPurchaseListQuery,
+  StockPurchaseListResponse,
+  StockPurchaseRow,
   ExpenseCategoryRequest,
   ExpenseCategorySummary,
   ExpenseListQuery,
@@ -51,6 +55,80 @@ const SELECT = `
     JOIN expense_categories c ON c.code = e.category_code
     LEFT JOIN suppliers s ON s.id = e.supplier_id
     LEFT JOIN users u ON u.id = e.created_by`;
+
+// ─── Stock purchases (information only; not spending) ───────────────────────────
+
+const STOCK_FROM = `FROM purchase_receipt_items pri
+    JOIN purchase_receipts pr ON pr.id = pri.receipt_id
+    JOIN purchase_items pi ON pi.id = pri.purchase_item_id
+    JOIN purchases pu ON pu.id = pi.purchase_id
+    JOIN suppliers sup ON sup.id = pu.supplier_id
+    JOIN products pd ON pd.id = pi.product_id`;
+const STOCK_AMOUNT = `ROUND(pri.quantity_milli::numeric * pri.unit_cost_mills / 10000)::bigint`;
+const STOCK_SELECT = `SELECT pr.id::text AS receipt_id, pr.received_at, pu.id::text AS purchase_id,
+    pu.reference_no AS purchase_ref, sup.id::text AS supplier_id, sup.name AS supplier_name,
+    pd.id::text AS product_id, pd.name AS product_name, pri.quantity_milli::text AS quantity_milli,
+    pri.unit_cost_mills::text AS unit_cost_mills, ${STOCK_AMOUNT}::text AS amount_cents,
+    pr.delivery_note_no`;
+
+interface StockRow {
+  receipt_id: string;
+  received_at: Date;
+  purchase_id: string;
+  purchase_ref: string;
+  supplier_id: string;
+  supplier_name: string;
+  product_id: string;
+  product_name: string;
+  quantity_milli: string;
+  unit_cost_mills: string;
+  amount_cents: string;
+  delivery_note_no: string | null;
+}
+
+const toStockRow = (r: StockRow): StockPurchaseRow => ({
+  receiptId: r.receipt_id,
+  receivedAt: r.received_at.toISOString(),
+  purchaseId: r.purchase_id,
+  purchaseRef: r.purchase_ref,
+  supplierId: r.supplier_id,
+  supplierName: r.supplier_name,
+  productId: r.product_id,
+  productName: r.product_name,
+  quantityMilli: Number(r.quantity_milli),
+  unitCostMills: Number(r.unit_cost_mills),
+  amountCents: Number(r.amount_cents),
+  deliveryNoteNo: r.delivery_note_no,
+});
+
+/** Only goods that went into stock: a stock-less line is already an expense row. */
+function stockWhere(
+  f: StockPurchaseExportQuery,
+  timeZone: string,
+): { sql: string; params: unknown[] } {
+  const params: unknown[] = [timeZone];
+  const where = ['pri.inventory_movement_id IS NOT NULL'];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    where.push(sql.replace('?', `$${params.length}`));
+  };
+  if (f.from) add('(pr.received_at AT TIME ZONE $1)::date >= ?::date', f.from);
+  if (f.to) add('(pr.received_at AT TIME ZONE $1)::date <= ?::date', f.to);
+  if (f.supplierId) add('pu.supplier_id = ?::uuid', f.supplierId);
+  if (f.q) {
+    params.push(`%${f.q}%`);
+    where.push(
+      `(pd.name ILIKE $${params.length} OR sup.name ILIKE $${params.length} OR pu.reference_no ILIKE $${params.length})`,
+    );
+  }
+  return { sql: `WHERE ${where.join(' AND ')}`, params };
+}
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 
 function toSummary(r: ExpenseRow): ExpenseSummary {
   return {
@@ -225,6 +303,68 @@ export class ExpensesService {
   async get(id: string, db: Queryable = this.pool): Promise<ExpenseSummary | null> {
     const r = await db.query<ExpenseRow>(`${SELECT} WHERE e.id = $1`, [id]);
     return r.rows[0] ? toSummary(r.rows[0]) : null;
+  }
+
+  /** Goods received into stock, newest first. `totalCents` is their value (not spending). */
+  async stockPurchases(
+    query: StockPurchaseListQuery,
+    timeZone: string,
+  ): Promise<StockPurchaseListResponse> {
+    const { sql, params } = stockWhere(query, timeZone);
+    const from = `${STOCK_FROM} ${sql}`;
+    const totals = await this.pool.query<{ n: string; total: string }>(
+      `SELECT count(*)::text AS n, COALESCE(SUM(${STOCK_AMOUNT}), 0)::text AS total ${from}`,
+      params,
+    );
+    const rows = await this.pool.query<StockRow>(
+      `${STOCK_SELECT} ${from} ORDER BY pr.received_at DESC, pri.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, query.pageSize, (query.page - 1) * query.pageSize],
+    );
+    return {
+      items: rows.rows.map(toStockRow),
+      page: query.page,
+      pageSize: query.pageSize,
+      total: Number(totals.rows[0]!.n),
+      totalCents: Number(totals.rows[0]!.total),
+    };
+  }
+
+  /** CSV of the same rows (all of them, not one page). Same `;` format as the report exports. */
+  async stockPurchasesCsv(
+    query: StockPurchaseExportQuery,
+    timeZone: string,
+  ): Promise<{ filename: string; csv: string }> {
+    const { sql, params } = stockWhere(query, timeZone);
+    const rows = await this.pool.query<StockRow>(
+      `${STOCK_SELECT} ${STOCK_FROM} ${sql} ORDER BY pr.received_at, pri.id`,
+      params,
+    );
+    const header = [
+      'received_at',
+      'supplier',
+      'purchase',
+      'product',
+      'quantity_milli',
+      'unit_cost_mills',
+      'amount_cents',
+      'delivery_note',
+      'effect',
+    ];
+    const body = rows.rows.map((r) => [
+      r.received_at.toISOString(),
+      r.supplier_name,
+      r.purchase_ref,
+      r.product_name,
+      r.quantity_milli,
+      r.unit_cost_mills,
+      r.amount_cents,
+      r.delivery_note_no ?? '',
+      'stock',
+    ]);
+    const csv =
+      '\uFEFF' + [header, ...body].map((r) => r.map(csvCell).join(';')).join('\r\n') + '\r\n';
+    const span = `${query.from ?? 'all'}_${query.to ?? 'all'}`;
+    return { filename: `likapcs-stock-purchases-${span}.csv`, csv };
   }
 
   async list(query: ExpenseListQuery): Promise<ExpenseListResponse> {

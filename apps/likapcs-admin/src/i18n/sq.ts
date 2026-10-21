@@ -725,6 +725,7 @@ export const sq: Dictionary = {
       wallet: 'Balanca',
       credit: 'Borxh',
       other: 'Tjetër',
+      staff: 'Stafi',
     },
   },
   pricing: {
@@ -2200,6 +2201,21 @@ export const sq: Dictionary = {
   },
   expenses: {
     title: 'Shpenzimet',
+    views: { expenses: 'Shpenzimet', stock: 'Blerjet e stokut' },
+    stock: {
+      note: 'Mallrat e blera për stok nuk janë shpenzim kur mbërrijnë. Kostoja llogaritet te fitimi kur shiten. Këto rreshta janë informative dhe nuk shtohen te shpenzimet e periudhës.',
+      badge: 'Stok · kosto në shitje',
+      search: 'Kërko produkt, furnitor ose blerje',
+      supplier: 'Furnitori',
+      allSuppliers: 'Të gjithë furnitorët',
+      product: 'Produkti',
+      quantity: 'Sasia',
+      unitCost: 'Kosto njësi',
+      purchase: 'Blerja',
+      count: 'Rreshta',
+      total: 'Vlera e stokut (periudha)',
+      empty: 'Nuk ka blerje stoku në këtë periudhë',
+    },
     subtitle:
       'Qira, shërbime, furnizime dhe kosto të tjera. Shpenzimet në dorë mund të merren nga arka.',
     new: 'Shpenzim i ri',
