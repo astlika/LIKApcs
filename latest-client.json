@@ -1,11 +1,11 @@
 {
-  "version": "0.20.11",
-  "notes": "### Added\n\n- Stations: \"Remove time\" (−) next to \"Add time\" (+) for one PC with a running prepaid or pay-at-the-end session. Steps of 5 minutes or quick picks; the session always keeps at least one minute. No money moves: a prepaid session keeps what was paid, a pay-at-the-end session gets a smaller reservation. Recorded as a correction and in the audit log (`session.remove_time`).\n\n### Changed\n\n- Pricing: the page now leads with fixed-price packages (the simple way to sell time) and calls the rules \"Hourly rates\". Rounding, minimums, validity, time windows, priority and happy hour move under a collapsible \"Advanced\" section in the rule and package dialogs; it opens by itself when a value there is non-default or invalid. No data or price changes.",
-  "pub_date": "2026-10-20T23:21:14.991Z",
+  "version": "0.20.12",
+  "notes": "### Added\n\n- Settings → Security: \"Factory reset\" for the owner account only. It asks for the signed-in username, the password and a tick box. Before anything is erased, the server saves a safety backup (type \"Before factory reset\", kept in the backup list and restorable there). Then it erases all records, accounts, settings, the audit log, sessions and uploaded pictures and videos, and the system asks for first-run setup again. The access roles, permissions and built-in units stay, so setup works straight away. The signed-in session ends.",
+  "pub_date": "2026-10-21T01:02:14.679Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelFvUUQ4M3BJSUJuaFE2NlVEZEJCckFnVnErYzVzWWR2RkxacGUxdjZLcldOMlFiaFJncnlaYitoenVUcUN5ZFYrWVhBR2w5NmROOXd4ZkJ1amtibVEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTM4MjcwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4xMV94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4yMC4xMQpQRVFaLzVqK2R6YUV4elR3RUNLZmloSWh3aFoyN0pBT2RUVzhaSUgrYUI5c3VnSms3MlpVZW9TRE9XZ25iTFZmY2w0dFNXT3h0bldMVGFhbzFiT3lDdz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.11/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelEySUJTdStWeE11dFFTZVFDNGE2RmtXYWUxWmFOVzB6OXY0SGVrNzVQbHU1VlJVRnhiNjdXTUc2dW5yejdhMHlWWThxcVNLcDN6R0ErVFYwWUZZQndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTQ0MjE0CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yMC4xMl94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4yMC4xMgp6K0syMUxLWWQydml1TGNyZTV5SkE0bUVKbHVBNDhhZURLMnE1VHYxVHI5eEl1Qk9zbHVHT1d3V2xrdDhueDFMWDFvZE9CWis1bHhOU2JnUHQzNFREUT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.20.12/LIKApcs-Client-Setup.exe"
     }
   }
 }
