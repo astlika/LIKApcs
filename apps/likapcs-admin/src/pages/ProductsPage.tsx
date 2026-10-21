@@ -35,6 +35,7 @@ import {
   type PendingImage,
 } from '../components/catalog/ProductImageField';
 import { useFormat } from '../lib/format';
+import { unitProfit } from '../lib/unit-profit';
 import { ProductExtrasEditor } from '../components/catalog/ProductExtrasEditor';
 import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -434,6 +435,7 @@ function ProductDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProductForm>(() => formFrom(product));
@@ -490,6 +492,20 @@ function ProductDialog({
   };
   const priceCents = parseMoneyInput(form.price);
   const costCents = form.cost.trim() ? parseMoneyInput(form.cost) : 0;
+  // Live profit per piece. The tax rate is the chosen category, or the default one when none is chosen.
+  const selectedTax =
+    (taxCategories.data ?? []).find((c) => c.id === form.taxCategoryId) ??
+    (taxCategories.data ?? []).find((c) => c.isDefault);
+  const taxRateBp = selectedTax?.rateBp ?? 0;
+  const profit =
+    priceCents !== null && costCents !== null && priceCents > 0
+      ? unitProfit({
+          priceCents,
+          costCents,
+          rateBp: taxRateBp,
+          priceIncludesTax: form.priceIncludesTax,
+        })
+      : null;
   const minStockMilli = toMilli(form.minStock || '0');
   const initialStockMilli = form.initialStock.trim() ? toMilli(form.initialStock) : null;
 
@@ -779,6 +795,48 @@ function ProductDialog({
           onChange={(v) => set('priceIncludesTax', v)}
           label={t('products.priceIncludesTax')}
         />
+        {profit && (
+          <div className="unit-profit" data-testid="unit-profit">
+            <div
+              className="row"
+              style={{ justifyContent: 'space-between', alignItems: 'baseline' }}
+            >
+              <span className="muted">{t('products.profitPreview.title')}</span>
+              <strong
+                className={`num ${profit.profitCents >= 0 ? 'is-good' : 'is-bad'}`}
+                style={{ fontSize: 18 }}
+                data-testid="unit-profit-value"
+              >
+                {fmt.money(profit.profitCents)}
+              </strong>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              {t('products.profitPreview.breakdown', {
+                net: fmt.money(profit.netCents),
+                cost: fmt.money(profit.costCents),
+              })}
+              {' · '}
+              {profit.rateBp === 0
+                ? t('products.profitPreview.noVat')
+                : form.priceIncludesTax
+                  ? t('products.profitPreview.vatIncluded', {
+                      rate: (profit.rateBp / 100).toFixed(profit.rateBp % 100 ? 2 : 0),
+                      amount: fmt.money(profit.vatCents),
+                    })
+                  : t('products.profitPreview.vatAdded', {
+                      rate: (profit.rateBp / 100).toFixed(profit.rateBp % 100 ? 2 : 0),
+                      amount: fmt.money(profit.vatCents),
+                    })}
+              {profit.marginBp !== null &&
+                ` · ${t('products.profitPreview.margin', { percent: (profit.marginBp / 100).toFixed(1) })}`}
+            </div>
+            {costCents === 0 && (
+              <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>
+                {t('products.profitPreview.noCost')}
+              </div>
+            )}
+          </div>
+        )}
         <div className="grid grid--2">
           <Switch
             checked={form.trackStock}

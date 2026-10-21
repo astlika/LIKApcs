@@ -22,6 +22,16 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
     checkRange(range.from, range.to);
     return services.reports.cashBook(range);
   });
+  app.get('/reports/profit', view, async (request) => {
+    const range = reportRangeSchema.parse(request.query);
+    checkRange(range.from, range.to);
+    return services.reports.profit(range);
+  });
+  app.get('/reports/spending', view, async (request) => {
+    const range = reportRangeSchema.parse(request.query);
+    checkRange(range.from, range.to);
+    return services.reports.spending(range);
+  });
   app.get('/reports/export', exportPerm, async (request, reply) => {
     const query = reportExportQuerySchema.parse(request.query);
     checkRange(query.from, query.to);

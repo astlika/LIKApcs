@@ -15,14 +15,17 @@ import type {
   CashBookRow,
   CashBookTotals,
   CashShiftSummary,
+  ProfitReport,
   ReportBucket,
   ReportExportKind,
   ReportRange,
   SalesReport,
+  SpendingReport,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
+import { profitReport, spendingReport, spendingRowsAll } from './reports-profit.js';
 
 interface RangeParams {
   from: string;
@@ -312,6 +315,18 @@ export class ReportsService {
     return { from: range.from, to: range.to, rows, totals, generatedAt: new Date().toISOString() };
   }
 
+  /** Profit & loss on the accrual basis, with the cash view and data-quality checks alongside. */
+  async profit(range: ReportRange): Promise<ProfitReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return profitReport(this.pool, timeZone, range);
+  }
+
+  /** Every money-out and stock-in/out row in the range, newest first, capped for the screen. */
+  async spending(range: ReportRange): Promise<SpendingReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return spendingReport(this.pool, timeZone, range);
+  }
+
   /** CSV export (UTF-8 with BOM so Excel opens it correctly; `;` separator for EU locales). */
   async exportCsv(
     kind: ReportExportKind,
@@ -452,6 +467,28 @@ export class ReportsService {
           s.notes,
         ];
       });
+    } else if (kind === 'spending') {
+      const all = await spendingRowsAll(this.pool, timeZone, range);
+      header = [
+        'date',
+        'kind',
+        'effect',
+        'description',
+        'category',
+        'method',
+        'amount_cents',
+        'reference',
+      ];
+      rows = all.map((x) => [
+        x.date,
+        x.kind,
+        x.effect,
+        x.description,
+        x.category,
+        x.method,
+        x.amountCents,
+        x.reference,
+      ]);
     } else {
       const r = await this.pool.query(
         `SELECT r.name AS register, cs.status, ou.full_name AS opened_by, ${ts('cs.opened_at')} AS opened_at, cu.full_name AS closed_by, ${ts('cs.closed_at')} AS closed_at,

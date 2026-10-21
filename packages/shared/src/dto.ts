@@ -2156,6 +2156,89 @@ export interface CashBookReport {
   generatedAt: string;
 }
 
+/**
+ * Profit & loss on the accrual basis: net sales without VAT − cost of the goods sold − operating
+ * expenses − stock losses. Stock bought is not a cost when it is bought; it becomes one when it is
+ * sold (cost of goods sold), so buying stock never lowers profit twice. Money is integer cents;
+ * margins are basis points (1234 = 12.34 %), null when there is no revenue.
+ */
+export interface ProfitReport {
+  range: ReportRange;
+  revenue: {
+    /** Sales charged in the range, minus refunds, VAT included (the same figure as the sales report). */
+    netSalesCents: number;
+    /** VAT inside `netSalesCents`, after refunds. */
+    vatCents: number;
+    /** `netSalesCents − vatCents`. */
+    revenueCents: number;
+  };
+  /** Cost of the goods sold, less the cost of refunded goods that went back on the shelf. */
+  costOfSalesCents: number;
+  /** Cost of refunded goods that were NOT put back on the shelf (already inside `costOfSalesCents`). */
+  refundedNotRestockedCents: number;
+  grossProfitCents: number;
+  grossMarginBp: number | null;
+  operatingExpensesCents: number;
+  expensesByCategory: ReportBucket[];
+  /** Stock that disappeared without a sale: damaged, expired, missing, counted short, adjusted down. */
+  stockLossCents: number;
+  stockLossByType: ReportBucket[];
+  netProfitCents: number;
+  netMarginBp: number | null;
+  /** Stock value that came into the shop in the range (not a cost until sold). */
+  stock: { receivedCents: number; openingCents: number; addedCents: number };
+  /** Real money: the open drawer's movements (opening float excluded) and supplier payments. */
+  cash: {
+    drawerInCents: number;
+    drawerOutCents: number;
+    drawerByType: { type: string; inCents: number; outCents: number }[];
+    supplierPaidCents: number;
+  };
+  /** Owed to suppliers at the end of the range (ordered or received purchases, not yet paid). */
+  payables: { supplierBalanceCents: number };
+  /** Gaps that make the numbers incomplete. Each should be zero. */
+  checks: { productsWithoutCost: number; saleLinesWithoutCost: number; lossesWithoutCost: number };
+  generatedAt: string;
+}
+
+export const SPENDING_KINDS = [
+  'expense',
+  'stock_received',
+  'stock_opening',
+  'stock_added',
+  'stock_loss',
+  'supplier_payment',
+] as const;
+export type SpendingKind = (typeof SPENDING_KINDS)[number];
+/** Where a spending row lands: `profit` = an operating cost, `stock` = value held in stock, `cash` = paid out, not a cost. */
+export const SPENDING_EFFECTS = ['profit', 'stock', 'cash'] as const;
+export type SpendingEffect = (typeof SPENDING_EFFECTS)[number];
+
+export interface SpendingRow {
+  /** Local calendar date, YYYY-MM-DD (business time zone). */
+  date: string;
+  kind: SpendingKind;
+  effect: SpendingEffect;
+  description: string;
+  /** Expense category, supplier, or the reason for a stock row. */
+  category: string | null;
+  method: string | null;
+  /** Always positive; `kind` says whether it went out or was booked as stock. */
+  amountCents: number;
+  reference: string | null;
+}
+
+export interface SpendingReport {
+  range: ReportRange;
+  totals: { kind: SpendingKind; count: number; amountCents: number }[];
+  /** Most recent rows first, capped at `SPENDING_ROW_LIMIT`; the CSV export has every row. */
+  rows: SpendingRow[];
+  rowCount: number;
+  truncated: boolean;
+  generatedAt: string;
+}
+export const SPENDING_ROW_LIMIT = 500;
+
 export const REPORT_EXPORT_KINDS = [
   'sales',
   'sale_items',
@@ -2163,6 +2246,7 @@ export const REPORT_EXPORT_KINDS = [
   'sessions',
   'shifts',
   'cash_book',
+  'spending',
 ] as const;
 export type ReportExportKind = (typeof REPORT_EXPORT_KINDS)[number];
 export const reportExportQuerySchema = reportRangeSchema.extend({

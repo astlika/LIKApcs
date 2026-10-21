@@ -375,7 +375,8 @@ function NewPurchaseDialog({
           product: p,
           qty: '1',
           cost: centsToInput(p.purchaseCostCents),
-          taxPct: p.taxRateBp > 0 ? String(p.taxRateBp / 100) : '0',
+          // VAT is never added by itself: every line starts at 0% and the user opts in.
+          taxPct: '0',
         },
       ];
     });
@@ -566,15 +567,34 @@ function NewPurchaseDialog({
                         />
                       </td>
                       <td className="right">
-                        <Input
-                          inputMode="decimal"
-                          className="num"
-                          style={{ width: 70, textAlign: 'right' }}
-                          value={l.taxPct}
-                          aria-invalid={!Number.isFinite(c.taxBp) || undefined}
-                          aria-label={t('purchases.taxPct')}
-                          onChange={(e) => update(i, { taxPct: e.target.value })}
-                        />
+                        <div className="stack" style={{ gap: 4, alignItems: 'flex-end' }}>
+                          <Input
+                            inputMode="decimal"
+                            className="num"
+                            style={{ width: 70, textAlign: 'right' }}
+                            value={l.taxPct}
+                            aria-invalid={!Number.isFinite(c.taxBp) || undefined}
+                            aria-label={t('purchases.taxPct')}
+                            onChange={(e) => update(i, { taxPct: e.target.value })}
+                          />
+                          {l.product.taxRateBp > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t('purchases.applyVatHint')}
+                              data-testid="apply-vat"
+                              onClick={() =>
+                                update(i, { taxPct: String(l.product.taxRateBp / 100) })
+                              }
+                            >
+                              {t('purchases.applyVat', {
+                                rate: (l.product.taxRateBp / 100).toFixed(
+                                  l.product.taxRateBp % 100 ? 2 : 0,
+                                ),
+                              })}
+                            </Button>
+                          )}
+                        </div>
                       </td>
                       <td className="right num">{c.ok ? fmt.money(c.total + c.tax) : '—'}</td>
                       <td className="right">

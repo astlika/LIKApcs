@@ -16,6 +16,7 @@ import {
 } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, getToken } from '../lib/api';
 import { CashBookCard } from '../components/reports/CashBookCard';
+import { ProfitReportView } from '../components/reports/ProfitReportView';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -34,6 +35,8 @@ import {
 } from '../components/ui/primitives';
 
 type Preset = 'today' | 'yesterday' | 'week' | 'month' | 'lastMonth' | 'custom';
+/** The two halves of Reports: the sales picture, or profit & spending (0.21.0). */
+type ReportView = 'sales' | 'profit';
 
 function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -106,6 +109,7 @@ export function ReportsPage() {
   const [custom, setCustom] = useState(presetRange('today'));
   const [exportKind, setExportKind] = useState<ReportExportKind>('sales');
   const [exporting, setExporting] = useState(false);
+  const [view, setView] = useState<ReportView>('sales');
   const range = useMemo(
     () => (preset === 'custom' ? custom : presetRange(preset)),
     [preset, custom],
@@ -115,10 +119,10 @@ export function ReportsPage() {
   const report = useQuery({
     queryKey: ['reports', 'sales', range],
     queryFn: () => api<SalesReport>('/reports/sales', { query: range }),
-    enabled: valid,
+    enabled: valid && view === 'sales',
     placeholderData: (prev) => prev,
   });
-  const r = report.data;
+  const r = view === 'sales' ? report.data : undefined;
 
   const onExport = async () => {
     setExporting(true);
@@ -160,6 +164,16 @@ export function ReportsPage() {
         }
       />
       <div className="toolbar">
+        <Segmented<ReportView>
+          value={view}
+          onChange={setView}
+          ariaLabel={t('reports.viewLabel')}
+          testId="reports-view"
+          options={[
+            { value: 'sales', label: t('reports.view.sales') },
+            { value: 'profit', label: t('reports.view.profit') },
+          ]}
+        />
         <Segmented<Preset>
           value={preset}
           onChange={(p) => {
@@ -199,12 +213,13 @@ export function ReportsPage() {
         </label>
       </div>
       {!valid && <Alert tone="warning">{t('reports.invalidRange')}</Alert>}
-      {report.isLoading && <Loading />}
-      {report.isError && (
+      {view === 'sales' && report.isLoading && <Loading />}
+      {view === 'sales' && report.isError && (
         <Alert tone="danger">
           {report.error instanceof ApiError ? report.error.message : t('common.errorGeneric')}
         </Alert>
       )}
+      {view === 'profit' && valid && <ProfitReportView from={range.from} to={range.to} />}
       {r && (
         <div className="stack rep" style={{ gap: 24 }}>
           <ResultHero report={r} />

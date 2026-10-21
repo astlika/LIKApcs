@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Reports → "Profit & spending" (next to "Sales"): the profit and loss for any period, on the accrual basis. Revenue without VAT, the cost of the goods sold, operating expenses and stock losses (damaged, expired, missing, counted short, adjusted down), with the net profit and margins. Refunded goods that were not put back on the shelf count as a loss. Beside it: the money that actually moved (cash sales and drawer expenses, supplier payments, what is still owed to suppliers), the stock brought in (received from suppliers, opening stock, stock gains) and data checks for products or movements without a cost.
+- Reports → "Profit & spending" → spending register: every money-out and stock movement in the period, each tagged as profit (operating cost or stock loss), stock (held in inventory) or cash (paid to a supplier). Filter by type and effect. The CSV export "Spending register" has every row.
+- Products → Add/Edit product: the profit per piece is shown live under the price fields. It is the price without VAT minus the purchase cost, using the chosen VAT category (or the default one). The line says how much VAT is inside the price, or added at the till, and the margin. A cost of 0 shows a hint to enter the cost.
+
+### Changed
+
+- Purchases: products added to a purchase start at 0% VAT, so no VAT is added unless you choose it. Each line that has a product VAT rate shows an "Add VAT %" button that applies that rate to the line.
+
+### Fixed
+
+- Stock adjustments without a cost (for example a damaged bottle) are now valued at the product's average cost, not at zero, so losses and gains show their real value in the reports.
+
 ## [0.20.12] - 2026-10-21
 
 ### Added

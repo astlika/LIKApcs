@@ -768,9 +768,11 @@ export class CatalogService {
       const current = await client.query<{
         stock_milli: string | number;
         allow_negative_stock: boolean;
-      }>('SELECT stock_milli, allow_negative_stock FROM products WHERE id = $1 FOR UPDATE', [
-        productId,
-      ]);
+        average_cost_cents: string | number;
+      }>(
+        'SELECT stock_milli, allow_negative_stock, average_cost_cents FROM products WHERE id = $1 FOR UPDATE',
+        [productId],
+      );
       if (!current.rows[0]) throw notFound('Product');
       const stock = Number(current.rows[0].stock_milli);
       const delta =
@@ -780,7 +782,9 @@ export class CatalogService {
         productId,
         type: input.type,
         delta,
-        unitCostCents: input.unitCostCents ?? null,
+        // Without a cost given, the movement carries the product's average cost, so a loss or a
+        // gain is valued in the reports (losses at what the goods cost us, not zero).
+        unitCostCents: input.unitCostCents ?? Number(current.rows[0].average_cost_cents),
         reason: input.reason,
         referenceType: 'adjustment',
         referenceId: null,
