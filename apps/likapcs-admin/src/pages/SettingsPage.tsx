@@ -27,6 +27,7 @@ import {
   formatMoney,
   type SettingKey,
   type SettingsMap,
+  type FactoryResetResult,
   type SystemInfoResponse,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
@@ -36,10 +37,148 @@ import { useI18n } from '../i18n';
 import { LIKA_WEBSITE_URL } from '../lib/desktop';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+
+/**
+ * Owner-only "start over" button. Erases every business record, account, setting and uploaded file
+ * on this server after the server has taken a safety backup. Needs the signed-in username, the
+ * password and an explicit tick; on success the session is ended.
+ */
+function FactoryResetCard() {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { logout } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setOpen(false);
+    setPassword('');
+    setConfirmed(false);
+    setError(null);
+  };
+
+  const reset = useMutation({
+    mutationFn: () =>
+      api<FactoryResetResult>('/system/factory-reset', {
+        method: 'POST',
+        body: { username: username.trim(), password, confirm: true },
+      }),
+    onSuccess: async () => {
+      setPassword('');
+      toast.success(
+        t('settings.security.reset.doneTitle'),
+        t('settings.security.reset.doneMessage'),
+      );
+      queryClient.clear();
+      await logout();
+    },
+    onError: (err) => {
+      setPassword('');
+      if (err instanceof ApiError && err.code === 'USERNAME_MISMATCH') {
+        setError(t('settings.security.reset.wrongUsername'));
+      } else if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
+        setError(t('settings.security.reset.wrongPassword'));
+      } else {
+        setError(t('settings.security.reset.failed'));
+      }
+    },
+  });
+
+  const canSubmit = username.trim() !== '' && password !== '' && confirmed && !reset.isPending;
+
+  return (
+    <Card
+      title={t('settings.security.reset.title')}
+      subtitle={t('settings.security.reset.subtitle')}
+      testId="factory-reset-card"
+    >
+      <Alert tone="danger">{t('settings.security.reset.warning')}</Alert>
+      <div style={{ marginTop: 16 }}>
+        <Button variant="danger" onClick={() => setOpen(true)}>
+          {t('settings.security.reset.open')}
+        </Button>
+      </div>
+
+      <Dialog
+        open={open}
+        onClose={close}
+        locked={reset.isPending}
+        title={t('settings.security.reset.dialogTitle')}
+        description={t('settings.security.reset.dialogBody')}
+        size="sm"
+        footer={
+          <>
+            <Button onClick={close} disabled={reset.isPending}>
+              {t('settings.security.reset.cancel')}
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!canSubmit}
+              loading={reset.isPending}
+              onClick={() => reset.mutate()}
+            >
+              {t('settings.security.reset.submit')}
+            </Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <div className="span-2">
+            <Field
+              label={t('settings.security.reset.username')}
+              hint={t('settings.security.reset.usernameHint')}
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  value={username}
+                  autoComplete="username"
+                  autoFocus
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          <div className="span-2">
+            <Field label={t('settings.security.reset.password')}>
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  value={password}
+                  autoComplete="current-password"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          <div className="span-2">
+            <Checkbox
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+              label={t('settings.security.reset.confirm')}
+            />
+          </div>
+          {error && (
+            <div className="span-2">
+              <Alert tone="danger">{error}</Alert>
+            </div>
+          )}
+        </div>
+      </Dialog>
+    </Card>
+  );
+}
 import {
   Alert,
   Button,
   Card,
+  Checkbox,
+  Dialog,
   Field,
   Input,
   Loading,
@@ -104,7 +243,8 @@ const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'ALL', 'MKD', 'RSD', 'BAM', 'TRY
 
 export function SettingsPage() {
   const { t, language } = useI18n();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const isOwner = user?.roles.includes('owner') ?? false;
   const toast = useToast();
   const queryClient = useQueryClient();
   const canManage = can(PERMISSIONS.SETTINGS_MANAGE);
@@ -1141,26 +1281,34 @@ export function SettingsPage() {
       )}
 
       {tab === 'security' && (
-        <Card>
-          <div className="form-grid">
-            {number('security.session_hours', t('settings.security.sessionHours'), {
-              min: 1,
-              max: 168,
-            })}
-            {number('security.min_password_length', t('settings.security.minPassword'), {
-              min: 4,
-              max: 64,
-            })}
-            {number('security.max_failed_logins', t('settings.security.maxFailed'), {
-              min: 3,
-              max: 20,
-            })}
-            {number('security.lockout_minutes', t('settings.security.lockout'), {
-              min: 1,
-              max: 1440,
-            })}
-          </div>
-        </Card>
+        <>
+          <Card>
+            <div className="form-grid">
+              {number('security.session_hours', t('settings.security.sessionHours'), {
+                min: 1,
+                max: 168,
+              })}
+              {number('security.min_password_length', t('settings.security.minPassword'), {
+                min: 4,
+                max: 64,
+              })}
+              {number('security.max_failed_logins', t('settings.security.maxFailed'), {
+                min: 3,
+                max: 20,
+              })}
+              {number('security.lockout_minutes', t('settings.security.lockout'), {
+                min: 1,
+                max: 1440,
+              })}
+            </div>
+          </Card>
+          {isOwner && (
+            <>
+              <div style={{ height: 16 }} />
+              <FactoryResetCard />
+            </>
+          )}
+        </>
       )}
 
       {tab === 'system' && (

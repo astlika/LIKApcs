@@ -1588,6 +1588,30 @@ export const sq: Dictionary = {
       minPassword: 'Gjatësia minimale e fjalëkalimit',
       maxFailed: 'Blloko llogarinë pas hyrjeve të dështuara',
       lockout: 'Kohëzgjatja e bllokimit (minuta)',
+      reset: {
+        title: 'Rivendosja në fabrikë',
+        subtitle:
+          'Fshi gjithçka në këtë server dhe fillo nga e para. Para kësaj ruhet një kopje rezervë sigurie.',
+        warning:
+          'Kjo fshin të gjitha shitjet, stacionet, klientët, produktet, punonjësit, llogaritë, cilësimet dhe foto e video të ngarkuara. Aplikacioni nuk mund ta zhbëjë. Kopja rezervë e sigurisë mbetet në listën e kopjeve, prej nga mund ta rikthesh.',
+        open: 'Rivendosja në fabrikë…',
+        dialogTitle: 'Të fshihet gjithçka dhe të fillohet nga e para?',
+        dialogBody:
+          'Do të dilni nga llogaria. Herën tjetër që hapet serveri, do të shfaqet konfigurimi fillestar.',
+        username: 'Emri juaj i përdoruesit',
+        usernameHint: 'Shkruani emrin e përdoruesit të llogarisë me të cilën jeni futur.',
+        password: 'Fjalëkalimi juaj',
+        confirm:
+          'E kuptoj që të gjitha të dhënat do të fshihen. Para kësaj ruhet një kopje rezervë sigurie.',
+        submit: 'Fshi gjithçka',
+        cancel: 'Anulo',
+        wrongUsername: 'Emri i përdoruesit nuk përputhet me llogarinë e hyrë.',
+        wrongPassword: 'Fjalëkalimi nuk është i saktë.',
+        failed:
+          'Rivendosja nuk u përfundua. Kontrollo listën e kopjeve para se ta provosh përsëri.',
+        doneTitle: 'Rivendosja në fabrikë u krye',
+        doneMessage: 'Kopja rezervë e sigurisë u ruajt. Po dilni nga llogaria.',
+      },
     },
     system: {
       backupEnabled: 'Kopje rezervë automatike ditore',
@@ -2132,6 +2156,7 @@ export const sq: Dictionary = {
       pre_migration: 'Para përditësimit',
       pre_restore: 'Para rikthimit',
       pre_import: 'Para importit',
+      pre_reset: 'Para rivendosjes në fabrikë',
     },
     status: {
       running: 'Në proces',

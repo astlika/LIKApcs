@@ -11,9 +11,11 @@ import {
   type NetworkInfoResponse,
   type SetupStatusResponse,
   type SystemInfoResponse,
+  factoryResetSchema,
+  type FactoryResetResult,
 } from '@likapcs/shared';
 import crypto from 'node:crypto';
-import { conflict, forbidden, notFound } from '../errors.js';
+import { AppError, conflict, forbidden, notFound } from '../errors.js';
 import { lanAddresses } from '../discovery.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
@@ -77,6 +79,29 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     setTimeout(() => app.control.requestShutdown('control.stop'), 50);
     return reply.code(202).send({ stopping: true });
   });
+
+  /**
+   * Factory reset (Settings → Security). Owner only. The caller's own username and password are
+   * re-checked and `confirm: true` is required; the service takes a safety backup first.
+   */
+  app.post(
+    '/system/factory-reset',
+    { preHandler: app.requireAuth, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request): Promise<FactoryResetResult> => {
+      const body = factoryResetSchema.parse(request.body);
+      const auth = request.auth!;
+      if (body.username !== auth.user.username) {
+        throw new AppError(403, 'USERNAME_MISMATCH', 'The username is not the signed-in account');
+      }
+      const ok = await services.auth.confirmPassword(auth.user.id, body.password);
+      if (!ok) throw new AppError(403, 'PASSWORD_MISMATCH', 'The password is not correct');
+      return services.backups.factoryReset({
+        userId: auth.user.id,
+        username: auth.user.username,
+        ip: request.ip,
+      });
+    },
+  );
 
   app.get('/system/setup-status', async (): Promise<SetupStatusResponse> => {
     const [count, publicSettings] = await Promise.all([

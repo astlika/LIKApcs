@@ -35,6 +35,7 @@ import {
   type BackupStatus,
   type BackupSummary,
   type BackupsResponse,
+  type FactoryResetResult,
   type RestoreResult,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
@@ -62,6 +63,8 @@ export interface BackupServiceOptions {
   schemaVersion: () => number;
   /** Called after a successful restore (drop caches, notify Admins, disconnect clients). */
   afterRestore?: () => void;
+  /** Factory reset: erases uploaded pictures and videos (the backup folder is never touched). */
+  wipeUploads?: () => Promise<void>;
   log?: { info: (o: object, msg: string) => void; error: (o: object, msg: string) => void };
 }
 
@@ -72,6 +75,16 @@ const SKIP_ON_RESTORE = new Set(['schema_migrations']);
  * right now, not the files that existed when the archive was taken.
  */
 const PRESERVE_CURRENT = new Set(['backup_history']);
+/**
+ * Factory reset keeps the system's own configuration: migration bookkeeping, and the access roles
+ * and permission catalogue that first-run setup needs. Every other table is erased.
+ */
+const KEEP_ON_FACTORY_RESET = new Set([
+  'schema_migrations',
+  'roles',
+  'permissions',
+  'role_permissions',
+]);
 
 export class BackupService {
   private busy: 'backup' | 'restore' | null = null;
@@ -309,6 +322,97 @@ export class BackupService {
   }
 
   // ─── Restore ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Factory reset. A safety backup is taken first; then every table (except migration bookkeeping)
+   * and every uploaded picture/video is erased, users and settings included, so the system starts
+   * again at first-run setup. The backup history survives, with its links to the erased users
+   * cleared, so the safety backup stays listed. The backup folder is never touched.
+   */
+  async factoryReset(input: {
+    userId: string;
+    username: string;
+    ip: string;
+  }): Promise<FactoryResetResult> {
+    this.acquire('backup');
+    try {
+      const { rows: owners } = await this.pool.query(
+        `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = $1 AND r.code = 'owner'`,
+        [input.userId],
+      );
+      if (owners.length === 0) {
+        throw new AppError(403, 'FORBIDDEN', 'Only the owner can reset the system');
+      }
+      const safety = await this.runBackup('pre_reset', {
+        userId: input.userId,
+        label: input.username,
+        ip: input.ip,
+      });
+      const client = await this.pool.connect();
+      let tablesErased = 0;
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL lock_timeout = '60s'`);
+        const { rows: history } = await client.query<Record<string, unknown>>(
+          'SELECT * FROM backup_history',
+        );
+        const erasable = (await this.publicTables(client)).filter(
+          (t) => !KEEP_ON_FACTORY_RESET.has(t),
+        );
+        // Built-in rows (units, expense categories) carry `is_system`: they stay, user rows go.
+        const { rows: flagged } = await client.query<{ table_name: string }>(
+          `SELECT table_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND column_name = 'is_system'`,
+        );
+        const withFlag = new Set(flagged.map((r) => r.table_name));
+        const plain = erasable.filter((t) => !withFlag.has(t));
+        const builtIn = erasable.filter((t) => withFlag.has(t));
+        if (plain.length > 0) {
+          await client.query(`TRUNCATE ${plain.map(quoteIdent).join(', ')} RESTART IDENTITY`);
+        }
+        for (const t of builtIn) {
+          await client.query(`DELETE FROM ${quoteIdent(t)} WHERE is_system IS NOT TRUE`);
+        }
+        // Rows a fresh install starts with (same as migrations 0004, 0009).
+        await client.query(
+          `INSERT INTO cash_registers (name)
+           SELECT 'Main register' WHERE NOT EXISTS (SELECT 1 FROM cash_registers)`,
+        );
+        await client.query(
+          `INSERT INTO document_sequences (kind, period, prefix, next_value)
+           VALUES ('customer', '', 'C', 1) ON CONFLICT (kind, period) DO NOTHING`,
+        );
+        tablesErased = erasable.length;
+        for (const h of history) {
+          const row: Record<string, unknown> = { ...h, created_by: null };
+          const keys = Object.keys(row);
+          await client.query(
+            `INSERT INTO backup_history (${keys.map(quoteIdent).join(', ')})
+             VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')})
+             ON CONFLICT (id) DO NOTHING`,
+            keys.map((k) => row[k]),
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      await this.options.wipeUploads?.();
+      await this.settings.ensureDefaults();
+      this.options.afterRestore?.();
+      this.options.log?.info(
+        { preResetBackupId: safety.id, tablesErased },
+        'factory reset completed',
+      );
+      return { preResetBackupId: safety.id, tablesErased };
+    } finally {
+      this.busy = null;
+    }
+  }
 
   async restore(input: {
     id: string;

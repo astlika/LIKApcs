@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { CLIENT_DISPLAY_SETTING_KEYS, WS_CLOSE_CODES, type SettingsMap } from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
@@ -232,6 +233,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const purchasing = new PurchasingService(pool, cash);
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
+    wipeUploads: async () => {
+      for (const dir of ['wallpapers', 'products', 'videos']) {
+        const target = path.join(config.uploadDir, dir);
+        await fsp.rm(target, { recursive: true, force: true });
+        await fsp.mkdir(target, { recursive: true });
+      }
+    },
     afterRestore: () => {
       settings.invalidate();
       hub.broadcastToAdmins('system.restored', { at: new Date().toISOString() });

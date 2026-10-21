@@ -2357,6 +2357,7 @@ export const BACKUP_KINDS = [
   'pre_migration',
   'pre_restore',
   'pre_import',
+  'pre_reset',
 ] as const;
 export type BackupKind = (typeof BACKUP_KINDS)[number];
 export const BACKUP_STATUSES = ['running', 'succeeded', 'failed', 'deleted'] as const;
@@ -2415,6 +2416,23 @@ export const restoreBackupSchema = z.object({
   confirm: z.literal(true),
 });
 export type RestoreBackupRequest = z.infer<typeof restoreBackupSchema>;
+
+/**
+ * Factory reset: erases every business record, user, setting and uploaded picture or video after a
+ * safety backup. Needs the signed-in owner's own username and password, and an explicit `confirm`.
+ */
+export const factoryResetSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(1).max(200),
+  confirm: z.literal(true),
+});
+export type FactoryResetRequest = z.infer<typeof factoryResetSchema>;
+
+export interface FactoryResetResult {
+  /** The safety backup taken immediately before the erase (it stays in the backup list). */
+  preResetBackupId: string;
+  tablesErased: number;
+}
 
 export interface RestoreResult {
   backupId: string;

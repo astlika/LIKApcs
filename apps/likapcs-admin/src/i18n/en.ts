@@ -1578,6 +1578,27 @@ export const en = {
       minPassword: 'Minimum password length',
       maxFailed: 'Lock account after failed sign-ins',
       lockout: 'Lockout duration (minutes)',
+      reset: {
+        title: 'Factory reset',
+        subtitle: 'Erase everything on this server and start over. A safety backup is saved first.',
+        warning:
+          'This erases all sales, stations, customers, products, employees, accounts, settings and uploaded pictures and videos. The app cannot undo it. The safety backup stays in the backup list, where you can restore it.',
+        open: 'Factory reset…',
+        dialogTitle: 'Erase everything and start over?',
+        dialogBody:
+          'You will be signed out. The next time the server opens, it will show the first-run setup again.',
+        username: 'Your username',
+        usernameHint: 'Type the username of the account you are signed in with.',
+        password: 'Your password',
+        confirm: 'I understand that all data will be erased. A safety backup is saved before that.',
+        submit: 'Erase everything',
+        cancel: 'Cancel',
+        wrongUsername: 'The username does not match the signed-in account.',
+        wrongPassword: 'The password is not correct.',
+        failed: 'The reset did not finish. Check the backup list before you try again.',
+        doneTitle: 'Factory reset complete',
+        doneMessage: 'A safety backup was saved. Signing you out.',
+      },
     },
     system: {
       backupEnabled: 'Automatic daily backup',
@@ -2122,6 +2143,7 @@ export const en = {
       pre_migration: 'Before update',
       pre_restore: 'Before restore',
       pre_import: 'Before import',
+      pre_reset: 'Before factory reset',
     },
     status: {
       running: 'Running',
