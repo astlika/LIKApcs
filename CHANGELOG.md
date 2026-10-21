@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.12] - 2026-10-21
+
+### Added
+
+- Settings → Security: "Factory reset" for the owner account only. It asks for the signed-in username, the password and a tick box. Before anything is erased, the server saves a safety backup (type "Before factory reset", kept in the backup list and restorable there). Then it erases all records, accounts, settings, the audit log, sessions and uploaded pictures and videos, and the system asks for first-run setup again. The access roles, permissions and built-in units stay, so setup works straight away. The signed-in session ends.
+
 ## [0.20.11] - 2026-10-21
 
 ### Added
