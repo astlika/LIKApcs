@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-21
+
 ### Added
 
 - Unit prices and costs with three decimals: a product's selling price and cost, and the unit cost of a purchase line or stock adjustment, accept up to 3 decimals (e.g. 0.125 €). They are stored exactly in mills (thousandths of €); the cent columns are the same value rounded.
