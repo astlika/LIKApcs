@@ -56,6 +56,7 @@ import {
   SaleMathError,
   settlePayments,
 } from '@likapcs/shared';
+import { millsToCents, multiplyMillsByQuantity } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -148,6 +149,8 @@ export interface OrderLineForSale {
   trackStock: boolean;
   allowNegative: boolean;
   unitCostCents: number;
+  /** Exact unit cost in mills (thousandths of €). */
+  unitCostMills: number;
 }
 export interface SessionOrdersHook {
   /** Locks and returns the lines of the session's accepted "on the bill" orders. */
@@ -2146,7 +2149,7 @@ export class SessionsService {
           rateBp,
           splitInclusiveTax(line.lineTotalCents, rateBp).tax,
           line.lineTotalCents,
-          Math.round((line.unitCostCents * line.quantityMilli) / 1000),
+          multiplyMillsByQuantity(line.unitCostMills, line.quantityMilli),
         ],
       );
     }
@@ -2163,7 +2166,8 @@ export class SessionsService {
         productId,
         type: 'sale',
         delta: -line.qty,
-        unitCostCents: line.unitCostCents,
+        unitCostCents: millsToCents(line.unitCostMills),
+        unitCostMills: line.unitCostMills,
         reason: null,
         referenceType: 'sale',
         referenceId: saleId,

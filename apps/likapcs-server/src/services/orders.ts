@@ -30,6 +30,7 @@ import {
   ORDER_MAX_QUANTITY,
 } from '@likapcs/shared';
 import type { ServerOrderUpdate } from '@likapcs/shared';
+import { millsToCents } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -165,6 +166,8 @@ interface MenuProductRow {
   allow_negative_stock: boolean;
   average_cost_cents: string | number;
   purchase_cost_cents: string | number;
+  average_cost_mills: string | number;
+  purchase_cost_mills: string | number;
   is_active: boolean;
   client_menu: boolean;
 }
@@ -172,7 +175,8 @@ interface MenuProductRow {
 const MENU_SELECT = `
   SELECT p.id, p.name, p.category_id, c.name AS category_name, c.color AS category_color, p.selling_price_cents,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents, p.image_path, p.stock_milli, p.track_stock,
-         p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents, p.is_active, p.client_menu
+         p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents, p.average_cost_mills, p.purchase_cost_mills,
+                p.is_active, p.client_menu
     FROM products p LEFT JOIN categories c ON c.id = p.category_id`;
 
 const available = (p: MenuProductRow) =>
@@ -595,9 +599,12 @@ export class OrdersService implements SessionOrdersHook {
       allow_negative_stock: boolean;
       average_cost_cents: string | number;
       purchase_cost_cents: string | number;
+      average_cost_mills: string | number;
+      purchase_cost_mills: string | number;
     }>(
       `SELECT i.order_id, i.product_id, i.name, i.quantity_milli, i.unit_price_cents, i.line_total_cents,
-              p.track_stock, p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents
+              p.track_stock, p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents,
+              p.average_cost_mills, p.purchase_cost_mills
          FROM station_orders o
          JOIN station_order_items i ON i.order_id = o.id
          JOIN products p ON p.id = i.product_id
@@ -615,7 +622,8 @@ export class OrdersService implements SessionOrdersHook {
       lineTotalCents: Number(l.line_total_cents),
       trackStock: l.track_stock,
       allowNegative: l.allow_negative_stock,
-      unitCostCents: Number(l.average_cost_cents) || Number(l.purchase_cost_cents),
+      unitCostCents: millsToCents(Number(l.average_cost_mills) || Number(l.purchase_cost_mills)),
+      unitCostMills: Number(l.average_cost_mills) || Number(l.purchase_cost_mills),
     }));
   }
 

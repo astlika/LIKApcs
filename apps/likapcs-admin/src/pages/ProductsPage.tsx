@@ -19,7 +19,9 @@ import {
 import {
   PERMISSIONS,
   STOCK_ADJUSTMENT_TYPES,
-  parseMoneyInput,
+  formatUnitMoneyInput,
+  millsToCents,
+  parseUnitMoneyInput,
   type CategorySummary,
   type InventoryMovementSummary,
   type ProductBarcodeInput,
@@ -267,9 +269,9 @@ export function ProductsPage() {
                       <span className="faint">—</span>
                     )}
                   </td>
-                  <td className="right num">{fmt.money(p.sellingPriceCents)}</td>
+                  <td className="right num">{fmt.unitMoney(p.sellingPriceMills)}</td>
                   <td className="right num faint">
-                    {fmt.money(p.averageCostCents || p.purchaseCostCents)}
+                    {fmt.unitMoney(p.averageCostMills || p.purchaseCostMills)}
                   </td>
                   <td className="right num">
                     {p.trackStock ? (
@@ -400,8 +402,8 @@ function formFrom(p: ProductSummary | null): ProductForm {
     brand: p?.brand ?? '',
     taxCategoryId: p?.taxCategoryId ?? '',
     unitCode: p?.unitCode ?? 'pc',
-    price: p ? (p.sellingPriceCents / 100).toFixed(2) : '',
-    cost: p ? (p.purchaseCostCents / 100).toFixed(2) : '',
+    price: p ? formatUnitMoneyInput(p.sellingPriceMills) : '',
+    cost: p ? formatUnitMoneyInput(p.purchaseCostMills) : '',
     priceIncludesTax: p?.priceIncludesTax ?? true,
     minStock: p ? qty(p.minStockMilli) : '0',
     trackStock: p?.trackStock ?? true,
@@ -490,15 +492,19 @@ function ProductDialog({
     void queryClient.invalidateQueries({ queryKey: ['products'] });
     void queryClient.invalidateQueries({ queryKey: ['catalog'] });
   };
-  const priceCents = parseMoneyInput(form.price);
-  const costCents = form.cost.trim() ? parseMoneyInput(form.cost) : 0;
+  // Unit prices and costs are exact to 3 decimals (mills). The till charges whole cents, so the
+  // live profit preview uses the cents the sale will actually use.
+  const priceMills = parseUnitMoneyInput(form.price);
+  const costMills = form.cost.trim() ? parseUnitMoneyInput(form.cost) : 0;
+  const priceCents = priceMills === null ? null : millsToCents(priceMills);
+  const costCents = costMills === null ? null : millsToCents(costMills);
   // Live profit per piece. The tax rate is the chosen category, or the default one when none is chosen.
   const selectedTax =
     (taxCategories.data ?? []).find((c) => c.id === form.taxCategoryId) ??
     (taxCategories.data ?? []).find((c) => c.isDefault);
   const taxRateBp = selectedTax?.rateBp ?? 0;
   const profit =
-    priceCents !== null && costCents !== null && priceCents > 0
+    priceCents !== null && costCents !== null && priceMills !== null && priceMills > 0
       ? unitProfit({
           priceCents,
           costCents,
@@ -511,7 +517,7 @@ function ProductDialog({
 
   const save = useMutation({
     mutationFn: async () => {
-      if (priceCents === null || costCents === null || minStockMilli === null)
+      if (priceMills === null || costMills === null || minStockMilli === null)
         throw new Error('invalid');
       const base = {
         name: form.name.trim(),
@@ -519,8 +525,10 @@ function ProductDialog({
         brand: form.brand.trim() || null,
         taxCategoryId: form.taxCategoryId || null,
         unitCode: form.unitCode.trim() || 'pc',
-        purchaseCostCents: costCents,
-        sellingPriceCents: priceCents,
+        purchaseCostCents: millsToCents(costMills),
+        purchaseCostMills: costMills,
+        sellingPriceCents: millsToCents(priceMills),
+        sellingPriceMills: priceMills,
         priceIncludesTax: form.priceIncludesTax,
         minStockMilli,
         allowNegativeStock: form.allowNegativeStock,
@@ -635,8 +643,8 @@ function ProductDialog({
   const fe = (field: string) => fieldError(error, field);
   const valid =
     form.name.trim().length > 0 &&
-    priceCents !== null &&
-    costCents !== null &&
+    priceMills !== null &&
+    costMills !== null &&
     minStockMilli !== null;
 
   return (
@@ -726,7 +734,7 @@ function ProductDialog({
             label={t('products.price')}
             error={
               fe('sellingPriceCents') ??
-              (form.price && priceCents === null ? t('common.invalid') : undefined)
+              (form.price && priceMills === null ? t('common.invalid') : undefined)
             }
           >
             {(id, invalid) => (
@@ -742,7 +750,7 @@ function ProductDialog({
           </Field>
           <Field
             label={t('products.cost')}
-            error={form.cost && costCents === null ? t('common.invalid') : undefined}
+            error={form.cost && costMills === null ? t('common.invalid') : undefined}
             optional
           >
             {(id, invalid) => (
@@ -830,7 +838,7 @@ function ProductDialog({
               {profit.marginBp !== null &&
                 ` · ${t('products.profitPreview.margin', { percent: (profit.marginBp / 100).toFixed(1) })}`}
             </div>
-            {costCents === 0 && (
+            {costMills === 0 && (
               <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>
                 {t('products.profitPreview.noCost')}
               </div>
@@ -1075,12 +1083,12 @@ function StockAdjustDialog({ product, onClose }: { product: ProductSummary; onCl
   const [cost, setCost] = useState('');
 
   const amountMilli = toMilli(amount);
-  const costCents = cost.trim() ? parseMoneyInput(cost) : null;
+  const costMills = cost.trim() ? parseUnitMoneyInput(cost) : null;
   const projected =
     mode === 'count' ? amountMilli : amountMilli === null ? null : product.stockMilli + amountMilli;
   const amountOk =
     amountMilli !== null && (mode === 'delta' ? amountMilli !== 0 : amountMilli >= 0);
-  const costOk = !cost.trim() || costCents !== null;
+  const costOk = !cost.trim() || costMills !== null;
   const valid = amountOk && costOk && reason.trim().length >= 2;
 
   const adjust = useMutation({
@@ -1093,7 +1101,8 @@ function StockAdjustDialog({ product, onClose }: { product: ProductSummary; onCl
             ? { newStockMilli: amountMilli }
             : { quantityMilliDelta: amountMilli }),
           reason: reason.trim(),
-          unitCostCents: costCents ?? undefined,
+          unitCostCents: costMills === null ? undefined : millsToCents(costMills),
+          unitCostMills: costMills ?? undefined,
         },
       }),
     onSuccess: () => {

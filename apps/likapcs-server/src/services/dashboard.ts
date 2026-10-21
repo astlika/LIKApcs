@@ -62,7 +62,7 @@ export class DashboardService {
         params,
       ),
       this.pool.query<{ total: number }>(
-        `SELECT COALESCE(SUM(pri.quantity_milli * pri.unit_cost_cents / 1000), 0)::bigint AS total
+        `SELECT COALESCE(SUM(ROUND(pri.quantity_milli::numeric * pri.unit_cost_mills / 10000)), 0)::bigint AS total
              FROM purchase_receipt_items pri JOIN purchase_receipts pr ON pr.id = pri.receipt_id
             WHERE pr.received_at >= ($1::date)::timestamp AT TIME ZONE $2
               AND pr.received_at <  ($1::date + 1)::timestamp AT TIME ZONE $2`,

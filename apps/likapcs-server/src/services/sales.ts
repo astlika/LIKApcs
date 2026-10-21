@@ -32,6 +32,7 @@ import {
   type SuspendSaleRequest,
   type ClaimPin,
 } from '@likapcs/shared';
+import { millsToCents, multiplyMillsByQuantity } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -145,6 +146,8 @@ interface ProductForSale {
   price_includes_tax: boolean;
   average_cost_cents: string | number;
   purchase_cost_cents: string | number;
+  average_cost_mills: string | number;
+  purchase_cost_mills: string | number;
   track_stock: boolean;
   allow_negative_stock: boolean;
   is_active: boolean;
@@ -795,6 +798,7 @@ export class SalesService {
     const unique = [...new Set(ids)].sort();
     const r = await client.query<ProductForSale>(
       `SELECT p.id, p.name, p.sku, p.selling_price_cents, p.price_includes_tax, p.average_cost_cents, p.purchase_cost_cents,
+             p.average_cost_mills, p.purchase_cost_mills,
               p.track_stock, p.allow_negative_stock, p.is_active, tc.rate_bp AS tax_rate_bp,
               ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents
          FROM products p LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
@@ -942,7 +946,8 @@ export class SalesService {
       const time = timeLines.get(i);
       // Off-inventory and PC-time lines book no product and no cost: their margin is the whole price.
       const p = 'productId' in item ? products.get(item.productId)! : null;
-      const unitCost = p ? Number(p.average_cost_cents) || Number(p.purchase_cost_cents) : 0;
+      // Unit cost in mills; the sale's cost is the line's cost in mills, rounded to the cent.
+      const unitCostMills = p ? Number(p.average_cost_mills) || Number(p.purchase_cost_mills) : 0;
       const extras = p && 'addonIds' in item ? resolveAddons(p, item.addonIds) : [];
       const description = time
         ? time.stationCode
@@ -966,7 +971,7 @@ export class SalesService {
           line.taxRateBp,
           line.taxCents,
           line.lineTotalCents,
-          Math.round((unitCost * line.quantityMilli) / 1000),
+          multiplyMillsByQuantity(unitCostMills, line.quantityMilli),
           JSON.stringify(extras),
         ],
       );
@@ -1115,7 +1120,8 @@ export class SalesService {
         productId,
         type: 'sale',
         delta: -qty,
-        unitCostCents: Number(p.average_cost_cents) || Number(p.purchase_cost_cents),
+        unitCostCents: millsToCents(Number(p.average_cost_mills) || Number(p.purchase_cost_mills)),
+        unitCostMills: Number(p.average_cost_mills) || Number(p.purchase_cost_mills),
         reason: null,
         referenceType: 'sale',
         referenceId: saleId,

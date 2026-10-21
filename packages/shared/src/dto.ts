@@ -1053,6 +1053,12 @@ export const productSchema = z.object({
   unitCode: z.string().trim().min(1).max(16).default('pc'),
   purchaseCostCents: z.number().int().min(0).max(100_000_000).default(0),
   sellingPriceCents: z.number().int().min(0).max(100_000_000),
+  /**
+   * Exact unit values in mills (thousandths of €, 0.125 € = 125). When sent, they win and the
+   * cent fields are derived from them; sales still charge whole cents.
+   */
+  purchaseCostMills: z.number().int().min(0).max(10_000_000_000).optional(),
+  sellingPriceMills: z.number().int().min(0).max(10_000_000_000).optional(),
   priceIncludesTax: z.boolean().default(true),
   minStockMilli: z.number().int().min(0).max(1_000_000_000).default(0),
   allowNegativeStock: z.boolean().default(false),
@@ -1099,6 +1105,10 @@ export interface ProductSummary {
   purchaseCostCents: number;
   averageCostCents: number;
   sellingPriceCents: number;
+  /** The same unit values in mills (thousandths of €). The cent fields are these, rounded. */
+  purchaseCostMills: number;
+  averageCostMills: number;
+  sellingPriceMills: number;
   /**
    * Price the POS charges right now when a product ad with a promo is live (always below
    * `sellingPriceCents`), otherwise null. Derived by the server — never sent by the POS.
@@ -1178,6 +1188,8 @@ export const stockAdjustmentSchema = z
     newStockMilli: z.number().int().min(0).optional(),
     reason: z.string().trim().min(2).max(200),
     unitCostCents: z.number().int().min(0).max(100_000_000).optional(),
+    /** Exact unit cost in mills; wins over `unitCostCents`. */
+    unitCostMills: z.number().int().min(0).max(10_000_000_000).optional(),
   })
   .refine((v) => (v.quantityMilliDelta === undefined) !== (v.newStockMilli === undefined), {
     message: 'Provide quantityMilliDelta or newStockMilli',
@@ -1194,6 +1206,8 @@ export interface InventoryMovementSummary {
   quantityMilliDelta: number;
   stockAfterMilli: number;
   unitCostCents: number | null;
+  /** Exact unit cost in mills (thousandths of €); null when the movement has no cost. */
+  unitCostMills?: number | null;
   reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
@@ -2311,6 +2325,8 @@ export const purchaseItemInputSchema = z.object({
   productId: uuidSchema,
   quantityMilli: z.number().int().positive(),
   unitCostCents: z.number().int().min(0),
+  /** Exact unit cost in mills (0.125 € = 125); wins over `unitCostCents` when sent. */
+  unitCostMills: z.number().int().min(0).max(10_000_000_000).optional(),
   /** Supplier VAT on top of the unit cost; informational for the cost price. */
   taxRateBp: z.number().int().min(0).max(10_000).default(0),
 });
@@ -2398,6 +2414,7 @@ export interface PurchaseItemSummary {
   quantityReceivedMilli: number;
   quantityReturnedMilli: number;
   unitCostCents: number;
+  unitCostMills: number;
   taxRateBp: number;
   lineTotalCents: number;
 }
@@ -2408,7 +2425,12 @@ export interface PurchaseReceiptSummary {
   receivedByName: string | null;
   deliveryNoteNo: string | null;
   notes: string | null;
-  items: { purchaseItemId: number; quantityMilli: number; unitCostCents: number }[];
+  items: {
+    purchaseItemId: number;
+    quantityMilli: number;
+    unitCostCents: number;
+    unitCostMills?: number;
+  }[];
 }
 
 export interface PurchasePaymentSummary {

@@ -171,8 +171,11 @@ describe('suppliers & purchases', () => {
     expect(rest.body.status).toBe('received');
     expect(rest.body.items[0]!.quantityReceivedMilli).toBe(10_000);
     expect((await product(chips.id)).stockMilli).toBe(30_000);
-    // Average: (20 × 50 + 4 × 40) / 24 = 48.33 → 48, then (24 × 48 + 6 × 40) / 30 = 46.4 → 46
-    expect((await product(chips.id)).averageCostCents).toBe(46);
+    // Average in mills (1 cent = 10 mills; each step rounds to the mill): 50 c = 500, 40 c = 400.
+    // (20 × 500 + 4 × 400) / 24 = 483.33 → 483, then (24 × 483 + 6 × 400) / 30 = 466.4 → 466 mills.
+    // The cent column is the same value rounded: 46.6 → 47 cents.
+    expect((await product(chips.id)).averageCostMills).toBe(466);
+    expect((await product(chips.id)).averageCostCents).toBe(47);
     expect((await call(owner.token, 'POST', `/purchases/${p.id}/receive`, {})).status).toBe(409);
 
     const s = await call<SupplierSummary>(owner.token, 'GET', `/suppliers/${supplier.id}`);

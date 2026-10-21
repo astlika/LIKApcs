@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Unit prices and costs with three decimals: a product's selling price and cost, and the unit cost of a purchase line or stock adjustment, accept up to 3 decimals (e.g. 0.125 €). They are stored exactly in mills (thousandths of €); the cent columns are the same value rounded.
+- Migration `0045` adds the mills columns (`products.selling_price_mills`, `purchase_cost_mills`, `average_cost_mills`; `purchase_items`, `purchase_receipt_items` and `inventory_movements` get `unit_cost_mills`). Existing values are backfilled as cents × 10.
+
+### Changed
+
+- Sales still charge whole cents: a 0.125 € price is charged as 0.13 €, and the cost of a sold piece is booked as 13 cents. The sale line cost is `average cost (mills) × quantity`, rounded to the cent.
+- Weighted average cost is computed in mills, so it no longer rounds to the cent at every purchase.
+- Purchase lines are priced in mills; a purchase of 10 pcs at 0.125 € totals 1.25 €.
+
 ## [0.21.0] - 2026-10-21
 
 ### Added

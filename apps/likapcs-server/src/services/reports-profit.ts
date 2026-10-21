@@ -63,7 +63,7 @@ rows AS (
   UNION ALL
   SELECT pr.received_at, 'stock_received', 'stock',
          pd.name::text, sup.name::text, NULL::text,
-         ROUND(pri.quantity_milli::numeric * pri.unit_cost_cents / 1000)::bigint, pu.id::text
+         ROUND(pri.quantity_milli::numeric * pri.unit_cost_mills / 10000)::bigint, pu.id::text
     FROM purchase_receipt_items pri
     JOIN purchase_receipts pr ON pr.id = pri.receipt_id
     JOIN purchase_items pi ON pi.id = pri.purchase_item_id
@@ -75,14 +75,14 @@ rows AS (
   SELECT m.created_at,
          CASE WHEN m.movement_type = 'initial' THEN 'stock_opening' ELSE 'stock_added' END, 'stock',
          pd.name::text, m.reason::text, NULL::text,
-         ROUND(m.quantity_milli_delta::numeric * COALESCE(m.unit_cost_cents, 0) / 1000)::bigint, m.id::text
+         ROUND(m.quantity_milli_delta::numeric * COALESCE(m.unit_cost_mills, 0) / 10000)::bigint, m.id::text
     FROM inventory_movements m JOIN products pd ON pd.id = m.product_id
    WHERE m.quantity_milli_delta > 0 AND m.movement_type IN ('initial', 'adjustment', 'stock_count')
      AND ${inRange('m.created_at')}
   UNION ALL
   SELECT m.created_at, 'stock_loss', 'profit',
          pd.name::text, m.reason::text, m.movement_type::text,
-         ROUND(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_cents, 0) / 1000)::bigint, m.id::text
+         ROUND(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_mills, 0) / 10000)::bigint, m.id::text
     FROM inventory_movements m JOIN products pd ON pd.id = m.product_id
    WHERE m.quantity_milli_delta < 0
      AND m.movement_type IN ('damaged', 'expired', 'missing', 'stock_count', 'adjustment')
@@ -170,23 +170,23 @@ export async function profitReport(
       ),
       q<{ key: string; n: string; amount: string; no_cost: string }>(
         `SELECT m.movement_type AS key, count(*)::text AS n,
-                COALESCE(ROUND(SUM(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_cents, 0) / 1000)), 0)::bigint::text AS amount,
-                COUNT(*) FILTER (WHERE m.unit_cost_cents IS NULL)::text AS no_cost
+                COALESCE(ROUND(SUM(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_mills, 0) / 10000)), 0)::bigint::text AS amount,
+                COUNT(*) FILTER (WHERE m.unit_cost_mills IS NULL)::text AS no_cost
            FROM inventory_movements m
           WHERE m.quantity_milli_delta < 0
             AND m.movement_type IN ('damaged', 'expired', 'missing', 'stock_count', 'adjustment')
             AND ${inRange('m.created_at')}
           GROUP BY m.movement_type
-          ORDER BY SUM(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_cents, 0)) DESC`,
+          ORDER BY SUM(ABS(m.quantity_milli_delta)::numeric * COALESCE(m.unit_cost_mills, 0)) DESC`,
       ),
       q<{ amount: string }>(
-        `SELECT COALESCE(ROUND(SUM(pri.quantity_milli::numeric * pri.unit_cost_cents / 1000)), 0)::bigint::text AS amount
+        `SELECT COALESCE(ROUND(SUM(pri.quantity_milli::numeric * pri.unit_cost_mills / 10000)), 0)::bigint::text AS amount
            FROM purchase_receipt_items pri JOIN purchase_receipts pr ON pr.id = pri.receipt_id
           WHERE ${inRange('pr.received_at')}`,
       ),
       q<{ key: string; amount: string }>(
         `SELECT m.movement_type AS key,
-                COALESCE(ROUND(SUM(m.quantity_milli_delta::numeric * COALESCE(m.unit_cost_cents, 0) / 1000)), 0)::bigint::text AS amount
+                COALESCE(ROUND(SUM(m.quantity_milli_delta::numeric * COALESCE(m.unit_cost_mills, 0) / 10000)), 0)::bigint::text AS amount
            FROM inventory_movements m
           WHERE m.quantity_milli_delta > 0 AND m.movement_type IN ('initial', 'adjustment', 'stock_count')
             AND ${inRange('m.created_at')}
@@ -214,7 +214,7 @@ export async function profitReport(
       q<{ n: string }>(
         `SELECT count(*)::text AS n FROM products pr
           WHERE pr.track_stock AND pr.stock_milli > 0
-            AND pr.average_cost_cents = 0 AND pr.purchase_cost_cents = 0`,
+            AND pr.average_cost_mills = 0 AND pr.purchase_cost_mills = 0`,
         [],
       ),
     ]);

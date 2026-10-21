@@ -19,6 +19,12 @@ import type {
   UpdateProductInput,
 } from '@likapcs/shared';
 import { productListQuerySchema } from '@likapcs/shared';
+import { millsToCents } from '@likapcs/shared';
+
+/** Exact unit value in mills: the given mills, or the cents × 10 when only cents are sent. */
+export function unitMills(cents: number, mills?: number | null): number {
+  return mills ?? cents * 10;
+}
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
@@ -44,6 +50,9 @@ interface ProductRow {
   purchase_cost_cents: string | number;
   average_cost_cents: string | number;
   selling_price_cents: string | number;
+  purchase_cost_mills: string | number;
+  average_cost_mills: string | number;
+  selling_price_mills: string | number;
   price_includes_tax: boolean;
   stock_milli: string | number;
   min_stock_milli: string | number;
@@ -71,6 +80,7 @@ const PRODUCT_SELECT = `
          p.supplier_id, p.tax_category_id, tc.rate_bp AS tax_rate_bp, p.unit_code,
          COALESCE(u.is_decimal, false) AS unit_is_decimal,
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
+         p.purchase_cost_mills, p.average_cost_mills, p.selling_price_mills,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
          p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
          p.parent_id, pp.name AS parent_name, p.variant_label,
@@ -265,6 +275,9 @@ export class CatalogService {
       purchaseCostCents: Number(row.purchase_cost_cents),
       averageCostCents: Number(row.average_cost_cents),
       sellingPriceCents: Number(row.selling_price_cents),
+      purchaseCostMills: Number(row.purchase_cost_mills),
+      averageCostMills: Number(row.average_cost_mills),
+      sellingPriceMills: Number(row.selling_price_mills),
       promoPriceCents: row.promo_price_cents === null ? null : Number(row.promo_price_cents),
       priceIncludesTax: row.price_includes_tax,
       stockMilli: stock,
@@ -412,6 +425,10 @@ export class CatalogService {
   }
 
   async createProduct(input: ProductInput, actor: AuditActor): Promise<ProductSummary> {
+    const purchaseMills = unitMills(input.purchaseCostCents, input.purchaseCostMills);
+    const sellingMills = unitMills(input.sellingPriceCents, input.sellingPriceMills);
+    const purchaseCents = millsToCents(purchaseMills);
+    const sellingCents = millsToCents(sellingMills);
     return withTransaction(this.pool, async (client) => {
       await checkVariant(client, null, input.parentId, input.variantLabel);
       const sku = input.sku?.trim() || (await nextSku(client));
@@ -420,8 +437,10 @@ export class CatalogService {
           `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
                                  average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
                                  allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
-                                 client_menu, parent_id, variant_label)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
+                                 client_menu, parent_id, variant_label,
+                                 purchase_cost_mills, average_cost_mills, selling_price_mills)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                   $21, $21, $22) RETURNING id`,
           [
             input.name,
             sku,
@@ -430,8 +449,8 @@ export class CatalogService {
             input.supplierId,
             input.taxCategoryId,
             input.unitCode,
-            input.purchaseCostCents,
-            input.sellingPriceCents,
+            purchaseCents,
+            sellingCents,
             input.priceIncludesTax,
             input.minStockMilli,
             input.allowNegativeStock,
@@ -443,6 +462,8 @@ export class CatalogService {
             input.clientMenu,
             input.parentId,
             input.variantLabel,
+            purchaseMills,
+            sellingMills,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -463,7 +484,8 @@ export class CatalogService {
           productId: id,
           type: 'initial',
           delta: input.initialStockMilli,
-          unitCostCents: input.purchaseCostCents,
+          unitCostCents: purchaseCents,
+          unitCostMills: purchaseMills,
           reason: 'Opening stock',
           referenceType: 'product',
           referenceId: id,
@@ -496,6 +518,8 @@ export class CatalogService {
       unitCode: 'unit_code',
       purchaseCostCents: 'purchase_cost_cents',
       sellingPriceCents: 'selling_price_cents',
+      purchaseCostMills: 'purchase_cost_mills',
+      sellingPriceMills: 'selling_price_mills',
       priceIncludesTax: 'price_includes_tax',
       minStockMilli: 'min_stock_milli',
       allowNegativeStock: 'allow_negative_stock',
@@ -507,6 +531,15 @@ export class CatalogService {
       parentId: 'parent_id',
       variantLabel: 'variant_label',
     };
+    // Mills win over cents. Sending a price in mills also sets its cent column (rounded).
+    if (patch.purchaseCostMills !== undefined || patch.purchaseCostCents !== undefined) {
+      const mills = unitMills(patch.purchaseCostCents ?? 0, patch.purchaseCostMills);
+      patch = { ...patch, purchaseCostMills: mills, purchaseCostCents: millsToCents(mills) };
+    }
+    if (patch.sellingPriceMills !== undefined || patch.sellingPriceCents !== undefined) {
+      const mills = unitMills(patch.sellingPriceCents ?? 0, patch.sellingPriceMills);
+      patch = { ...patch, sellingPriceMills: mills, sellingPriceCents: millsToCents(mills) };
+    }
     return withTransaction(this.pool, async (client) => {
       if ('parentId' in patch || 'variantLabel' in patch) {
         const current = await client.query<{
@@ -768,9 +801,9 @@ export class CatalogService {
       const current = await client.query<{
         stock_milli: string | number;
         allow_negative_stock: boolean;
-        average_cost_cents: string | number;
+        average_cost_mills: string | number;
       }>(
-        'SELECT stock_milli, allow_negative_stock, average_cost_cents FROM products WHERE id = $1 FOR UPDATE',
+        'SELECT stock_milli, allow_negative_stock, average_cost_mills FROM products WHERE id = $1 FOR UPDATE',
         [productId],
       );
       if (!current.rows[0]) throw notFound('Product');
@@ -778,13 +811,19 @@ export class CatalogService {
       const delta =
         input.newStockMilli !== undefined ? input.newStockMilli - stock : input.quantityMilliDelta!;
       if (delta === 0) throw badRequest('The adjustment does not change the stock');
+      const adjustCostMills =
+        input.unitCostMills ??
+        (input.unitCostCents !== undefined
+          ? input.unitCostCents * 10
+          : Number(current.rows[0].average_cost_mills));
       await applyMovement(client, {
         productId,
         type: input.type,
         delta,
         // Without a cost given, the movement carries the product's average cost, so a loss or a
         // gain is valued in the reports (losses at what the goods cost us, not zero).
-        unitCostCents: input.unitCostCents ?? Number(current.rows[0].average_cost_cents),
+        unitCostCents: millsToCents(adjustCostMills),
+        unitCostMills: adjustCostMills,
         reason: input.reason,
         referenceType: 'adjustment',
         referenceId: null,
@@ -848,6 +887,7 @@ export class CatalogService {
       quantity_milli_delta: string;
       stock_after_milli: string;
       unit_cost_cents: string | null;
+      unit_cost_mills: string | null;
       reason: string | null;
       reference_type: string | null;
       reference_id: string | null;
@@ -855,7 +895,7 @@ export class CatalogService {
       created_at: Date;
     }>(
       `SELECT m.id::text, m.product_id, p.name AS product_name, p.sku, m.movement_type, m.quantity_milli_delta::text,
-              m.stock_after_milli::text, m.unit_cost_cents::text, m.reason, m.reference_type, m.reference_id,
+              m.stock_after_milli::text, m.unit_cost_cents::text, m.unit_cost_mills::text, m.reason, m.reference_type, m.reference_id,
               u.full_name AS created_by_name, m.created_at
          FROM inventory_movements m
          JOIN products p ON p.id = m.product_id
@@ -874,6 +914,7 @@ export class CatalogService {
         quantityMilliDelta: Number(m.quantity_milli_delta),
         stockAfterMilli: Number(m.stock_after_milli),
         unitCostCents: m.unit_cost_cents === null ? null : Number(m.unit_cost_cents),
+        unitCostMills: m.unit_cost_mills === null ? null : Number(m.unit_cost_mills),
         reason: m.reason,
         referenceType: m.reference_type,
         referenceId: m.reference_id,
@@ -943,6 +984,8 @@ export interface MovementInput {
   type: string;
   delta: number;
   unitCostCents: number | null;
+  /** Exact unit cost in mills; wins over `unitCostCents` when given. */
+  unitCostMills?: number | null;
   reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
@@ -973,16 +1016,23 @@ export async function applyMovement(
       requestedMilli: -input.delta,
     });
   }
+  const costMills =
+    input.unitCostMills !== undefined && input.unitCostMills !== null
+      ? input.unitCostMills
+      : input.unitCostCents === null
+        ? null
+        : input.unitCostCents * 10;
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO inventory_movements (product_id, movement_type, quantity_milli_delta, stock_after_milli, unit_cost_cents,
-                                      reason, reference_type, reference_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id::text`,
+                                      unit_cost_mills, reason, reference_type, reference_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id::text`,
     [
       input.productId,
       input.type,
       input.delta,
       after,
-      input.unitCostCents,
+      costMills === null ? null : millsToCents(costMills),
+      costMills,
       input.reason,
       input.referenceType,
       input.referenceId,
