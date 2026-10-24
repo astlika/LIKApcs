@@ -65,6 +65,7 @@ import {
   widgetCheck,
 } from './native';
 import { RemoteStreamer } from './remote-stream';
+import { applyDesktopWallpaper } from './desktop-wallpaper';
 import {
   Clock,
   CommandGuard,
@@ -895,6 +896,7 @@ export class Agent {
             this.heartbeatIntervalMs = Math.max(3, message.heartbeatIntervalSeconds) * 1000;
             this.lastAckAt = Date.now();
             this.setState(applyWelcome(this.snapshot.state, this.withWallpaper(message)));
+            void applyDesktopWallpaper(this.snapshot.state.display?.desktopWallpaperUrl ?? null);
             void secretSet(KEYS.language, message.language);
             this.set({ lastError: null, serverNowMs: this.clock.now() });
             this.setPhase({ phase: 'online' });
@@ -932,6 +934,7 @@ export class Agent {
             break;
           case 'server.display':
             this.setState(applyDisplay(this.snapshot.state, this.withWallpaper(message)));
+            void applyDesktopWallpaper(this.snapshot.state.display?.desktopWallpaperUrl ?? null);
             void secretSet(KEYS.language, message.language);
             this.refreshAds(true);
             break;

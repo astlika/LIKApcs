@@ -28,7 +28,9 @@ import {
   Power,
   RotateCcw,
   Square,
+  Image as ImageIcon,
   Timer,
+  Wallet,
   XCircle,
   Zap,
   type LucideIcon,
@@ -64,6 +66,8 @@ import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
 import { BulkRemoveTimeDialog } from '../sessions/BulkRemoveTimeDialog';
+import { BulkSettleDialog } from '../sessions/BulkSettleDialog';
+import { BulkWallpaperDialog } from './BulkWallpaperDialog';
 import { BulkStopDialog } from '../sessions/BulkStopDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
@@ -84,6 +88,8 @@ export type StationActionId =
   | 'resume'
   | 'extend'
   | 'remove-time'
+  | 'settle'
+  | 'wallpaper'
   | 'gift'
   | 'cancel'
   | 'lock'
@@ -131,6 +137,8 @@ type Flow =
   | { kind: 'bulk-minutes' }
   | { kind: 'bulk-end' }
   | { kind: 'bulk-remove-time' }
+  | { kind: 'bulk-settle' }
+  | { kind: 'bulk-wallpaper' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -160,6 +168,8 @@ export function useStationActions(
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
+  const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
+  const canManageStations = can(PERMISSIONS.STATIONS_MANAGE);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
   const canRemote = can(PERMISSIONS.REMOTE_VIEW);
   const navigate = useNavigate();
@@ -382,6 +392,28 @@ export function useStationActions(
           enabled: canControl && groupWithSession > 0,
           tone: 'danger',
           hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
+        {
+          // 0.23.0: a fixed payment or a discount for the whole selection.
+          id: 'settle',
+          label: `${t('map.settle')} (${groupWithSession})`,
+          icon: Wallet,
+          bar: true,
+          enabled: canControl && canDiscount && groupWithSession > 0,
+          hint:
+            groupWithSession === 0
+              ? t('map.noneWithSession')
+              : !canDiscount
+                ? t('map.settleNeedsDiscount')
+                : undefined,
+        },
+        {
+          // 0.23.0: one picture for the selection (or all PCs): lock screen or Windows desktop.
+          id: 'wallpaper',
+          label: `${t('map.wallpaper')} (${n})`,
+          icon: ImageIcon,
+          bar: true,
+          enabled: canManageStations && n > 0,
         },
         {
           // "Zbrit kohën" for the whole selection: same minutes off each running session.
@@ -613,6 +645,9 @@ export function useStationActions(
     canControl,
     canPower,
     canRemote,
+    canGift,
+    canDiscount,
+    canManageStations,
     t,
     multi,
     group.length,
@@ -654,6 +689,12 @@ export function useStationActions(
         case 'extend':
           if (multi) setFlow({ kind: 'bulk-minutes' });
           else if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          break;
+        case 'settle':
+          if (multi) setFlow({ kind: 'bulk-settle' });
+          break;
+        case 'wallpaper':
+          if (multi) setFlow({ kind: 'bulk-wallpaper' });
           break;
         case 'remove-time':
           if (multi) setFlow({ kind: 'bulk-remove-time' });
@@ -796,6 +837,35 @@ export function useStationActions(
               toast.toast(
                 'warning',
                 t('map.stopPartial', { ended: result.ended, failed: result.failed }),
+              );
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-wallpaper' && (
+        <BulkWallpaperDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            toast.success(t('map.wallpaperDone', { n: result.updated }));
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-settle' && (
+        <BulkSettleDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.settled === 0) toast.toast('info', t('map.settleNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.settleResult', { settled: result.settled }));
+            else
+              toast.toast(
+                'warning',
+                t('map.settlePartial', { settled: result.settled, failed: result.failed }),
               );
           }}
         />

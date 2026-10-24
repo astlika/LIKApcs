@@ -2,6 +2,7 @@
  * 0.20.0: one PC's own look (widget size, position, design, colour, ads on/off) and its
  * lock-screen wallpaper. Everything left on "House setting" follows Settings › Client screen.
  */
+import type { WallpaperKind } from '@likapcs/shared';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -20,6 +21,11 @@ import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { Button, Dialog, Field, Select } from '../ui/primitives';
+
+const WALLPAPER_PATH: Record<WallpaperKind, string> = {
+  lock: 'wallpaper',
+  desktop: 'desktop-wallpaper',
+};
 
 const WALLPAPER_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
 
@@ -60,13 +66,14 @@ export function StationLookDialog({
     onError: failed,
   });
 
-  const uploadWallpaper = async (file: File) => {
+  const uploadWallpaper = async (file: File, kind: WallpaperKind = 'lock') => {
     setWallpaperBusy(true);
     try {
-      // Phone photos are large; a 1920 px wallpaper is plenty for a PC screen.
-      const prepared = await prepareProductImage(file, 1920);
+      // Phone photos are large; a 1920 px wallpaper is plenty for a PC screen. The desktop one is
+      // JPEG (or PNG), the format Windows takes.
+      const prepared = await prepareProductImage(file, 1920, kind === 'desktop' ? 'jpeg' : 'webp');
       const updated = await apiUpload<StationSummary>(
-        `/stations/${station.id}/wallpaper`,
+        `/stations/${station.id}/${WALLPAPER_PATH[kind]}`,
         prepared.blob,
         {},
         { method: 'PUT', contentType: prepared.contentType },
@@ -81,10 +88,10 @@ export function StationLookDialog({
     }
   };
 
-  const removeWallpaper = async () => {
+  const removeWallpaper = async (kind: WallpaperKind = 'lock') => {
     setWallpaperBusy(true);
     try {
-      const updated = await api<StationSummary>(`/stations/${station.id}/wallpaper`, {
+      const updated = await api<StationSummary>(`/stations/${station.id}/${WALLPAPER_PATH[kind]}`, {
         method: 'DELETE',
       });
       setCurrent(updated);
@@ -98,6 +105,7 @@ export function StationLookDialog({
   };
 
   const wallpaperSrc = fileUrl(current.wallpaperUrl);
+  const desktopSrc = fileUrl(current.desktopWallpaperUrl);
 
   return (
     <Dialog
@@ -212,6 +220,47 @@ export function StationLookDialog({
                   </label>
                   {wallpaperSrc && (
                     <Button onClick={() => void removeWallpaper()} disabled={wallpaperBusy}>
+                      {t('stations.look.remove')}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </Field>
+
+        <Field label={t('stations.look.desktopTitle')} hint={t('stations.look.desktopHint')}>
+          {() => (
+            <div className="stack">
+              <div
+                className="look-wallpaper"
+                data-testid="station-desktop-wallpaper-preview"
+                style={desktopSrc ? { backgroundImage: `url("${desktopSrc}")` } : undefined}
+              >
+                {!desktopSrc && <span>{t('stations.look.none')}</span>}
+              </div>
+              {canManage && (
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <label className="btn btn--sm" aria-disabled={wallpaperBusy}>
+                    {wallpaperBusy ? t('stations.look.uploading') : t('stations.look.upload')}
+                    <input
+                      type="file"
+                      accept={WALLPAPER_ACCEPT}
+                      hidden
+                      disabled={wallpaperBusy}
+                      data-testid="station-desktop-wallpaper-input"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (file) void uploadWallpaper(file, 'desktop');
+                      }}
+                    />
+                  </label>
+                  {desktopSrc && (
+                    <Button
+                      onClick={() => void removeWallpaper('desktop')}
+                      disabled={wallpaperBusy}
+                    >
                       {t('stations.look.remove')}
                     </Button>
                   )}

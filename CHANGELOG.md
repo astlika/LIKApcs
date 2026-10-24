@@ -8,6 +8,9 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ### Added
 
+- Windows desktop wallpaper per PC (migration `0046` adds `stations.desktop_wallpaper_file`). Station › Look sets it for one PC; the desktop app downloads it as JPEG and sets it, and puts the previous wallpaper back when the Admin clears it. Windows takes JPEG or PNG only; other pictures are converted to JPEG in the Admin.
+- Bulk wallpaper: from the station bar, one picture for the selected PCs or for all PCs (Ctrl+A), as the lock-screen wallpaper or as the Windows desktop background (`PUT /stations/wallpapers?kind=lock|desktop&stations=all|<ids>`).
+- Fixed payment or discount for several PCs at once (station bar "Pay"; `POST /sessions/bulk-settle`). Pay-at-the-end bills are ended and collected with the discount that gives the wanted amount, or each becomes a fixed amount; prepaid time is skipped and already paid bills are refused. Needs `pos.discount`.
 - Backups include the uploaded files (product pictures, wallpapers, ad videos), not only the database. The archive has an `uploads/` folder next to `tables/`, and its manifest counts the files. A restore brings the uploads back as they were at the backup; older archives without them restore as before.
 - "Remove time" for several PCs at once: the same minutes come off every selected running session (`POST /sessions/bulk-remove-time`). Each session is checked on its own, and the result lists every PC that changed and every one that was left unchanged.
 - Expenses page: a switch between "Expenses" and "Stock purchases". The stock view lists goods received into stock (supplier, product, quantity, unit cost to 3 decimals, amount, purchase link), with a count and value total, filters (dates, supplier, search) and a CSV export. These rows are information only and are not added to spending: their cost counts in profit when the goods are sold.

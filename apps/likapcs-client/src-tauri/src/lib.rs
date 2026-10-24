@@ -12,6 +12,7 @@ mod remote_input;
 mod screen;
 mod secrets;
 mod tasks;
+mod wallpaper;
 mod wol;
 
 use serde::{Deserialize, Serialize};
@@ -246,6 +247,26 @@ async fn hardware_metrics(
     tauri::async_runtime::spawn_blocking(move || s.metrics())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 0.23.0: sets this PC's Windows desktop wallpaper (picture bytes, base64, from the server).
+#[tauri::command]
+async fn set_desktop_wallpaper(bytes: String, ext: String) -> Result<(), String> {
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(bytes.as_bytes())
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || wallpaper::set_desktop(&data, &ext))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 0.23.0: puts back the desktop wallpaper the PC had before the Admin changed it.
+#[tauri::command]
+async fn restore_desktop_wallpaper() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(wallpaper::restore)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1182,6 +1203,8 @@ pub fn run() {
             secret_get,
             secret_set,
             secret_delete,
+            set_desktop_wallpaper,
+            restore_desktop_wallpaper,
             discover_servers,
             set_window_mode,
             power_action,

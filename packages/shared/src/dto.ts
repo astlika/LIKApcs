@@ -299,6 +299,8 @@ export interface StationSummary {
   look: StationLook;
   /** 0.20.0: this PC's lock-screen wallpaper (a server path under /api/v1), or null. */
   wallpaperUrl: string | null;
+  /** 0.23.0: this PC's Windows desktop wallpaper (a server path under /api/v1), or null. */
+  desktopWallpaperUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -736,6 +738,30 @@ export const bulkRemoveTimeSchema = z.object({
 });
 export type BulkRemoveTimeRequest = z.infer<typeof bulkRemoveTimeSchema>;
 
+/**
+ * Payment for several PCs at once (0.23.0). `fixed`: each bill becomes exactly `amountCents`
+ * (a discount of the difference; a fixed amount above the bill is refused). `discount`: `amountCents`
+ * comes off each bill. Prepaid sessions are paid at the start and are refused.
+ */
+export const bulkSettleSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(60),
+  mode: z.enum(['fixed', 'discount']),
+  amountCents: z.number().int().min(0).max(1_000_000),
+});
+export type BulkSettleRequest = z.infer<typeof bulkSettleSchema>;
+
+export interface BulkSettleResult {
+  settled: number;
+  failed: number;
+  results: {
+    sessionId: string;
+    ok: boolean;
+    error: string | null;
+    /** The amount the customer pays for this session (cents), when settled. */
+    finalCents: number | null;
+  }[];
+}
+
 export interface BulkRemoveTimeResult {
   removed: number;
   failed: number;
@@ -1165,6 +1191,23 @@ export type ProductImageFromUrlInput = z.infer<typeof productImageFromUrlSchema>
 
 export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+
+/** 0.23.0: which wallpaper a bulk upload sets. The desktop one must be JPEG or PNG (Windows). */
+export const WALLPAPER_KINDS = ['lock', 'desktop'] as const;
+export type WallpaperKind = (typeof WALLPAPER_KINDS)[number];
+export const DESKTOP_WALLPAPER_TYPES = ['image/jpeg', 'image/png'] as const;
+
+export interface BulkWallpaperResult {
+  kind: WallpaperKind;
+  updated: number;
+  stationIds: string[];
+}
+
+/** Bulk wallpaper target: `all` or up to 200 comma-separated station ids. */
+export const bulkWallpaperQuerySchema = z.object({
+  kind: z.enum(WALLPAPER_KINDS),
+  stations: z.string().min(1).max(8000),
+});
 
 export const productListQuerySchema = z.object({
   /** Only products offered on the PC menu (0.10.0). */

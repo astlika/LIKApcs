@@ -4,6 +4,7 @@ import {
   PERMISSIONS,
   bulkEndSessionsSchema,
   bulkRemoveTimeSchema,
+  bulkSettleSchema,
   bulkMinutesSchema,
   collectSessionSchema,
   collectStationSchema,
@@ -64,6 +65,9 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   app.post('/sessions/:id/resume', control, async (request) =>
     services.sessions.resume(idParams.parse(request.params).id, actorOf(request)),
+  );
+  app.post('/sessions/bulk-settle', control, async (request) =>
+    services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request)),
   );
   app.post('/sessions/bulk-remove-time', control, async (request) =>
     services.sessions.bulkRemoveTime(bulkRemoveTimeSchema.parse(request.body), actorOf(request)),

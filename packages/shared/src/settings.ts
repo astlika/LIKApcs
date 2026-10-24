@@ -527,6 +527,7 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetStyle: settings['client.widget_style'],
     widgetTheme: settings['client.widget_theme'],
     wallpaperUrl: null,
+    desktopWallpaperUrl: null,
     widgetShowPayment: settings['client.widget_show_payment'],
     widgetHideInGames: settings['client.widget_hide_in_games'],
     blockWinInGames: settings['client.block_win_in_games'],

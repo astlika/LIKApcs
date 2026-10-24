@@ -25,6 +25,7 @@ interface StationRow {
   id: string;
   look: StationLook | null;
   wallpaper_file: string | null;
+  desktop_wallpaper_file: string | null;
   number: number;
   code: string;
   name: string;
@@ -80,7 +81,7 @@ interface StationRow {
 
 const STATION_SELECT = `
   SELECT s.id, s.number, s.code, s.name, s.zone, s.notes, s.is_enabled, s.created_at, s.updated_at,
-         s.look, s.wallpaper_file,
+         s.look, s.wallpaper_file, s.desktop_wallpaper_file,
          d.id AS device_id, d.machine_id AS device_machine_id, d.hostname AS device_hostname,
          d.os_info AS device_os_info, d.app_version AS device_app_version, d.status AS device_status,
          d.registered_at AS device_registered_at, d.approved_at AS device_approved_at,
@@ -266,6 +267,9 @@ export class StationsService {
         : null,
       look: row.look ?? {},
       wallpaperUrl: row.wallpaper_file ? wallpaperPath(row.wallpaper_file) : null,
+      desktopWallpaperUrl: row.desktop_wallpaper_file
+        ? wallpaperPath(row.desktop_wallpaper_file)
+        : null,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };

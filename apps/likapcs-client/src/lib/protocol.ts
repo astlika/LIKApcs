@@ -241,9 +241,13 @@ export function withAbsoluteWallpaper(
   display: ClientDisplayConfig,
   serverUrl: string,
 ): ClientDisplayConfig {
-  const url = display.wallpaperUrl;
-  if (!url || !url.startsWith('/')) return display;
-  return { ...display, wallpaperUrl: `${serverUrl}${url}` };
+  const absolute = (value: string | null): string | null =>
+    value && value.startsWith('/') ? `${serverUrl}${value}` : value;
+  return {
+    ...display,
+    wallpaperUrl: absolute(display.wallpaperUrl),
+    desktopWallpaperUrl: absolute(display.desktopWallpaperUrl ?? null),
+  };
 }
 
 export function applyDisplay(state: ClientState, message: ServerDisplay): ClientState {

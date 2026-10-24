@@ -20,6 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   allocatePayments,
+  collectSessionSchema,
   billableSeconds,
   priceForSeconds,
   quotePrepaidMinutes,
@@ -40,6 +41,8 @@ import {
   type BulkEndSessionsResult,
   type BulkRemoveTimeRequest,
   type BulkRemoveTimeResult,
+  type BulkSettleRequest,
+  type BulkSettleResult,
   type BulkMinutesApplied,
   type BulkMinutesSkipped,
   type ClientSessionBilling,
@@ -1463,6 +1466,72 @@ export class SessionsService {
    * already paid and open orders stay open. One session failing (for example one that ended a
    * moment before) does not stop the others; every outcome is reported.
    */
+  /**
+   * Fixed payment or discount for several PCs (0.23.0). A running session is ended first (it waits
+   * at the desk like a bulk stop), then collected with the discount that gives the wanted amount.
+   * Each session is handled alone; prepaid and already paid sessions are refused before anything
+   * is changed. The fixed mode and any discount need pos.discount.
+   */
+  async bulkSettle(req: BulkSettleRequest, actor: SessionActorContext): Promise<BulkSettleResult> {
+    if (!actor.permissions?.has(PERMISSIONS.POS_DISCOUNT))
+      throw forbidden('Missing permission: pos.discount');
+    const results: BulkSettleResult['results'] = [];
+    for (const sessionId of [...new Set(req.sessionIds)]) {
+      try {
+        const before = await this.pool.query<{
+          billing_mode: string;
+          status: string;
+          billed_at: Date | null;
+        }>('SELECT billing_mode, status, billed_at FROM gaming_sessions WHERE id = $1', [
+          sessionId,
+        ]);
+        if (!before.rowCount) throw notFound('Session');
+        const b = before.rows[0]!;
+        if (b.billing_mode === 'prepaid')
+          throw conflict('Prepaid time is paid at the start; nothing to settle');
+        if (b.billed_at) throw conflict('Session is already paid');
+        if (b.status === 'cancelled') throw conflict('Session was cancelled; nothing to settle');
+        if (b.status === 'active' || b.status === 'paused')
+          await this.end(sessionId, endSessionSchema.parse({ parkForDesk: true }), actor);
+        const row = await this.pool.query<{
+          final_price_cents: number | null;
+          quoted_price_cents: number | null;
+        }>('SELECT final_price_cents, quoted_price_cents FROM gaming_sessions WHERE id = $1', [
+          sessionId,
+        ]);
+        const due = Number(row.rows[0]!.final_price_cents ?? row.rows[0]!.quoted_price_cents ?? 0);
+        if (req.mode === 'fixed' && req.amountCents > due)
+          throw badRequest(
+            `The fixed amount is above the bill (${due} cents); use a discount instead`,
+          );
+        const discountCents = req.mode === 'fixed' ? due - req.amountCents : req.amountCents;
+        const out = await this.collect(
+          sessionId,
+          collectSessionSchema.parse({ discountCents, paymentMethod: 'cash' }),
+          actor,
+        );
+        results.push({
+          sessionId,
+          ok: true,
+          error: null,
+          finalCents: out.session.finalPriceCents ?? due - discountCents,
+        });
+      } catch (err) {
+        results.push({
+          sessionId,
+          ok: false,
+          error: err instanceof Error ? err.message : 'failed',
+          finalCents: null,
+        });
+      }
+    }
+    return {
+      settled: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
+  }
+
   /**
    * Removes the same minutes from several running sessions. Each session is checked on its own
    * (postpaid, ended, or too little time left are refused for that session only).

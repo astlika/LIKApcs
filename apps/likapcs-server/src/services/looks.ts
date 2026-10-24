@@ -12,6 +12,8 @@ import {
   type StationLook,
   type StationSummary,
 } from '@likapcs/shared';
+import fs from 'node:fs';
+import type { WallpaperKind } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import type { RealtimeHub } from '../realtime/hub.js';
@@ -30,6 +32,7 @@ interface LookRow {
   id: string;
   look: StationLook | null;
   wallpaper_file: string | null;
+  desktop_wallpaper_file: string | null;
 }
 
 interface PresetRow {
@@ -53,7 +56,7 @@ export class LooksService {
   /** What one PC shows: house settings with its overrides and wallpaper applied. */
   async displayFor(stationId: string, all: SettingsMap): Promise<ClientDisplayConfig> {
     const r = await this.pool.query<LookRow>(
-      'SELECT id, look, wallpaper_file FROM stations WHERE id = $1',
+      'SELECT id, look, wallpaper_file, desktop_wallpaper_file FROM stations WHERE id = $1',
       [stationId],
     );
     return this.displayOf(all, r.rows[0]);
@@ -64,6 +67,7 @@ export class LooksService {
       clientDisplayFromSettings(all),
       row?.look ?? {},
       row?.wallpaper_file ? wallpaperPath(row.wallpaper_file) : null,
+      row?.desktop_wallpaper_file ? wallpaperPath(row.desktop_wallpaper_file) : null,
     );
   }
 
@@ -82,7 +86,7 @@ export class LooksService {
     const devices = this.hub.listDevices();
     if (devices.length === 0) return;
     const r = await this.pool.query<LookRow>(
-      'SELECT id, look, wallpaper_file FROM stations WHERE id = ANY($1::uuid[])',
+      'SELECT id, look, wallpaper_file, desktop_wallpaper_file FROM stations WHERE id = ANY($1::uuid[])',
       [devices.map((d) => d.stationId)],
     );
     const byStation = new Map(r.rows.map((row) => [row.id, row]));
@@ -101,7 +105,7 @@ export class LooksService {
     if (devices.length > 0) {
       const all = await this.settings.getAll();
       const r = await this.pool.query<LookRow>(
-        'SELECT id, look, wallpaper_file FROM stations WHERE id = $1',
+        'SELECT id, look, wallpaper_file, desktop_wallpaper_file FROM stations WHERE id = $1',
         [stationId],
       );
       const message = this.displayMessage(all, r.rows[0]);
@@ -127,24 +131,32 @@ export class LooksService {
     return this.announce(stationId);
   }
 
+  /** Column of each wallpaper kind: a fixed map, never built from input. */
+  private static readonly WALLPAPER_COLUMN: Record<
+    WallpaperKind,
+    'wallpaper_file' | 'desktop_wallpaper_file'
+  > = { lock: 'wallpaper_file', desktop: 'desktop_wallpaper_file' };
+
   /** Stores an already-saved wallpaper file for the PC and removes the one it replaces. */
   async setWallpaper(
     stationId: string,
     fileName: string,
     actor: AuditActor,
+    kind: WallpaperKind = 'lock',
   ): Promise<StationSummary> {
-    const before = await this.pool.query<{ wallpaper_file: string | null }>(
-      'SELECT wallpaper_file FROM stations WHERE id = $1',
+    const column = LooksService.WALLPAPER_COLUMN[kind];
+    const before = await this.pool.query<{ file: string | null }>(
+      `SELECT ${column} AS file FROM stations WHERE id = $1`,
       [stationId],
     );
     if (!before.rowCount) throw notFound('Station');
-    await this.pool.query('UPDATE stations SET wallpaper_file = $2 WHERE id = $1', [
+    await this.pool.query(`UPDATE stations SET ${column} = $2 WHERE id = $1`, [
       stationId,
       fileName,
     ]);
-    await this.wallpapers.remove(before.rows[0]!.wallpaper_file);
+    await this.wallpapers.remove(before.rows[0]!.file);
     await recordAudit(this.pool, actor, {
-      action: 'station.wallpaper.set',
+      action: kind === 'lock' ? 'station.wallpaper.set' : 'station.desktop_wallpaper.set',
       entityType: 'station',
       entityId: stationId,
       details: { file: fileName },
@@ -152,20 +164,61 @@ export class LooksService {
     return this.announce(stationId);
   }
 
-  async clearWallpaper(stationId: string, actor: AuditActor): Promise<StationSummary> {
-    const before = await this.pool.query<{ wallpaper_file: string | null }>(
-      'SELECT wallpaper_file FROM stations WHERE id = $1',
+  async clearWallpaper(
+    stationId: string,
+    actor: AuditActor,
+    kind: WallpaperKind = 'lock',
+  ): Promise<StationSummary> {
+    const column = LooksService.WALLPAPER_COLUMN[kind];
+    const before = await this.pool.query<{ file: string | null }>(
+      `SELECT ${column} AS file FROM stations WHERE id = $1`,
       [stationId],
     );
     if (!before.rowCount) throw notFound('Station');
-    await this.pool.query('UPDATE stations SET wallpaper_file = NULL WHERE id = $1', [stationId]);
-    await this.wallpapers.remove(before.rows[0]!.wallpaper_file);
+    await this.pool.query(`UPDATE stations SET ${column} = NULL WHERE id = $1`, [stationId]);
+    await this.wallpapers.remove(before.rows[0]!.file);
     await recordAudit(this.pool, actor, {
-      action: 'station.wallpaper.cleared',
+      action: kind === 'lock' ? 'station.wallpaper.cleared' : 'station.desktop_wallpaper.cleared',
       entityType: 'station',
       entityId: stationId,
     });
     return this.announce(stationId);
+  }
+
+  /**
+   * 0.23.0: the stations a bulk wallpaper goes to: `all` (every PC not archived) or the listed ids,
+   * which must all exist.
+   */
+  async stationIdsFor(target: 'all' | string[]): Promise<string[]> {
+    if (target === 'all') {
+      const r = await this.pool.query<{ id: string }>(
+        'SELECT id FROM stations WHERE archived_at IS NULL ORDER BY number',
+      );
+      return r.rows.map((row) => row.id);
+    }
+    const unique = [...new Set(target)];
+    const r = await this.pool.query<{ id: string }>(
+      'SELECT id FROM stations WHERE id = ANY($1::uuid[])',
+      [unique],
+    );
+    if (r.rowCount !== unique.length) throw notFound('Station');
+    return unique;
+  }
+
+  /**
+   * Sets one picture on several PCs. Each PC keeps its own stored copy, because replacing a
+   * wallpaper removes the file it replaces.
+   */
+  async setWallpaperForStations(
+    stationIds: string[],
+    sourcePath: string,
+    kind: WallpaperKind,
+    actor: AuditActor,
+  ): Promise<void> {
+    for (const stationId of stationIds) {
+      const fileName = await this.wallpapers.saveStream(fs.createReadStream(sourcePath));
+      await this.setWallpaper(stationId, fileName, actor, kind);
+    }
   }
 
   // ─── Layout presets ───────────────────────────────────────────────────────

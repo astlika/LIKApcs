@@ -41,6 +41,7 @@ export function applyStationLook(
   house: ClientDisplayConfig,
   look: StationLook,
   wallpaperUrl: string | null,
+  desktopWallpaperUrl: string | null = null,
 ): ClientDisplayConfig {
   const pick = <T>(value: T | null | undefined, fallback: T): T =>
     value === null || value === undefined ? fallback : value;
@@ -52,6 +53,7 @@ export function applyStationLook(
     widgetTheme: pick(look.widgetTheme, house.widgetTheme),
     ads: { ...house.ads, enabled: pick(look.adsEnabled, house.ads.enabled) },
     wallpaperUrl,
+    desktopWallpaperUrl,
   };
 }
 

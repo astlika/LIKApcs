@@ -69,6 +69,16 @@ export async function captureScreenFrame(
   });
 }
 
+/** 0.23.0: sets this PC's Windows desktop wallpaper (base64 picture bytes; ext `png` or `jpg`). */
+export async function setDesktopWallpaper(bytesBase64: string, ext: 'png' | 'jpg'): Promise<void> {
+  if (isDesktopApp()) return invoke<void>('set_desktop_wallpaper', { bytes: bytesBase64, ext });
+}
+
+/** 0.23.0: puts back the wallpaper the PC had before the first Admin change. */
+export async function restoreDesktopWallpaper(): Promise<void> {
+  if (isDesktopApp()) return invoke<void>('restore_desktop_wallpaper');
+}
+
 export async function secretGet(name: string): Promise<string | null> {
   if (isDesktopApp()) return invoke<string | null>('secret_get', { name });
   return window.localStorage.getItem(LS_PREFIX + name);

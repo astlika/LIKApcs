@@ -461,6 +461,7 @@ describe('reduce()', () => {
         widgetStyle: 'minimal',
         widgetTheme: 'indigo',
         wallpaperUrl: null,
+        desktopWallpaperUrl: null,
         widgetShowPayment: false,
         widgetHideInGames: true,
         blockWinInGames: true,

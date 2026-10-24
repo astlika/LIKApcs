@@ -351,6 +351,8 @@ export interface ClientDisplayConfig {
   widgetTheme: ClientWidgetTheme;
   /** 0.20.0: this PC's lock-screen wallpaper (absolute once the PC resolves it), or null. */
   wallpaperUrl: string | null;
+  /** 0.23.0: this PC's Windows desktop wallpaper (absolute once resolved), or null. */
+  desktopWallpaperUrl: string | null;
   widgetShowPayment: boolean;
   /** 0.19.7: hide the countdown widget while a fullscreen game runs. */
   widgetHideInGames: boolean;
