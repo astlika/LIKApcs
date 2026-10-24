@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-25
+
 ### Added
 
 - Windows desktop wallpaper per PC (migration `0046` adds `stations.desktop_wallpaper_file`). Station › Look sets it for one PC; the desktop app downloads it as JPEG and sets it, and puts the previous wallpaper back when the Admin clears it. Windows takes JPEG or PNG only; other pictures are converted to JPEG in the Admin.
