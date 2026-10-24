@@ -725,6 +725,23 @@ export const removeSessionTimeSchema = z.object({
 });
 export type RemoveSessionTimeRequest = z.infer<typeof removeSessionTimeSchema>;
 
+/** Takes the same minutes off several running sessions at once (one outcome per session). */
+export const bulkRemoveTimeSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(60),
+  minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+});
+export type BulkRemoveTimeRequest = z.infer<typeof bulkRemoveTimeSchema>;
+
+export interface BulkRemoveTimeResult {
+  removed: number;
+  failed: number;
+  results: { sessionId: string; ok: boolean; error: string | null }[];
+}
+
 /** 0.18.0: free minutes for a running session (`sessions.gift`) — no sale, no money, full audit. */
 export const sessionGiftSchema = z.object({
   minutes: z.number().int().min(1).max(600),

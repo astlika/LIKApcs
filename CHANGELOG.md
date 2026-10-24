@@ -6,10 +6,10 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Added
 
+- Backups include the uploaded files (product pictures, wallpapers, ad videos), not only the database. The archive has an `uploads/` folder next to `tables/`, and its manifest counts the files. A restore brings the uploads back as they were at the backup; older archives without them restore as before.
+- "Remove time" for several PCs at once: the same minutes come off every selected running session (`POST /sessions/bulk-remove-time`). Each session is checked on its own, and the result lists every PC that changed and every one that was left unchanged.
 - Expenses page: a switch between "Expenses" and "Stock purchases". The stock view lists goods received into stock (supplier, product, quantity, unit cost to 3 decimals, amount, purchase link), with a count and value total, filters (dates, supplier, search) and a CSV export. These rows are information only and are not added to spending: their cost counts in profit when the goods are sold.
 - Payment method label "Staff" / "Stafi" (it used to show the raw translation key).
 

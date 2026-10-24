@@ -1180,6 +1180,14 @@ export const sq: Dictionary = {
     stopResult: 'U ndaluan {ended} PC.',
     stopPartial: 'U ndaluan {ended} PC; {failed} nuk u ndaluan.',
     stopNone: "Nuk ka sesion aktiv për t'u ndaluar.",
+    removeTimeTitle: 'Zbrit kohë te {n} PC',
+    removeTimeBody:
+      'Të njëjtat minuta hiqen nga çdo seancë aktive e zgjedhur. Seanca që nuk mund të humbasë aq kohë mbetet pa ndryshim. Asnjë pagesë nuk lëviz.',
+    removeTimeLabel: "Minuta për t'u zbritur",
+    removeTimeConfirm: 'Zbrit {n} min',
+    removeTimeNone: 'Nuk ka seancë aktive për të zbritur kohë.',
+    removeTimeResult: 'U zbrit koha te {ended} PC.',
+    removeTimePartial: 'U zbrit koha te {ended} PC; {failed} mbetën pa ndryshim.',
     singleOnly: 'Zgjidh vetëm një PC për këtë veprim',
     bulkTitle: '+ minuta në {n} PC',
     bulkBody:

@@ -63,6 +63,7 @@ import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
+import { BulkRemoveTimeDialog } from '../sessions/BulkRemoveTimeDialog';
 import { BulkStopDialog } from '../sessions/BulkStopDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
@@ -129,6 +130,7 @@ type Flow =
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
   | { kind: 'bulk-end' }
+  | { kind: 'bulk-remove-time' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -379,6 +381,15 @@ export function useStationActions(
           bar: true,
           enabled: canControl && groupWithSession > 0,
           tone: 'danger',
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
+        {
+          // "Zbrit kohën" for the whole selection: same minutes off each running session.
+          id: 'remove-time',
+          label: `${t('sessions.removeTime')} (${groupWithSession})`,
+          icon: Minus,
+          bar: true,
+          enabled: canControl && groupWithSession > 0,
           hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
@@ -644,11 +655,12 @@ export function useStationActions(
           if (multi) setFlow({ kind: 'bulk-minutes' });
           else if (live) setFlow({ kind: 'extend', sessionId: live.id });
           break;
+        case 'remove-time':
+          if (multi) setFlow({ kind: 'bulk-remove-time' });
+          else if (live) setFlow({ kind: 'remove-time', sessionId: live.id });
+          break;
         case 'gift':
           if (live) setFlow({ kind: 'extend', sessionId: live.id, gift: true });
-          break;
-        case 'remove-time':
-          if (live) setFlow({ kind: 'remove-time', sessionId: live.id });
           break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
@@ -784,6 +796,24 @@ export function useStationActions(
               toast.toast(
                 'warning',
                 t('map.stopPartial', { ended: result.ended, failed: result.failed }),
+              );
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-remove-time' && (
+        <BulkRemoveTimeDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.removed === 0) toast.toast('info', t('map.removeTimeNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.removeTimeResult', { ended: result.removed }));
+            else
+              toast.toast(
+                'warning',
+                t('map.removeTimePartial', { ended: result.removed, failed: result.failed }),
               );
           }}
         />

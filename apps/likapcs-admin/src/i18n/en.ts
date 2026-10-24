@@ -1168,6 +1168,14 @@ export const en = {
     stopResult: 'Stopped {ended} PCs.',
     stopPartial: 'Stopped {ended} PCs; {failed} could not be stopped.',
     stopNone: 'No running session to stop.',
+    removeTimeTitle: 'Remove time from {n} PCs',
+    removeTimeBody:
+      'The same minutes come off every selected running session. A session that cannot give that much time is left unchanged. No money moves.',
+    removeTimeLabel: 'Minutes to remove',
+    removeTimeConfirm: 'Remove {n} min',
+    removeTimeNone: 'No running session to remove time from.',
+    removeTimeResult: 'Time removed on {ended} PCs.',
+    removeTimePartial: 'Time removed on {ended} PCs; {failed} left unchanged.',
     singleOnly: 'Select a single PC for this action',
     bulkTitle: '+ minutes on {n} PCs',
     bulkBody:

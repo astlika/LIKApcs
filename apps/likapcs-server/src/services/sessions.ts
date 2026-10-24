@@ -38,6 +38,8 @@ import {
   type BulkMinutesResult,
   type BulkEndSessionsRequest,
   type BulkEndSessionsResult,
+  type BulkRemoveTimeRequest,
+  type BulkRemoveTimeResult,
   type BulkMinutesApplied,
   type BulkMinutesSkipped,
   type ClientSessionBilling,
@@ -1461,6 +1463,34 @@ export class SessionsService {
    * already paid and open orders stay open. One session failing (for example one that ended a
    * moment before) does not stop the others; every outcome is reported.
    */
+  /**
+   * Removes the same minutes from several running sessions. Each session is checked on its own
+   * (postpaid, ended, or too little time left are refused for that session only).
+   */
+  async bulkRemoveTime(
+    req: BulkRemoveTimeRequest,
+    actor: SessionActorContext,
+  ): Promise<BulkRemoveTimeResult> {
+    const results: BulkRemoveTimeResult['results'] = [];
+    for (const sessionId of [...new Set(req.sessionIds)]) {
+      try {
+        await this.removeTime(sessionId, { minutes: req.minutes }, actor);
+        results.push({ sessionId, ok: true, error: null });
+      } catch (err) {
+        results.push({
+          sessionId,
+          ok: false,
+          error: err instanceof Error ? err.message : 'failed',
+        });
+      }
+    }
+    return {
+      removed: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
+  }
+
   async bulkEnd(
     req: BulkEndSessionsRequest,
     actor: SessionActorContext,
