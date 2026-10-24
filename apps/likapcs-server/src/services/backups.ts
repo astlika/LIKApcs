@@ -65,6 +65,8 @@ export interface BackupServiceOptions {
   afterRestore?: () => void;
   /** Factory reset: erases uploaded pictures and videos (the backup folder is never touched). */
   wipeUploads?: () => Promise<void>;
+  /** Uploaded files folder: pictures, wallpapers and ad videos go into every backup (`uploads/`). */
+  uploadDir?: string;
   log?: { info: (o: object, msg: string) => void; error: (o: object, msg: string) => void };
 }
 
@@ -147,6 +149,29 @@ export class BackupService {
     return { path: row.file_path, fileName: path.basename(row.file_path), sizeBytes: stat.size };
   }
 
+  // ─── Uploaded files ──────────────────────────────────────────────────────────
+
+  /** Copies the uploads folder into the archive staging area; null when there is none. */
+  private async copyUploads(target: string): Promise<{ files: number; bytes: number } | null> {
+    const source = this.options.uploadDir;
+    if (!source || !fs.existsSync(source)) return null;
+    await fsp.cp(source, target, { recursive: true });
+    return treeSize(target);
+  }
+
+  /** Replaces the uploads folder with the archived one (entries not in the archive are removed). */
+  private async replaceUploads(archived: string): Promise<void> {
+    const target = this.options.uploadDir;
+    if (!target) return;
+    await fsp.mkdir(target, { recursive: true });
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.rm(path.join(target, entry), { recursive: true, force: true });
+    }
+    for (const entry of await fsp.readdir(archived)) {
+      await fsp.cp(path.join(archived, entry), path.join(target, entry), { recursive: true });
+    }
+  }
+
   // ─── Create ──────────────────────────────────────────────────────────────────
 
   async create(input: { kind: BackupKind; actor: AuditActor | null }): Promise<BackupSummary> {
@@ -188,6 +213,8 @@ export class BackupService {
         manifestTables.push({ name: table, rows: stream.rowCount, bytes: stat.size });
       }
       await client.query('COMMIT');
+      // Uploaded files are part of the backup too: product pictures, wallpapers, ad videos.
+      const uploads = await this.copyUploads(path.join(tmpDir, 'uploads'));
       const manifest: BackupManifest = {
         format: BACKUP_FORMAT,
         formatVersion: BACKUP_FORMAT_VERSION,
@@ -197,11 +224,13 @@ export class BackupService {
         businessName,
         kind,
         tables: manifestTables,
+        uploads,
       };
       await fsp.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
       await tar.create({ gzip: true, file: finalPath, cwd: tmpDir, portable: true }, [
         'manifest.json',
         'tables',
+        ...(uploads ? ['uploads'] : []),
       ]);
       const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
       await this.pool.query(
@@ -538,6 +567,10 @@ export class BackupService {
       } finally {
         client.release();
       }
+      // Files come back with the data: the archive's uploads replace the current ones, so every
+      // restored product, wallpaper and ad points at a file that is really there.
+      const archivedUploads = path.join(tmpDir, 'uploads');
+      if (fs.existsSync(archivedUploads)) await this.replaceUploads(archivedUploads);
       this.settings.invalidate();
       this.options.afterRestore?.();
       const result: RestoreResult = {
@@ -725,6 +758,24 @@ async function csvHeader(file: string): Promise<string[]> {
   } finally {
     await handle.close();
   }
+}
+
+/** Number of files and their total size under a folder. */
+async function treeSize(dir: string): Promise<{ files: number; bytes: number }> {
+  let files = 0;
+  let bytes = 0;
+  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const inner = await treeSize(full);
+      files += inner.files;
+      bytes += inner.bytes;
+    } else if (entry.isFile()) {
+      files += 1;
+      bytes += (await fsp.stat(full)).size;
+    }
+  }
+  return { files, bytes };
 }
 
 export function parseManifest(text: string): BackupManifest {

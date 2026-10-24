@@ -2517,6 +2517,11 @@ export interface BackupManifest {
   businessName: string | null;
   kind: BackupKind;
   tables: { name: string; rows: number; bytes: number }[];
+  /**
+   * Uploaded files in the archive's `uploads/` folder (product pictures, wallpapers, ad videos).
+   * Absent or null in archives taken before this was added.
+   */
+  uploads?: { files: number; bytes: number } | null;
 }
 
 export interface BackupSummary {

@@ -233,6 +233,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const purchasing = new PurchasingService(pool, cash);
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
+    uploadDir: config.uploadDir,
     wipeUploads: async () => {
       for (const dir of ['wallpapers', 'products', 'videos']) {
         const target = path.join(config.uploadDir, dir);
