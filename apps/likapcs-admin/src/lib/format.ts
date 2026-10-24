@@ -1,5 +1,12 @@
 import { useCallback } from 'react';
-import { formatDate, formatDateTime, formatMoney, formatTime, type Cents } from '@likapcs/shared';
+import {
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  formatTime,
+  formatUnitMoney,
+  type Cents,
+} from '@likapcs/shared';
 import { useI18n } from '../i18n';
 import { useAppSettings } from '../state/app-settings';
 
@@ -39,5 +46,10 @@ export function useFormat() {
     },
     [language, timeZone],
   );
-  return { money, date, time, dateTime, relative, currency, timeZone };
+  /** A unit price or cost in mills: shows 3 decimals only when the value needs them (0.125 €). */
+  const unitMoney = useCallback(
+    (mills: number) => formatUnitMoney(mills, { currency, locale: language }),
+    [currency, language],
+  );
+  return { money, unitMoney, date, time, dateTime, relative, currency, timeZone };
 }

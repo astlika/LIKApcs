@@ -298,6 +298,25 @@ export function DebtsPage() {
                       {d.customerCode}
                       {d.customerPhone ? ` · ${d.customerPhone}` : ''}
                     </div>
+                    {d.itemsText && (
+                      <div
+                        className="muted"
+                        style={{ fontSize: 12, maxWidth: 360 }}
+                        title={d.itemsText}
+                        data-testid="debt-items"
+                      >
+                        {d.itemsText}
+                      </div>
+                    )}
+                    {d.installmentCount && d.remainingCents > 0 && (
+                      <div className="faint" style={{ fontSize: 12 }}>
+                        {t('debts.installments', {
+                          paid: d.installmentsPaid,
+                          count: d.installmentCount,
+                          next: fmt.money(d.installmentCents ?? 0),
+                        })}
+                      </div>
+                    )}
                   </td>
                   <td className="mono">{d.receiptNo ?? '—'}</td>
                   <td className="num muted">{fmt.date(d.createdAt)}</td>
@@ -527,6 +546,15 @@ function DebtDetailDialog({
                   {fmt.date(d.dueDate)}
                 </strong>
               </div>
+              {d.installmentCount && d.remainingCents > 0 && (
+                <div className="muted" data-testid="debt-installments">
+                  {t('debts.installments', {
+                    paid: d.installmentsPaid,
+                    count: d.installmentCount,
+                    next: fmt.money(d.installmentCents ?? 0),
+                  })}
+                </div>
+              )}
               <div className="muted">
                 {t('debts.opened')}: {fmt.dateTime(d.createdAt)}
                 {d.createdByName ? ` · ${d.createdByName}` : ''}
@@ -579,6 +607,36 @@ function DebtDetailDialog({
             </Field>
           )}
 
+          {d.installments.length > 0 && (
+            <div>
+              <div className="field__label">{t('debts.partsTitle')}</div>
+              <table className="table table--compact" data-testid="debt-parts">
+                <tbody>
+                  {d.installments.map((p) => (
+                    <tr key={p.seq}>
+                      <td>{t('debts.partN', { n: p.seq })}</td>
+                      <td className="num muted">{fmt.date(p.dueDate)}</td>
+                      <td className="num right">{fmt.money(p.amountCents)}</td>
+                      <td className="num right muted">{fmt.money(p.paidCents)}</td>
+                      <td
+                        className={
+                          p.status !== 'paid' && p.overdueDays > 0 ? 'text-danger' : 'muted'
+                        }
+                      >
+                        {p.status === 'paid'
+                          ? t('debts.partPaid')
+                          : p.overdueDays > 0
+                            ? t('debts.partOverdue', { days: p.overdueDays })
+                            : p.status === 'partial'
+                              ? t('debts.partPartial')
+                              : t('debts.partOpen')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {d.items.length > 0 && (
             <div>
               <div className="field__label">{t('debts.items')}</div>

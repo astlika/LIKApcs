@@ -308,6 +308,23 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-left'] .overlay {
 html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
   inset: auto 16px 16px auto;
 }
+html:not([data-desktop='1'])[data-widget-pos='top-center'] .overlay {
+  inset: 16px auto auto 50%;
+  margin-left: calc(var(--ov-w, 300px) / -2);
+}
+html:not([data-desktop='1'])[data-widget-pos='bottom-center'] .overlay {
+  inset: auto auto 16px 50%;
+  margin-left: calc(var(--ov-w, 300px) / -2);
+}
+/* 0.19.7: vertically centred on the left / right edge (the desktop shell positions the window). */
+html:not([data-desktop='1'])[data-widget-pos='middle-left'] .overlay {
+  inset: 50% auto auto 16px;
+  transform: translateY(-50%);
+}
+html:not([data-desktop='1'])[data-widget-pos='middle-right'] .overlay {
+  inset: 50% 16px auto auto;
+  transform: translateY(-50%);
+}
 
 /* ── shared pieces ── */
 .overlay__top {
@@ -752,6 +769,10 @@ html:not([data-desktop='1'])[data-widget-pos='bottom-right'] .overlay {
 }
 
 /* ── 6 · pill ── */
+/* 0.19.7: the plain time line is drawn on the desktop, so it gets a soft shadow to stay readable. */
+.overlay--simple .overlay__mini-time {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
 .overlay--pill {
   justify-content: center;
 }
@@ -2112,6 +2133,57 @@ html[data-widget-pos$='left'] .overlay--dot .overlay__anchor {
   }
 }
 /* Backdrop preset behind the slides (Settings › Background) — the ad theme palette. */
+/* ─── 0.20.0: widget colour themes (the accent of the countdown widget) ───────── */
+.overlay--theme-emerald {
+  --accent: #10b981;
+  --accent-2: #a3e635;
+}
+.overlay--theme-sky {
+  --accent: #0ea5e9;
+  --accent-2: #67e8f9;
+}
+.overlay--theme-amber {
+  --accent: #f59e0b;
+  --accent-2: #fde047;
+}
+.overlay--theme-rose {
+  --accent: #f43f5e;
+  --accent-2: #fb7185;
+}
+.overlay--theme-violet {
+  --accent: #8b5cf6;
+  --accent-2: #e879f9;
+}
+.overlay--theme-mono {
+  --accent: #94a3b8;
+  --accent-2: #e2e8f0;
+}
+/* 0.19.1: six more accent colours (item 11). */
+.overlay--theme-teal {
+  --accent: #14b8a6;
+  --accent-2: #5eead4;
+}
+.overlay--theme-orange {
+  --accent: #f97316;
+  --accent-2: #fdba74;
+}
+.overlay--theme-fuchsia {
+  --accent: #d946ef;
+  --accent-2: #f0abfc;
+}
+.overlay--theme-lime {
+  --accent: #84cc16;
+  --accent-2: #d9f99d;
+}
+.overlay--theme-red {
+  --accent: #ef4444;
+  --accent-2: #fca5a5;
+}
+.overlay--theme-blue {
+  --accent: #3b82f6;
+  --accent-2: #93c5fd;
+}
+
 .lock--ads .lock__bg {
   background:
     radial-gradient(1200px 600px at 10% -10%, var(--ad-glow-1), transparent 60%),

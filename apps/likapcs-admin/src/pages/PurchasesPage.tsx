@@ -13,9 +13,12 @@ import {
   PURCHASE_PAYMENT_STATUSES,
   PURCHASE_STATUSES,
   formatQuantity,
-  multiplyByQuantity,
+  formatUnitMoneyInput,
+  millsToCents,
+  multiplyMillsByQuantity,
   parseMoneyInput,
   parseQuantityInput,
+  parseUnitMoneyInput,
   percentOf,
   type PaymentMethod,
   type ProductSummary,
@@ -302,13 +305,14 @@ interface Line {
 
 function lineValues(l: Line) {
   const qtyMilli = parseQuantityInput(l.qty);
-  const cost = parseMoneyInput(l.cost);
+  // The unit cost is typed to 3 decimals (0.125 €) and kept in mills; the line total is in cents.
+  const cost = parseUnitMoneyInput(l.cost);
   const taxPct = Number(l.taxPct.replace(',', '.'));
   const taxBp =
     l.taxPct.trim() === '' ? 0 : Number.isFinite(taxPct) ? Math.round(taxPct * 100) : NaN;
   const ok =
     qtyMilli !== null && qtyMilli > 0 && cost !== null && Number.isFinite(taxBp) && taxBp >= 0;
-  const total = ok ? multiplyByQuantity(cost, qtyMilli) : 0;
+  const total = ok ? multiplyMillsByQuantity(cost!, qtyMilli) : 0;
   return { qtyMilli, cost, taxBp, ok, total, tax: ok ? percentOf(total, taxBp) : 0 };
 }
 
@@ -374,8 +378,9 @@ function NewPurchaseDialog({
         {
           product: p,
           qty: '1',
-          cost: centsToInput(p.purchaseCostCents),
-          taxPct: p.taxRateBp > 0 ? String(p.taxRateBp / 100) : '0',
+          cost: formatUnitMoneyInput(p.purchaseCostMills),
+          // VAT is never added by itself: every line starts at 0% and the user opts in.
+          taxPct: '0',
         },
       ];
     });
@@ -395,7 +400,8 @@ function NewPurchaseDialog({
           items: lines.map((l, i) => ({
             productId: l.product.id,
             quantityMilli: computed[i]!.qtyMilli,
-            unitCostCents: computed[i]!.cost,
+            unitCostCents: millsToCents(computed[i]!.cost!),
+            unitCostMills: computed[i]!.cost!,
             taxRateBp: computed[i]!.taxBp,
           })),
           additionalCostsCents: extraCents ?? 0,
@@ -566,15 +572,34 @@ function NewPurchaseDialog({
                         />
                       </td>
                       <td className="right">
-                        <Input
-                          inputMode="decimal"
-                          className="num"
-                          style={{ width: 70, textAlign: 'right' }}
-                          value={l.taxPct}
-                          aria-invalid={!Number.isFinite(c.taxBp) || undefined}
-                          aria-label={t('purchases.taxPct')}
-                          onChange={(e) => update(i, { taxPct: e.target.value })}
-                        />
+                        <div className="stack" style={{ gap: 4, alignItems: 'flex-end' }}>
+                          <Input
+                            inputMode="decimal"
+                            className="num"
+                            style={{ width: 70, textAlign: 'right' }}
+                            value={l.taxPct}
+                            aria-invalid={!Number.isFinite(c.taxBp) || undefined}
+                            aria-label={t('purchases.taxPct')}
+                            onChange={(e) => update(i, { taxPct: e.target.value })}
+                          />
+                          {l.product.taxRateBp > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t('purchases.applyVatHint')}
+                              data-testid="apply-vat"
+                              onClick={() =>
+                                update(i, { taxPct: String(l.product.taxRateBp / 100) })
+                              }
+                            >
+                              {t('purchases.applyVat', {
+                                rate: (l.product.taxRateBp / 100).toFixed(
+                                  l.product.taxRateBp % 100 ? 2 : 0,
+                                ),
+                              })}
+                            </Button>
+                          )}
+                        </div>
                       </td>
                       <td className="right num">{c.ok ? fmt.money(c.total + c.tax) : '—'}</td>
                       <td className="right">
@@ -953,7 +978,7 @@ function PurchaseDialog({ id, onClose }: { id: string; onClose: () => void }) {
                           )}
                         </td>
                       )}
-                      <td className="right num">{fmt.money(it.unitCostCents)}</td>
+                      <td className="right num">{fmt.unitMoney(it.unitCostMills)}</td>
                       <td className="right num">{(it.taxRateBp / 100).toFixed(0)}%</td>
                       <td className="right num">{fmt.money(it.lineTotalCents)}</td>
                     </tr>

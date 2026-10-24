@@ -106,6 +106,13 @@ export function WidgetMock({
         </>
       );
       break;
+    case 'simple':
+      body = (
+        <span className="wm__line wm__line--center">
+          <strong className="wm__mini-time">{minutes}</strong>
+        </span>
+      );
+      break;
     case 'minutes':
     case 'minutes-money':
       body = (

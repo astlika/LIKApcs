@@ -331,6 +331,7 @@ export function Overlay({
     'overlay',
     `overlay--${spec.id}`,
     `overlay--${display?.widgetSize ?? 'normal'}`,
+    `overlay--theme-${display?.widgetTheme ?? 'indigo'}`,
     spec.text === 'card' ? 'overlay--card' : '',
     spec.transparent ? 'overlay--clear' : '',
     low ? 'overlay--low' : '',
@@ -426,6 +427,9 @@ export function Overlay({
   switch (spec.id) {
     case 'minimal':
       body = <MinimalLine ctx={ctx} />;
+      break;
+    case 'simple':
+      body = <SimpleLine ctx={ctx} />;
       break;
     case 'minutes':
     case 'minutes-money':
@@ -670,6 +674,23 @@ function MinimalLine({ ctx }: { ctx: Ctx }) {
 }
 
 // ─── 3/4 · minutes only · minutes + € ───────────────────────────────────────────
+
+/** 0.19.7: the plainest look — only the time left, no bar, no amount, no PC code. */
+function SimpleLine({ ctx }: { ctx: Ctx }) {
+  const { flashTone } = ctx;
+  return (
+    <div className="overlay__line overlay__line--center" data-tauri-drag-region>
+      <span
+        className={`overlay__mini-time ${flashTone ? `overlay__flash--${flashTone}` : ''}`}
+        data-tauri-drag-region
+        data-testid="overlay-time"
+      >
+        {lineText(ctx)}
+      </span>
+      <OfflineDot ctx={ctx} />
+    </div>
+  );
+}
 
 function MinutesLine({ ctx, withMoney }: { ctx: Ctx; withMoney: boolean }) {
   const { money, fraction, flashTone } = ctx;

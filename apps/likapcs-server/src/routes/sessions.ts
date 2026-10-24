@@ -2,10 +2,15 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  bulkEndSessionsSchema,
+  bulkRemoveTimeSchema,
+  bulkSettleSchema,
   bulkMinutesSchema,
   collectSessionSchema,
+  collectStationSchema,
   endSessionSchema,
   extendSessionSchema,
+  removeSessionTimeSchema,
   sessionGiftSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
@@ -33,6 +38,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/sessions', view, async (request) =>
     services.sessions.list(sessionListQuerySchema.parse(request.query)),
   );
+  // 0.19.0: open prepaid-time credits (sold at the till) — optionally for one PC.
+  app.get('/time-credits', view, async (request) => {
+    const q = z.object({ stationId: uuidSchema.optional() }).parse(request.query);
+    return { credits: await services.timeCredits.open(q.stationId) };
+  });
+
   app.get('/sessions/:id', view, async (request) =>
     services.sessions.getById(idParams.parse(request.params).id),
   );
@@ -54,6 +65,19 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   app.post('/sessions/:id/resume', control, async (request) =>
     services.sessions.resume(idParams.parse(request.params).id, actorOf(request)),
+  );
+  app.post('/sessions/bulk-settle', control, async (request) =>
+    services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request)),
+  );
+  app.post('/sessions/bulk-remove-time', control, async (request) =>
+    services.sessions.bulkRemoveTime(bulkRemoveTimeSchema.parse(request.body), actorOf(request)),
+  );
+  app.post('/sessions/:id/remove-time', control, async (request) =>
+    services.sessions.removeTime(
+      idParams.parse(request.params).id,
+      removeSessionTimeSchema.parse(request.body),
+      actorOf(request),
+    ),
   );
   app.post('/sessions/:id/extend', control, async (request) =>
     services.sessions.extend(
@@ -82,6 +106,10 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sessions/bulk-minutes', control, async (request) =>
     services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
   );
+  /** 0.19.4: "Ndalo" for several PCs at once — nothing is charged now; bills wait at the desk. */
+  app.post('/sessions/bulk-end', control, async (request) =>
+    services.sessions.bulkEnd(bulkEndSessionsSchema.parse(request.body), actorOf(request)),
+  );
   app.post('/sessions/:id/end', control, async (request) =>
     services.sessions.end(
       idParams.parse(request.params).id,
@@ -95,6 +123,27 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.collect(
       idParams.parse(request.params).id,
       collectSessionSchema.parse(request.body ?? {}),
+      actorOf(request),
+    ),
+  );
+  /**
+   * 0.21.0 — pay all: the bills waiting at one PC, paid in one tender step (one transaction; each
+   * bill keeps its own receipt). Same permission as collecting a single bill.
+   */
+  app.post('/stations/:stationId/collect-all', control, async (request) =>
+    services.sessions.collectStation(
+      z.object({ stationId: uuidSchema }).parse(request.params).stationId,
+      collectStationSchema.parse(request.body ?? {}),
+      actorOf(request),
+    ),
+  );
+  /**
+   * 0.19.5 — collect all PCs: every bill waiting at any PC, in one tender step (one transaction).
+   * Same permission as collecting a single bill; a tender that does not cover them refuses all.
+   */
+  app.post('/sessions/collect-all', control, async (request) =>
+    services.sessions.collectAllPcs(
+      collectStationSchema.parse(request.body ?? {}),
       actorOf(request),
     ),
   );

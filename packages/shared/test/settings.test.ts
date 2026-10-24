@@ -42,6 +42,7 @@ describe('client screen options (0018)', () => {
       { cols: 3, rows: 3 },
       { cols: 4, rows: 3 },
       { cols: 4, rows: 4 },
+      { cols: 5, rows: 5 },
     ]);
   });
 
@@ -65,7 +66,7 @@ describe('client screen options (0018)', () => {
       'client.ads_background': 'gold',
       'client.ads_ticker_text': 'Happy hour 18:00 – 20:00',
     });
-    expect(() => validateSettingsPatch({ 'client.ads_grid': '5x5' })).toThrow();
+    expect(() => validateSettingsPatch({ 'client.ads_grid': '5x4' })).toThrow();
     expect(() => validateSettingsPatch({ 'client.ads_caption': 'left' })).toThrow();
     expect(() => validateSettingsPatch({ 'client.ads_background': 'neon' })).toThrow();
     expect(() => validateSettingsPatch({ 'client.ads_ticker_text': 'x'.repeat(201) })).toThrow();

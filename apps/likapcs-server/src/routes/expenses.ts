@@ -5,6 +5,8 @@ import {
   createExpenseSchema,
   expenseCategorySchema,
   expenseListQuerySchema,
+  stockPurchaseExportQuerySchema,
+  stockPurchaseListQuerySchema,
   uuidSchema,
   voidExpenseSchema,
 } from '@likapcs/shared';
@@ -37,6 +39,22 @@ export const expenseRoutes: FastifyPluginAsync = async (app) => {
         ),
       ),
   );
+  app.get('/expenses/stock-purchases', view, async (request) =>
+    services.expenses.stockPurchases(
+      stockPurchaseListQuerySchema.parse(request.query),
+      await services.settings.get('locale.timezone'),
+    ),
+  );
+  app.get('/expenses/stock-purchases/export', view, async (request, reply) => {
+    const { filename, csv } = await services.expenses.stockPurchasesCsv(
+      stockPurchaseExportQuerySchema.parse(request.query),
+      await services.settings.get('locale.timezone'),
+    );
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${filename}"`)
+      .send(csv);
+  });
   app.get('/expenses', view, async (request) =>
     services.expenses.list(expenseListQuerySchema.parse(request.query)),
   );

@@ -11,15 +11,21 @@
  *  • gaming  = sessions billed in the range (billed_at), minutes = billable_seconds / 60
  */
 import type {
+  CashBookReport,
+  CashBookRow,
+  CashBookTotals,
   CashShiftSummary,
+  ProfitReport,
   ReportBucket,
   ReportExportKind,
   ReportRange,
   SalesReport,
+  SpendingReport,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
+import { profitReport, spendingReport, spendingRowsAll } from './reports-profit.js';
 
 interface RangeParams {
   from: string;
@@ -46,6 +52,20 @@ function bucket(
     count: Number(r.n),
     amountCents: Number(r.amount),
   }));
+}
+
+/** A timestamp as `YYYY-MM-DD HH:MM:SS` in the business time zone (the CSV's local time). */
+function localTimestamp(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(iso));
 }
 
 function csvEscape(v: unknown): string {
@@ -252,6 +272,61 @@ export class ReportsService {
     };
   }
 
+  /**
+   * 0.21.0 — the cash book: one row per cash shift that overlaps the range, each with its drawer
+   * movements. Cash in and cash out are magnitudes; the opening float is not counted in either.
+   */
+  async cashBook(range: RangeParams): Promise<CashBookReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    const shifts = await this.cash.shiftsBetween(range.from, range.to, timeZone);
+    const movements = await this.cash.movementsForShifts(shifts.map((s) => s.id));
+    const rows: CashBookRow[] = shifts.map((shift) => {
+      const list = movements.get(shift.id) ?? [];
+      const flows = list.filter((m) => m.type !== 'opening');
+      const cashInCents = flows.reduce(
+        (acc, m) => (m.amountCents > 0 ? acc + m.amountCents : acc),
+        0,
+      );
+      const cashOutCents = flows.reduce(
+        (acc, m) => (m.amountCents < 0 ? acc - m.amountCents : acc),
+        0,
+      );
+      return {
+        shift,
+        cashInCents,
+        cashOutCents,
+        expectedCashCents: shift.openingCents + cashInCents - cashOutCents,
+        movements: list,
+      };
+    });
+    const closed = rows.filter((r) => r.shift.status === 'closed');
+    const sum = (list: CashBookRow[], pick: (r: CashBookRow) => number) =>
+      list.reduce((acc, r) => acc + pick(r), 0);
+    const totals: CashBookTotals = {
+      shiftsCount: rows.length,
+      openShiftsCount: rows.length - closed.length,
+      openingCents: sum(rows, (r) => r.shift.openingCents),
+      cashInCents: sum(rows, (r) => r.cashInCents),
+      cashOutCents: sum(rows, (r) => r.cashOutCents),
+      expectedCashCents: sum(rows, (r) => r.expectedCashCents),
+      countedCashCents: sum(closed, (r) => r.shift.countedCashCents ?? 0),
+      differenceCents: sum(closed, (r) => r.shift.differenceCents ?? 0),
+    };
+    return { from: range.from, to: range.to, rows, totals, generatedAt: new Date().toISOString() };
+  }
+
+  /** Profit & loss on the accrual basis, with the cash view and data-quality checks alongside. */
+  async profit(range: ReportRange): Promise<ProfitReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return profitReport(this.pool, timeZone, range);
+  }
+
+  /** Every money-out and stock-in/out row in the range, newest first, capped for the screen. */
+  async spending(range: ReportRange): Promise<SpendingReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return spendingReport(this.pool, timeZone, range);
+  }
+
   /** CSV export (UTF-8 with BOM so Excel opens it correctly; `;` separator for EU locales). */
   async exportCsv(
     kind: ReportExportKind,
@@ -355,6 +430,65 @@ export class ReportsService {
         'receipt_no',
       ];
       rows = r.rows.map((x) => header.map((h) => x[h]));
+    } else if (kind === 'cash_book') {
+      const book = await this.cashBook(range);
+      header = [
+        'register',
+        'status',
+        'opened_by',
+        'opened_at',
+        'closed_by',
+        'closed_at',
+        'opening_cents',
+        'cash_in_cents',
+        'cash_out_cents',
+        'expected_cash_cents',
+        'counted_cash_cents',
+        'difference_cents',
+        'movements',
+        'notes',
+      ];
+      rows = book.rows.map((row) => {
+        const s = row.shift;
+        return [
+          s.registerName,
+          s.status,
+          s.openedBy.name,
+          localTimestamp(s.openedAt, timeZone),
+          s.closedBy?.name ?? null,
+          s.closedAt ? localTimestamp(s.closedAt, timeZone) : null,
+          s.openingCents,
+          row.cashInCents,
+          row.cashOutCents,
+          row.expectedCashCents,
+          s.countedCashCents,
+          s.differenceCents,
+          row.movements.length,
+          s.notes,
+        ];
+      });
+    } else if (kind === 'spending') {
+      const all = await spendingRowsAll(this.pool, timeZone, range);
+      header = [
+        'date',
+        'kind',
+        'effect',
+        'description',
+        'category',
+        'method',
+        'amount_cents',
+        'reference',
+      ];
+      rows = all.map((x) => [
+        x.date,
+        x.kind,
+        x.effect,
+        x.description,
+        x.category,
+        x.method,
+        x.amountCents,
+        x.reference,
+      ]);
     } else {
       const r = await this.pool.query(
         `SELECT r.name AS register, cs.status, ou.full_name AS opened_by, ${ts('cs.opened_at')} AS opened_at, cu.full_name AS closed_by, ${ts('cs.closed_at')} AS closed_at,

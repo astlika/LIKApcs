@@ -5,7 +5,7 @@
  * action, right-click opens the action menu. Rubber-band selection lives in the page (it needs
  * the scrolling canvas).
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Bell, Hourglass } from 'lucide-react';
 import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
 import { formatHms, projectSession } from '../../lib/session-time';
@@ -126,18 +126,23 @@ export function StationTile({
   onSelect,
   onPrimary,
   onMenu,
+  onHover,
 }: {
   station: StationSummary;
   fetchedAt: number;
   selected: boolean;
   size: number;
   onSelect: (mods: SelectModifiers) => void;
+  /** Mouse rests on the tile (after a short delay): the tile's rectangle; null when it leaves. */
+  onHover?: (rect: DOMRect | null) => void;
   onPrimary: () => void;
   onMenu: (x: number, y: number) => void;
 }) {
   const { t, td } = useI18n();
   const fmt = useFormat();
   const now = useNow();
+  const hoverTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
   const live = station.activeSession;
   const projected = live
     ? projectSession(
@@ -163,7 +168,7 @@ export function StationTile({
   const compact = size < 88;
   return (
     <div
-      className="pc-tile"
+      className={compact ? 'pc-tile pc-tile--line' : 'pc-tile'}
       data-id={station.id}
       data-status={status}
       data-archived={station.archived ? 'true' : undefined}
@@ -172,8 +177,18 @@ export function StationTile({
       tabIndex={0}
       aria-pressed={selected}
       aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
-      style={{ width: size + 24 }}
+      style={compact ? undefined : { width: size + 24 }}
       onClick={(e) => onSelect(modifiersOf(e))}
+      onMouseEnter={(e) => {
+        if (!onHover) return;
+        const el = e.currentTarget;
+        window.clearTimeout(hoverTimer.current);
+        hoverTimer.current = window.setTimeout(() => onHover(el.getBoundingClientRect()), 300);
+      }}
+      onMouseLeave={() => {
+        window.clearTimeout(hoverTimer.current);
+        onHover?.(null);
+      }}
       onDoubleClick={(e) => {
         e.preventDefault();
         if (e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -196,74 +211,110 @@ export function StationTile({
         }
       }}
     >
-      <PcIcon status={status} number={station.number} size={size} />
-      {station.pendingRequest && (
-        <span
-          className="pc-tile__request"
-          title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
-          data-testid="tile-request"
-        >
-          <Bell size={10} />
-          {compact ? '' : t('requests.tile')}
-        </span>
-      )}
-      {station.awaitingPayment.count > 0 && (
-        <span
-          className="pc-tile__awaiting"
-          title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
-          data-testid="tile-awaiting"
-        >
-          <Hourglass size={10} />
-          {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
-        </span>
-      )}
-      <div className="pc-tile__code">{station.code}</div>
-      {!compact && station.name !== station.code && (
-        <div className="pc-tile__name">{station.name}</div>
-      )}
-      {live && projected ? (
+      {!compact && (
         <>
-          <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
-            {projected.remaining !== null
-              ? formatHms(projected.remaining)
-              : formatHms(projected.elapsed)}
-          </div>
-          {!compact && (
-            <div className="pc-tile__meta">
-              <span className="num">{fmt.money(live.currentPriceCents)}</span>
-              {live.customerName && <span className="pc-tile__customer">{live.customerName}</span>}
-            </div>
+          <PcIcon status={status} number={station.number} size={size} />
+          {station.pendingRequest && (
+            <span
+              className="pc-tile__request"
+              title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
+              data-testid="tile-request"
+            >
+              <Bell size={10} />
+              {compact ? '' : t('requests.tile')}
+            </span>
           )}
-          {fraction !== null && (
-            <div className="pc-tile__bar" aria-hidden>
-              <span style={{ width: `${fraction * 100}%` }} />
+          {station.awaitingPayment.count > 0 && (
+            <span
+              className="pc-tile__awaiting"
+              title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
+              data-testid="tile-awaiting"
+            >
+              <Hourglass size={10} />
+              {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
+            </span>
+          )}
+          <div className="pc-tile__code">{station.code}</div>
+          {!compact && station.name !== station.code && (
+            <div className="pc-tile__name">{station.name}</div>
+          )}
+          {live && projected ? (
+            <>
+              <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
+                {projected.remaining !== null
+                  ? formatHms(projected.remaining)
+                  : formatHms(projected.elapsed)}
+              </div>
+              {!compact && (
+                <div className="pc-tile__meta">
+                  <span className="num">{fmt.money(live.currentPriceCents)}</span>
+                  {live.customerName && (
+                    <span className="pc-tile__customer">{live.customerName}</span>
+                  )}
+                </div>
+              )}
+              {fraction !== null && (
+                <div className="pc-tile__bar" aria-hidden>
+                  <span style={{ width: `${fraction * 100}%` }} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="pc-tile__state">
+              {station.archived
+                ? t('stations.archived')
+                : td(
+                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
+                    station.status,
+                  )}
+              {station.isEnabled &&
+                station.status === 'available' &&
+                !station.device &&
+                !compact && <span className="faint"> · {t('stations.noDevice')}</span>}
+              {station.status === 'maintenance' && station.maintenance && !compact && (
+                <span className="faint">
+                  {' '}
+                  · {station.maintenance.byName ?? '—'} ·{' '}
+                  {formatHms(
+                    Math.max(
+                      0,
+                      Math.round(
+                        (new Date(station.maintenance.until).getTime() - Date.now()) / 1000,
+                      ),
+                    ),
+                  )}
+                </span>
+              )}
             </div>
           )}
         </>
-      ) : (
-        <div className="pc-tile__state">
-          {station.archived
-            ? t('stations.archived')
-            : td(
-                `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
-                station.status,
-              )}
-          {station.isEnabled && station.status === 'available' && !station.device && !compact && (
-            <span className="faint"> · {t('stations.noDevice')}</span>
+      )}
+      {compact && (
+        <>
+          {/* 0.19.1 (item 4): at small icon sizes the tile is one line: dot, code, timer or state. */}
+          <span className="pc-tile__pip" data-status={status} aria-hidden />
+          <span className="pc-tile__code">{station.code}</span>
+          <span className="pc-tile__line-state num" data-warn={status === 'expiring' || undefined}>
+            {live && projected
+              ? formatHms(projected.remaining !== null ? projected.remaining : projected.elapsed)
+              : station.archived
+                ? t('stations.archived')
+                : td(
+                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
+                    station.status,
+                  )}
+          </span>
+          {station.pendingRequest && (
+            <Bell size={10} aria-label={t('requests.tile')} data-testid="tile-request" />
           )}
-          {station.status === 'maintenance' && station.maintenance && !compact && (
-            <span className="faint">
-              {' '}
-              · {station.maintenance.byName ?? '—'} ·{' '}
-              {formatHms(
-                Math.max(
-                  0,
-                  Math.round((new Date(station.maintenance.until).getTime() - Date.now()) / 1000),
-                ),
-              )}
-            </span>
+          {station.awaitingPayment.count > 0 && (
+            <Hourglass
+              size={10}
+              aria-label={t('sessions.awaiting.title')}
+              data-testid="tile-awaiting"
+            />
           )}
-        </div>
+        </>
       )}
     </div>
   );
@@ -278,6 +329,7 @@ export function StationMap({
   onSelect,
   onPrimary,
   onMenu,
+  onHover,
 }: {
   stations: StationSummary[];
   fetchedAt: number;
@@ -287,6 +339,7 @@ export function StationMap({
   onSelect: (id: string, mods: SelectModifiers) => void;
   onPrimary: (id: string) => void;
   onMenu: (id: string, x: number, y: number) => void;
+  onHover?: (id: string, rect: DOMRect | null) => void;
 }) {
   const { t } = useI18n();
   const groups = useMemo(
@@ -316,6 +369,7 @@ export function StationMap({
                 onSelect={(mods) => onSelect(s.id, mods)}
                 onPrimary={() => onPrimary(s.id)}
                 onMenu={(x, y) => onMenu(s.id, x, y)}
+                onHover={onHover ? (rect) => onHover(s.id, rect) : undefined}
               />
             ))}
           </div>

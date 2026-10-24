@@ -210,3 +210,74 @@ export function formatQuantity(quantityMilli: QuantityMilli, locale: 'en' | 'sq'
   const decimalSep = locale === 'sq' ? ',' : '.';
   return `${negative ? '-' : ''}${whole}${fraction ? decimalSep + fraction : ''}`;
 }
+
+/**
+ * Unit prices and unit costs keep three decimals: they are stored in MILLS, thousandths of a euro
+ * (0.125 € = 125 mills). One cent = 10 mills. Sales always use whole cents, so a unit value is
+ * rounded to the cent only when it is charged or added to a cent total.
+ */
+export const MILLS_PER_CENT = 10;
+
+/** Mills → whole cents, rounded half away from zero (125 mills → 13 cents). */
+export function millsToCents(mills: number): Cents {
+  if (!Number.isInteger(mills)) throw new TypeError('mills must be an integer');
+  return toNumberChecked(divRound(BigInt(mills), BigInt(MILLS_PER_CENT)), 'cents');
+}
+
+/** unit price (mills) × quantity (milli) → line total in cents, rounded half away from zero. */
+export function multiplyMillsByQuantity(unitMills: number, quantityMilli: QuantityMilli): Cents {
+  if (!Number.isInteger(unitMills) || unitMills < 0) throw new TypeError('unit mills must be ≥ 0');
+  assertQuantity(quantityMilli, 'quantityMilli');
+  return toNumberChecked(
+    divRound(BigInt(unitMills) * BigInt(quantityMilli), BigInt(QUANTITY_SCALE * MILLS_PER_CENT)),
+    'line total',
+  );
+}
+
+/**
+ * Parse a user-typed unit amount ("0.125", "12,5", "1 234,125") into mills without floats.
+ * Accepts up to 3 fraction digits. Returns null for invalid input.
+ */
+export function parseUnitMoneyInput(input: string): number | null {
+  const cleaned = input.replace(/\s|€|EUR/gi, '').trim();
+  if (!cleaned) return null;
+  const match = /^(-)?(\d+)(?:[.,](\d{1,3}))?$/.exec(cleaned);
+  if (!match) return null;
+  const sign = match[1] ? -1 : 1;
+  const whole = match[2] ?? '0';
+  const fraction = (match[3] ?? '').padEnd(3, '0');
+  return toNumberChecked(BigInt(whole) * 1000n + BigInt(fraction), 'parsed amount') * sign;
+}
+
+/** Mills → text with up to 3 decimals and at least 2 ("125" → "0.125", "1300" → "1.30"). */
+export function formatUnitMoneyInput(mills: number): string {
+  const sign = mills < 0 ? '-' : '';
+  const abs = Math.abs(mills);
+  const whole = Math.floor(abs / 1000);
+  let frac = String(abs % 1000).padStart(3, '0');
+  while (frac.length > 2 && frac.endsWith('0')) frac = frac.slice(0, -1);
+  return `${sign}${whole}.${frac}`;
+}
+
+/**
+ * Format a unit value in mills with up to 3 decimals, keeping the currency style of `formatMoney`:
+ * 1500 → "€1.50", 125 → "€0.125" (en) / "0,125 €" (sq).
+ */
+export function formatUnitMoney(mills: number, options: MoneyFormatOptions = {}): string {
+  if (!Number.isInteger(mills)) throw new TypeError('mills must be an integer');
+  if (mills % MILLS_PER_CENT === 0) return formatMoney(mills / MILLS_PER_CENT, options);
+  const { currency = 'EUR', locale = 'en', showSymbol = true } = options;
+  const negative = mills < 0;
+  const abs = Math.abs(mills);
+  const whole = Math.floor(abs / 1000);
+  const fraction = String(abs % 1000).padStart(3, '0');
+  const groupSep = locale === 'sq' ? '.' : ',';
+  const decimalSep = locale === 'sq' ? ',' : '.';
+  const wholeGrouped = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
+  const number = `${wholeGrouped}${decimalSep}${fraction}`;
+  if (!showSymbol) return `${negative ? '-' : ''}${number}`;
+  const symbol = CURRENCY_SYMBOLS[currency] ?? currency;
+  const formatted =
+    locale === 'sq' || symbol.length > 1 ? `${number} ${symbol}` : `${symbol}${number}`;
+  return negative ? `-${formatted}` : formatted;
+}

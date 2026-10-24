@@ -31,6 +31,7 @@ import {
   type SessionRequest,
   type SessionRequestCreate,
   type StationOrder,
+  type ClientDisplayConfig,
 } from '@likapcs/shared';
 import {
   APP_VERSION,
@@ -52,6 +53,8 @@ import {
   secretGet,
   secretSet,
   setWindowMode,
+  captureScreenFrame,
+  sendRemoteInput,
   sha256Hex,
   trayUpdate,
   wolConfigure,
@@ -61,11 +64,14 @@ import {
   type WindowMode,
   widgetCheck,
 } from './native';
+import { RemoteStreamer } from './remote-stream';
+import { applyDesktopWallpaper } from './desktop-wallpaper';
 import {
   Clock,
   CommandGuard,
   applyDisplay,
   applyWelcome,
+  withAbsoluteWallpaper,
   backoffMs,
   baseWindowModeOf,
   candidateServerUrls,
@@ -150,6 +156,7 @@ export type CustomerActionError =
   | 'not_paired'
   | 'network'
   | 'rate_limited'
+  | 'bad_request'
   | 'invalid_credentials'
   | 'locked'
   | 'login_disabled'
@@ -197,7 +204,8 @@ const UPDATE_FIRST_CHECK_MS = 2 * 60_000;
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const UPDATE_RETRY_MS = 30 * 60_000;
 /** Safety net behind the `server.display` push (a missed push must not keep stale ads for long). */
-const ADS_REFRESH_MS = 10 * 60_000;
+// 0.19.3: 60 s, so a product that runs out of stock leaves the screen within a minute.
+const ADS_REFRESH_MS = 60_000;
 /** How long "Order #3 accepted" stays in the widget. */
 const ORDER_FLASH_MS = 8000;
 
@@ -260,6 +268,11 @@ export class Agent {
   private heartbeatIntervalMs = 10_000;
   private started = false;
   private stopped = false;
+  /** Live screen (remote view): sends frames only while the server asks for them. */
+  private readonly remoteStreamer = new RemoteStreamer({
+    capture: captureScreenFrame,
+    send: (frame) => this.send(frame),
+  });
   private wake: (() => void) | null = null;
   private readonly startedAt = Date.now();
   private tick: ReturnType<typeof setInterval> | null = null;
@@ -882,7 +895,8 @@ export class Agent {
             this.clock.sync(message.serverTime);
             this.heartbeatIntervalMs = Math.max(3, message.heartbeatIntervalSeconds) * 1000;
             this.lastAckAt = Date.now();
-            this.setState(applyWelcome(this.snapshot.state, message));
+            this.setState(applyWelcome(this.snapshot.state, this.withWallpaper(message)));
+            void applyDesktopWallpaper(this.snapshot.state.display?.desktopWallpaperUrl ?? null);
             void secretSet(KEYS.language, message.language);
             this.set({ lastError: null, serverNowMs: this.clock.now() });
             this.setPhase({ phase: 'online' });
@@ -910,8 +924,17 @@ export class Agent {
             this.clock.sync(message.serverTime);
             this.lastAckAt = Date.now();
             break;
+          case 'server.stream':
+            this.remoteStreamer.apply(message);
+            break;
+          case 'server.input':
+            // Live control: the Admin is controlling this PC. A refused event (UAC, lock screen) is
+            // dropped; the Admin sees nothing else.
+            void sendRemoteInput(message.event).catch(() => undefined);
+            break;
           case 'server.display':
-            this.setState(applyDisplay(this.snapshot.state, message));
+            this.setState(applyDisplay(this.snapshot.state, this.withWallpaper(message)));
+            void applyDesktopWallpaper(this.snapshot.state.display?.desktopWallpaperUrl ?? null);
             void secretSet(KEYS.language, message.language);
             this.refreshAds(true);
             break;
@@ -930,6 +953,7 @@ export class Agent {
 
       socket.onclose = (ev) => {
         clearTimeout(connectTimer);
+        this.remoteStreamer.stop();
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
         if (this.socket === socket) this.socket = null;
@@ -978,6 +1002,13 @@ export class Agent {
   }
 
   // ─── Lock-screen slideshow ───────────────────────────────────────────────────
+
+  /** Makes this PC's wallpaper URL absolute (0.20.0) on the welcome and display messages. */
+  private withWallpaper<T extends { display?: ClientDisplayConfig }>(message: T): T {
+    if (!message.display) return message;
+    const base = this.snapshot.pairing?.serverUrl ?? '';
+    return { ...message, display: withAbsoluteWallpaper(message.display, base) };
+  }
 
   /** The owner's ads (Admin › Ads) for the lock screen; refreshed on connect, on `server.display`, every 10 min. */
   private refreshAds(force = false): void {
@@ -1265,6 +1296,7 @@ export class Agent {
       if (code === 'unauthorized' && init.customer) this.set({ customer: null });
       const known: CustomerActionError[] = [
         'rate_limited',
+        'bad_request',
         'invalid_credentials',
         'locked',
         'login_disabled',
@@ -1317,6 +1349,18 @@ export class Agent {
       request: res.body.pending ?? this.snapshot.request,
     });
     return { ok: true, customer: res.body.customer, pending: res.body.pending };
+  }
+
+  /** 0.20.8: starts the PC time bought without a PC — the name and the PIN from the receipt. */
+  async claimTimeCredit(
+    name: string,
+    pin: string,
+  ): Promise<{ ok: true; minutes: number } | { ok: false; error: CustomerActionError }> {
+    const res = await this.customerCall<{ ok: true; minutes: number }>(
+      '/client/time-credit/claim',
+      { method: 'POST', body: { name: name.trim(), pin } },
+    );
+    return res.ok ? { ok: true, minutes: res.body.minutes } : res;
   }
 
   async customerLogout(): Promise<void> {
@@ -1502,6 +1546,8 @@ export class Agent {
   private onTick(): void {
     const now = this.clock.now();
     const { state } = this.snapshot;
+    // 0.19.3: keep the lock-screen ads fresh (stock changes do not push to PCs).
+    if (state.mode === 'locked' && this.snapshot.phase.phase === 'online') this.refreshAds();
     let next = state;
     if (state.session && sessionView(state.session, now).expired) {
       next = { ...state, mode: 'locked', session: null };

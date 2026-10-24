@@ -1,6 +1,6 @@
 [package]
 name = "likapcs-client"
-version = "0.18.1"
+version = "0.22.0"
 description = "LIKApcs-Client — lock screen, session timer and remote control agent for gaming PCs"
 authors = ["LIKApcs"]
 edition = "2021"
@@ -23,6 +23,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Hardware facts + live load for the Admin's PC details (CPU, GPU names via WMI, RAM, disk, sensors).
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "component"] }
+# Live screen (remote view): JPEG encoder for one frame at a time, and base64 for the frame payload.
+jpeg-encoder = "0.6"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 # Device token and pairing data live in the Windows Credential Manager (DPAPI, per user).
@@ -33,7 +36,10 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_LibraryLoader",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
 ] }
 
 [profile.release]
