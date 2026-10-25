@@ -52,6 +52,7 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
 import { StationMap, type SelectModifiers } from '../components/stations/StationMap';
+import { LivePreviewCard, useLivePreview } from '../components/stations/LivePreview';
 import {
   intersects,
   mapOrder,
@@ -69,6 +70,7 @@ import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
 import { WakePanel } from '../components/stations/WakePanel';
+import { StationLookDialog } from '../components/stations/StationLookDialog';
 import { isWakeable } from '../components/stations/useStationActions';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -210,6 +212,18 @@ export function StationsPage() {
     setAnchorId(id);
   }, []);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // Hover preview: the PC under the mouse (after a short pause). Needs remote.view.
+  const [hover, setHover] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [previewArmed, setPreviewArmed] = useState(false);
+  const canPreview = can(PERMISSIONS.REMOTE_VIEW);
+  const preview = useLivePreview(hover?.id ?? null, canPreview && previewArmed);
+  // The card is positioned once; a scroll moves the tile, so the card goes.
+  useEffect(() => {
+    if (!hover) return;
+    const hide = () => setHover(null);
+    window.addEventListener('scroll', hide, true);
+    return () => window.removeEventListener('scroll', hide, true);
+  }, [hover]);
   const [marquee, setMarquee] = useState<{
     left: number;
     top: number;
@@ -616,6 +630,20 @@ export function StationsPage() {
             <span className="muted">{t('map.selectShort')}</span>
           )}
         </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="select-all-pcs"
+          disabled={displayOrder.length === 0 || selectedIds.length === displayOrder.length}
+          onClick={() => {
+            // Every PC on the map (the same list Ctrl+A uses), so the bar actions apply to all.
+            setSelectedIds(displayOrder.map((s) => s.id));
+            setAnchorId(displayOrder[0]?.id ?? null);
+            setMenu(null);
+          }}
+        >
+          {t('map.selectAll')}
+        </Button>
         <MapHelp />
         <div className="map-actions__buttons">
           {actions
@@ -704,9 +732,21 @@ export function StationsPage() {
             onMenu={(id, x, y) => {
               // selectTile() already handled the selection (keeps a group the tile is in).
               if (!selectedSet.has(id)) setSelectedId(id);
+              setHover(null);
               setMenu({ x, y });
             }}
+            onHover={(id, rect) => {
+              if (rect) setPreviewArmed(true);
+              setHover(rect ? { id, rect } : null);
+            }}
           />
+          {hover && canPreview && (
+            <HoverCard
+              hover={hover}
+              station={visible.find((s) => s.id === hover.id)}
+              feed={preview}
+            />
+          )}
           {marquee && (
             <div
               className="map-marquee"
@@ -1282,6 +1322,8 @@ function StationDetailDialog({
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
   const [editOpen, setEditOpen] = useState(false);
+  // 0.20.0: this PC's own look and wallpaper.
+  const [lookOpen, setLookOpen] = useState(false);
   const [confirm, setConfirm] = useState<
     'revoke' | 'reissue' | 'delete' | 'archive' | 'unarchive' | null
   >(null);
@@ -1360,6 +1402,11 @@ function StationDetailDialog({
             )}
             <div style={{ flex: 1 }} />
             {canManage && (
+              <Button onClick={() => setLookOpen(true)} data-testid="station-look">
+                {t('stations.look.button')}
+              </Button>
+            )}
+            {canManage && (
               <Button onClick={() => setEditOpen(true)}>{t('stations.editStation')}</Button>
             )}
             <Button
@@ -1410,7 +1457,7 @@ function StationDetailDialog({
                 approveRequestId={approveRequestId}
               />
             </Card>
-            <Card flush testId="station-device">
+            <Card testId="station-device">
               {device ? (
                 <div className="st-device">
                   <div className="st-device__row" data-testid="station-device-row">
@@ -1615,6 +1662,8 @@ function StationDetailDialog({
           </>
         )}
       </Dialog>
+
+      {lookOpen && <StationLookDialog station={station} onClose={() => setLookOpen(false)} />}
 
       <StationFormDialog
         open={editOpen}
@@ -1982,4 +2031,18 @@ function DeviceCommands({
       )}
     </div>
   );
+}
+
+/** The hover preview card, when the hovered PC is in the list. */
+function HoverCard({
+  hover,
+  station,
+  feed,
+}: {
+  hover: { id: string; rect: DOMRect };
+  station: StationSummary | undefined;
+  feed: ReturnType<typeof useLivePreview>;
+}) {
+  if (!station) return null;
+  return <LivePreviewCard station={station} rect={hover.rect} feed={feed} />;
 }

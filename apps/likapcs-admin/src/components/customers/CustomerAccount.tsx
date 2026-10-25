@@ -63,6 +63,45 @@ export function WalletPill({ cents, testId }: { cents: number; testId?: string }
   );
 }
 
+/**
+ * 0.20.8: the debt and the balance side by side. The POS cart shows them right after the customer's
+ * name, so the cashier sees what is owed before adding more to the tab. The debt turns red when
+ * there is one, and filled red at the credit limit.
+ */
+export function CustomerBalances({
+  customer,
+  testId,
+}: {
+  customer: CustomerSummary;
+  testId?: string;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const due = customer.balanceDueCents;
+  const funds = customer.walletBalanceCents;
+  const limit = customer.creditLimitCents;
+  const atLimit = limit > 0 && due >= limit;
+  return (
+    <span className="cust-balances" data-testid={testId}>
+      <span
+        className={`cust-balance cust-balance--debt${due > 0 ? ' is-due' : ''}${atLimit ? ' is-over' : ''}`}
+        title={limit > 0 ? t('pos.payLaterLimit', { amount: fmt.money(limit) }) : undefined}
+        data-testid="customer-debt"
+      >
+        <span className="cust-balance__k">{t('pos.customerDebt')}</span>
+        <span className="num">{fmt.money(due)}</span>
+      </span>
+      <span
+        className={`cust-balance cust-balance--wallet${funds > 0 ? ' is-funded' : ''}`}
+        data-testid="customer-balance"
+      >
+        <span className="cust-balance__k">{t('pos.customerBalance')}</span>
+        <span className="num">{fmt.money(funds)}</span>
+      </span>
+    </span>
+  );
+}
+
 /** Invalidates everything that shows a balance or a debt after a wallet move. */
 function useAccountInvalidation(customerId: string) {
   const queryClient = useQueryClient();

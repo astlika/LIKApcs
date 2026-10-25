@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   parseMoneyInput,
   type CustomerSummary,
+  type DebtDetail,
   type DebtPaymentRequest,
   type DebtPaymentResult,
   type DebtSummary,
@@ -65,9 +66,21 @@ export function PayDebtDialog({
   const walletCents = walletOn ? (customerQuery.data?.walletBalanceCents ?? 0) : 0;
   const methods: DebtPaymentRequest['method'][] =
     walletCents > 0 ? [...cashMethods, 'wallet'] : cashMethods;
-  const maxCents = debt
-    ? debt.remainingCents
-    : (outstanding.data?.items.reduce((a, d) => a + d.remainingCents, 0) ?? 0);
+  // 0.19.8: a debt with installments can be paid part by part.
+  const plan = useQuery({
+    queryKey: ['debts', 'detail', debt?.id],
+    queryFn: () => api<DebtDetail>(`/debts/${debt!.id}`),
+    enabled: !!debt && !!debt.installmentCount,
+    staleTime: 0,
+  });
+  const parts = plan.data?.installments ?? [];
+  const [partSeq, setPartSeq] = useState<number | null>(null);
+  const selectedPart = partSeq === null ? undefined : parts.find((p) => p.seq === partSeq);
+  const maxCents = selectedPart
+    ? selectedPart.remainingCents
+    : debt
+      ? debt.remainingCents
+      : (outstanding.data?.items.reduce((a, d) => a + d.remainingCents, 0) ?? 0);
   const [amountText, setAmountText] = useState(debt ? (debt.remainingCents / 100).toFixed(2) : '');
   const [method, setMethod] = useState<DebtPaymentRequest['method']>('cash');
   const [tenderedText, setTenderedText] = useState('');
@@ -109,6 +122,7 @@ export function PayDebtDialog({
             method,
             tenderedCents: method === 'cash' && tenderedCents !== null ? tenderedCents : undefined,
             reference: reference.trim() || undefined,
+            ...(partSeq !== null ? { installmentSeq: partSeq } : {}),
           },
         },
       ),
@@ -221,6 +235,39 @@ export function PayDebtDialog({
           <span>{t('debts.remaining')}</span>
           <span className="num">{fmt.money(maxCents)}</span>
         </div>
+        {parts.length > 0 && (
+          <Field label={t('debts.partPay')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={partSeq === null ? '' : String(partSeq)}
+                onChange={(e) => {
+                  const seq = e.target.value ? Number(e.target.value) : null;
+                  setPartSeq(seq);
+                  const part = seq === null ? undefined : parts.find((p) => p.seq === seq);
+                  // A chosen part is paid in full by default; "oldest first" keeps the whole balance.
+                  setAmountText(
+                    ((part ? part.remainingCents : (debt?.remainingCents ?? 0)) / 100).toFixed(2),
+                  );
+                }}
+                data-testid="debt-part"
+              >
+                <option value="">{t('debts.partAuto')}</option>
+                {parts
+                  .filter((p) => p.status !== 'paid')
+                  .map((p) => (
+                    <option key={p.seq} value={p.seq}>
+                      {t('debts.partOption', {
+                        label: t('debts.partN', { n: p.seq }),
+                        amount: fmt.money(p.remainingCents),
+                        date: fmt.date(p.dueDate),
+                      })}
+                    </option>
+                  ))}
+              </Select>
+            )}
+          </Field>
+        )}
         <div className="grid grid--2">
           <Field
             label={t('debts.amountToPay')}

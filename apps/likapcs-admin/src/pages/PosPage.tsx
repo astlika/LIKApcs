@@ -2,7 +2,8 @@
  * Point of sale. Keyboard-first and Enter-driven: scan or tap the products, **Enter** opens the
  * payment, **Enter** completes it (the exact amount is pre-filled, a tendered amount can be typed
  * or tapped), Enter / auto-finish starts the next sale. F2 focuses the search/scan field, F4
- * starts a new sale, Esc closes dialogs (F6 / F8 still work as silent aliases for old habits).
+ * starts a new sale, F7 puts the sale on the customer's tab (pay later), Esc closes dialogs
+ * (F6 / F8 still work as silent aliases for old habits).
  * USB barcode scanners act as keyboards — a fast burst ending in Enter is picked up anywhere on
  * the page (`useBarcodeScanner`), whatever has the focus, and is never mistaken for the Enter
  * that opens the payment; slower typing in the search field searches by name.
@@ -18,6 +19,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
+  Clock,
   Minus,
   PauseCircle,
   Plus,
@@ -25,6 +27,8 @@ import {
   ShoppingCart,
   Trash2,
   X,
+  Users,
+  CalendarClock,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -40,18 +44,27 @@ import {
   type SalesListResponse,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
+import { usePosFlags } from '../lib/pos-flags';
 import {
+  addFreeItem,
+  addTimeItem,
   addToCart,
   cartItemCount,
   cartToRequest,
   cartTotals,
   emptyCart,
+  lineKey,
+  lineName,
   removeLine,
   setLineDiscount,
   setQuantity,
   type Cart,
+  type CartLine,
   unitPriceOf,
 } from '../lib/cart';
+import { FreeItemDialog } from '../components/pos/FreeItemDialog';
+import { AddonDialog } from '../components/pos/AddonDialog';
+import { TimeItemDialog } from '../components/pos/TimeItemDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -63,7 +76,7 @@ import { displayCustomerOf, useCustomerDisplay } from '../state/customer-display
 import { useAppSettings } from '../state/app-settings';
 import { SaleDoneDialog } from '../components/pos/SaleDoneDialog';
 import { CustomerPicker } from '../components/customers/CustomerPicker';
-import { TenderPanel, useTender } from '../components/payments/TenderPanel';
+import { TenderPanel, useTender, type TenderMode } from '../components/payments/TenderPanel';
 import {
   Badge,
   Button,
@@ -100,7 +113,16 @@ export function PosPage() {
   const [search, setSearch] = useState('');
   // The tile grid filters on a debounced copy so scanner key bursts don't trigger a query per key.
   const [gridSearch, setGridSearch] = useState('');
-  const [dialog, setDialog] = useState<'payment' | 'confirmNew' | 'suspended' | null>(null);
+  // The payment dialog's first mode: "Add to debt" (F7) opens it on pay later (0.20.8).
+  const [payStart, setPayStart] = useState<TenderMode>('cash');
+  const [dialog, setDialog] = useState<
+    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
+  >(null);
+  // 0.19.1: a product with extras opens the extras dialog before it is added to the cart.
+  const [addonPick, setAddonPick] = useState<{
+    product: ProductSummary;
+    quantityMilli: number;
+  } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
@@ -121,11 +143,14 @@ export function PosPage() {
     const h = setTimeout(() => setGridSearch(search.trim()), 180);
     return () => clearTimeout(h);
   }, [search]);
+  const flags = usePosFlags();
   const settings = useQuery({
     queryKey: ['settings', 'all'],
     queryFn: () => api<SettingsMap>('/settings'),
     staleTime: 60_000,
   });
+  /** 0.19.0: off-inventory lines take the default tax rate, shown the same as the server computes. */
+  const defaultTaxBp = settings.data?.['tax.default_rate_bp'] ?? 0;
   const products = useQuery({
     queryKey: ['products', 'pos', categoryId, gridSearch],
     queryFn: () =>
@@ -144,6 +169,17 @@ export function PosPage() {
   });
 
   const totals = useMemo(() => cartTotals(cart, customer?.discountBp ?? 0), [cart, customer]);
+  const canGiveDebt = can(PERMISSIONS.DEBTS_GIVE);
+  // The customer as the server has him now: his debt and balance move with every sale, so the cart
+  // never shows the numbers from when he was picked (0.20.8).
+  const liveCustomer = useQuery({
+    queryKey: ['customers', 'pos', customer?.id ?? null],
+    queryFn: () => api<CustomerSummary>(`/customers/${customer!.id}`),
+    enabled: !!customer,
+    staleTime: 0,
+  });
+  const shownCustomer =
+    customer && liveCustomer.data?.id === customer.id ? liveCustomer.data : customer;
   const resetCart = useCallback(() => {
     setCart(emptyCart());
     setCustomer(null);
@@ -153,9 +189,35 @@ export function PosPage() {
     focusSearch();
   }, [focusSearch, setCart, setCustomer, setResumedId]);
 
+  // Staff purchase (0.20.7): on, the sale is priced at purchase cost, no discounts and no customer;
+  // a free item cannot go on it (the server would charge its typed price), so the toggle refuses.
+  const toggleStaff = useCallback(() => {
+    if (cart.staff) {
+      setCart((c) => ({ ...c, staff: false }));
+    } else {
+      if (cart.lines.some((l) => l.kind === 'free')) {
+        toast.error(t('pos.staffNoFreeItems'));
+        return;
+      }
+      setCart((c) => ({
+        ...c,
+        staff: true,
+        discountCents: 0,
+        customerId: null,
+        lines: c.lines.map((l) => ({ ...l, discountCents: 0 }) as CartLine),
+      }));
+      setCustomer(null);
+    }
+    focusSearch();
+  }, [cart, focusSearch, setCart, setCustomer, t, toast]);
+
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      if (product.addons?.length) {
+        setAddonPick({ product, quantityMilli });
+        return;
+      }
       setCart((c) => addToCart(c, product, quantityMilli));
       focusSearch();
     },
@@ -213,10 +275,30 @@ export function PosPage() {
     void api<SaleDetail>(`/sales/${id}`).then(async (sale) => {
       let next = emptyCart();
       for (const item of sale.items) {
-        if (!item.productId) continue;
+        if (!item.productId) {
+          // Off-inventory line (0.19.0): it has no product row to reload — its snapshot is enough.
+          next = addFreeItem(next, {
+            name: item.description,
+            unitPriceCents: item.unitPriceCents,
+            taxRateBp: item.taxRateBp,
+            quantityMilli: item.quantityMilli,
+          });
+          if (item.discountCents)
+            next = setLineDiscount(
+              next,
+              lineKey(next.lines[next.lines.length - 1]!),
+              item.discountCents,
+            );
+          continue;
+        }
         const product = await api<ProductSummary>(`/products/${item.productId}`);
-        next = addToCart(next, product, item.quantityMilli);
-        if (item.discountCents) next = setLineDiscount(next, product.id, item.discountCents);
+        next = addToCart(next, product, item.quantityMilli, item.addonIds ?? []);
+        if (item.discountCents)
+          next = setLineDiscount(
+            next,
+            lineKey(next.lines[next.lines.length - 1]!),
+            item.discountCents,
+          );
       }
       // A parked sale's discount may be the customer's default one (applied by the server); do
       // not resend it as an explicit discount, the server re-applies it on completion.
@@ -251,12 +333,20 @@ export function PosPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
         e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
+        // F2 = customer (0.20.7). Nothing to pick on a staff purchase or while a dialog is open.
+        if (dialog || cart.staff) return;
+        document.querySelector<HTMLInputElement>('#pos-cart-customer input')?.focus();
       } else if (e.key === 'F4') {
         e.preventDefault();
         if (cart.lines.length) setDialog('confirmNew');
         else resetCart();
+      } else if (e.key === 'F7') {
+        // Add to debt (0.20.8): the whole sale goes on the customer's tab, the payment opens on pay later.
+        e.preventDefault();
+        if (cart.staff || !cart.lines.length || receipt || dialog || !customer || !canGiveDebt)
+          return;
+        setPayStart('credit');
+        setDialog('payment');
       } else if (e.key === 'Enter' || e.key === 'F6') {
         if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
         const target = e.target instanceof Element ? e.target : null;
@@ -270,13 +360,14 @@ export function PosPage() {
           // The payment dialog mounts synchronously (discrete event): stop the same Enter from
           // reaching its own listener and completing the sale in one go.
           e.stopPropagation();
+          setPayStart('cash');
           setDialog('payment');
         }
       }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [cart.lines.length, receipt, dialog, resetCart]);
+  }, [cart.lines.length, cart.staff, receipt, dialog, resetCart, customer, canGiveDebt]);
 
   // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
   // them first): a code is looked up exactly, otherwise the single visible match is added.
@@ -426,72 +517,137 @@ export function PosPage() {
         </div>
       </section>
 
-      <aside className="pos__cart">
-        <div className="pos__cart-head">
-          <h2>
-            <ShoppingCart size={18} /> {t('pos.cart')}
+      <aside
+        className={`pos__cart${cart.staff ? ' pos__cart--staff' : ''}`}
+        aria-label={t('pos.cart')}
+      >
+        <header className="pos__cart-head">
+          <div className="pos__cart-title">
+            <h2>
+              <ShoppingCart size={16} /> {t('pos.cart')}
+            </h2>
+            <span className="pos__count num">{t('pos.items', { n: cartItemCount(cart) })}</span>
             {resumedId && <Badge tone="warning">{t('sales.status.suspended')}</Badge>}
-          </h2>
-          <span className="muted">{t('pos.items', { n: cartItemCount(cart) })}</span>
-        </div>
-        <div className="pos__customer">
-          <CustomerPicker
-            value={customer}
-            onChange={(c) => {
-              setCustomer(c);
-              setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
-            }}
-            placeholder={t('pos.customerPlaceholder')}
-          />
-        </div>
+          </div>
+          <div className="pos__cart-tools">
+            {flags.offInventory && !cart.staff && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDialog('freeItem')}
+                data-testid="pos-free-item"
+              >
+                <Plus size={14} /> {t('pos.freeItem')}
+              </Button>
+            )}
+            {flags.timeItems && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDialog('timeItem')}
+                data-testid="pos-time-item"
+              >
+                <Clock size={14} /> {t('pos.timeItem')}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant={cart.staff ? 'primary' : 'ghost'}
+              aria-pressed={!!cart.staff}
+              onClick={toggleStaff}
+              data-testid="pos-staff-toggle"
+            >
+              <Users size={14} /> {t('pos.staffPurchase')}
+            </Button>
+          </div>
+        </header>
+        {cart.staff && (
+          <div className="pos__staff-banner" role="status" data-testid="pos-staff-banner">
+            <strong>{t('pos.staffBannerTitle')}</strong>
+            <span>{t('pos.staffBanner')}</span>
+          </div>
+        )}
+        {!cart.staff && (
+          <div className="pos__customer" id="pos-cart-customer">
+            <CustomerPicker
+              value={shownCustomer}
+              onChange={(c) => {
+                setCustomer(c);
+                setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
+              }}
+              placeholder={t('pos.customerPlaceholder')}
+              showAccount
+            />
+          </div>
+        )}
         <div className="pos__lines">
           {cart.lines.length === 0 && <div className="pos__empty">{t('pos.emptyCart')}</div>}
           {cart.lines.map((line, i) => {
             const computed = totals.lines[i]!;
+            const key = lineKey(line);
+            const unit = displayUnit(line, !!cart.staff);
             return (
-              <div key={line.product.id} className="pos-line">
+              <div key={key} className="pos-line">
                 <div className="pos-line__main">
-                  <div className="pos-line__name">{line.product.name}</div>
-                  <div className="pos-line__price faint num">
-                    {fmt.money(unitPriceOf(line.product))} × {line.quantityMilli / 1000}
-                    {unitPriceOf(line.product) < line.product.sellingPriceCents && (
-                      <span className="text-success"> · {t('pos.promo')}</span>
+                  <div className="pos-line__name">
+                    {lineName(line)}
+                    {line.kind === 'free' && (
+                      <span className="faint"> · {t('pos.freeItemTag')}</span>
                     )}
+                    {line.kind === 'time' && (
+                      <span className="faint"> · {t('pos.timeItemTag')}</span>
+                    )}
+                  </div>
+                  <div className="pos-line__price faint num">
+                    {line.kind === 'time' && cart.staff ? (
+                      t('pos.staffFree')
+                    ) : (
+                      <>
+                        {fmt.money(unit)} × {line.quantityMilli / 1000}
+                      </>
+                    )}
+                    {line.kind === 'product' &&
+                      !cart.staff &&
+                      unit < line.product.sellingPriceCents && (
+                        <span className="text-success"> · {t('pos.promo')}</span>
+                      )}
                   </div>
                 </div>
                 <div className="pos-line__qty">
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli - 1000))
-                    }
-                    aria-label="−"
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <QtyInput
-                    quantityMilli={line.quantityMilli}
-                    label={t('pos.qty')}
-                    onCommit={(milli) => {
-                      setCart((c) => setQuantity(c, line.product.id, milli));
-                      focusSearch();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli + 1000))
-                    }
-                    aria-label="+"
-                  >
-                    <Plus size={14} />
-                  </button>
+                  {line.kind === 'time' ? (
+                    <span className="faint num">1</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
+                        aria-label="−"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <QtyInput
+                        quantityMilli={line.quantityMilli}
+                        label={t('pos.qty')}
+                        onCommit={(milli) => {
+                          setCart((c) => setQuantity(c, key, milli));
+                          focusSearch();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
+                        aria-label="+"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
-                  {canDiscount && (
+                  {canDiscount && !cart.staff && (
                     <input
                       className="input pos-line__discount"
                       placeholder="−0.00"
@@ -500,7 +656,7 @@ export function PosPage() {
                       defaultValue={line.discountCents ? (line.discountCents / 100).toFixed(2) : ''}
                       onBlur={(e) => {
                         const cents = e.target.value.trim() ? parseMoneyInput(e.target.value) : 0;
-                        if (cents !== null) setCart(setLineDiscount(cart, line.product.id, cents));
+                        if (cents !== null) setCart(setLineDiscount(cart, key, cents));
                       }}
                       aria-label={t('pos.lineDiscount')}
                     />
@@ -508,8 +664,8 @@ export function PosPage() {
                 </div>
                 <button
                   type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => setCart(removeLine(cart, line.product.id))}
+                  className="btn btn--ghost btn--sm pos-line__remove"
+                  onClick={() => setCart(removeLine(cart, key))}
                   aria-label={t('common.delete')}
                 >
                   <Trash2 size={14} />
@@ -519,7 +675,7 @@ export function PosPage() {
           })}
         </div>
         <div className="pos__totals">
-          {canDiscount && (
+          {canDiscount && !cart.staff && (
             <div className="row row--between">
               <span className="muted">{t('pos.saleDiscount')}</span>
               <input
@@ -550,13 +706,15 @@ export function PosPage() {
               <span className="num">−{fmt.money(totals.discountCents)}</span>
             </div>
           )}
-          <div className="row row--between faint" style={{ fontSize: 12 }}>
+          <div className="row row--between faint pos__tax">
             <span>{t('pos.tax')}</span>
             <span className="num">{fmt.money(totals.taxCents)}</span>
           </div>
           <div className="pos__grand">
-            <span>{t('pos.total')}</span>
-            <span className="num">{fmt.money(totals.totalCents)}</span>
+            <span>{cart.staff ? t('pos.staffCostTotal') : t('pos.total')}</span>
+            <span className="num" data-testid="pos-total">
+              {fmt.money(totals.totalCents)}
+            </span>
           </div>
         </div>
         <div className="pos__actions">
@@ -567,7 +725,18 @@ export function PosPage() {
             {canSuspend && (
               <>
                 <Button
-                  disabled={cart.lines.length === 0}
+                  disabled={
+                    cart.lines.length === 0 ||
+                    !!cart.staff ||
+                    cart.lines.some((l) => l.kind === 'time')
+                  }
+                  title={
+                    cart.staff
+                      ? t('pos.staffNoPark')
+                      : cart.lines.some((l) => l.kind === 'time')
+                        ? t('pos.timeItemNotParkable')
+                        : undefined
+                  }
                   loading={suspend.isPending}
                   onClick={() => suspend.mutate()}
                 >
@@ -582,25 +751,70 @@ export function PosPage() {
               </>
             )}
           </div>
+          {!cart.staff && canGiveDebt && (
+            <Button
+              size="lg"
+              className="pos__tab"
+              disabled={cart.lines.length === 0 || !customer}
+              title={customer ? undefined : t('pos.addToTabNoCustomer')}
+              onClick={() => {
+                setPayStart('credit');
+                setDialog('payment');
+              }}
+              data-testid="pos-add-to-tab"
+            >
+              <CalendarClock size={14} /> {t('pos.addToTab')} <Kbd>F7</Kbd>
+            </Button>
+          )}
           <Button
             variant="primary"
             size="lg"
             className="pos__pay"
             disabled={cart.lines.length === 0}
-            onClick={() => setDialog('payment')}
+            onClick={() => {
+              setPayStart('cash');
+              setDialog('payment');
+            }}
+            data-testid="pos-pay"
           >
-            <Banknote size={16} /> {t('pos.pay')} <Kbd>Enter</Kbd>
+            {cart.staff ? <Users size={16} /> : <Banknote size={16} />}{' '}
+            {cart.staff ? t('pos.staffRecord') : t('pos.pay')} <Kbd>Enter</Kbd>
           </Button>
         </div>
         <div className="pos__hint faint">{t('pos.shortcuts')}</div>
       </aside>
 
-      {dialog === 'payment' && (
+      {dialog === 'payment' && cart.staff && (
+        <StaffPurchaseDialog
+          cart={cart}
+          totalCents={totals.totalCents}
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onCompleted={(sale, receiptData) => {
+            setDialog(null);
+            setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // The customer's debt and balance moved: every view of them refetches.
+            void queryClient.invalidateQueries({ queryKey: ['customers'] });
+            display.setDone({
+              receiptNo: sale.receiptNo,
+              totalCents: 0,
+              paidCents: 0,
+              changeCents: 0,
+              creditCents: 0,
+              customer: null,
+            });
+          }}
+        />
+      )}
+      {dialog === 'payment' && !cart.staff && (
         <PaymentDialog
           cart={cart}
           resumedId={resumedId}
           totalCents={totals.totalCents}
-          customer={customer}
+          customer={shownCustomer}
+          startMode={payStart}
           onCustomerChange={(c) => {
             setCustomer(c);
             setCart((prev) => ({ ...prev, customerId: c?.id ?? null }));
@@ -611,7 +825,9 @@ export function PosPage() {
           }}
           onCompleted={(sale, receiptData) => {
             setDialog(null);
-            setReceipt(receiptData);
+            setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // The customer's debt and balance moved: every view of them refetches.
+            void queryClient.invalidateQueries({ queryKey: ['customers'] });
             // Customer display: "thank you" with what was paid / put on the tab.
             const paymentsNow = sale.payments.filter((p) => p.kind === 'sale');
             const creditCents = paymentsNow
@@ -650,6 +866,48 @@ export function PosPage() {
         confirmLabel={t('pos.newSale')}
         danger
       />
+      {addonPick && (
+        <AddonDialog
+          product={addonPick.product}
+          onClose={() => {
+            setAddonPick(null);
+            focusSearch();
+          }}
+          onAdd={(addonIds) => {
+            const { product, quantityMilli } = addonPick;
+            setCart((c) => addToCart(c, product, quantityMilli, addonIds));
+            setAddonPick(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'freeItem' && (
+        <FreeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onAdd={(item) => {
+            setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'timeItem' && (
+        <TimeItemDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          customerName={customer?.name ?? null}
+          onAdd={(item) => {
+            setCart((c) => addTimeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
       {dialog === 'suspended' && (
         <Dialog
           open
@@ -755,6 +1013,135 @@ function QtyInput({
   );
 }
 
+/** The unit a line is shown at: the purchase cost on a staff purchase, PC time free. */
+function displayUnit(line: CartLine, staff: boolean): number {
+  if (line.kind === 'product')
+    return staff ? line.product.purchaseCostCents : unitPriceOf(line.product);
+  if (line.kind === 'time' && staff) return 0;
+  return line.unitPriceCents;
+}
+
+// ─── Staff purchase dialog ─────────────────────────────────────────────────────
+/**
+ * Records a staff purchase (0.20.7): no payment, the server takes the stock out at cost and books
+ * the sale as a staff outflow with the user, date and time. Enter records it, Esc closes.
+ */
+function StaffPurchaseDialog({
+  cart,
+  totalCents,
+  onClose,
+  onCompleted,
+}: {
+  cart: Cart;
+  totalCents: number;
+  onClose: () => void;
+  onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const complete = useMutation({
+    mutationFn: async () => {
+      const sale = await api<SaleDetail>('/sales', {
+        method: 'POST',
+        body: { ...cartToRequest(cart), discountCents: 0, staff: true, payments: [] },
+      });
+      const receipt = await api<ReceiptData>(`/sales/${sale.id}/receipt`);
+      return { sale, receipt };
+    },
+    onSuccess: ({ sale, receipt }) => {
+      toast.success(t('pos.staffRecorded'));
+      onCompleted(sale, receipt);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+  const submit = () => {
+    if (!complete.isPending) complete.mutate();
+  };
+  // Enter records the purchase from anywhere in the dialog; the Enter that opened it is ignored.
+  const openedAt = useRef(performance.now());
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.timeStamp <= openedAt.current) return;
+      if (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element)) {
+        e.preventDefault();
+        submit();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('pos.staffConfirmTitle')}
+      size="md"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={complete.isPending}
+            onClick={submit}
+            data-testid="pos-staff-record"
+          >
+            <Users size={16} /> {t('pos.staffRecord')} <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted pos-staff-hint">{t('pos.staffConfirmHint')}</p>
+        <ul className="pos-staff-list">
+          {cart.lines.map((line) => (
+            <li key={lineKey(line)}>
+              <span>
+                {lineName(line)} <span className="faint num">× {line.quantityMilli / 1000}</span>
+              </span>
+              <span className="num">
+                {line.kind === 'time'
+                  ? t('pos.staffFree')
+                  : fmt.money(displayUnit(line, true) * (line.quantityMilli / 1000))}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="pos__grand" style={{ fontSize: 26 }}>
+          <span>{t('pos.staffCostTotal')}</span>
+          <span className="num">{fmt.money(totalCents)}</span>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Selects a tender by its chip, so the panel's own switch (pre-fill, focus) runs. */
+function clickMethod(mode: TenderMode): void {
+  document.querySelector<HTMLButtonElement>(`[data-testid="pos-method-${mode}"]`)?.click();
+}
+
+/** F2 in the payment: the customer field of the panel; pay later or balance opens it if hidden. */
+function focusDialogCustomer(modes: TenderMode[]): void {
+  const find = () =>
+    document.querySelector<HTMLInputElement>(
+      '[role="dialog"] .tender-credit input, [role="dialog"] .tender-wallet input',
+    );
+  const input = find();
+  if (input) {
+    input.focus();
+    return;
+  }
+  const fallback = (['credit', 'wallet'] as TenderMode[]).find((m) => modes.includes(m));
+  if (!fallback) return;
+  clickMethod(fallback);
+  window.requestAnimationFrame(() => find()?.focus());
+}
+
 // ─── Payment dialog ────────────────────────────────────────────────────────────
 function PaymentDialog({
   cart,
@@ -764,6 +1151,7 @@ function PaymentDialog({
   onCustomerChange,
   onClose,
   onCompleted,
+  startMode = 'cash',
 }: {
   cart: Cart;
   resumedId: string | null;
@@ -773,17 +1161,22 @@ function PaymentDialog({
   onCustomerChange: (customer: CustomerSummary | null) => void;
   onClose: () => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
+  /** 0.20.8: the first mode of the dialog ("Add to debt" opens on pay later). */
+  startMode?: TenderMode;
 }) {
   const { t } = useI18n();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  const tender = useTender({ totalCents, customer });
+  const tender = useTender({ totalCents, customer, initialMode: startMode });
   const display = useCustomerDisplay();
+  // `setTender` is stable; the `display` object is not (it changes whenever the tender does), so the
+  // effects below depend on the setter only — depending on `display` looped on every render.
+  const { setTender: reportTender } = display;
 
   // Customer display: what is being counted, live (cleared when the dialog closes).
   const { mode, paidCents, cashCents, walletCents, creditCents, changeCents, covered } = tender;
   useEffect(() => {
-    display.setTender({
+    reportTender({
       mode,
       paidCents,
       cashCents: cashCents ?? 0,
@@ -793,7 +1186,7 @@ function PaymentDialog({
       covered,
     });
   }, [
-    display,
+    reportTender,
     mode,
     paidCents,
     cashCents,
@@ -803,7 +1196,7 @@ function PaymentDialog({
     covered,
     totalCents,
   ]);
-  useEffect(() => () => display.setTender(null), [display]);
+  useEffect(() => () => reportTender(null), [reportTender]);
 
   const complete = useMutation({
     mutationFn: async () => {
@@ -831,12 +1224,35 @@ function PaymentDialog({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.timeStamp <= openedAt.current) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
       if (
         e.key === 'F8' ||
         (e.key === 'Enter' && !e.repeat && !isEditableElement(e.target as Element))
       ) {
         e.preventDefault();
         submit();
+        return;
+      }
+      // Methods without the mouse: ↑/↓ step through them (the cash field keeps its own caret and
+      // ignores them), 1–9 pick one directly when no field is being typed in. Clicking the chip
+      // reuses the panel's own switch, so the amounts are pre-filled exactly as with a tap.
+      const modes = tender.modes;
+      if (modes.length > 1 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        const idx = Math.max(0, modes.indexOf(tender.mode));
+        const next = (idx + (e.key === 'ArrowDown' ? 1 : -1) + modes.length) % modes.length;
+        clickMethod(modes[next]!);
+      } else if (
+        modes.length > 1 &&
+        /^[1-9]$/.test(e.key) &&
+        Number(e.key) <= modes.length &&
+        !isEditableElement(e.target as Element)
+      ) {
+        e.preventDefault();
+        clickMethod(modes[Number(e.key) - 1]!);
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        focusDialogCustomer(tender.modes);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -870,6 +1286,7 @@ function PaymentDialog({
         </>
       }
     >
+      <p className="faint pos-pay-keys">{t('pos.paymentKeys')}</p>
       <TenderPanel tender={tender} onSubmit={submit} onCustomerChange={onCustomerChange} />
     </Dialog>
   );

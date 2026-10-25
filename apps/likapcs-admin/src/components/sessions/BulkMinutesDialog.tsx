@@ -25,7 +25,34 @@ import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
+import { bulkEligibility } from '../../lib/bulk-eligibility';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
+
+function BulkPreview({ stations }: { stations: StationSummary[] }) {
+  const { t } = useI18n();
+  const { will, wont } = bulkEligibility(stations);
+  return (
+    <div className="bulk-preview" data-testid="bulk-preview">
+      <div>
+        <strong>{t('map.bulkWillGet', { n: will.length })}</strong>{' '}
+        <span>{will.map((s) => s.code).join(', ') || '—'}</span>
+      </div>
+      {wont.length > 0 && (
+        <div className="faint">
+          <strong>{t('map.bulkWontGet', { n: wont.length })}</strong>{' '}
+          <span>
+            {wont
+              .map(
+                (w) =>
+                  `${w.station.code} (${t(w.reason === 'postpaid' ? 'map.skipPostpaid' : 'map.skipNoSession')})`,
+              )
+              .join(', ')}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function BulkMinutesDialog({
   stations,
@@ -169,6 +196,7 @@ export function BulkMinutesDialog({
       }
     >
       <div className="stack">
+        <BulkPreview stations={stations} />
         <div className="chips">
           {(packages.data ?? []).map((p) => (
             <button

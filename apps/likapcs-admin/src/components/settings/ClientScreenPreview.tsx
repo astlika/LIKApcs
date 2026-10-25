@@ -195,11 +195,20 @@ export function ClientScreenPreview({
   // 800 px wide screen, so the real footprint (shared widget-designs.ts) is scaled by width / 800
   // — large enough to read, true to the proportions.
   const corner = display.widgetPosition;
-  const align = corner.endsWith('left') ? 'left' : 'right';
+  const align = corner.endsWith('center') ? 'center' : corner.endsWith('left') ? 'left' : 'right';
   const cornerStyle: CSSProperties = {
     position: 'absolute',
-    ...(corner.startsWith('top') ? { top: '4%' } : { bottom: '6%' }),
-    ...(align === 'left' ? { left: '3%' } : { right: '3%' }),
+    // 0.19.7: the middle positions sit on the vertical centre of the left / right edge.
+    ...(corner.startsWith('middle')
+      ? { top: '50%', transform: 'translateY(-50%)' }
+      : corner.startsWith('top')
+        ? { top: '4%' }
+        : { bottom: '6%' }),
+    ...(align === 'center'
+      ? { left: '50%', transform: 'translateX(-50%)' }
+      : align === 'left'
+        ? { left: '3%' }
+        : { right: '3%' }),
   };
   return (
     <div
@@ -218,7 +227,7 @@ export function ClientScreenPreview({
           code={stationCode}
           money={money(150)}
           scale={previewWidth / 800}
-          align={align}
+          align={align === 'left' ? 'left' : 'right'}
         />
       </div>
     </div>

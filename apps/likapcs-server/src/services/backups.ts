@@ -35,6 +35,7 @@ import {
   type BackupStatus,
   type BackupSummary,
   type BackupsResponse,
+  type FactoryResetResult,
   type RestoreResult,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
@@ -62,6 +63,10 @@ export interface BackupServiceOptions {
   schemaVersion: () => number;
   /** Called after a successful restore (drop caches, notify Admins, disconnect clients). */
   afterRestore?: () => void;
+  /** Factory reset: erases uploaded pictures and videos (the backup folder is never touched). */
+  wipeUploads?: () => Promise<void>;
+  /** Uploaded files folder: pictures, wallpapers and ad videos go into every backup (`uploads/`). */
+  uploadDir?: string;
   log?: { info: (o: object, msg: string) => void; error: (o: object, msg: string) => void };
 }
 
@@ -72,6 +77,16 @@ const SKIP_ON_RESTORE = new Set(['schema_migrations']);
  * right now, not the files that existed when the archive was taken.
  */
 const PRESERVE_CURRENT = new Set(['backup_history']);
+/**
+ * Factory reset keeps the system's own configuration: migration bookkeeping, and the access roles
+ * and permission catalogue that first-run setup needs. Every other table is erased.
+ */
+const KEEP_ON_FACTORY_RESET = new Set([
+  'schema_migrations',
+  'roles',
+  'permissions',
+  'role_permissions',
+]);
 
 export class BackupService {
   private busy: 'backup' | 'restore' | null = null;
@@ -134,6 +149,29 @@ export class BackupService {
     return { path: row.file_path, fileName: path.basename(row.file_path), sizeBytes: stat.size };
   }
 
+  // ─── Uploaded files ──────────────────────────────────────────────────────────
+
+  /** Copies the uploads folder into the archive staging area; null when there is none. */
+  private async copyUploads(target: string): Promise<{ files: number; bytes: number } | null> {
+    const source = this.options.uploadDir;
+    if (!source || !fs.existsSync(source)) return null;
+    await fsp.cp(source, target, { recursive: true });
+    return treeSize(target);
+  }
+
+  /** Replaces the uploads folder with the archived one (entries not in the archive are removed). */
+  private async replaceUploads(archived: string): Promise<void> {
+    const target = this.options.uploadDir;
+    if (!target) return;
+    await fsp.mkdir(target, { recursive: true });
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.rm(path.join(target, entry), { recursive: true, force: true });
+    }
+    for (const entry of await fsp.readdir(archived)) {
+      await fsp.cp(path.join(archived, entry), path.join(target, entry), { recursive: true });
+    }
+  }
+
   // ─── Create ──────────────────────────────────────────────────────────────────
 
   async create(input: { kind: BackupKind; actor: AuditActor | null }): Promise<BackupSummary> {
@@ -175,6 +213,8 @@ export class BackupService {
         manifestTables.push({ name: table, rows: stream.rowCount, bytes: stat.size });
       }
       await client.query('COMMIT');
+      // Uploaded files are part of the backup too: product pictures, wallpapers, ad videos.
+      const uploads = await this.copyUploads(path.join(tmpDir, 'uploads'));
       const manifest: BackupManifest = {
         format: BACKUP_FORMAT,
         formatVersion: BACKUP_FORMAT_VERSION,
@@ -184,11 +224,13 @@ export class BackupService {
         businessName,
         kind,
         tables: manifestTables,
+        uploads,
       };
       await fsp.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
       await tar.create({ gzip: true, file: finalPath, cwd: tmpDir, portable: true }, [
         'manifest.json',
         'tables',
+        ...(uploads ? ['uploads'] : []),
       ]);
       const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
       await this.pool.query(
@@ -309,6 +351,97 @@ export class BackupService {
   }
 
   // ─── Restore ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Factory reset. A safety backup is taken first; then every table (except migration bookkeeping)
+   * and every uploaded picture/video is erased, users and settings included, so the system starts
+   * again at first-run setup. The backup history survives, with its links to the erased users
+   * cleared, so the safety backup stays listed. The backup folder is never touched.
+   */
+  async factoryReset(input: {
+    userId: string;
+    username: string;
+    ip: string;
+  }): Promise<FactoryResetResult> {
+    this.acquire('backup');
+    try {
+      const { rows: owners } = await this.pool.query(
+        `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = $1 AND r.code = 'owner'`,
+        [input.userId],
+      );
+      if (owners.length === 0) {
+        throw new AppError(403, 'FORBIDDEN', 'Only the owner can reset the system');
+      }
+      const safety = await this.runBackup('pre_reset', {
+        userId: input.userId,
+        label: input.username,
+        ip: input.ip,
+      });
+      const client = await this.pool.connect();
+      let tablesErased = 0;
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL lock_timeout = '60s'`);
+        const { rows: history } = await client.query<Record<string, unknown>>(
+          'SELECT * FROM backup_history',
+        );
+        const erasable = (await this.publicTables(client)).filter(
+          (t) => !KEEP_ON_FACTORY_RESET.has(t),
+        );
+        // Built-in rows (units, expense categories) carry `is_system`: they stay, user rows go.
+        const { rows: flagged } = await client.query<{ table_name: string }>(
+          `SELECT table_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND column_name = 'is_system'`,
+        );
+        const withFlag = new Set(flagged.map((r) => r.table_name));
+        const plain = erasable.filter((t) => !withFlag.has(t));
+        const builtIn = erasable.filter((t) => withFlag.has(t));
+        if (plain.length > 0) {
+          await client.query(`TRUNCATE ${plain.map(quoteIdent).join(', ')} RESTART IDENTITY`);
+        }
+        for (const t of builtIn) {
+          await client.query(`DELETE FROM ${quoteIdent(t)} WHERE is_system IS NOT TRUE`);
+        }
+        // Rows a fresh install starts with (same as migrations 0004, 0009).
+        await client.query(
+          `INSERT INTO cash_registers (name)
+           SELECT 'Main register' WHERE NOT EXISTS (SELECT 1 FROM cash_registers)`,
+        );
+        await client.query(
+          `INSERT INTO document_sequences (kind, period, prefix, next_value)
+           VALUES ('customer', '', 'C', 1) ON CONFLICT (kind, period) DO NOTHING`,
+        );
+        tablesErased = erasable.length;
+        for (const h of history) {
+          const row: Record<string, unknown> = { ...h, created_by: null };
+          const keys = Object.keys(row);
+          await client.query(
+            `INSERT INTO backup_history (${keys.map(quoteIdent).join(', ')})
+             VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')})
+             ON CONFLICT (id) DO NOTHING`,
+            keys.map((k) => row[k]),
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      await this.options.wipeUploads?.();
+      await this.settings.ensureDefaults();
+      this.options.afterRestore?.();
+      this.options.log?.info(
+        { preResetBackupId: safety.id, tablesErased },
+        'factory reset completed',
+      );
+      return { preResetBackupId: safety.id, tablesErased };
+    } finally {
+      this.busy = null;
+    }
+  }
 
   async restore(input: {
     id: string;
@@ -434,6 +567,10 @@ export class BackupService {
       } finally {
         client.release();
       }
+      // Files come back with the data: the archive's uploads replace the current ones, so every
+      // restored product, wallpaper and ad points at a file that is really there.
+      const archivedUploads = path.join(tmpDir, 'uploads');
+      if (fs.existsSync(archivedUploads)) await this.replaceUploads(archivedUploads);
       this.settings.invalidate();
       this.options.afterRestore?.();
       const result: RestoreResult = {
@@ -621,6 +758,24 @@ async function csvHeader(file: string): Promise<string[]> {
   } finally {
     await handle.close();
   }
+}
+
+/** Number of files and their total size under a folder. */
+async function treeSize(dir: string): Promise<{ files: number; bytes: number }> {
+  let files = 0;
+  let bytes = 0;
+  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const inner = await treeSize(full);
+      files += inner.files;
+      bytes += inner.bytes;
+    } else if (entry.isFile()) {
+      files += 1;
+      bytes += (await fsp.stat(full)).size;
+    }
+  }
+  return { files, bytes };
 }
 
 export function parseManifest(text: string): BackupManifest {

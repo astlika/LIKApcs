@@ -14,6 +14,7 @@ import {
   Clock,
   Gift,
   Hourglass,
+  Minus,
   Pause,
   Play,
   Plus,
@@ -547,7 +548,7 @@ function ActiveSession({
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   const now = useNow();
-  const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | null>(null);
+  const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | 'remove' | null>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   useEffect(() => {
@@ -576,6 +577,7 @@ function ActiveSession({
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
+        'remove-time': t('sessions.timeRemoved'),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
               total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
@@ -708,9 +710,18 @@ function ActiveSession({
             </Button>
           )}
           {s.billingMode !== 'postpaid' && (
-            <Button onClick={() => setDialog('extend')}>
-              <Plus size={14} /> {t('sessions.extend')}
-            </Button>
+            <div className="time-step" role="group" aria-label={t('sessions.timeStepLabel')}>
+              <Button
+                onClick={() => setDialog('remove')}
+                disabled={act.isPending}
+                data-testid="session-remove-time"
+              >
+                <Minus size={14} /> {t('sessions.removeTime')}
+              </Button>
+              <Button onClick={() => setDialog('extend')} data-testid="session-add-time">
+                <Plus size={14} /> {t('sessions.extend')}
+              </Button>
+            </div>
           )}
           <Button variant="primary" onClick={() => setDialog('end')} data-testid="session-end">
             <Square size={14} /> {t('sessions.end')}
@@ -731,6 +742,14 @@ function ActiveSession({
           busy={act.isPending}
           onClose={() => setDialog(null)}
           onConfirm={(body) => act.mutate({ action: 'end', body })}
+        />
+      )}
+      {dialog === 'remove' && (
+        <RemoveTimeDialog
+          session={s}
+          busy={act.isPending}
+          onClose={() => setDialog(null)}
+          onConfirm={(body) => act.mutate({ action: 'remove-time', body })}
         />
       )}
       {dialog === 'extend' && (
@@ -965,6 +984,132 @@ export function EndSessionDialog({
 }
 
 // ─── Extend ────────────────────────────────────────────────────────────────────
+/**
+ * 0.20.11: take minutes off a running session (the "−" beside "+ Add time"). Steps of 5 minutes,
+ * quick picks, and never more than leaves one minute. No money moves: a prepaid session keeps what
+ * was paid; a pay-at-the-end session gets a smaller reservation.
+ */
+export function RemoveTimeDialog({
+  session,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  session: SessionSummary;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (body: { minutes: number; clientRequestId: string }) => void;
+}) {
+  const { t } = useI18n();
+  const now = useNow();
+  const [clientRequestId] = useState(() => crypto.randomUUID());
+  // A paused session counts its remaining time from the moment it was paused.
+  const from = session.status === 'paused' && session.pausedAt ? Date.parse(session.pausedAt) : now;
+  // Same rule as the server: at least one second of the session must stay running.
+  const remainingSeconds = session.endsAt
+    ? Math.max(0, Math.floor((Date.parse(session.endsAt) - from) / 1000))
+    : 0;
+  const remainingMinutes = Math.floor(remainingSeconds / 60);
+  const maxMinutes = Math.max(0, Math.floor((remainingSeconds - 1) / 60));
+  const [minutes, setMinutes] = useState(() => Math.min(5, Math.max(1, maxMinutes)));
+  const canRemove = maxMinutes >= 1;
+  const clamp = (n: number) => Math.max(1, Math.min(maxMinutes, n));
+  const valid = canRemove && Number.isInteger(minutes) && minutes >= 1 && minutes <= maxMinutes;
+  const submit = () => {
+    if (!valid || busy) return;
+    onConfirm({ minutes, clientRequestId });
+  };
+  useEnterSubmits(submit);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('sessions.removeTimeTitle')}
+      description={t('sessions.removeTimeBody')}
+      size="md"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={busy}
+            disabled={!valid}
+            onClick={submit}
+            data-testid="session-remove-confirm"
+          >
+            <Minus size={14} /> {t('sessions.removeTimeConfirm', { n: minutes })} <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted" style={{ margin: 0 }}>
+          {t('sessions.timeLeft', { n: remainingMinutes })}
+          {canRemove ? ` · ${t('sessions.timeLeftAfter', { n: remainingMinutes - minutes })}` : ''}
+        </p>
+        {canRemove ? (
+          <>
+            <div className="time-stepper" data-testid="remove-time-stepper">
+              <Button
+                size="sm"
+                aria-label="−5"
+                disabled={!valid || minutes <= 1}
+                onClick={() => setMinutes((m) => clamp(m - 5))}
+              >
+                <Minus size={14} />
+              </Button>
+              <Input
+                type="number"
+                min={1}
+                max={maxMinutes}
+                value={String(minutes)}
+                style={{ maxWidth: 120, textAlign: 'center' }}
+                data-testid="remove-time-minutes"
+                onChange={(e) => setMinutes(Number.parseInt(e.target.value, 10) || 0)}
+              />
+              <Button
+                size="sm"
+                aria-label="+5"
+                disabled={minutes >= maxMinutes}
+                onClick={() => setMinutes((m) => clamp(m + 5))}
+              >
+                <Plus size={14} />
+              </Button>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {[5, 15, 30]
+                .filter((m) => m <= maxMinutes)
+                .map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className="chip"
+                    aria-pressed={minutes === m}
+                    onClick={() => setMinutes(clamp(m))}
+                  >
+                    {m} min
+                  </button>
+                ))}
+            </div>
+            {session.billingMode === 'endpay' && (
+              <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+                {t('sessions.removeTimeEndPayHint')}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-danger" style={{ margin: 0 }}>
+            {t('sessions.removeTimeNone')}
+          </p>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
 export function ExtendSessionDialog({
   session,
   busy,
@@ -972,11 +1117,14 @@ export function ExtendSessionDialog({
   onConfirm,
   request = null,
   canGift = false,
+  initialGift = false,
 }: {
   session: SessionSummary;
   busy: boolean;
   onClose: () => void;
   onConfirm: (body: Record<string, unknown>, action?: 'extend' | 'gift') => void;
+  /** 0.19.1: open straight in gift mode (the station's "Gift" button). */
+  initialGift?: boolean;
   /** Approving a customer's extension request: duration pre-filled, `requestId` sent along. */
   request?: StationPendingRequest | null;
   /** 0.18.0: `stations.gift` — free minutes with a party on the PC (not for postpaid sessions). */
@@ -988,7 +1136,7 @@ export function ExtendSessionDialog({
   const [minutes, setMinutes] = useState(
     request && !request.packageId ? String(request.durationMinutes) : '30',
   );
-  const [gift, setGift] = useState(false);
+  const [gift, setGift] = useState(initialGift);
   const [reason, setReason] = useState('');
   const giftPossible = canGift && !request && session.billingMode !== 'postpaid';
   const useGift = gift && giftPossible;

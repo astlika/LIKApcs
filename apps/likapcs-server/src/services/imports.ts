@@ -575,8 +575,10 @@ export class ImportService {
         const inserted = await ctx.client.query<{ id: string }>(
           `INSERT INTO products (name, sku, category_id, unit_code, purchase_cost_cents, average_cost_cents,
                                  selling_price_cents, price_includes_tax, min_stock_milli, allow_negative_stock,
-                                 track_stock, description, is_active, created_by, client_menu)
-           VALUES ($1, $2, $3, 'pc', $4, $4, $5, true, $6, false, $7, $8, true, $9, false)
+                                 track_stock, description, is_active, created_by, client_menu,
+                                 purchase_cost_mills, average_cost_mills, selling_price_mills)
+           VALUES ($1, $2, $3, 'pc', $4::bigint, $4::bigint, $5::bigint, true, $6, false, $7, $8, true, $9, false,
+                   $4::bigint * 10, $4::bigint * 10, $5::bigint * 10)
            RETURNING id`,
           [
             name,

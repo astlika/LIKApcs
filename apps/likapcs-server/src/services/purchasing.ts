@@ -33,7 +33,7 @@ import type {
   SupplierRequest,
   SupplierSummary,
 } from '@likapcs/shared';
-import { multiplyByQuantity, percentOf } from '@likapcs/shared';
+import { millsToCents, multiplyMillsByQuantity, percentOf } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
@@ -41,6 +41,9 @@ import { recordAudit, type AuditActor } from './audit.js';
 import type { CashService } from './cash.js';
 import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
+
+/** Category of the expense booked for a stock-less purchase line (0.19.1). */
+const STOCKLESS_EXPENSE_CATEGORY = 'other';
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -97,6 +100,7 @@ interface ItemRow {
   quantity_received_milli: string;
   quantity_returned_milli: string;
   unit_cost_cents: string;
+  unit_cost_mills: string;
   tax_rate_bp: number;
   line_total_cents: string;
 }
@@ -177,22 +181,24 @@ const toItem = (r: ItemRow): PurchaseItemSummary => ({
   quantityReceivedMilli: Number(r.quantity_received_milli),
   quantityReturnedMilli: Number(r.quantity_returned_milli),
   unitCostCents: Number(r.unit_cost_cents),
+  unitCostMills: Number(r.unit_cost_mills),
   taxRateBp: r.tax_rate_bp,
   lineTotalCents: Number(r.line_total_cents),
 });
 
 /** Weighted average cost after receiving `qty` at `unitCost` on top of `stock` at `avg`. */
+/** Weighted average unit cost in mills (thousandths of €): Σ(qty × cost) / Σ qty, rounded. */
 export function weightedAverageCost(
   stockMilli: number,
-  averageCostCents: number,
+  averageCostMills: number,
   receivedMilli: number,
-  unitCostCents: number,
+  unitCostMills: number,
 ): number {
   const onHand = Math.max(0, stockMilli); // negative stock carries no cost
   const total = onHand + receivedMilli;
-  if (total <= 0) return unitCostCents;
-  // Σ(qty × cost) / Σ qty, in integer arithmetic (milli × cents fits comfortably in 2^53).
-  return Math.round((onHand * averageCostCents + receivedMilli * unitCostCents) / total);
+  if (total <= 0) return unitCostMills;
+  // Integer arithmetic: milli × mills stays far below 2^53 for any realistic stock.
+  return Math.round((onHand * averageCostMills + receivedMilli * unitCostMills) / total);
 }
 
 export function paymentStatusFor(totalCents: number, paidCents: number): PurchasePaymentStatus {
@@ -373,7 +379,7 @@ export class PurchasingService {
       db.query<ItemRow>(
         `SELECT pi.id::text, pi.line_no, pi.product_id, pr.name AS product_name, pr.sku, pi.description,
                 pi.quantity_ordered_milli::text, pi.quantity_received_milli::text, pi.quantity_returned_milli::text,
-                pi.unit_cost_cents::text, pi.tax_rate_bp, pi.line_total_cents::text
+                pi.unit_cost_cents::text, pi.unit_cost_mills::text, pi.tax_rate_bp, pi.line_total_cents::text
            FROM purchase_items pi JOIN products pr ON pr.id = pi.product_id
           WHERE pi.purchase_id = $1 ORDER BY pi.line_no`,
         [id],
@@ -394,9 +400,9 @@ export class PurchasingService {
         receipt_id: string;
         purchase_item_id: string;
         quantity_milli: string;
-        unit_cost_cents: string;
+        unit_cost_mills: string;
       }>(
-        `SELECT ri.receipt_id, ri.purchase_item_id::text, ri.quantity_milli::text, ri.unit_cost_cents::text
+        `SELECT ri.receipt_id, ri.purchase_item_id::text, ri.quantity_milli::text, ri.unit_cost_mills::text
            FROM purchase_receipt_items ri JOIN purchase_receipts r ON r.id = ri.receipt_id
           WHERE r.purchase_id = $1 ORDER BY ri.id`,
         [id],
@@ -427,7 +433,8 @@ export class PurchasingService {
         .map((ri) => ({
           purchaseItemId: Number(ri.purchase_item_id),
           quantityMilli: Number(ri.quantity_milli),
-          unitCostCents: Number(ri.unit_cost_cents),
+          unitCostCents: millsToCents(Number(ri.unit_cost_mills)),
+          unitCostMills: Number(ri.unit_cost_mills),
         })),
     }));
     const paymentList: PurchasePaymentSummary[] = payments.rows.map((p) => ({
@@ -480,10 +487,18 @@ export class PurchasingService {
       let subtotal = 0;
       let tax = 0;
       const lines = input.items.map((item, i) => {
-        const lineTotal = multiplyByQuantity(item.unitCostCents, item.quantityMilli);
+        // Unit cost in mills (0.125 € = 125); the cent column is the same value rounded.
+        const unitCostMills = item.unitCostMills ?? item.unitCostCents * 10;
+        const lineTotal = multiplyMillsByQuantity(unitCostMills, item.quantityMilli);
         subtotal += lineTotal;
         tax += percentOf(lineTotal, item.taxRateBp);
-        return { ...item, lineNo: i + 1, lineTotal, name: byId.get(item.productId)!.name };
+        return {
+          ...item,
+          unitCostMills,
+          lineNo: i + 1,
+          lineTotal,
+          name: byId.get(item.productId)!.name,
+        };
       });
       const total = subtotal + tax + input.additionalCostsCents;
       if (input.payment && input.payment.amountCents > total)
@@ -516,15 +531,16 @@ export class PurchasingService {
       for (const line of lines) {
         await client.query(
           `INSERT INTO purchase_items (purchase_id, line_no, product_id, description, quantity_ordered_milli,
-                                       unit_cost_cents, tax_rate_bp, line_total_cents)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                                       unit_cost_cents, unit_cost_mills, tax_rate_bp, line_total_cents)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             purchaseId,
             line.lineNo,
             line.productId,
             line.name,
             line.quantityMilli,
-            line.unitCostCents,
+            millsToCents(line.unitCostMills),
+            line.unitCostMills,
             line.taxRateBp,
             line.lineTotal,
           ],
@@ -597,10 +613,13 @@ export class PurchasingService {
     input: ReceivePurchaseRequest,
     actor: AuditActor,
   ): Promise<void> {
-    const p = await client.query<{ status: PurchaseStatus; reference_no: string }>(
-      'SELECT status, reference_no FROM purchases WHERE id = $1 FOR UPDATE',
-      [purchaseId],
-    );
+    const p = await client.query<{
+      status: PurchaseStatus;
+      reference_no: string;
+      supplier_id: string;
+    }>('SELECT status, reference_no, supplier_id FROM purchases WHERE id = $1 FOR UPDATE', [
+      purchaseId,
+    ]);
     if (!p.rows[0]) throw notFound('Purchase');
     if (p.rows[0].status === 'cancelled') throw conflict('This purchase is cancelled');
     if (p.rows[0].status === 'received') throw conflict('Everything was already received');
@@ -609,10 +628,10 @@ export class PurchasingService {
       product_id: string;
       quantity_ordered_milli: string;
       quantity_received_milli: string;
-      unit_cost_cents: string;
+      unit_cost_mills: string;
       description: string;
     }>(
-      `SELECT id::text, product_id, quantity_ordered_milli::text, quantity_received_milli::text, unit_cost_cents::text, description
+      `SELECT id::text, product_id, quantity_ordered_milli::text, quantity_received_milli::text, unit_cost_mills::text, description
          FROM purchase_items WHERE purchase_id = $1 ORDER BY line_no FOR UPDATE`,
       [purchaseId],
     );
@@ -647,19 +666,50 @@ export class PurchasingService {
           purchaseItemId: w.purchaseItemId,
           outstandingMilli: outstanding,
         });
-      const unitCost = Number(item.unit_cost_cents);
+      const unitCost = Number(item.unit_cost_mills);
       const product = await client.query<{
         stock_milli: string;
-        average_cost_cents: string;
+        average_cost_mills: string;
         allow_negative_stock: boolean;
+        track_stock: boolean;
       }>(
-        'SELECT stock_milli::text, average_cost_cents::text, allow_negative_stock FROM products WHERE id = $1 FOR UPDATE',
+        'SELECT stock_milli::text, average_cost_mills::text, allow_negative_stock, track_stock FROM products WHERE id = $1 FOR UPDATE',
         [item.product_id],
       );
       const pr = product.rows[0]!;
+      if (!pr.track_stock) {
+        // 0.19.1: a stock-less line is an expense, not inventory. It is booked once, here, with
+        // the receipt line as its link; no stock moves and the product's cost is not changed.
+        const receiptItem = await client.query<{ id: string }>(
+          `INSERT INTO purchase_receipt_items (receipt_id, purchase_item_id, quantity_milli, unit_cost_cents, unit_cost_mills, inventory_movement_id)
+           VALUES ($1, $2, $3, $4, $5, NULL) RETURNING id::text`,
+          [receiptId, w.purchaseItemId, w.quantityMilli, millsToCents(unitCost), unitCost],
+        );
+        const amount = multiplyMillsByQuantity(unitCost, w.quantityMilli);
+        if (amount > 0) {
+          await client.query(
+            `INSERT INTO expenses (expense_date, category_code, amount_cents, payment_method, description,
+                                   supplier_id, created_by, purchase_receipt_item_id)
+             VALUES (CURRENT_DATE, $1, $2, 'other', $3, $4, $5, $6)`,
+            [
+              STOCKLESS_EXPENSE_CATEGORY,
+              amount,
+              `${p.rows[0].reference_no} · ${item.description} × ${w.quantityMilli / 1000}`,
+              p.rows[0].supplier_id,
+              actor.userId ?? null,
+              Number(receiptItem.rows[0]!.id),
+            ],
+          );
+        }
+        await client.query(
+          `UPDATE purchase_items SET quantity_received_milli = quantity_received_milli + $2 WHERE id = $1`,
+          [w.purchaseItemId, w.quantityMilli],
+        );
+        continue;
+      }
       const newAverage = weightedAverageCost(
         Number(pr.stock_milli),
-        Number(pr.average_cost_cents),
+        Number(pr.average_cost_mills),
         w.quantityMilli,
         unitCost,
       );
@@ -667,7 +717,8 @@ export class PurchasingService {
         productId: item.product_id,
         type: 'purchase_receipt',
         delta: w.quantityMilli,
-        unitCostCents: unitCost,
+        unitCostCents: millsToCents(unitCost),
+        unitCostMills: unitCost,
         reason: p.rows[0].reference_no,
         referenceType: 'purchase',
         referenceId: purchaseId,
@@ -675,13 +726,22 @@ export class PurchasingService {
         allowNegative: pr.allow_negative_stock,
       });
       await client.query(
-        `UPDATE products SET purchase_cost_cents = $2, average_cost_cents = $3 WHERE id = $1`,
-        [item.product_id, unitCost, newAverage],
+        `UPDATE products SET purchase_cost_mills = $2, purchase_cost_cents = $3,
+                             average_cost_mills = $4, average_cost_cents = $5
+          WHERE id = $1`,
+        [item.product_id, unitCost, millsToCents(unitCost), newAverage, millsToCents(newAverage)],
       );
       await client.query(
-        `INSERT INTO purchase_receipt_items (receipt_id, purchase_item_id, quantity_milli, unit_cost_cents, inventory_movement_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [receiptId, w.purchaseItemId, w.quantityMilli, unitCost, movement.movementId],
+        `INSERT INTO purchase_receipt_items (receipt_id, purchase_item_id, quantity_milli, unit_cost_cents, unit_cost_mills, inventory_movement_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          receiptId,
+          w.purchaseItemId,
+          w.quantityMilli,
+          millsToCents(unitCost),
+          unitCost,
+          movement.movementId,
+        ],
       );
       await client.query(
         `UPDATE purchase_items SET quantity_received_milli = quantity_received_milli + $2 WHERE id = $1`,

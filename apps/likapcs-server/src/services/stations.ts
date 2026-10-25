@@ -10,8 +10,10 @@ import {
   type StationMaintenance,
   type StationPendingRequest,
   type StationStatus,
+  type StationLook,
   type StationSummary,
   type UpdateStationRequest,
+  wallpaperPath,
 } from '@likapcs/shared';
 import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -21,6 +23,9 @@ import { recordAudit, type AuditActor } from './audit.js';
 
 interface StationRow {
   id: string;
+  look: StationLook | null;
+  wallpaper_file: string | null;
+  desktop_wallpaper_file: string | null;
   number: number;
   code: string;
   name: string;
@@ -76,6 +81,7 @@ interface StationRow {
 
 const STATION_SELECT = `
   SELECT s.id, s.number, s.code, s.name, s.zone, s.notes, s.is_enabled, s.created_at, s.updated_at,
+         s.look, s.wallpaper_file, s.desktop_wallpaper_file,
          d.id AS device_id, d.machine_id AS device_machine_id, d.hostname AS device_hostname,
          d.os_info AS device_os_info, d.app_version AS device_app_version, d.status AS device_status,
          d.registered_at AS device_registered_at, d.approved_at AS device_approved_at,
@@ -95,10 +101,10 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
-         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode = 'endpay'
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid')
            AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
          (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
-           WHERE a.station_id = s.id AND a.billing_mode = 'endpay' AND a.billed_at IS NULL
+           WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL
            AND a.status IN ('expired', 'completed')) AS awaiting_cents
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
@@ -258,6 +264,11 @@ export class StationsService {
             reason: row.archived_reason,
             byName: row.archived_by_name,
           }
+        : null,
+      look: row.look ?? {},
+      wallpaperUrl: row.wallpaper_file ? wallpaperPath(row.wallpaper_file) : null,
+      desktopWallpaperUrl: row.desktop_wallpaper_file
+        ? wallpaperPath(row.desktop_wallpaper_file)
         : null,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),

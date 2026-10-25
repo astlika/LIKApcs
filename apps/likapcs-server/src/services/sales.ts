@@ -14,18 +14,25 @@ import {
   settlePayments,
   SaleMathError,
   type CreateSaleRequest,
+  type FreeSaleItemInput,
   type ReceiptData,
+  type SessionQuoteRequest,
+  type SessionQuoteResponse,
+  type TimeSaleItemInput,
   type RefundRequest,
   type RefundSummary,
   type DebtStatus,
   type SaleDetail,
+  type SaleItemInput,
   type SaleItemSummary,
   type SaleListQuery,
   type SalePaymentSummary,
   type SaleSummary,
   type SalesListResponse,
   type SuspendSaleRequest,
+  type ClaimPin,
 } from '@likapcs/shared';
+import { millsToCents, multiplyMillsByQuantity } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -38,6 +45,29 @@ import type { CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import { lockCustomers } from '../db/locks.js';
+import type { TimeCreditsService } from './time-credits.js';
+
+/** The part of SessionsService that prices a PC-time line (0.19.0). */
+export interface TimeLineQuoter {
+  quote(req: SessionQuoteRequest, at?: Date): Promise<SessionQuoteResponse>;
+}
+
+/** A prepaid PC-time line, priced by the server: by sale-item index. */
+interface TimeLine {
+  /** null: sold without a PC; the minutes are used at any PC by name + PIN (0.20.8). */
+  stationId: string | null;
+  stationCode: string | null;
+  holderName: string | null;
+  minutes: number;
+  priceCents: number;
+}
+type TimeLines = Map<number, TimeLine>;
+
+const isTimeItem = (i: SaleItemInput): i is TimeSaleItemInput => 'minutes' in i;
+
+/** Product ids of a sale request — off-inventory ("free") lines have none (0.19.0). */
+const productIdsOf = (items: readonly SaleItemInput[]): string[] =>
+  items.flatMap((i) => ('productId' in i ? [i.productId] : []));
 
 export interface SaleActor extends AuditActor {
   userId: string;
@@ -87,7 +117,26 @@ interface CustomerTerms {
   discountBp: number;
 }
 
+/** 0.19.1: the extras of a product as loaded for a sale. */
+interface AddonForSale {
+  id: string;
+  name: string;
+  price_cents: string | number;
+}
+
+/** 0.19.1: the chosen extras of one line; an id the product does not have is refused. */
+export function resolveAddons(p: ProductForSale, ids: string[] | undefined) {
+  const chosen: { id: string; name: string; priceCents: number }[] = [];
+  for (const id of new Set(ids ?? [])) {
+    const a = (p.addons ?? []).find((x) => x.id === id);
+    if (!a) throw badRequest(`${p.name} has no such extra`, { field: 'addonIds', productId: p.id });
+    chosen.push({ id: a.id, name: a.name, priceCents: Number(a.price_cents) });
+  }
+  return chosen;
+}
+
 interface ProductForSale {
+  addons?: AddonForSale[];
   id: string;
   name: string;
   sku: string;
@@ -97,6 +146,8 @@ interface ProductForSale {
   price_includes_tax: boolean;
   average_cost_cents: string | number;
   purchase_cost_cents: string | number;
+  average_cost_mills: string | number;
+  purchase_cost_mills: string | number;
   track_stock: boolean;
   allow_negative_stock: boolean;
   is_active: boolean;
@@ -136,6 +187,8 @@ export class SalesService {
     private readonly cash: CashService,
     private readonly debts: DebtsService,
     private readonly wallet: WalletService,
+    private readonly timeCredits: TimeCreditsService,
+    private readonly sessions: TimeLineQuoter,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -191,10 +244,11 @@ export class SalesService {
       tax_cents: string;
       line_total_cents: string;
       refunded_milli: string;
+      addons: { id: string }[];
     }>(
       `SELECT i.id::text, i.line_no, i.product_id, i.gaming_session_id, i.description, p.sku, i.quantity_milli::text,
               i.unit_price_cents::text, i.discount_cents::text, i.tax_rate_bp, i.tax_cents::text,
-              i.line_total_cents::text, i.refunded_milli::text
+              i.line_total_cents::text, i.refunded_milli::text, i.addons
          FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
         WHERE i.sale_id = $1 ORDER BY i.line_no`,
       [saleId],
@@ -213,6 +267,7 @@ export class SalesService {
       taxCents: Number(i.tax_cents),
       lineTotalCents: Number(i.line_total_cents),
       refundedMilli: Number(i.refunded_milli),
+      addonIds: (i.addons ?? []).map((a) => a.id),
     }));
   }
 
@@ -277,6 +332,17 @@ export class SalesService {
     }));
   }
 
+  /** The price of PC time bought without a PC: the rule for every PC, at this moment (0.20.8). */
+  async quoteTime(minutes: number) {
+    const q = await this.sessions.quote({ stationId: '', billingMode: 'prepaid', minutes });
+    return {
+      minutes,
+      priceCents: q.priceCents,
+      rule: q.rule?.name ?? null,
+      rateCentsPerHour: q.rule?.rateCentsPerHour ?? null,
+    };
+  }
+
   async list(query: SaleListQuery): Promise<SalesListResponse> {
     const where: string[] = [];
     const values: unknown[] = [];
@@ -298,6 +364,16 @@ export class SalesService {
       values.push(query.customerId);
       where.push(`s.customer_id = $${values.length}`);
     }
+    if (query.kind === 'time') {
+      where.push('EXISTS (SELECT 1 FROM time_credits tk WHERE tk.sale_id = s.id)');
+    } else if (query.kind === 'refund') {
+      where.push('s.refunded_cents > 0');
+    }
+    if (query.tender === 'staff') {
+      where.push(
+        "EXISTS (SELECT 1 FROM payments sp WHERE sp.sale_id = s.id AND sp.method = 'staff')",
+      );
+    }
     if (query.q) {
       values.push(`%${query.q.toUpperCase()}%`);
       where.push(`upper(COALESCE(s.receipt_no, '')) LIKE $${values.length}`);
@@ -311,10 +387,20 @@ export class SalesService {
       where.push(`COALESCE(s.completed_at, s.created_at) <= $${values.length}`);
     }
     const clause = `WHERE ${where.join(' AND ')}`;
-    const summary = await this.pool.query<{ n: string; total: string; refunded: string }>(
+    const summary = await this.pool.query<{
+      n: string;
+      total: string;
+      refunded: string;
+      minutes_sold: string;
+      minutes_used: string;
+    }>(
       `SELECT count(*)::text AS n,
               COALESCE(sum(CASE WHEN s.status <> 'suspended' THEN s.total_cents ELSE 0 END), 0)::text AS total,
-              COALESCE(sum(s.refunded_cents), 0)::text AS refunded
+              COALESCE(sum(s.refunded_cents), 0)::text AS refunded,
+              COALESCE(sum((SELECT COALESCE(sum(tc.minutes_total), 0) FROM time_credits tc
+                             WHERE tc.sale_id = s.id AND tc.cancelled_at IS NULL)), 0)::text AS minutes_sold,
+              COALESCE(sum((SELECT COALESCE(sum(tc.minutes_total - tc.minutes_remaining), 0) FROM time_credits tc
+                             WHERE tc.sale_id = s.id AND tc.cancelled_at IS NULL)), 0)::text AS minutes_used
          FROM sales s ${clause}`,
       values,
     );
@@ -333,6 +419,8 @@ export class SalesService {
         count: Number(summary.rows[0]!.n),
         totalCents: Number(summary.rows[0]!.total),
         refundedCents: Number(summary.rows[0]!.refunded),
+        minutesSold: Number(summary.rows[0]!.minutes_sold),
+        minutesUsed: Number(summary.rows[0]!.minutes_used),
       },
     };
   }
@@ -412,28 +500,45 @@ export class SalesService {
     // deadlocking on the receipt number.
     await lockCustomers(client, input.customerId);
     const saleId = await this.insertSaleShell(client, input, actor, 'completed');
-    await this.fillAndComplete(client, saleId, input, input.payments, actor, opts.fixedPrices);
-    return this.getById(saleId, client);
+    const claimPins: ClaimPin[] = [];
+    await this.fillAndComplete(
+      client,
+      saleId,
+      input,
+      input.payments,
+      actor,
+      opts.fixedPrices,
+      input.staff,
+      claimPins,
+    );
+    const sale = await this.getById(saleId, client);
+    return claimPins.length > 0 ? { ...sale, claimPins } : sale;
   }
 
   /** Parks a sale (no stock change, no payment, no receipt number) to be completed later. */
   async suspend(input: SuspendSaleRequest, actor: SaleActor): Promise<SaleDetail> {
     if (!actor.permissions.has('pos.suspend')) throw forbidden('Missing permission: pos.suspend');
+    // A parked sale is resumed as it was typed; PC time has no product to resume from, and its
+    // credit is only made when the sale is paid. So it is completed or removed, never parked.
+    if (input.items.some(isTimeItem)) {
+      throw conflict('PC time cannot be parked — complete the sale or remove the PC time line', {
+        code: 'TIME_NOT_PARKABLE',
+      });
+    }
     return withTransaction(this.pool, async (client) => {
       const saleId = await this.insertSaleShell(client, input, actor, 'suspended');
-      const products = await this.loadProducts(
-        client,
-        input.items.map((i) => i.productId),
-        false,
-      );
+      const products = await this.loadProducts(client, productIdsOf(input.items), false);
+      const timeLines = await this.priceTimeLines(client, input.items, new Date());
       const totals = this.compute(
         input,
         products,
         actor,
         await this.defaultTaxRate(client),
         await this.customerTerms(client, input.customerId),
+        undefined,
+        timeLines,
       );
-      await this.writeLines(client, saleId, input, products, totals);
+      await this.writeLines(client, saleId, input, products, totals, timeLines);
       await client.query(
         `UPDATE sales SET subtotal_cents = $2, discount_cents = $3, tax_cents = $4, total_cents = $5 WHERE id = $1`,
         [saleId, totals.subtotalCents, totals.discountCents, totals.taxCents, totals.totalCents],
@@ -501,6 +606,12 @@ export class SalesService {
       if (sale.rows[0].status !== 'completed' && sale.rows[0].status !== 'partially_refunded') {
         throw conflict('This sale cannot be refunded');
       }
+      // A staff purchase took no money, so there is no money to give back (0.20.7).
+      const staffSale = await client.query(
+        "SELECT 1 FROM payments WHERE sale_id = $1 AND method = 'staff' LIMIT 1",
+        [saleId],
+      );
+      if (staffSale.rows[0]) throw conflict('A staff purchase cannot be refunded');
       const lines = await client.query<{
         id: string;
         product_id: string | null;
@@ -535,6 +646,8 @@ export class SalesService {
         const idx = lines.rows.findIndex((l) => Number(l.id) === item.saleItemId);
         if (idx < 0) throw badRequest(`Line ${item.saleItemId} does not belong to this sale`);
         const line = lines.rows[idx]!;
+        // PC time sold on this line: refused once any of it was used; otherwise the credit goes.
+        await this.timeCredits.cancelForSaleItem(client, Number(line.id), actor);
         const remainingMilli = Number(line.quantity_milli) - Number(line.refunded_milli);
         if (item.quantityMilli > remainingMilli) {
           throw conflict('Refund quantity exceeds what was sold', {
@@ -685,6 +798,7 @@ export class SalesService {
     const unique = [...new Set(ids)].sort();
     const r = await client.query<ProductForSale>(
       `SELECT p.id, p.name, p.sku, p.selling_price_cents, p.price_includes_tax, p.average_cost_cents, p.purchase_cost_cents,
+             p.average_cost_mills, p.purchase_cost_mills,
               p.track_stock, p.allow_negative_stock, p.is_active, tc.rate_bp AS tax_rate_bp,
               ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents
          FROM products p LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
@@ -692,6 +806,17 @@ export class SalesService {
       [unique],
     );
     const map = new Map(r.rows.map((p) => [p.id, p]));
+    if (unique.length > 0) {
+      const extras = await client.query<AddonForSale & { product_id: string }>(
+        `SELECT id, product_id, name, price_cents FROM product_addons
+          WHERE product_id = ANY($1::uuid[]) ORDER BY sort_order, created_at`,
+        [unique],
+      );
+      for (const a of extras.rows) {
+        const p = map.get(a.product_id);
+        if (p) (p.addons ??= []).push({ id: a.id, name: a.name, price_cents: a.price_cents });
+      }
+    }
     for (const id of unique) {
       const p = map.get(id);
       if (!p) throw notFound(`Product ${id}`);
@@ -714,18 +839,60 @@ export class SalesService {
     actor: SaleActor,
     defaultRate: number,
     customer: CustomerTerms | null,
-    fixedPrices?: Map<string, number>,
+    fixedPrices: Map<string, number> | undefined,
+    timeLines: TimeLines,
+    staff = false,
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
+    if (staff && hasDiscount) {
+      throw badRequest('A staff purchase cannot carry a discount', { code: 'STAFF_DISCOUNT' });
+    }
     if (hasDiscount && !actor.permissions.has('pos.discount')) {
       throw forbidden('Discounts require the pos.discount permission');
     }
-    if (fixedPrices) customer = null;
-    const lines = input.items.map((i) => {
+    if (fixedPrices || staff) customer = null;
+    const lines = input.items.map((i, idx) => {
+      if (isTimeItem(i)) {
+        // PC time: the station's quoted price (tax included, default rate), one unit. Free for
+        // staff (0.20.7).
+        return {
+          unitPriceCents: staff ? 0 : timeLines.get(idx)!.priceCents,
+          quantityMilli: 1000,
+          discountCents: i.discountCents,
+          taxRateBp: defaultRate,
+          priceIncludesTax: true,
+        };
+      }
+      if (!('productId' in i)) {
+        // A staff purchase is priced at cost, so it can only take stock items (0.20.7).
+        if (staff)
+          throw badRequest('A staff purchase takes stock items only', { code: 'STAFF_ITEMS' });
+        // Off-inventory line: the typed price, the default tax, prices include tax.
+        return {
+          unitPriceCents: i.unitPriceCents,
+          quantityMilli: i.quantityMilli,
+          discountCents: i.discountCents,
+          taxRateBp: defaultRate,
+          priceIncludesTax: true,
+        };
+      }
       const p = products.get(i.productId)!;
+      const addonsCents = resolveAddons(p, i.addonIds).reduce((sum, a) => sum + a.priceCents, 0);
+      if (staff) {
+        // Staff pay the purchase cost, with no add-ons and no promo (0.20.7).
+        return {
+          unitPriceCents: Number(p.purchase_cost_cents),
+          quantityMilli: i.quantityMilli,
+          discountCents: 0,
+          taxRateBp: p.tax_rate_bp ?? defaultRate,
+          priceIncludesTax: p.price_includes_tax,
+        };
+      }
+      const extrasCents = addonsCents;
       return {
         unitPriceCents:
-          fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents),
+          (fixedPrices?.get(i.productId) ?? Number(p.promo_price_cents ?? p.selling_price_cents)) +
+          extrasCents,
         quantityMilli: i.quantityMilli,
         discountCents: i.discountCents,
         taxRateBp: p.tax_rate_bp ?? defaultRate,
@@ -771,45 +938,118 @@ export class SalesService {
     input: SuspendSaleRequest,
     products: Map<string, ProductForSale>,
     totals: ReturnType<typeof computeSale>,
-  ): Promise<void> {
+    timeLines: TimeLines,
+  ): Promise<Map<number, number>> {
+    const saleItemIds = new Map<number, number>();
     for (const [i, line] of totals.lines.entries()) {
       const item = input.items[i]!;
-      const p = products.get(item.productId)!;
-      const unitCost = Number(p.average_cost_cents) || Number(p.purchase_cost_cents);
-      await client.query(
+      const time = timeLines.get(i);
+      // Off-inventory and PC-time lines book no product and no cost: their margin is the whole price.
+      const p = 'productId' in item ? products.get(item.productId)! : null;
+      // Unit cost in mills; the sale's cost is the line's cost in mills, rounded to the cent.
+      const unitCostMills = p ? Number(p.average_cost_mills) || Number(p.purchase_cost_mills) : 0;
+      const extras = p && 'addonIds' in item ? resolveAddons(p, item.addonIds) : [];
+      const description = time
+        ? time.stationCode
+          ? `${time.stationCode} · ${time.minutes} min`
+          : `PC time · ${time.minutes} min${time.holderName ? ` · ${time.holderName}` : ''}`
+        : p
+          ? [p.name, ...extras.map((a) => a.name)].join(' + ')
+          : (item as FreeSaleItemInput).description;
+      const r = await client.query<{ id: string }>(
         `INSERT INTO sale_items (sale_id, line_no, product_id, description, quantity_milli, unit_price_cents, discount_cents,
-                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents, addons)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING id`,
         [
           saleId,
           i + 1,
-          p.id,
-          p.name,
+          p?.id ?? null,
+          description,
           line.quantityMilli,
           line.unitPriceCents,
           line.discountCents,
           line.taxRateBp,
           line.taxCents,
           line.lineTotalCents,
-          Math.round((unitCost * line.quantityMilli) / 1000),
+          multiplyMillsByQuantity(unitCostMills, line.quantityMilli),
+          JSON.stringify(extras),
         ],
       );
+      saleItemIds.set(i, Number(r.rows[0]!.id));
     }
+    return saleItemIds;
+  }
+
+  /**
+   * 0.19.0: prices every PC-time line at the station's own quote, right now, and checks the PC
+   * exists. The client's price is never used.
+   */
+  private async priceTimeLines(
+    client: DbClient,
+    items: readonly SaleItemInput[],
+    at: Date,
+  ): Promise<TimeLines> {
+    const out: TimeLines = new Map();
+    for (const [idx, item] of items.entries()) {
+      if (!isTimeItem(item)) continue;
+      if (!item.stationId) {
+        // No PC chosen (0.20.8): the rule that applies to every PC, at this moment.
+        const quote = await this.sessions.quote(
+          { stationId: '', billingMode: 'prepaid', minutes: item.minutes },
+          at,
+        );
+        out.set(idx, {
+          stationId: null,
+          stationCode: null,
+          holderName: item.holderName ?? null,
+          minutes: item.minutes,
+          priceCents: quote.priceCents,
+        });
+        continue;
+      }
+      const st = await client.query<{ code: string }>('SELECT code FROM stations WHERE id = $1', [
+        item.stationId,
+      ]);
+      if (!st.rows[0]) throw notFound('PC');
+      const quote = await this.sessions.quote(
+        { stationId: item.stationId, billingMode: 'prepaid', minutes: item.minutes },
+        at,
+      );
+      out.set(idx, {
+        stationId: item.stationId,
+        stationCode: st.rows[0].code,
+        holderName: null,
+        minutes: item.minutes,
+        priceCents: quote.priceCents,
+      });
+    }
+    return out;
   }
 
   private async fillAndComplete(
     client: DbClient,
     saleId: string,
     input: SuspendSaleRequest,
-    payments: CreateSaleRequest['payments'],
+    givenPayments: CreateSaleRequest['payments'],
     actor: SaleActor,
     fixedPrices?: Map<string, number>,
+    staff = false,
+    claimPins: ClaimPin[] = [],
   ): Promise<void> {
-    const products = await this.loadProducts(
-      client,
-      input.items.map((i) => i.productId),
-      true,
-    );
+    const products = await this.loadProducts(client, productIdsOf(input.items), true);
+    const timeLines = await this.priceTimeLines(client, input.items, new Date());
+    if (!staff && givenPayments.some((p) => p.method === 'staff')) {
+      throw badRequest('The staff tender is only for a staff purchase', { code: 'PAYMENT' });
+    }
+    if (staff && givenPayments.length > 0) {
+      throw badRequest('A staff purchase takes no payment', { code: 'STAFF_PAYMENT' });
+    }
+    // 0.19.0: installments are a way of paying a debt, so they only mean something on pay-later.
+    if (givenPayments.some((p) => p.installments && p.method !== 'credit')) {
+      throw badRequest('Installments apply to pay-later (on the tab) only', {
+        code: 'INSTALLMENTS_CREDIT_ONLY',
+      });
+    }
     const totals = this.compute(
       input,
       products,
@@ -817,7 +1057,19 @@ export class SalesService {
       await this.defaultTaxRate(client),
       await this.customerTerms(client, input.customerId),
       fixedPrices,
+      timeLines,
+      staff,
     );
+    // A staff purchase is settled by the server: the whole total on the `staff` tender (nothing
+    // when it is free), so the drawer and the customer's tab are never touched.
+    const payments: CreateSaleRequest['payments'] = staff
+      ? totals.totalCents > 0
+        ? [{ method: 'staff', amountCents: totals.totalCents }]
+        : []
+      : givenPayments;
+    if (!staff && payments.length === 0 && totals.totalCents > 0) {
+      throw badRequest('A payment is required', { code: 'PAYMENT' });
+    }
     let settled: { paidCents: number; changeCents: number };
     try {
       settled = settlePayments(totals.totalCents, payments);
@@ -825,11 +1077,42 @@ export class SalesService {
       if (err instanceof SaleMathError) throw badRequest(err.message, { code: 'PAYMENT' });
       throw err;
     }
-    await this.writeLines(client, saleId, input, products, totals);
+    const saleItemIds = await this.writeLines(client, saleId, input, products, totals, timeLines);
+    // PC time sold: one credit per time line, redeemed at that PC later (0.19.0).
+    // The name the minutes belong to: the one typed for the line, else the customer's, else "Klient".
+    const customerName = input.customerId
+      ? ((
+          await client.query<{ name: string }>('SELECT name FROM customers WHERE id = $1', [
+            input.customerId,
+          ])
+        ).rows[0]?.name ?? null)
+      : null;
+    for (const [idx, time] of timeLines) {
+      const created = await this.timeCredits.create(client, {
+        saleId,
+        saleItemId: saleItemIds.get(idx)!,
+        stationId: time.stationId,
+        holderName: time.stationId === null ? (time.holderName ?? customerName ?? 'Klient') : null,
+        customerId: input.customerId,
+        minutes: time.minutes,
+        priceCents: totals.lines[idx]!.lineTotalCents,
+        actor,
+      });
+      if (created.pin !== null) {
+        claimPins.push({
+          creditId: created.creditId,
+          holderName: time.holderName ?? customerName ?? 'Klient',
+          minutes: time.minutes,
+          pin: created.pin,
+        });
+      }
+    }
     // Stock: aggregate per product (the same product may appear on several lines).
     const perProduct = new Map<string, number>();
-    for (const item of input.items)
+    for (const item of input.items) {
+      if (!('productId' in item)) continue;
       perProduct.set(item.productId, (perProduct.get(item.productId) ?? 0) + item.quantityMilli);
+    }
     for (const [productId, qty] of [...perProduct.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       const p = products.get(productId)!;
       if (!p.track_stock) continue;
@@ -837,7 +1120,8 @@ export class SalesService {
         productId,
         type: 'sale',
         delta: -qty,
-        unitCostCents: Number(p.average_cost_cents) || Number(p.purchase_cost_cents),
+        unitCostCents: millsToCents(Number(p.average_cost_mills) || Number(p.purchase_cost_mills)),
+        unitCostMills: Number(p.average_cost_mills) || Number(p.purchase_cost_mills),
         reason: null,
         referenceType: 'sale',
         referenceId: saleId,
@@ -886,6 +1170,7 @@ export class SalesService {
         saleId,
         amountCents: credit.reduce((acc, p) => acc + p.amountCents, 0),
         dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
+        installmentCount: credit.find((p) => p.installments)?.installments ?? null,
         notes: receiptNo,
         actor,
       });
@@ -932,6 +1217,16 @@ export class SalesService {
         totalCents: totals.totalCents,
         discountCents: totals.discountCents,
         items: input.items.length,
+        // 0.19.0: off-inventory lines are typed at the till — the audit keeps how many and what.
+        freeItems: input.items.flatMap((i) =>
+          'productId' in i || isTimeItem(i)
+            ? []
+            : [{ description: i.description, unitPriceCents: i.unitPriceCents }],
+        ),
+        // 0.19.0: PC time sold at the till — each line's station and minutes.
+        timeItems: input.items.flatMap((i) =>
+          isTimeItem(i) ? [{ stationId: i.stationId, minutes: i.minutes }] : [],
+        ),
         methods: [...new Set(payments.map((p) => p.method))],
       },
     });

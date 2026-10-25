@@ -16,7 +16,9 @@ import {
   adsGridSize,
   isProtectedProcess,
   normalizeExeName,
+  CLIENT_LAYOUT_SETTING_KEYS,
   CLIENT_WIDGET_POSITIONS,
+  CLIENT_WIDGET_THEMES,
   CLIENT_WIDGET_SIZES,
   PERMISSIONS,
   PROTOCOL_VERSION,
@@ -25,6 +27,7 @@ import {
   formatMoney,
   type SettingKey,
   type SettingsMap,
+  type FactoryResetResult,
   type SystemInfoResponse,
 } from '@likapcs/shared';
 import { api, ApiError } from '../lib/api';
@@ -34,10 +37,148 @@ import { useI18n } from '../i18n';
 import { LIKA_WEBSITE_URL } from '../lib/desktop';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+
+/**
+ * Owner-only "start over" button. Erases every business record, account, setting and uploaded file
+ * on this server after the server has taken a safety backup. Needs the signed-in username, the
+ * password and an explicit tick; on success the session is ended.
+ */
+function FactoryResetCard() {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { logout } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setOpen(false);
+    setPassword('');
+    setConfirmed(false);
+    setError(null);
+  };
+
+  const reset = useMutation({
+    mutationFn: () =>
+      api<FactoryResetResult>('/system/factory-reset', {
+        method: 'POST',
+        body: { username: username.trim(), password, confirm: true },
+      }),
+    onSuccess: async () => {
+      setPassword('');
+      toast.success(
+        t('settings.security.reset.doneTitle'),
+        t('settings.security.reset.doneMessage'),
+      );
+      queryClient.clear();
+      await logout();
+    },
+    onError: (err) => {
+      setPassword('');
+      if (err instanceof ApiError && err.code === 'USERNAME_MISMATCH') {
+        setError(t('settings.security.reset.wrongUsername'));
+      } else if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
+        setError(t('settings.security.reset.wrongPassword'));
+      } else {
+        setError(t('settings.security.reset.failed'));
+      }
+    },
+  });
+
+  const canSubmit = username.trim() !== '' && password !== '' && confirmed && !reset.isPending;
+
+  return (
+    <Card
+      title={t('settings.security.reset.title')}
+      subtitle={t('settings.security.reset.subtitle')}
+      testId="factory-reset-card"
+    >
+      <Alert tone="danger">{t('settings.security.reset.warning')}</Alert>
+      <div style={{ marginTop: 16 }}>
+        <Button variant="danger" onClick={() => setOpen(true)}>
+          {t('settings.security.reset.open')}
+        </Button>
+      </div>
+
+      <Dialog
+        open={open}
+        onClose={close}
+        locked={reset.isPending}
+        title={t('settings.security.reset.dialogTitle')}
+        description={t('settings.security.reset.dialogBody')}
+        size="sm"
+        footer={
+          <>
+            <Button onClick={close} disabled={reset.isPending}>
+              {t('settings.security.reset.cancel')}
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!canSubmit}
+              loading={reset.isPending}
+              onClick={() => reset.mutate()}
+            >
+              {t('settings.security.reset.submit')}
+            </Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <div className="span-2">
+            <Field
+              label={t('settings.security.reset.username')}
+              hint={t('settings.security.reset.usernameHint')}
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  value={username}
+                  autoComplete="username"
+                  autoFocus
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          <div className="span-2">
+            <Field label={t('settings.security.reset.password')}>
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  value={password}
+                  autoComplete="current-password"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          <div className="span-2">
+            <Checkbox
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+              label={t('settings.security.reset.confirm')}
+            />
+          </div>
+          {error && (
+            <div className="span-2">
+              <Alert tone="danger">{error}</Alert>
+            </div>
+          )}
+        </div>
+      </Dialog>
+    </Card>
+  );
+}
 import {
   Alert,
   Button,
   Card,
+  Checkbox,
+  Dialog,
   Field,
   Input,
   Loading,
@@ -49,18 +190,29 @@ import {
   WebLink,
 } from '../components/ui/primitives';
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
+import { LayoutPresetsCard } from '../components/settings/LayoutPresetsCard';
+import { ScreenViewsCard } from '../components/settings/ScreenViewsCard';
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
 import { CustomerDisplayCard } from '../components/settings/CustomerDisplayCard';
 
 type TabId =
-  'business' | 'locale' | 'stations' | 'client' | 'printing' | 'security' | 'system' | 'about';
+  | 'business'
+  | 'locale'
+  | 'stations'
+  | 'client'
+  | 'ads'
+  | 'printing'
+  | 'security'
+  | 'system'
+  | 'about';
 const TAB_IDS: TabId[] = [
   'business',
   'locale',
   'stations',
   'client',
+  'ads',
   'printing',
   'security',
   'system',
@@ -91,7 +243,8 @@ const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'ALL', 'MKD', 'RSD', 'BAM', 'TRY
 
 export function SettingsPage() {
   const { t, language } = useI18n();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const isOwner = user?.roles.includes('owner') ?? false;
   const toast = useToast();
   const queryClient = useQueryClient();
   const canManage = can(PERMISSIONS.SETTINGS_MANAGE);
@@ -119,6 +272,14 @@ export function SettingsPage() {
     [settings.data, draft],
   );
   const dirty = Object.keys(draft).length > 0;
+  // 0.20.0: the layout keys as they stand now (presets save exactly these).
+  const currentLayout = useMemo(
+    () =>
+      Object.fromEntries(
+        CLIENT_LAYOUT_SETTING_KEYS.map((key) => [key, (current as Record<string, unknown>)[key]]),
+      ) as Record<string, unknown>,
+    [current],
+  );
 
   // Warn before leaving the page with unsaved changes.
   useEffect(() => {
@@ -142,6 +303,21 @@ export function SettingsPage() {
       delete next[key];
       return next;
     });
+  }
+
+  // Loads a preset into the draft; "Save" sends it (one PATCH, like every other change here).
+  function applyLayout(values: Record<string, unknown>) {
+    setDraft((d) => {
+      const next = { ...d } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(values)) {
+        const saved = settings.data ? (settings.data as Record<string, unknown>)[key] : undefined;
+        if (JSON.stringify(saved) === JSON.stringify(value)) delete next[key];
+        else next[key] = value;
+      }
+      return next as Partial<SettingsMap>;
+    });
+    setErrors({});
+    toast.success(t('settings.client.presets.applied'));
   }
 
   const save = useMutation({
@@ -619,6 +795,36 @@ export function SettingsPage() {
                     t('settings.client.showPaymentHint'),
                   )}
                 </div>
+                <div className="span-2">
+                  {bool(
+                    'client.widget_hide_in_games',
+                    t('settings.client.hideInGames'),
+                    t('settings.client.hideInGamesHint'),
+                  )}
+                </div>
+                <div className="span-2">
+                  {bool(
+                    'client.block_win_in_games',
+                    t('settings.client.blockWin'),
+                    t('settings.client.blockWinHint'),
+                  )}
+                </div>
+                <Field
+                  label={t('settings.client.widgetTheme')}
+                  hint={t('settings.client.widgetThemeHint')}
+                  className="span-2"
+                >
+                  {() => (
+                    <Segmented
+                      value={current['client.widget_theme']}
+                      options={CLIENT_WIDGET_THEMES.map((v) => ({
+                        value: v,
+                        label: t(`settings.client.theme.${v}`),
+                      }))}
+                      onChange={(v) => !ro && set('client.widget_theme', v)}
+                    />
+                  )}
+                </Field>
                 <Field
                   label={t('settings.client.widgetStyle')}
                   hint={t('settings.client.widgetStyleHint')}
@@ -654,6 +860,8 @@ export function SettingsPage() {
                 onChange={(v) => !ro && set('client.lock_title', v)}
               />
             </Card>
+            <ScreenViewsCard canManage={canManage} onApply={applyLayout} />
+            <LayoutPresetsCard canManage={canManage} layout={currentLayout} onApply={applyLayout} />
             <Card
               title={t('settings.client.staffLoginTitle')}
               subtitle={t('settings.client.staffLoginHint')}
@@ -662,6 +870,34 @@ export function SettingsPage() {
                 hint: t('settings.client.staffLoginUsernameHint'),
               })}
             </Card>
+          </div>
+          <div className="client-screen__preview">
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewSession')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="session"
+            />
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {t('settings.client.previewLockTitle')}
+            </div>
+            <ClientScreenPreview
+              display={clientDisplayFromSettings(current)}
+              businessName={current['business.name']}
+              mode="locked"
+            />
+            <div className="faint" style={{ fontSize: 12 }}>
+              {t('settings.client.previewNote')}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'ads' && (
+        <div className="client-screen">
+          <div className="client-screen__controls">
             <Card
               title={t('settings.client.adsTitle')}
               subtitle={t('settings.client.adsHint')}
@@ -687,84 +923,6 @@ export function SettingsPage() {
                       />
                     )}
                   </Field>
-                  {current['client.ads_layout'] === 'grid' && (
-                    <Field
-                      label={t('settings.client.gridSize')}
-                      hint={t('settings.client.gridSizeHint')}
-                      className="span-2"
-                    >
-                      {() => (
-                        <div className="grid-pick" role="radiogroup" data-testid="screen-grids">
-                          {CLIENT_ADS_GRIDS.map((g) => {
-                            const { cols, rows } = adsGridSize(g);
-                            const on = current['client.ads_grid'] === g;
-                            return (
-                              <button
-                                key={g}
-                                type="button"
-                                role="radio"
-                                aria-checked={on}
-                                className={`grid-pick__opt ${on ? 'is-on' : ''}`}
-                                onClick={() => !ro && set('client.ads_grid', g)}
-                                data-testid={`screen-grid-${g}`}
-                              >
-                                <span
-                                  className="grid-pick__thumb"
-                                  style={{
-                                    gridTemplateColumns: `repeat(${cols}, 1fr)`,
-                                    gridTemplateRows: `repeat(${rows}, 1fr)`,
-                                  }}
-                                  aria-hidden
-                                >
-                                  {Array.from({ length: cols * rows }, (_, i) => (
-                                    <i key={i} />
-                                  ))}
-                                </span>
-                                <span className="grid-pick__label">
-                                  <b>{cols * rows}</b>
-                                  <small>
-                                    {cols} × {rows}
-                                  </small>
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </Field>
-                  )}
-                  {current['client.ads_layout'] === 'full' && (
-                    <Field label={t('settings.client.caption')} className="span-2">
-                      {() => (
-                        <Segmented
-                          value={current['client.ads_caption']}
-                          options={CLIENT_ADS_CAPTIONS.map((v) => ({
-                            value: v,
-                            label: t(`settings.client.captions.${v}`),
-                          }))}
-                          onChange={(v) => !ro && set('client.ads_caption', v)}
-                          testId="screen-caption"
-                        />
-                      )}
-                    </Field>
-                  )}
-                  <Field
-                    label={t('settings.client.adsStyle')}
-                    hint={t('settings.client.adsStyleHint')}
-                    className="span-2"
-                  >
-                    {() => (
-                      <Segmented
-                        value={current['client.ads_style']}
-                        options={CLIENT_ADS_STYLES.map((v) => ({
-                          value: v,
-                          label: t(`ads.styles.${v}`),
-                        }))}
-                        onChange={(v) => !ro && set('client.ads_style', v)}
-                        testId="screen-style"
-                      />
-                    )}
-                  </Field>
                   <Field label={t('settings.client.adsTransition')} className="span-2">
                     {() => (
                       <Segmented
@@ -781,130 +939,207 @@ export function SettingsPage() {
                     min: 3,
                     max: 120,
                   })}
+                  <div data-testid="screen-shuffle">
+                    {bool(
+                      'client.ads_shuffle',
+                      t('settings.client.adsShuffle'),
+                      t('settings.client.adsShuffleHint'),
+                    )}
+                  </div>
                   <Field
-                    label={t('settings.client.imageFit')}
-                    hint={t('settings.client.imageFitHint')}
+                    label={t('settings.client.background')}
+                    hint={t('settings.client.backgroundHint')}
                   >
                     {() => (
-                      <Segmented
-                        value={current['client.ads_image_fit']}
-                        options={CLIENT_ADS_IMAGE_FITS.map((v) => ({
-                          value: v,
-                          label: t(`settings.client.fits.${v}`),
-                        }))}
-                        onChange={(v) => !ro && set('client.ads_image_fit', v)}
-                        testId="screen-fit"
+                      <div className="ad-themes" role="radiogroup" data-testid="screen-backgrounds">
+                        {AD_THEMES.map((theme) => {
+                          const on = current['client.ads_background'] === theme;
+                          return (
+                            <button
+                              key={theme}
+                              type="button"
+                              role="radio"
+                              aria-checked={on}
+                              className={`ad-theme ${on ? 'is-on' : ''}`}
+                              title={t(`ads.themes.${theme}`)}
+                              onClick={() => !ro && set('client.ads_background', theme)}
+                              data-testid={`screen-background-${theme}`}
+                            >
+                              <span className="ad-theme__swatch" style={themeStyle(theme)}>
+                                {on && <Check size={14} />}
+                              </span>
+                              <span className="ad-theme__label">{t(`ads.themes.${theme}`)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </Field>
+                </div>
+              </div>
+              <details data-testid="ads-more" className="ads-more">
+                <summary>{t('settings.client.adsMore')}</summary>
+                <div className="stack">
+                  <div className="form-grid">
+                    {current['client.ads_layout'] === 'grid' && (
+                      <Field
+                        label={t('settings.client.gridSize')}
+                        hint={t('settings.client.gridSizeHint')}
+                        className="span-2"
+                      >
+                        {() => (
+                          <div className="grid-pick" role="radiogroup" data-testid="screen-grids">
+                            {CLIENT_ADS_GRIDS.map((g) => {
+                              const { cols, rows } = adsGridSize(g);
+                              const on = current['client.ads_grid'] === g;
+                              return (
+                                <button
+                                  key={g}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={on}
+                                  className={`grid-pick__opt ${on ? 'is-on' : ''}`}
+                                  onClick={() => !ro && set('client.ads_grid', g)}
+                                  data-testid={`screen-grid-${g}`}
+                                >
+                                  <span
+                                    className="grid-pick__thumb"
+                                    style={{
+                                      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                                      gridTemplateRows: `repeat(${rows}, 1fr)`,
+                                    }}
+                                    aria-hidden
+                                  >
+                                    {Array.from({ length: cols * rows }, (_, i) => (
+                                      <i key={i} />
+                                    ))}
+                                  </span>
+                                  <span className="grid-pick__label">
+                                    <b>{cols * rows}</b>
+                                    <small>
+                                      {cols} × {rows}
+                                    </small>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Field>
+                    )}
+                    {current['client.ads_layout'] === 'full' && (
+                      <Field label={t('settings.client.caption')} className="span-2">
+                        {() => (
+                          <Segmented
+                            value={current['client.ads_caption']}
+                            options={CLIENT_ADS_CAPTIONS.map((v) => ({
+                              value: v,
+                              label: t(`settings.client.captions.${v}`),
+                            }))}
+                            onChange={(v) => !ro && set('client.ads_caption', v)}
+                            testId="screen-caption"
+                          />
+                        )}
+                      </Field>
+                    )}
+                    <Field
+                      label={t('settings.client.adsStyle')}
+                      hint={t('settings.client.adsStyleHint')}
+                      className="span-2"
+                    >
+                      {() => (
+                        <Segmented
+                          value={current['client.ads_style']}
+                          options={CLIENT_ADS_STYLES.map((v) => ({
+                            value: v,
+                            label: t(`ads.styles.${v}`),
+                          }))}
+                          onChange={(v) => !ro && set('client.ads_style', v)}
+                          testId="screen-style"
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label={t('settings.client.imageFit')}
+                      hint={t('settings.client.imageFitHint')}
+                    >
+                      {() => (
+                        <Segmented
+                          value={current['client.ads_image_fit']}
+                          options={CLIENT_ADS_IMAGE_FITS.map((v) => ({
+                            value: v,
+                            label: t(`settings.client.fits.${v}`),
+                          }))}
+                          onChange={(v) => !ro && set('client.ads_image_fit', v)}
+                          testId="screen-fit"
+                        />
+                      )}
+                    </Field>
+                    <div className="span-2 toggle-grid">
+                      <div>{bool('client.ads_show_price', t('settings.client.adsShowPrice'))}</div>
+                      <div data-testid="screen-show-category">
+                        {bool('client.ads_show_category', t('settings.client.showCategory'))}
+                      </div>
+                      <div data-testid="screen-motion">
+                        {bool(
+                          'client.ads_motion',
+                          t('settings.client.motion'),
+                          t('settings.client.motionHint'),
+                        )}
+                      </div>
+                      <div data-testid="screen-promo-countdown">
+                        {bool(
+                          'client.ads_promo_countdown',
+                          t('settings.client.adsPromoCountdown'),
+                          t('settings.client.adsPromoCountdownHint'),
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div data-testid="screen-fullscreen">
+                    {bool(
+                      'client.ads_fullscreen',
+                      t('settings.client.fullscreen'),
+                      t('settings.client.fullscreenHint'),
+                    )}
+                  </div>
+                  <div className="toggle-grid">
+                    <div data-testid="screen-show-clock">
+                      {bool('client.ads_show_clock', t('settings.client.showClock'))}
+                    </div>
+                    <div data-testid="screen-show-brand">
+                      {bool('client.ads_show_brand', t('settings.client.showBrand'))}
+                    </div>
+                    <div data-testid="screen-show-station">
+                      {bool('client.ads_show_station', t('settings.client.showStation'))}
+                    </div>
+                    <div data-testid="screen-show-status">
+                      {bool('client.ads_show_status', t('settings.client.showStatus'))}
+                    </div>
+                    <div data-testid="screen-show-progress">
+                      {bool('client.ads_show_progress', t('settings.client.showProgress'))}
+                    </div>
+                  </div>
+                  <Field
+                    label={t('settings.client.ticker')}
+                    hint={t('settings.client.tickerHint')}
+                    error={errors['client.ads_ticker_text']}
+                  >
+                    {(id, invalid) => (
+                      <Input
+                        id={id}
+                        value={current['client.ads_ticker_text']}
+                        maxLength={200}
+                        placeholder={t('settings.client.tickerPlaceholder')}
+                        onChange={(e) => set('client.ads_ticker_text', e.target.value)}
+                        aria-invalid={invalid}
+                        disabled={ro}
+                        data-testid="screen-ticker"
                       />
                     )}
                   </Field>
-                  <div className="span-2 toggle-grid">
-                    <div>{bool('client.ads_show_price', t('settings.client.adsShowPrice'))}</div>
-                    <div data-testid="screen-show-category">
-                      {bool('client.ads_show_category', t('settings.client.showCategory'))}
-                    </div>
-                    <div data-testid="screen-motion">
-                      {bool(
-                        'client.ads_motion',
-                        t('settings.client.motion'),
-                        t('settings.client.motionHint'),
-                      )}
-                    </div>
-                    <div data-testid="screen-shuffle">
-                      {bool(
-                        'client.ads_shuffle',
-                        t('settings.client.adsShuffle'),
-                        t('settings.client.adsShuffleHint'),
-                      )}
-                    </div>
-                    <div data-testid="screen-promo-countdown">
-                      {bool(
-                        'client.ads_promo_countdown',
-                        t('settings.client.adsPromoCountdown'),
-                        t('settings.client.adsPromoCountdownHint'),
-                      )}
-                    </div>
-                  </div>
                 </div>
-              </div>
-            </Card>
-            <Card
-              title={t('settings.client.screenTitle')}
-              subtitle={t('settings.client.screenHint')}
-              testId="screen-card"
-            >
-              <div className="stack">
-                <div data-testid="screen-fullscreen">
-                  {bool(
-                    'client.ads_fullscreen',
-                    t('settings.client.fullscreen'),
-                    t('settings.client.fullscreenHint'),
-                  )}
-                </div>
-                <div className="toggle-grid">
-                  <div data-testid="screen-show-clock">
-                    {bool('client.ads_show_clock', t('settings.client.showClock'))}
-                  </div>
-                  <div data-testid="screen-show-brand">
-                    {bool('client.ads_show_brand', t('settings.client.showBrand'))}
-                  </div>
-                  <div data-testid="screen-show-station">
-                    {bool('client.ads_show_station', t('settings.client.showStation'))}
-                  </div>
-                  <div data-testid="screen-show-status">
-                    {bool('client.ads_show_status', t('settings.client.showStatus'))}
-                  </div>
-                  <div data-testid="screen-show-progress">
-                    {bool('client.ads_show_progress', t('settings.client.showProgress'))}
-                  </div>
-                </div>
-                <Field
-                  label={t('settings.client.background')}
-                  hint={t('settings.client.backgroundHint')}
-                >
-                  {() => (
-                    <div className="ad-themes" role="radiogroup" data-testid="screen-backgrounds">
-                      {AD_THEMES.map((theme) => {
-                        const on = current['client.ads_background'] === theme;
-                        return (
-                          <button
-                            key={theme}
-                            type="button"
-                            role="radio"
-                            aria-checked={on}
-                            className={`ad-theme ${on ? 'is-on' : ''}`}
-                            title={t(`ads.themes.${theme}`)}
-                            onClick={() => !ro && set('client.ads_background', theme)}
-                            data-testid={`screen-background-${theme}`}
-                          >
-                            <span className="ad-theme__swatch" style={themeStyle(theme)}>
-                              {on && <Check size={14} />}
-                            </span>
-                            <span className="ad-theme__label">{t(`ads.themes.${theme}`)}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Field>
-                <Field
-                  label={t('settings.client.ticker')}
-                  hint={t('settings.client.tickerHint')}
-                  error={errors['client.ads_ticker_text']}
-                >
-                  {(id, invalid) => (
-                    <Input
-                      id={id}
-                      value={current['client.ads_ticker_text']}
-                      maxLength={200}
-                      placeholder={t('settings.client.tickerPlaceholder')}
-                      onChange={(e) => set('client.ads_ticker_text', e.target.value)}
-                      aria-invalid={invalid}
-                      disabled={ro}
-                      data-testid="screen-ticker"
-                    />
-                  )}
-                </Field>
-              </div>
+              </details>
             </Card>
           </div>
           <div className="client-screen__preview">
@@ -963,11 +1198,41 @@ export function SettingsPage() {
                 max: 60,
                 hint: t('settings.printing.autoFinishHint'),
               })}
+              {text('business.receipt_footer', t('settings.business.receiptFooter'), {
+                hint: t('settings.business.receiptFooterHint'),
+                multiline: true,
+                className: 'span-2',
+              })}
+            </div>
+          </Card>
+          <Card title={t('settings.printing.posCard')}>
+            <div className="form-grid">
               <div className="span-2" data-testid="settings-hide-out-of-stock">
                 {bool(
                   'pos.hide_out_of_stock',
                   t('settings.printing.hideOutOfStock'),
                   t('settings.printing.hideOutOfStockHint'),
+                )}
+              </div>
+              <div className="span-2" data-testid="settings-off-inventory">
+                {bool(
+                  'pos.off_inventory_items',
+                  t('settings.printing.offInventory'),
+                  t('settings.printing.offInventoryHint'),
+                )}
+              </div>
+              <div className="span-2" data-testid="settings-time-items">
+                {bool(
+                  'pos.time_items',
+                  t('settings.printing.timeItems'),
+                  t('settings.printing.timeItemsHint'),
+                )}
+              </div>
+              <div className="span-2" data-testid="settings-installments">
+                {bool(
+                  'pos.installments',
+                  t('settings.printing.installments'),
+                  t('settings.printing.installmentsHint'),
                 )}
               </div>
               <div className="span-2">
@@ -989,11 +1254,6 @@ export function SettingsPage() {
                   t('settings.printing.walletHint'),
                 )}
               </div>
-              {text('business.receipt_footer', t('settings.business.receiptFooter'), {
-                hint: t('settings.business.receiptFooterHint'),
-                multiline: true,
-                className: 'span-2',
-              })}
             </div>
           </Card>
           <CustomerDisplayCard />
@@ -1021,26 +1281,34 @@ export function SettingsPage() {
       )}
 
       {tab === 'security' && (
-        <Card>
-          <div className="form-grid">
-            {number('security.session_hours', t('settings.security.sessionHours'), {
-              min: 1,
-              max: 168,
-            })}
-            {number('security.min_password_length', t('settings.security.minPassword'), {
-              min: 4,
-              max: 64,
-            })}
-            {number('security.max_failed_logins', t('settings.security.maxFailed'), {
-              min: 3,
-              max: 20,
-            })}
-            {number('security.lockout_minutes', t('settings.security.lockout'), {
-              min: 1,
-              max: 1440,
-            })}
-          </div>
-        </Card>
+        <>
+          <Card>
+            <div className="form-grid">
+              {number('security.session_hours', t('settings.security.sessionHours'), {
+                min: 1,
+                max: 168,
+              })}
+              {number('security.min_password_length', t('settings.security.minPassword'), {
+                min: 4,
+                max: 64,
+              })}
+              {number('security.max_failed_logins', t('settings.security.maxFailed'), {
+                min: 3,
+                max: 20,
+              })}
+              {number('security.lockout_minutes', t('settings.security.lockout'), {
+                min: 1,
+                max: 1440,
+              })}
+            </div>
+          </Card>
+          {isOwner && (
+            <>
+              <div style={{ height: 16 }} />
+              <FactoryResetCard />
+            </>
+          )}
+        </>
       )}
 
       {tab === 'system' && (

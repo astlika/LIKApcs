@@ -19,6 +19,12 @@ import type {
   UpdateProductInput,
 } from '@likapcs/shared';
 import { productListQuerySchema } from '@likapcs/shared';
+import { millsToCents } from '@likapcs/shared';
+
+/** Exact unit value in mills: the given mills, or the cents × 10 when only cents are sent. */
+export function unitMills(cents: number, mills?: number | null): number {
+  return mills ?? cents * 10;
+}
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
@@ -28,6 +34,7 @@ import { ProductImageStore } from './product-images.js';
 import type { SettingsService } from './settings.js';
 
 interface ProductRow {
+  addons: { id: string; name: string; price_cents: string | number }[] | null;
   id: string;
   name: string;
   sku: string;
@@ -43,6 +50,9 @@ interface ProductRow {
   purchase_cost_cents: string | number;
   average_cost_cents: string | number;
   selling_price_cents: string | number;
+  purchase_cost_mills: string | number;
+  average_cost_mills: string | number;
+  selling_price_mills: string | number;
   price_includes_tax: boolean;
   stock_milli: string | number;
   min_stock_milli: string | number;
@@ -54,6 +64,10 @@ interface ProductRow {
   is_active: boolean;
   client_menu: boolean;
   client_menu_order: number;
+  parent_id: string | null;
+  parent_name: string | null;
+  variant_label: string | null;
+  variant_count: string;
   created_at: Date;
   updated_at: Date;
   promo_price_cents: string | null;
@@ -66,16 +80,23 @@ const PRODUCT_SELECT = `
          p.supplier_id, p.tax_category_id, tc.rate_bp AS tax_rate_bp, p.unit_code,
          COALESCE(u.is_decimal, false) AS unit_is_decimal,
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
+         p.purchase_cost_mills, p.average_cost_mills, p.selling_price_mills,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
          p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
+         p.parent_id, pp.name AS parent_name, p.variant_label,
+         (SELECT count(*) FROM products v WHERE v.parent_id = p.id)::text AS variant_count,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
          (SELECT json_agg(json_build_object('id', b.id, 'barcode', b.barcode, 'is_primary', b.is_primary,
                                             'quantity_milli', b.quantity_milli) ORDER BY b.is_primary DESC, b.barcode)
-            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes
+            FROM product_barcodes b WHERE b.product_id = p.id) AS barcodes,
+         (SELECT json_agg(json_build_object('id', a.id, 'name', a.name, 'price_cents', a.price_cents)
+                          ORDER BY a.sort_order, a.created_at)
+            FROM product_addons a WHERE a.product_id = p.id) AS addons
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id
-    LEFT JOIN units_of_measure u ON u.code = p.unit_code`;
+    LEFT JOIN units_of_measure u ON u.code = p.unit_code
+    LEFT JOIN products pp ON pp.id = p.parent_id`;
 
 export class CatalogService {
   constructor(
@@ -254,6 +275,9 @@ export class CatalogService {
       purchaseCostCents: Number(row.purchase_cost_cents),
       averageCostCents: Number(row.average_cost_cents),
       sellingPriceCents: Number(row.selling_price_cents),
+      purchaseCostMills: Number(row.purchase_cost_mills),
+      averageCostMills: Number(row.average_cost_mills),
+      sellingPriceMills: Number(row.selling_price_mills),
       promoPriceCents: row.promo_price_cents === null ? null : Number(row.promo_price_cents),
       priceIncludesTax: row.price_includes_tax,
       stockMilli: stock,
@@ -266,12 +290,21 @@ export class CatalogService {
       isActive: row.is_active,
       clientMenu: row.client_menu,
       clientMenuOrder: row.client_menu_order,
+      parentId: row.parent_id,
+      parentName: row.parent_name,
+      variantLabel: row.variant_label,
+      variantCount: Number(row.variant_count),
       imageUrl: ProductImageStore.urlFor(row.image_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
         barcode: b.barcode,
         isPrimary: b.is_primary,
         quantityMilli: Number(b.quantity_milli),
+      })),
+      addons: (row.addons ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        priceCents: Number(a.price_cents),
       })),
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
@@ -392,15 +425,22 @@ export class CatalogService {
   }
 
   async createProduct(input: ProductInput, actor: AuditActor): Promise<ProductSummary> {
+    const purchaseMills = unitMills(input.purchaseCostCents, input.purchaseCostMills);
+    const sellingMills = unitMills(input.sellingPriceCents, input.sellingPriceMills);
+    const purchaseCents = millsToCents(purchaseMills);
+    const sellingCents = millsToCents(sellingMills);
     return withTransaction(this.pool, async (client) => {
+      await checkVariant(client, null, input.parentId, input.variantLabel);
       const sku = input.sku?.trim() || (await nextSku(client));
       const r = await client
         .query<{ id: string }>(
           `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
                                  average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
                                  allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
-                                 client_menu)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+                                 client_menu, parent_id, variant_label,
+                                 purchase_cost_mills, average_cost_mills, selling_price_mills)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                   $21, $21, $22) RETURNING id`,
           [
             input.name,
             sku,
@@ -409,8 +449,8 @@ export class CatalogService {
             input.supplierId,
             input.taxCategoryId,
             input.unitCode,
-            input.purchaseCostCents,
-            input.sellingPriceCents,
+            purchaseCents,
+            sellingCents,
             input.priceIncludesTax,
             input.minStockMilli,
             input.allowNegativeStock,
@@ -420,6 +460,10 @@ export class CatalogService {
             input.isActive,
             actor.userId ?? null,
             input.clientMenu,
+            input.parentId,
+            input.variantLabel,
+            purchaseMills,
+            sellingMills,
           ],
         )
         .catch((err: { code?: string; constraint?: string }) => {
@@ -440,7 +484,8 @@ export class CatalogService {
           productId: id,
           type: 'initial',
           delta: input.initialStockMilli,
-          unitCostCents: input.purchaseCostCents,
+          unitCostCents: purchaseCents,
+          unitCostMills: purchaseMills,
           reason: 'Opening stock',
           referenceType: 'product',
           referenceId: id,
@@ -473,6 +518,8 @@ export class CatalogService {
       unitCode: 'unit_code',
       purchaseCostCents: 'purchase_cost_cents',
       sellingPriceCents: 'selling_price_cents',
+      purchaseCostMills: 'purchase_cost_mills',
+      sellingPriceMills: 'selling_price_mills',
       priceIncludesTax: 'price_includes_tax',
       minStockMilli: 'min_stock_milli',
       allowNegativeStock: 'allow_negative_stock',
@@ -481,8 +528,38 @@ export class CatalogService {
       storageLocation: 'storage_location',
       isActive: 'is_active',
       clientMenu: 'client_menu',
+      parentId: 'parent_id',
+      variantLabel: 'variant_label',
     };
+    // Mills win over cents. Sending a price in mills also sets its cent column (rounded).
+    if (patch.purchaseCostMills !== undefined || patch.purchaseCostCents !== undefined) {
+      const mills = unitMills(patch.purchaseCostCents ?? 0, patch.purchaseCostMills);
+      patch = { ...patch, purchaseCostMills: mills, purchaseCostCents: millsToCents(mills) };
+    }
+    if (patch.sellingPriceMills !== undefined || patch.sellingPriceCents !== undefined) {
+      const mills = unitMills(patch.sellingPriceCents ?? 0, patch.sellingPriceMills);
+      patch = { ...patch, sellingPriceMills: mills, sellingPriceCents: millsToCents(mills) };
+    }
     return withTransaction(this.pool, async (client) => {
+      if ('parentId' in patch || 'variantLabel' in patch) {
+        const current = await client.query<{
+          parent_id: string | null;
+          variant_label: string | null;
+        }>('SELECT parent_id, variant_label FROM products WHERE id = $1 FOR UPDATE', [id]);
+        const row = current.rows[0];
+        if (!row) throw notFound('Product');
+        const parentId = 'parentId' in patch ? (patch.parentId ?? null) : row.parent_id;
+        const label = parentId
+          ? 'variantLabel' in patch
+            ? (patch.variantLabel ?? null)
+            : row.variant_label
+          : null;
+        await checkVariant(client, id, parentId, label);
+        // Un-linking a variant clears its label too (the pair is kept together).
+        if (parentId === null) {
+          patch = { ...patch, variantLabel: null };
+        }
+      }
       const sets: string[] = [];
       const values: unknown[] = [];
       for (const [key, column] of Object.entries(map)) {
@@ -586,6 +663,15 @@ export class CatalogService {
         });
         return { archived: true, imagePath: null };
       }
+      // 0.19.0: variants point at this product; it is archived instead (it stays in the family).
+      const variants = await client.query<{ n: string }>(
+        'SELECT count(*)::text AS n FROM products WHERE parent_id = $1',
+        [id],
+      );
+      if (Number(variants.rows[0]!.n) > 0)
+        throw conflict('This product has variants — archive it instead of deleting it', {
+          code: 'HAS_VARIANTS',
+        });
       const r = await client.query<{ image_path: string | null }>(
         'DELETE FROM products WHERE id = $1 RETURNING image_path',
         [id],
@@ -628,6 +714,40 @@ export class CatalogService {
           );
         throw err;
       });
+  }
+
+  /** 0.19.1: replaces the product's extras. Existing sales keep their snapshot. */
+  async setAddons(
+    productId: string,
+    input: { addons: { name: string; priceCents: number }[] },
+    actor: AuditActor,
+  ): Promise<ProductSummary> {
+    return withTransaction(this.pool, async (client) => {
+      const exists = await client.query('SELECT 1 FROM products WHERE id = $1', [productId]);
+      if (!exists.rowCount) throw notFound('Product');
+      // An extra saved again under the same name keeps its id, so a parked sale still resolves it.
+      const current = await client.query<{ id: string; name: string }>(
+        'SELECT id, name FROM product_addons WHERE product_id = $1',
+        [productId],
+      );
+      const byName = new Map(current.rows.map((r) => [r.name, r.id]));
+      await client.query('DELETE FROM product_addons WHERE product_id = $1', [productId]);
+      for (const [i, a] of input.addons.entries()) {
+        const name = a.name.trim();
+        await client.query(
+          `INSERT INTO product_addons (id, product_id, name, price_cents, sort_order)
+           VALUES (COALESCE($5::uuid, gen_random_uuid()), $1, $2, $3, $4)`,
+          [productId, name, a.priceCents, i, byName.get(name) ?? null],
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'catalog.product.addons',
+        entityType: 'product',
+        entityId: productId,
+        details: { count: input.addons.length },
+      });
+      return this.getProduct(productId, client);
+    });
   }
 
   async addBarcode(
@@ -681,19 +801,29 @@ export class CatalogService {
       const current = await client.query<{
         stock_milli: string | number;
         allow_negative_stock: boolean;
-      }>('SELECT stock_milli, allow_negative_stock FROM products WHERE id = $1 FOR UPDATE', [
-        productId,
-      ]);
+        average_cost_mills: string | number;
+      }>(
+        'SELECT stock_milli, allow_negative_stock, average_cost_mills FROM products WHERE id = $1 FOR UPDATE',
+        [productId],
+      );
       if (!current.rows[0]) throw notFound('Product');
       const stock = Number(current.rows[0].stock_milli);
       const delta =
         input.newStockMilli !== undefined ? input.newStockMilli - stock : input.quantityMilliDelta!;
       if (delta === 0) throw badRequest('The adjustment does not change the stock');
+      const adjustCostMills =
+        input.unitCostMills ??
+        (input.unitCostCents !== undefined
+          ? input.unitCostCents * 10
+          : Number(current.rows[0].average_cost_mills));
       await applyMovement(client, {
         productId,
         type: input.type,
         delta,
-        unitCostCents: input.unitCostCents ?? null,
+        // Without a cost given, the movement carries the product's average cost, so a loss or a
+        // gain is valued in the reports (losses at what the goods cost us, not zero).
+        unitCostCents: millsToCents(adjustCostMills),
+        unitCostMills: adjustCostMills,
         reason: input.reason,
         referenceType: 'adjustment',
         referenceId: null,
@@ -757,6 +887,7 @@ export class CatalogService {
       quantity_milli_delta: string;
       stock_after_milli: string;
       unit_cost_cents: string | null;
+      unit_cost_mills: string | null;
       reason: string | null;
       reference_type: string | null;
       reference_id: string | null;
@@ -764,7 +895,7 @@ export class CatalogService {
       created_at: Date;
     }>(
       `SELECT m.id::text, m.product_id, p.name AS product_name, p.sku, m.movement_type, m.quantity_milli_delta::text,
-              m.stock_after_milli::text, m.unit_cost_cents::text, m.reason, m.reference_type, m.reference_id,
+              m.stock_after_milli::text, m.unit_cost_cents::text, m.unit_cost_mills::text, m.reason, m.reference_type, m.reference_id,
               u.full_name AS created_by_name, m.created_at
          FROM inventory_movements m
          JOIN products p ON p.id = m.product_id
@@ -783,6 +914,7 @@ export class CatalogService {
         quantityMilliDelta: Number(m.quantity_milli_delta),
         stockAfterMilli: Number(m.stock_after_milli),
         unitCostCents: m.unit_cost_cents === null ? null : Number(m.unit_cost_cents),
+        unitCostMills: m.unit_cost_mills === null ? null : Number(m.unit_cost_mills),
         reason: m.reason,
         referenceType: m.reference_type,
         referenceId: m.reference_id,
@@ -797,6 +929,47 @@ export class CatalogService {
 }
 
 /** Generated SKUs: `SKU-000001`, continuous (no yearly reset). */
+/**
+ * 0.19.0: a variant points at one parent (one level only) and has a label. A product that has
+ * variants cannot itself become a variant. `selfId` is null when the product is being created.
+ */
+async function checkVariant(
+  client: DbClient,
+  selfId: string | null,
+  parentId: string | null,
+  label: string | null,
+): Promise<void> {
+  if (!parentId) {
+    if (label) throw badRequest('A variant label needs a parent product', { field: 'parentId' });
+    return;
+  }
+  if (!label || !label.trim())
+    throw badRequest('A variant needs a label (for example its size or colour)', {
+      field: 'variantLabel',
+    });
+  if (parentId === selfId)
+    throw badRequest('A product cannot be a variant of itself', { field: 'parentId' });
+  const parent = await client.query<{ parent_id: string | null }>(
+    'SELECT parent_id FROM products WHERE id = $1',
+    [parentId],
+  );
+  if (!parent.rows[0]) throw notFound('Parent product');
+  if (parent.rows[0].parent_id)
+    throw badRequest('A variant cannot have variants — choose the main product', {
+      field: 'parentId',
+    });
+  if (selfId) {
+    const kids = await client.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM products WHERE parent_id = $1',
+      [selfId],
+    );
+    if (Number(kids.rows[0]!.n) > 0)
+      throw conflict('This product has variants, so it cannot become a variant', {
+        field: 'parentId',
+      });
+  }
+}
+
 export async function nextSku(client: DbClient): Promise<string> {
   const r = await client.query<{ next_value: string }>(
     `INSERT INTO document_sequences (kind, period, prefix, next_value) VALUES ('sku', '', 'SKU', 2)
@@ -811,6 +984,8 @@ export interface MovementInput {
   type: string;
   delta: number;
   unitCostCents: number | null;
+  /** Exact unit cost in mills; wins over `unitCostCents` when given. */
+  unitCostMills?: number | null;
   reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
@@ -841,16 +1016,23 @@ export async function applyMovement(
       requestedMilli: -input.delta,
     });
   }
+  const costMills =
+    input.unitCostMills !== undefined && input.unitCostMills !== null
+      ? input.unitCostMills
+      : input.unitCostCents === null
+        ? null
+        : input.unitCostCents * 10;
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO inventory_movements (product_id, movement_type, quantity_milli_delta, stock_after_milli, unit_cost_cents,
-                                      reason, reference_type, reference_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id::text`,
+                                      unit_cost_mills, reason, reference_type, reference_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id::text`,
     [
       input.productId,
       input.type,
       input.delta,
       after,
-      input.unitCostCents,
+      costMills === null ? null : millsToCents(costMills),
+      costMills,
       input.reason,
       input.referenceType,
       input.referenceId,
