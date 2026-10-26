@@ -12,5 +12,6 @@ export * from './sale-math.js';
 export * from './wake.js';
 export * from './ads-pages.js';
 export * from './end-tasks.js';
+export * from './cs2.js';
 export * from './allocate-payments.js';
 export * from './installments.js';

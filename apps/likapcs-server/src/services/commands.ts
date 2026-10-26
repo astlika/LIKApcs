@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import {
   isNewerVersion,
   validateEndTasks,
+  type Cs2StationCommand,
   type ClientUpdatePushResponse,
   type StationCommandRequest,
   type StationCommandResponse,
@@ -175,6 +176,42 @@ export class CommandsService {
       severity: result.ok ? 'info' : 'warning',
     });
     return { commandId: result.commandId, command, ok: result.ok, error: result.error };
+  }
+
+  /**
+   * CS2 match server (0.24.0). Only the dedicated CS2 routes call this: the generic staff route
+   * never accepts `cs2.*`, so the arguments and the URL always come from the server's own config.
+   */
+  async sendCs2(
+    stationId: string,
+    command: Cs2StationCommand,
+    payload: Record<string, unknown>,
+    actor: AuditActor,
+  ): Promise<{ commandId: string; command: Cs2StationCommand; ok: boolean; error?: string }> {
+    const presence = this.onlineDeviceForStation(stationId);
+    const result = await this.hub.sendCommand(presence.deviceId, command, payload, {
+      timeoutMs: command === 'cs2.install' ? 20_000 : 15_000,
+    });
+    await recordAudit(this.pool, actor, {
+      action: `station.command.${command}`,
+      entityType: 'station',
+      entityId: stationId,
+      // Never log the payload: it can contain the server and player passwords.
+      details: { deviceId: presence.deviceId, ok: result.ok, error: result.error ?? null },
+      severity: result.ok ? 'info' : 'warning',
+    });
+    return { commandId: result.commandId, command, ok: result.ok, error: result.error };
+  }
+
+  /** The address of the device of a station, or null when it is offline. */
+  deviceAddressOf(stationId: string): string | null {
+    const presence = this.hub.listDevices().find((d) => d.stationId === stationId);
+    if (!presence?.ip) return null;
+    return presence.ip.replace(/^::ffff:/, '');
+  }
+
+  isStationOnline(stationId: string): boolean {
+    return this.hub.listDevices().some((d) => d.stationId === stationId);
   }
 
   /** Tells every online client running an older version than the server to update now. */
