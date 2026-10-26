@@ -1,11 +1,11 @@
 {
-  "version": "0.24.1",
-  "notes": "### Fixed\n\n- CS2 server on a PC with a Public network: the firewall rules now cover all network profiles (Private, Domain and Public) and both UDP and TCP on the game port. They are added when the server starts (one Windows admin prompt, then remembered), so clients no longer get \"Unable to establish a connection with a gameserver\" on Public networks.\n- The start result says whether the server is listening on its port. The Admin CS2 page shows the server PC's last result (refreshed every 5 s) instead of only the first reply.",
-  "pub_date": "2026-10-26T13:56:23.689Z",
+  "version": "0.25.0",
+  "notes": "### Removed\n\n- The CS2 match server (0.24.0) is removed completely: the Admin \"CS2 match\" page and its menu entry, the install/start/stop/connect commands on the PCs, the RCON match commands (freezetime, restart, warmup end), the server routes and the CS2 config.\n- Migration `0048` drops the `cs2_config` table, so the stored server and RCON passwords are deleted. Migration `0047` stays in the history.",
+  "pub_date": "2026-10-26T15:32:02.929Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelI2cE1ybXpuU081eDcvYWNMREE1R0o2K3VRZ005ejlMYzJOSmNrSGtnWEVVeW9GcS9NUnE5TVlGSkJUUnlGdWp5QzNLSnVFUCtnZHVXMGpqWVBSSndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDIyNzg1CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNC4xX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI0LjEKaStTV2I1WGE4blc1NGNwYW1pQ0VGQ2VLTFdaQ2VCMVowOEVOenVlSGZlYVl5czYyWUFjdzV4Nm0yZXl1eXJ6LzI1a1Y5V3k2b09ZM2NSRktlbDc2QkE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.24.1/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemRVY3VQWWc1TlNMcjN3NDl2aCtFd0x3TjliL3BvZ3VISzRSeVVQYXpueGlPS2laams2WlBKMjdqVmZVZlZQNXdQb3ZrejdFOGErRFVFSFNBb0RhaUE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDI4NTUyCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNS4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI1LjAKbU5BelFoQzRYMEluVVUzRytNZElFeWYxa01JaHl5cmg3NnBzb0haaEl6czh3SVJ4eWVVNGwwWHBpdmx5Qmd0czdRVVh0QzYzbnN0aDJCNCtaT1RXQmc9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.25.0/LIKApcs-Client-Setup.exe"
     }
   }
 }
