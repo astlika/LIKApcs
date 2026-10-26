@@ -285,6 +285,11 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
             if (message.event === 'cs2_result') {
               // 0.24.0: what the PC did with a CS2 command (install, start, stop, connect).
               const p = message.payload as { action?: unknown; ok?: unknown; message?: unknown };
+              app.services.cs2.recordResult(presence.stationId, {
+                action: String(p.action ?? '').slice(0, 40),
+                ok: p.ok === true,
+                message: String(p.message ?? '').slice(0, 500),
+              });
               await recordAudit(
                 app.pool,
                 {
@@ -299,7 +304,7 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                   details: {
                     action: String(p.action ?? '').slice(0, 40),
                     ok: p.ok === true,
-                    message: String(p.message ?? '').slice(0, 300),
+                    message: String(p.message ?? '').slice(0, 500),
                   },
                   severity: p.ok === true ? 'info' : 'warning',
                 },

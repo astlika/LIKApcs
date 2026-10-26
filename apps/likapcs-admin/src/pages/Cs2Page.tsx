@@ -55,9 +55,11 @@ export function Cs2Page() {
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
 
+  // Refresh every 5 s so the latest result from the server PC (start, stop, install…) shows up.
   const status = useQuery({
     queryKey: ['cs2'],
     queryFn: () => api<Cs2StatusResponse>('/cs2'),
+    refetchInterval: 5000,
   });
   const stations = useQuery({
     queryKey: ['stations', false],
@@ -277,6 +279,17 @@ export function Cs2Page() {
             t('cs2.noServerPc')
           )}
         </h3>
+        {server?.lastResult && (
+          <p
+            style={{
+              margin: '0 0 8px',
+              color: server.lastResult.ok ? 'var(--success, #15803d)' : 'var(--danger, #b91c1c)',
+            }}
+          >
+            {t('cs2.serverLastResult')}: {server.lastResult.message}
+            <span className="muted"> ({new Date(server.lastResult.at).toLocaleTimeString()})</span>
+          </p>
+        )}
         {status.data.resolvedAddress && (
           <p className="muted">
             {t('cs2.addressInUse')}: {status.data.resolvedAddress}:{cfg.port}

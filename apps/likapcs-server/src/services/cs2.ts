@@ -35,11 +35,22 @@ function publicView(c: Cs2Config): Cs2StatusResponse['config'] {
  * `cs2_config` (one row), never in `settings`, so passwords stay out of the audit log.
  */
 export class Cs2Service {
+  /** The last outcome each PC reported for a CS2 command (in memory; the audit log keeps history). */
+  private readonly results = new Map<
+    string,
+    { action: string; ok: boolean; message: string; at: string }
+  >();
+
   constructor(
     private readonly pool: Pool,
     private readonly commands: CommandsService,
     private readonly stations: StationsService,
   ) {}
+
+  /** Called when a PC reports the outcome of a CS2 command (`client.event` → `cs2_result`). */
+  recordResult(stationId: string, result: { action: string; ok: boolean; message: string }): void {
+    this.results.set(stationId, { ...result, at: new Date().toISOString() });
+  }
 
   async config(): Promise<Cs2Config> {
     const r = await this.pool.query<{ config: unknown }>(
@@ -86,6 +97,7 @@ export class Cs2Service {
             code: station.code,
             name: station.name,
             online: this.commands.isStationOnline(station.id),
+            lastResult: this.results.get(station.id) ?? null,
           }
         : null,
       resolvedAddress: this.resolveAddress(c),

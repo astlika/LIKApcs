@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-26
+
+### Fixed
+
+- CS2 server on a PC with a Public network: the firewall rules now cover all network profiles (Private, Domain and Public) and both UDP and TCP on the game port. They are added when the server starts (one Windows admin prompt, then remembered), so clients no longer get "Unable to establish a connection with a gameserver" on Public networks.
+- The start result says whether the server is listening on its port. The Admin CS2 page shows the server PC's last result (refreshed every 5 s) instead of only the first reply.
+
 ## [0.24.0] - 2026-10-26
 
 ### Added

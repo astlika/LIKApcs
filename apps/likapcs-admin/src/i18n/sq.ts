@@ -45,6 +45,7 @@ export const sq: Dictionary = {
     restart: 'Rinis pas 3 s',
     warmupEnd: 'Mbyll warmup-in',
     lastResult: 'Rezultati i fundit',
+    serverLastResult: 'Rezultati i fundit i PC-së së serverit',
   },
   app: { name: 'LIKApcs', tagline: 'Menaxhimi i Stacionit të Lojërave' },
   remote: {

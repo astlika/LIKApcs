@@ -2,7 +2,7 @@
 //! SteamCMD, run it, stop it, and start CS2 joined to a server. Only commands the LIKApcs server
 //! sends reach this module, and the arguments and links are checked again here before anything
 //! starts. Everything lives under %LOCALAPPDATA%\LIKApcs\cs2, so no admin rights are needed
-//! except the one firewall prompt Windows shows during install.
+//! except the firewall prompt Windows shows the first time the server starts.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -14,13 +14,19 @@ const STEAMCMD_URL: &str = "https://steamcdn-a.akamaihd.net/client/installer/ste
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 const CONNECT_PREFIX: &str = "steam://rungameid/730//+connect%20";
 const SERVER_EXE: &str = "cs2.exe";
+const DEFAULT_PORT: u16 = 27015;
+/// Bump when the firewall rules change: the marker file then no longer matches and the rules
+/// are added again (with one admin prompt).
+const FIREWALL_VERSION: u32 = 2;
+/// How long `start` waits for the server to open its UDP port before it reports the state.
+const LISTEN_WAIT: Duration = Duration::from_secs(25);
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cs2Result {
     pub ok: bool,
     pub message: String,
-    /// Install only: whether the firewall rules were added.
+    /// Whether the firewall rules for the server are in place (only set by `start`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firewall: Option<bool>,
 }
@@ -78,6 +84,26 @@ pub fn valid_connect_url(url: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '%' | '+'))
 }
 
+/// The game port from `-port N` in the launch arguments (27015 when absent or unreadable).
+pub fn port_from_args(args: &[String]) -> u16 {
+    args.iter()
+        .position(|a| a == "-port")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u16>().ok())
+        .filter(|p| *p >= 1024)
+        .unwrap_or(DEFAULT_PORT)
+}
+
+/// Whether `netstat -ano -p UDP` output lists a local UDP endpoint on `port`.
+pub fn is_listening_udp(netstat_output: &str, port: u16) -> bool {
+    let suffix = format!(":{port}");
+    netstat_output.lines().any(|line| {
+        let mut parts = line.split_whitespace();
+        matches!(parts.next(), Some(p) if p.eq_ignore_ascii_case("UDP"))
+            && parts.next().is_some_and(|local| local.ends_with(&suffix))
+    })
+}
+
 #[cfg(windows)]
 fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -92,7 +118,7 @@ fn ps_quote(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-/// Writes a PowerShell script next to the server and runs it hidden, waiting at most `timeout`.
+/// Writes a PowerShell script under the CS2 folder and runs it hidden, waiting at most `timeout`.
 /// Returns the exit code, or an error text when it could not run or did not finish.
 fn run_script(name: &str, body: &str, timeout: Duration) -> Result<i32, String> {
     let dir = root().ok_or("LOCALAPPDATA is not set")?;
@@ -130,40 +156,55 @@ fn run_script(name: &str, body: &str, timeout: Duration) -> Result<i32, String> 
     }
 }
 
-/// Adds the firewall rules for the server (UDP and TCP on the game port). Windows asks for admin
-/// rights through UAC; when the prompt is cancelled the rules are simply not added.
-fn add_firewall_rules(exe: &Path, port: u16) -> bool {
+/// Makes sure the firewall lets the server in on every network profile (Private, Domain AND
+/// Public — a cafe network is often Public). The rules are created by an elevated script, so
+/// Windows shows one admin prompt; the marker file remembers that this version and port are in
+/// place, so later starts do not prompt again. Returns false when the prompt was cancelled.
+fn ensure_firewall(exe: &Path, port: u16) -> bool {
+    let Some(root) = root() else { return false };
+    let marker = root.join("firewall.marker");
+    let wanted = format!("v{FIREWALL_VERSION} port {port}");
+    if std::fs::read_to_string(&marker).ok().as_deref() == Some(wanted.as_str()) {
+        return true;
+    }
     let fw_body = format!(
         "$ErrorActionPreference = 'Stop'\n\
-         netsh advfirewall firewall delete rule name='LIKApcs CS2 server' | Out-Null\n\
-         netsh advfirewall firewall add rule name='LIKApcs CS2 server' dir=in action=allow program='{exe}' enable=yes profile=private,domain | Out-Null\n\
-         netsh advfirewall firewall add rule name='LIKApcs CS2 server ports' dir=in action=allow protocol=UDP localport={port} profile=private,domain | Out-Null\n\
-         netsh advfirewall firewall add rule name='LIKApcs CS2 server ports TCP' dir=in action=allow protocol=TCP localport={port} profile=private,domain | Out-Null\n\
-         exit 0\n",
+         try {{\n\
+           Remove-NetFirewallRule -DisplayName 'LIKApcs CS2 server' -ErrorAction SilentlyContinue\n\
+           Remove-NetFirewallRule -DisplayName 'LIKApcs CS2 server ports' -ErrorAction SilentlyContinue\n\
+           Remove-NetFirewallRule -DisplayName 'LIKApcs CS2 server ports TCP' -ErrorAction SilentlyContinue\n\
+           New-NetFirewallRule -DisplayName 'LIKApcs CS2 server' -Direction Inbound -Action Allow -Program '{exe}' -Profile Any | Out-Null\n\
+           New-NetFirewallRule -DisplayName 'LIKApcs CS2 server ports' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {port} -Profile Any | Out-Null\n\
+           New-NetFirewallRule -DisplayName 'LIKApcs CS2 server ports TCP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {port} -Profile Any | Out-Null\n\
+           exit 0\n\
+         }} catch {{\n\
+           exit 1\n\
+         }}\n",
         exe = ps_quote(&exe.to_string_lossy()),
         port = port,
     );
-    let root = match root() {
-        Some(r) => r,
-        None => return false,
-    };
     let fw_path = root.join("firewall.ps1");
     if std::fs::write(&fw_path, fw_body).is_err() {
         return false;
     }
-    // Starts the rules script elevated (UAC) and waits for its exit code.
+    // Runs the rules script elevated (UAC) and waits for its exit code.
     let launcher = format!(
         "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{}') -Verb RunAs -WindowStyle Hidden -Wait -PassThru\n\
          exit $p.ExitCode\n",
         ps_quote(&fw_path.to_string_lossy()),
     );
-    matches!(
+    let ok = matches!(
         run_script("firewall-launch.ps1", &launcher, Duration::from_secs(300)),
         Ok(0)
-    )
+    );
+    if ok {
+        let _ = std::fs::write(&marker, wanted);
+    }
+    ok
 }
 
-/// Downloads SteamCMD (once), installs the CS2 dedicated server, adds the firewall rules.
+/// Downloads SteamCMD (once) and installs the CS2 dedicated server. The firewall is handled when
+/// the server starts, because the game port comes from the server's own arguments.
 pub fn install() -> Cs2Result {
     if !cfg!(windows) {
         return fail("the CS2 server can only be installed on Windows");
@@ -231,18 +272,7 @@ pub fn install() -> Cs2Result {
             status.code()
         ));
     }
-    let firewall = add_firewall_rules(&exe, 27015);
-    Cs2Result {
-        ok: true,
-        message: if firewall {
-            "CS2 server installed; firewall rules added".into()
-        } else {
-            "CS2 server installed. The firewall was not changed (the admin prompt was cancelled): \
-             allow UDP and TCP 27015 for the players to join"
-                .into()
-        },
-        firewall: Some(firewall),
-    }
+    done("CS2 server installed")
 }
 
 /// Whether a cs2.exe is already running on this PC (tasklist).
@@ -260,7 +290,18 @@ fn server_running() -> bool {
         .unwrap_or(false)
 }
 
-/// Starts the server with the arguments the LIKApcs server built (`-dedicated …`).
+/// Whether the server has opened its UDP port yet (netstat).
+fn listening_on(port: u16) -> bool {
+    let mut cmd = Command::new("netstat");
+    cmd.args(["-ano", "-p", "UDP"]).stdin(Stdio::null());
+    hide_console(&mut cmd);
+    cmd.output()
+        .map(|o| is_listening_udp(&String::from_utf8_lossy(&o.stdout), port))
+        .unwrap_or(false)
+}
+
+/// Starts the server with the arguments the LIKApcs server built (`-dedicated …`). Makes sure the
+/// firewall allows the port, then waits a little and reports whether the server is listening.
 pub fn start(args: Vec<String>) -> Cs2Result {
     if !valid_server_args(&args) {
         return fail("invalid CS2 server arguments");
@@ -271,8 +312,14 @@ pub fn start(args: Vec<String>) -> Cs2Result {
     if !exe.exists() {
         return fail("the CS2 server is not installed on this PC yet — install it first");
     }
+    let port = port_from_args(&args);
+    let firewall = ensure_firewall(&exe, port);
     if server_running() {
-        return done("the CS2 server is already running");
+        return Cs2Result {
+            ok: true,
+            message: "the CS2 server is already running".into(),
+            firewall: Some(firewall),
+        };
     }
     let mut cmd = Command::new(&exe);
     cmd.args(&args)
@@ -281,10 +328,34 @@ pub fn start(args: Vec<String>) -> Cs2Result {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     hide_console(&mut cmd);
-    match cmd.spawn() {
+    if let Err(e) = cmd.spawn() {
         // The child keeps running after this handle is dropped.
-        Ok(_) => done("the CS2 server started"),
-        Err(e) => fail(format!("cannot start the CS2 server: {e}")),
+        return fail(format!("cannot start the CS2 server: {e}"));
+    }
+    let deadline = Instant::now() + LISTEN_WAIT;
+    let mut listening = false;
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_secs(2));
+        if listening_on(port) {
+            listening = true;
+            break;
+        }
+    }
+    let message = match (listening, firewall) {
+        (true, true) => format!("the CS2 server started and is listening on UDP {port}"),
+        (true, false) => format!(
+            "the CS2 server started and is listening on UDP {port}, but the firewall rules were \
+             not added (the admin prompt was cancelled): press Start again and accept the prompt"
+        ),
+        (false, _) => format!(
+            "the CS2 server started but is not listening on UDP {port} yet; it may still be \
+             loading the map — check again in a minute"
+        ),
+    };
+    Cs2Result {
+        ok: listening && firewall,
+        message,
+        firewall: Some(firewall),
     }
 }
 
@@ -325,16 +396,21 @@ pub fn connect(url: &str) -> Cs2Result {
 mod tests {
     use super::*;
 
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn server_args_must_start_as_a_dedicated_launch() {
-        let good: Vec<String> = ["-dedicated", "-usercon", "+map", "de_dust2"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(valid_server_args(&good));
+        assert!(valid_server_args(&args(&[
+            "-dedicated",
+            "-usercon",
+            "+map",
+            "de_dust2"
+        ])));
         assert!(!valid_server_args(&[]));
-        assert!(!valid_server_args(&["-applaunch".into(), "730".into()]));
-        assert!(!valid_server_args(&["-dedicated".into(), "x\nrm".into()]));
+        assert!(!valid_server_args(&args(&["-applaunch", "730"])));
+        assert!(!valid_server_args(&args(&["-dedicated", "x\nrm"])));
         assert!(!valid_server_args(&["-dedicated".into(), "a".repeat(201)]));
     }
 
@@ -352,6 +428,29 @@ mod tests {
         ));
         assert!(!valid_connect_url(&format!("{ok}&calc.exe")));
         assert!(!valid_connect_url(&format!("{ok} ")));
+    }
+
+    #[test]
+    fn the_game_port_comes_from_the_arguments() {
+        assert_eq!(
+            port_from_args(&args(&["-dedicated", "-port", "27020"])),
+            27020
+        );
+        assert_eq!(port_from_args(&args(&["-dedicated"])), 27015);
+        assert_eq!(
+            port_from_args(&args(&["-dedicated", "-port", "abc"])),
+            27015
+        );
+        assert_eq!(port_from_args(&args(&["-dedicated", "-port", "80"])), 27015);
+    }
+
+    #[test]
+    fn listening_is_detected_from_netstat_output() {
+        let out = "\r\nActive Connections\r\n\r\n  Proto  Local Address          Foreign Address        State           PID\r\n  UDP    0.0.0.0:27015          *:*                                    4321\r\n  UDP    0.0.0.0:5353           *:*                                    1100\r\n";
+        assert!(is_listening_udp(out, 27015));
+        assert!(!is_listening_udp(out, 2701));
+        assert!(!is_listening_udp(out, 27016));
+        assert!(!is_listening_udp("", 27015));
     }
 
     #[test]

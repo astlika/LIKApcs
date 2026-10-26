@@ -43,6 +43,7 @@ export const en = {
     restart: 'Restart in 3 s',
     warmupEnd: 'End warmup',
     lastResult: 'Last result',
+    serverLastResult: 'Server PC last result',
   },
   app: { name: 'LIKApcs', tagline: 'Gaming Station Management' },
   remote: {

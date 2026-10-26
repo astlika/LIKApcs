@@ -257,6 +257,26 @@ describe('CS2 match server', () => {
     expect(res.body.ok).toBe(true);
     await waitFor('cs2.install');
   });
+  it('shows what the server PC last reported (start, listening or not)', async () => {
+    client.send({
+      type: 'client.event',
+      event: 'cs2_result',
+      payload: { action: 'start', ok: false, message: 'not listening on UDP 27015 yet' },
+    });
+    type Last = { action: string; ok: boolean; message: string } | null;
+    let last: Last = null;
+    for (let i = 0; i < 60 && !last; i++) {
+      await sleep(40);
+      const res = await call<{ serverStation: { lastResult: Last } | null }>('GET', '/cs2');
+      last = res.body.serverStation?.lastResult ?? null;
+    }
+    expect(last).toMatchObject({
+      action: 'start',
+      ok: false,
+      message: 'not listening on UDP 27015 yet',
+    });
+  });
+
   it('keeps saving after a factory reset emptied the config row', async () => {
     // A factory reset truncates cs2_config (it is not on the keep list): the row is simply gone.
     await ctx.pool.query('DELETE FROM cs2_config');

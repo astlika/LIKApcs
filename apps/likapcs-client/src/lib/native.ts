@@ -498,7 +498,7 @@ export function randomToken(bytes = 32): string {
 export interface Cs2Result {
   ok: boolean;
   message: string;
-  /** Install only: whether the firewall rules were added (needs the Windows admin prompt). */
+  /** Start only: whether the firewall rules for the server port are in place (one Windows admin prompt, then remembered). */
   firewall?: boolean;
 }
 
@@ -507,7 +507,7 @@ const cs2Unavailable = (): Cs2Result => ({
   message: 'not available in the browser build',
 });
 
-/** 0.24.0: downloads the CS2 dedicated server with SteamCMD and adds the firewall rules. */
+/** 0.24.0: downloads the CS2 dedicated server with SteamCMD (the firewall is handled at start). */
 export async function cs2Install(): Promise<Cs2Result> {
   if (!isDesktopApp()) return cs2Unavailable();
   return invoke<Cs2Result>('cs2_install');

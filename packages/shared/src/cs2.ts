@@ -117,7 +117,14 @@ export interface Cs2StatusResponse {
     rconPasswordSet: boolean;
     playerPasswordSet: boolean;
   };
-  serverStation: { id: string; code: string; name: string; online: boolean } | null;
+  serverStation: {
+    id: string;
+    code: string;
+    name: string;
+    online: boolean;
+    /** What the PC last reported for a CS2 command (install, start, stop, connect), if any. */
+    lastResult: { action: string; ok: boolean; message: string; at: string } | null;
+  } | null;
   /** The address the panel will use (configured, or the server PC's detected LAN address). */
   resolvedAddress: string | null;
 }
