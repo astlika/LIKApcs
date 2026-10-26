@@ -121,3 +121,17 @@ export interface Cs2StatusResponse {
   /** The address the panel will use (configured, or the server PC's detected LAN address). */
   resolvedAddress: string | null;
 }
+
+/** Partial update from the admin page; passwords are never accepted from the request. */
+export const cs2ConfigPatchSchema = cs2ConfigSchema
+  .omit({ playerPassword: true, rconPassword: true })
+  .partial()
+  .strict();
+export type Cs2ConfigPatch = z.infer<typeof cs2ConfigPatchSchema>;
+
+export const cs2ConnectBodySchema = z.object({
+  stationIds: z.array(z.string().min(1).max(64)).min(1).max(60),
+});
+export const cs2RconBodySchema = z.object({
+  preset: z.enum(['freezetime', 'restart', 'warmup_end']),
+});

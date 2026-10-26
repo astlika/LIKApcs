@@ -282,6 +282,29 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
                 },
               );
             }
+            if (message.event === 'cs2_result') {
+              // 0.24.0: what the PC did with a CS2 command (install, start, stop, connect).
+              const p = message.payload as { action?: unknown; ok?: unknown; message?: unknown };
+              await recordAudit(
+                app.pool,
+                {
+                  deviceId: presence.deviceId,
+                  label: `client ${presence.deviceId.slice(0, 8)}`,
+                  ip,
+                },
+                {
+                  action: 'station.cs2_result',
+                  entityType: 'station',
+                  entityId: presence.stationId,
+                  details: {
+                    action: String(p.action ?? '').slice(0, 40),
+                    ok: p.ok === true,
+                    message: String(p.message ?? '').slice(0, 300),
+                  },
+                  severity: p.ok === true ? 'info' : 'warning',
+                },
+              );
+            }
             if (message.event === 'widget_report') {
               // 0.17.1: the PC says whether its countdown widget is really visible; the desk sees
               // the answer (and the cause) on the station, without walking over to it.

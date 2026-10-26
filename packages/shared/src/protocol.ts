@@ -137,6 +137,8 @@ export const clientEventSchema = z.object({
     'tasks_ended',
     /** 0.17.1: is the countdown widget actually visible on the PC (payload: `WidgetReportPayload`). */
     'widget_report',
+    /** 0.24.0 CS2 match server: outcome of cs2.install/start/stop/connect (payload: `{action, ok, message}`). */
+    'cs2_result',
   ]),
   payload: z.record(z.unknown()).default({}),
 });
