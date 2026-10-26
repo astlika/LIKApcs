@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-26
+
+### Removed
+
+- The CS2 match server (0.24.0) is removed completely: the Admin "CS2 match" page and its menu entry, the install/start/stop/connect commands on the PCs, the RCON match commands (freezetime, restart, warmup end), the server routes and the CS2 config.
+- Migration `0048` drops the `cs2_config` table, so the stored server and RCON passwords are deleted. Migration `0047` stays in the history.
+
 ## [0.24.1] - 2026-10-26
 
 ### Fixed

@@ -58,10 +58,6 @@ import {
   sha256Hex,
   trayUpdate,
   wolConfigure,
-  cs2Connect,
-  cs2Install,
-  cs2Start,
-  cs2Stop,
   type DeviceIdentity,
   type TrayLabels,
   type UpdateCheck,
@@ -1152,23 +1148,6 @@ export class Agent {
             // Both layers filter on their own (protocol.ts and the Rust side): report the union.
             skipped: [...new Set([...effect.skipped, ...outcome.skipped])],
           },
-        });
-        break;
-      }
-      case 'cs2': {
-        // 0.24.0: CS2 match server. The ack already went out; the outcome comes back as an event
-        // so the desk sees what the PC did (install can take a long time).
-        const run = (): Promise<{ ok: boolean; message: string }> => {
-          if (effect.action === 'connect') return cs2Connect(effect.url);
-          if (effect.action === 'start') return cs2Start(effect.args);
-          if (effect.action === 'stop') return cs2Stop();
-          return cs2Install();
-        };
-        const result = await run().catch((err: unknown) => ({ ok: false, message: String(err) }));
-        this.send({
-          type: 'client.event',
-          event: 'cs2_result',
-          payload: { action: effect.action, ok: result.ok, message: result.message },
         });
         break;
       }

@@ -14,8 +14,6 @@ import errorHandlerPlugin from './plugins/error-handler.js';
 import { AppError } from './errors.js';
 import { RealtimeHub } from './realtime/hub.js';
 import { CommandsService } from './services/commands.js';
-import { Cs2Service } from './services/cs2.js';
-import { cs2Routes } from './routes/cs2.js';
 import { WakeService, type WakeSender } from './services/wake.js';
 import { PricingService } from './services/pricing.js';
 import { SessionsService } from './services/sessions.js';
@@ -108,7 +106,6 @@ export interface Services {
   imports: ImportService;
   dashboard: DashboardService;
   commands: CommandsService;
-  cs2: Cs2Service;
   wake: WakeService;
   requests: SessionRequestsService;
   orders: OrdersService;
@@ -187,7 +184,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const dashboard = new DashboardService(pool, settings, stations, audit);
   const maintenance = new MaintenanceService(pool, hub, stations, auth, users, settings);
   const commands = new CommandsService(pool, hub, maintenance, settings);
-  const cs2 = new Cs2Service(pool, commands, stations);
   const wake = new WakeService(pool, stations, options.wakeSender);
   const pricing = new PricingService(pool, settings);
   const cash = new CashService(pool, settings);
@@ -279,7 +275,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     imports,
     dashboard,
     commands,
-    cs2,
     wake,
     maintenance,
     pricing,
@@ -339,7 +334,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
       await api.register(looksRoutes);
-      await api.register(cs2Routes);
       await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);

@@ -12,7 +12,6 @@ mod remote_input;
 mod screen;
 mod secrets;
 mod tasks;
-mod cs2;
 mod wallpaper;
 mod wol;
 
@@ -1050,35 +1049,6 @@ async fn end_tasks(exes: Vec<String>) -> Result<tasks::EndTasksReport, String> {
         .map_err(|e| e.to_string())
 }
 
-/// CS2 match server (0.24.0): each command runs off the UI thread (install can take a long time).
-#[tauri::command]
-async fn cs2_install() -> cs2::Cs2Result {
-    tauri::async_runtime::spawn_blocking(cs2::install)
-        .await
-        .unwrap_or_else(|e| cs2::Cs2Result { ok: false, message: e.to_string(), firewall: None })
-}
-
-#[tauri::command]
-async fn cs2_start(args: Vec<String>) -> cs2::Cs2Result {
-    tauri::async_runtime::spawn_blocking(move || cs2::start(args))
-        .await
-        .unwrap_or_else(|e| cs2::Cs2Result { ok: false, message: e.to_string(), firewall: None })
-}
-
-#[tauri::command]
-async fn cs2_stop() -> cs2::Cs2Result {
-    tauri::async_runtime::spawn_blocking(cs2::stop)
-        .await
-        .unwrap_or_else(|e| cs2::Cs2Result { ok: false, message: e.to_string(), firewall: None })
-}
-
-#[tauri::command]
-async fn cs2_connect(url: String) -> cs2::Cs2Result {
-    tauri::async_runtime::spawn_blocking(move || cs2::connect(&url))
-        .await
-        .unwrap_or_else(|e| cs2::Cs2Result { ok: false, message: e.to_string(), firewall: None })
-}
-
 /// Where a crash is written: `%LOCALAPPDATA%\LIKApcs-Client\crash.log` (the temp dir elsewhere).
 fn crash_log_path() -> std::path::PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
@@ -1219,10 +1189,6 @@ pub fn run() {
             hardware_info,
             hardware_metrics,
             wol_configure,
-            cs2_install,
-            cs2_start,
-            cs2_stop,
-            cs2_connect,
             end_tasks,
             set_widget_layout,
             set_widget_hide_in_games,

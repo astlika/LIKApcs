@@ -137,8 +137,6 @@ export const clientEventSchema = z.object({
     'tasks_ended',
     /** 0.17.1: is the countdown widget actually visible on the PC (payload: `WidgetReportPayload`). */
     'widget_report',
-    /** 0.24.0 CS2 match server: outcome of cs2.install/start/stop/connect (payload: `{action, ok, message}`). */
-    'cs2_result',
   ]),
   payload: z.record(z.unknown()).default({}),
 });
@@ -268,13 +266,6 @@ export const STATION_COMMANDS = [
   'tasks.end',
   /** 0.18.0: gifted minutes — the widget throws a party-popper celebration (`payload.minutes`). */
   'celebrate',
-  /** 0.24.0 CS2 match server: install the dedicated server on this PC (SteamCMD, firewall). */
-  'cs2.install',
-  /** Start the CS2 server on this PC with `payload.args` built by the server. */
-  'cs2.start',
-  'cs2.stop',
-  /** Start CS2 on this PC and join `payload.url` (a steam:// link built by the server). */
-  'cs2.connect',
 ] as const;
 export type StationCommand = (typeof STATION_COMMANDS)[number];
 
