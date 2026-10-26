@@ -257,4 +257,13 @@ describe('CS2 match server', () => {
     expect(res.body.ok).toBe(true);
     await waitFor('cs2.install');
   });
+  it('keeps saving after a factory reset emptied the config row', async () => {
+    // A factory reset truncates cs2_config (it is not on the keep list): the row is simply gone.
+    await ctx.pool.query('DELETE FROM cs2_config');
+    const res = await call<{ config: { map: string } }>('PATCH', '/cs2', { map: 'de_inferno' });
+    expect(res.status).toBe(200);
+    expect(res.body.config.map).toBe('de_inferno');
+    const again = await call<{ config: { map: string } }>('GET', '/cs2');
+    expect(again.body.config.map).toBe('de_inferno');
+  });
 });

@@ -493,3 +493,40 @@ export function randomToken(bytes = 32): string {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
+
+/** Outcome of a CS2 command on this PC (`cs2.install`, `cs2.start`, `cs2.stop`, `cs2.connect`). */
+export interface Cs2Result {
+  ok: boolean;
+  message: string;
+  /** Install only: whether the firewall rules were added (needs the Windows admin prompt). */
+  firewall?: boolean;
+}
+
+const cs2Unavailable = (): Cs2Result => ({
+  ok: false,
+  message: 'not available in the browser build',
+});
+
+/** 0.24.0: downloads the CS2 dedicated server with SteamCMD and adds the firewall rules. */
+export async function cs2Install(): Promise<Cs2Result> {
+  if (!isDesktopApp()) return cs2Unavailable();
+  return invoke<Cs2Result>('cs2_install');
+}
+
+/** 0.24.0: starts the CS2 server with the arguments the server built (`-dedicated …`). */
+export async function cs2Start(args: string[]): Promise<Cs2Result> {
+  if (!isDesktopApp()) return cs2Unavailable();
+  return invoke<Cs2Result>('cs2_start', { args });
+}
+
+/** 0.24.0: stops the CS2 server on this PC. */
+export async function cs2Stop(): Promise<Cs2Result> {
+  if (!isDesktopApp()) return cs2Unavailable();
+  return invoke<Cs2Result>('cs2_stop');
+}
+
+/** 0.24.0: starts CS2 through Steam and joins the server from the link the server built. */
+export async function cs2Connect(url: string): Promise<Cs2Result> {
+  if (!isDesktopApp()) return cs2Unavailable();
+  return invoke<Cs2Result>('cs2_connect', { url });
+}

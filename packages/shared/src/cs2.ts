@@ -135,3 +135,24 @@ export const cs2ConnectBodySchema = z.object({
 export const cs2RconBodySchema = z.object({
   preset: z.enum(['freezetime', 'restart', 'warmup_end']),
 });
+
+/**
+ * The PC accepts only the link LIKApcs builds (`cs2ConnectUrl`): CS2 by app id, one IPv4
+ * address, a port and an optional join password. Anything else is refused before Steam sees it.
+ */
+const CS2_CONNECT_URL =
+  /^steam:\/\/rungameid\/730\/\/\+connect%20(\d{1,3}\.){3}\d{1,3}:\d{4,5}(%20\+password%20[A-Za-z0-9]{1,64})?$/;
+export function isCs2ConnectUrl(url: string): boolean {
+  return CS2_CONNECT_URL.test(url);
+}
+
+/** The server launch arguments the PC accepts: CS2 dedicated mode, no shell metacharacters. */
+export function isCs2ServerArgs(args: unknown): args is string[] {
+  return (
+    Array.isArray(args) &&
+    args.length > 0 &&
+    args.length <= 80 &&
+    args[0] === '-dedicated' &&
+    args.every((a) => typeof a === 'string' && a.length <= 200 && !/[\r\n\0]/.test(a))
+  );
+}

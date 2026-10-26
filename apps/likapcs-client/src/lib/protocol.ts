@@ -7,6 +7,8 @@
  *    effects the shell has to perform (power actions, update, lock/unlock the window…).
  */
 import {
+  isCs2ConnectUrl,
+  isCs2ServerArgs,
   isProtectedProcess,
   normalizeExeName,
   priceForSeconds,
@@ -169,6 +171,10 @@ export type Effect =
   | { type: 'update' }
   /** Turn the Windows side of Wake-on-LAN on, then report + re-send hardware facts. */
   | { type: 'wol_configure' }
+  /** 0.24.0 CS2 match server: install it here, start it, stop it, or start CS2 and join `url`. */
+  | { type: 'cs2'; action: 'install' | 'stop' }
+  | { type: 'cs2'; action: 'start'; args: string[] }
+  | { type: 'cs2'; action: 'connect'; url: string }
   /** End Task (0.17.0): close these programs (owner's list only), then report the outcome. */
   | { type: 'end_tasks'; exes: string[]; skipped: string[] }
   | {
@@ -448,6 +454,26 @@ export function reduce(
       if (exes.length === 0)
         return { state, effects: [], ok: false, error: 'no programs to close' };
       return { state, effects: [{ type: 'end_tasks', exes, skipped }], ok: true };
+    }
+    case 'cs2.install':
+      return { state, effects: [{ type: 'cs2', action: 'install' }], ok: true };
+    case 'cs2.stop':
+      return { state, effects: [{ type: 'cs2', action: 'stop' }], ok: true };
+    case 'cs2.start': {
+      // 0.24.0: only the CS2 dedicated-mode arguments the server builds; refused otherwise.
+      if (!isCs2ServerArgs(p.args))
+        return { state, effects: [], ok: false, error: 'invalid CS2 server arguments' };
+      return {
+        state,
+        effects: [{ type: 'cs2', action: 'start', args: p.args }],
+        ok: true,
+      };
+    }
+    case 'cs2.connect': {
+      const url = str(p.url) ?? '';
+      if (!isCs2ConnectUrl(url))
+        return { state, effects: [], ok: false, error: 'invalid CS2 connect link' };
+      return { state, effects: [{ type: 'cs2', action: 'connect', url }], ok: true };
     }
     default:
       return {

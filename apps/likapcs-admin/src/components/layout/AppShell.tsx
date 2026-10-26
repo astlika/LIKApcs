@@ -36,6 +36,7 @@ import {
   WifiOff,
   HandCoins,
   Megaphone,
+  Gamepad2,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -181,6 +182,12 @@ export function AppShell() {
           badge: pendingDevices.data?.length,
         },
         {
+          to: '/cs2',
+          icon: Gamepad2,
+          label: t('nav.cs2'),
+          permission: PERMISSIONS.STATIONS_VIEW,
+        },
+        {
           to: '/pos',
           icon: ShoppingCart,
           label: t('nav.pos'),
@@ -323,6 +330,7 @@ export function AppShell() {
     '/pricing': t('nav.pricing'),
     '/cash': t('nav.cash'),
     '/expenses': t('nav.expenses'),
+    '/cs2': t('nav.cs2'),
     '/invoices': t('nav.invoices'),
     '/customers': t('nav.customers'),
     '/debts': t('nav.debts'),

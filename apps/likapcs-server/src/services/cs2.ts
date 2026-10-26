@@ -49,9 +49,11 @@ export class Cs2Service {
     return parsed.success ? parsed.data : { ...CS2_DEFAULT_CONFIG };
   }
 
+  /** Upsert: a factory reset empties `cs2_config` (it is not on the keep list), so the row may be gone. */
   private async save(c: Cs2Config): Promise<void> {
     await this.pool.query(
-      'UPDATE cs2_config SET config = $1::jsonb, updated_at = now() WHERE id = 1',
+      `INSERT INTO cs2_config (id, config, updated_at) VALUES (1, $1::jsonb, now())
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config, updated_at = now()`,
       [JSON.stringify(c)],
     );
   }
