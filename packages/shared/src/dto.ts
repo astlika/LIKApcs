@@ -2599,6 +2599,25 @@ export interface BackupSummary {
   durationMs: number | null;
   errorMessage: string | null;
   createdByName: string | null;
+  /** 0.26.0: the file is encrypted with the backup password (needed to open it on another PC). */
+  encrypted: boolean;
+  /** 0.26.0: the copy to the external disk (null when no external folder is set). */
+  externalCopy: BackupExternalCopy | null;
+}
+
+/** Result of the copy to the external disk (0.26.0). `ok` is true only after the copy was verified. */
+export interface BackupExternalCopy {
+  ok: boolean;
+  path: string | null;
+  error: string | null;
+  at: string;
+}
+
+export interface BackupEncryptionStatus {
+  enabled: boolean;
+  changedAt: string | null;
+  /** Older passwords kept on this PC so earlier archives still open here. */
+  previousKeys: number;
 }
 
 export interface BackupsResponse {
@@ -2619,6 +2638,8 @@ export const restoreBackupSchema = z.object({
   password: z.string().min(1).max(200),
   /** Must be literally true: the UI asks for an explicit acknowledgement. */
   confirm: z.literal(true),
+  /** Backup password, only for an encrypted archive that is not opened by a key this PC already has. */
+  archivePassword: z.string().min(1).max(200).optional(),
 });
 export type RestoreBackupRequest = z.infer<typeof restoreBackupSchema>;
 
@@ -2661,6 +2682,16 @@ export const backupUploadQuerySchema = z.object({
       'file name may only contain letters, digits, dot, dash, underscore',
     ),
 });
+
+/** Sets or changes the backup password. The owner's own password is re-checked (like restore). */
+export const backupEncryptionSchema = z.object({
+  /** New backup password (at least 8 characters). */
+  archivePassword: z.string().min(8).max(200),
+  /** The acting user's own account password. */
+  password: z.string().min(1).max(200),
+  confirm: z.literal(true),
+});
+export type BackupEncryptionRequest = z.infer<typeof backupEncryptionSchema>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Phase 7: updates dashboard

@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Backups can be encrypted with a backup password (AES-256-GCM). The key is kept in a local file next to the data, never inside the database or in a backup. Set it on the Backups page (requires the account password).
+- Every archive contains a `report.txt` in Albanian: date, business, program and database versions, rows per table, photo/video files, and what is not included.
+- Optional copy outside the PC: set a folder on another disk (for example a USB drive). After each successful backup the file is copied there and checked by checksum. A failed copy does not fail the backup; the result is shown in the list and in the audit log.
+- Restoring or uploading an encrypted archive on a PC that does not know its key asks for the backup password. Older archives still open as before.
+
 ## [0.25.0] - 2026-10-26
 
 ### Removed

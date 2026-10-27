@@ -2166,6 +2166,37 @@ export const en = {
     images: 'Product pictures: {done} of {total} downloaded ({failed} failed)',
   },
   backups: {
+    encCardTitle: 'Encryption and copy outside this PC',
+    encOn: 'Encrypted with a password',
+    encOff: 'Not encrypted yet',
+    encSet: 'Set backup password',
+    encChange: 'Change backup password',
+    encChanged: 'Password set on {when}',
+    encHelp:
+      'Every new backup is locked with this password (AES-256). Write it down on paper and keep it outside this PC: without it a copy cannot be opened on another PC. Older copies stay readable on this PC.',
+    encWarning:
+      'If you lose this password, copies made with it cannot be opened on another PC. Only the owner can change it.',
+    encNewPassword: 'New backup password (at least 8 characters)',
+    encSave: 'Save password',
+    encSaved: 'Backup password saved',
+    extTitle: 'Copy outside this PC',
+    extHelp:
+      'Enter a folder on another disk, such as a USB drive (for example E:\\LIKApcs-Kopje). After every backup the encrypted file is copied there and checked. Leave empty to turn this off.',
+    extPlaceholder: 'e.g. E:\\LIKApcs-Kopje',
+    extSave: 'Save folder',
+    extSaved: 'Folder saved',
+    extOff: 'Off',
+    archiveBadge: 'Encrypted',
+    externalOk: 'Copied outside',
+    externalFailed: 'Outside copy failed',
+    archivePasswordLabel: 'Backup password',
+    archivePasswordHint:
+      'Only needed if this PC does not know the copy (for example a copy from another PC). Leave empty otherwise.',
+    archiveRequiredTitle: 'Backup password needed',
+    archiveRequiredBody:
+      'This copy is encrypted and this PC does not have its key. Type the backup password it was made with.',
+    archiveWrong: 'That backup password is not correct.',
+    archiveRetry: 'Upload',
     title: 'Backups',
     subtitle:
       'Full copies of the database, stored outside the installation folder. Keep a copy on another disk or PC.',

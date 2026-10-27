@@ -276,6 +276,8 @@ export const SETTING_SCHEMAS = {
   'backup.enabled': z.boolean(),
   'backup.time': z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   'backup.keep_count': z.number().int().min(1).max(365),
+  /** 0.26.0: folder on an external disk that gets a verified encrypted copy of every backup ('' = off). */
+  'backup.external_dir': z.string().max(260),
 
   'updates.channel': z.enum(['stable', 'beta']),
   'updates.check_on_startup': z.boolean(),
@@ -387,6 +389,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'backup.enabled': true,
   'backup.time': '04:00',
   'backup.keep_count': 30,
+  'backup.external_dir': '',
 
   'updates.channel': 'stable',
   'updates.check_on_startup': true,

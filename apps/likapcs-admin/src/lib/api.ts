@@ -198,7 +198,7 @@ export async function apiUpload<T>(
   path: string,
   file: Blob,
   query: Record<string, string> = {},
-  options: { method?: 'POST' | 'PUT'; contentType?: string } = {},
+  options: { method?: 'POST' | 'PUT'; contentType?: string; headers?: Record<string, string> } = {},
 ): Promise<T> {
   const url = new URL(`${getServerUrl()}/api/v1${path}`, window.location.origin);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
@@ -209,6 +209,7 @@ export async function apiUpload<T>(
       headers: {
         authorization: `Bearer ${getToken() ?? ''}`,
         'content-type': options.contentType ?? 'application/octet-stream',
+        ...options.headers,
       },
       body: file,
     });

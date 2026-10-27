@@ -8,6 +8,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  backupEncryptionSchema,
   backupListQuerySchema,
   backupUploadQuerySchema,
   restoreBackupSchema,
@@ -38,6 +39,20 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     services.backups.list(backupListQuerySchema.parse(request.query)),
   );
 
+  // Backup password status (0.26.0). The password itself is never returned.
+  app.get('/backups/encryption', manage, async () => services.backups.encryptionStatus());
+
+  app.put('/backups/encryption', manage, async (request) => {
+    const body = backupEncryptionSchema.parse(request.body);
+    const auth = request.auth!;
+    const ok = await services.auth.confirmPassword(auth.user.id, body.password);
+    if (!ok) throw new AppError(403, 'PASSWORD_MISMATCH', 'The password is not correct');
+    return services.backups.setEncryption({
+      archivePassword: body.archivePassword,
+      actor: actorOf(request),
+    });
+  });
+
   app.post('/backups', manage, async (request, reply) => {
     const backup = await services.backups.create({ kind: 'manual', actor: actorOf(request) });
     return reply.code(201).send(backup);
@@ -56,10 +71,16 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
           'Send the archive as application/octet-stream',
         );
       }
+      // The backup password (only for encrypted files) travels in a header, never in the URL.
+      const archivePassword =
+        typeof request.headers['x-archive-password'] === 'string'
+          ? request.headers['x-archive-password'].slice(0, 200)
+          : undefined;
       const backup = await services.backups.importUpload(
         body as unknown as Readable,
         fileName,
         actorOf(request),
+        archivePassword,
       );
       return reply.code(201).send(backup);
     },
@@ -88,6 +109,11 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const auth = request.auth!;
     const ok = await services.auth.confirmPassword(auth.user.id, body.password);
     if (!ok) throw new AppError(403, 'PASSWORD_MISMATCH', 'The password is not correct');
-    return services.backups.restore({ id, actor: actorOf(request), sessionId: auth.sessionId });
+    return services.backups.restore({
+      id,
+      actor: actorOf(request),
+      sessionId: auth.sessionId,
+      archivePassword: body.archivePassword,
+    });
   });
 };

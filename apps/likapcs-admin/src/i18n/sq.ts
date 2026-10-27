@@ -2179,6 +2179,37 @@ export const sq: Dictionary = {
     images: 'Fotot e produkteve: {done} nga {total} u shkarkuan ({failed} dështuan)',
   },
   backups: {
+    encCardTitle: 'Enkriptimi dhe kopja jashtë kësaj PC-je',
+    encOn: 'E enkriptuar me fjalëkalim',
+    encOff: 'Ende pa enkriptim',
+    encSet: 'Vendos fjalëkalimin e kopjeve',
+    encChange: 'Ndrysho fjalëkalimin e kopjeve',
+    encChanged: 'Fjalëkalimi u vendos më {when}',
+    encHelp:
+      'Çdo kopje e re kyçet me këtë fjalëkalim (AES-256). Shkruajeni në letër dhe mbajeni jashtë kësaj PC-je: pa të, kopja nuk hapet në një PC tjetër. Kopjet e vjetra mbeten të lexueshme në këtë PC.',
+    encWarning:
+      'Nëse e humbni këtë fjalëkalim, kopjet e bëra me të nuk hapen në një PC tjetër. Vetëm pronari mund ta ndryshojë.',
+    encNewPassword: 'Fjalëkalimi i ri i kopjeve (të paktën 8 karaktere)',
+    encSave: 'Ruaj fjalëkalimin',
+    encSaved: 'Fjalëkalimi i kopjeve u ruajt',
+    extTitle: 'Kopja jashtë kësaj PC-je',
+    extHelp:
+      'Shkruani një dosje në një disk tjetër, si një USB (p.sh. E:\\LIKApcs-Kopje). Pas çdo kopjeje, skedari i enkriptuar kopjohet atje dhe verifikohet. Lëreni bosh për ta fikur.',
+    extPlaceholder: 'p.sh. E:\\LIKApcs-Kopje',
+    extSave: 'Ruaj dosjen',
+    extSaved: 'Dosja u ruajt',
+    extOff: 'Joaktiv',
+    archiveBadge: 'E enkriptuar',
+    externalOk: 'U kopjua jashtë',
+    externalFailed: 'Kopja jashtë dështoi',
+    archivePasswordLabel: 'Fjalëkalimi i kopjeve',
+    archivePasswordHint:
+      'Nevojitet vetëm nëse kjo PC nuk e njeh kopjen (p.sh. një kopje nga një PC tjetër). Përndryshe lëreni bosh.',
+    archiveRequiredTitle: 'Nevojitet fjalëkalimi i kopjeve',
+    archiveRequiredBody:
+      'Kjo kopje është e enkriptuar dhe kjo PC nuk e ka çelësin e saj. Shkruani fjalëkalimin e kopjeve me të cilin u bë.',
+    archiveWrong: 'Fjalëkalimi i kopjeve nuk është i saktë.',
+    archiveRetry: 'Ngarko',
     title: 'Kopjet rezervë',
     subtitle:
       'Kopje të plota të bazës së të dhënave, të ruajtura jashtë dosjes së instalimit. Mbani një kopje në një disk ose PC tjetër.',

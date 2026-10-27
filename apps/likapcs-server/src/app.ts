@@ -234,6 +234,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
     uploadDir: config.uploadDir,
+    keyFile: path.join(config.dataDir, 'backup-keys.json'),
     wipeUploads: async () => {
       for (const dir of ['wallpapers', 'products', 'videos']) {
         const target = path.join(config.uploadDir, dir);
