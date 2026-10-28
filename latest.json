@@ -1,11 +1,11 @@
 {
-  "version": "0.25.0",
-  "notes": "### Removed\n\n- The CS2 match server (0.24.0) is removed completely: the Admin \"CS2 match\" page and its menu entry, the install/start/stop/connect commands on the PCs, the RCON match commands (freezetime, restart, warmup end), the server routes and the CS2 config.\n- Migration `0048` drops the `cs2_config` table, so the stored server and RCON passwords are deleted. Migration `0047` stays in the history.",
-  "pub_date": "2026-10-26T15:32:02.554Z",
+  "version": "0.26.0",
+  "notes": "### Added\n\n- Backups can be encrypted with a backup password (AES-256-GCM). The key is kept in a local file next to the data, never inside the database or in a backup. Set it on the Backups page (requires the account password).\n- Every archive contains a `report.txt` in Albanian: date, business, program and database versions, rows per table, photo/video files, and what is not included.\n- Optional copy outside the PC: set a folder on another disk (for example a USB drive). After each successful backup the file is copied there and checked by checksum. A failed copy does not fail the backup; the result is shown in the list and in the audit log.\n- Restoring or uploading an encrypted archive on a PC that does not know its key asks for the backup password. Older archives still open as before.",
+  "pub_date": "2026-10-28T15:03:40.601Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhellGblE5K0UzZHZRZ0NGaTF5Y3ZZZkFvN042Tzg4dzNjU3V6eHV3MHVFN0JnWTM0UTdLSWNhUzMwZXdCMlNHM0xFbFFBMmxmc2R1MWxNUUVkcnoxNGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDI4NjM0CWZpbGU6TElLQXBjc18wLjI1LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjUuMApNTnhRQkxxRDA1U0I2OHhxbURTYS9nMzM2Vmo0MWVzbi9ZZHU5Q0RMem1XUHVQMk55SmJWMWgvZzAxK2Jla1BrSXIrWm9DbUl1V3A4VzJXKzE1YVBEQT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.25.0/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemNZd2piRlNPeFNLb0tzNDN3OGNWUEtDR0ovZEdUTWtjSHhxNUVKbVJxbkwyUS9xL0ZkTTJQREtrN3poK0xrWnczdTcraGhSVVNtS0FMYjg5SnNicmdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTk5NzQxCWZpbGU6TElLQXBjc18wLjI2LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjYuMAo5aytZeW82VmRtNm9nN1JoYzJkUkVRSkJQWFV1dWprYi9jMjNxQm5LN0ttM3Uvdlk2eWswVHh4MGMwNk1ZWXFvdDAwR2Y0WUFSRTFLTlVsSnQyNjhCZz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.26.0/LIKApcs-Setup.exe"
     }
   }
 }
