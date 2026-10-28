@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-28
+
 ### Added
 
 - Backups can be encrypted with a backup password (AES-256-GCM). The key is kept in a local file next to the data, never inside the database or in a backup. Set it on the Backups page (requires the account password).
