@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-29
+
+### Added
+
+- Change the price of a PC bill that is already paid (prepaid time, or a bill that was collected). A lower price gives the difference back as a `price_adjustment` refund, from the open cash shift for cash. A higher price takes the difference in on the same sale. The fixed price stays as the user set it.
+- New permission `pos.adjust_paid` ("Change the price of a bill that is already paid"). The owner and admin roles always have it; other roles can be given it in Roles & permissions.
+- "Change price" button on the Sales page for a sale that has PC time.
+- Several PCs: prepaid bills are now included when the user has `pos.adjust_paid`, and the payment method can be chosen.
+- Database migration `0049_pos_adjust_paid.sql` (permission, and `refunds.kind`).
+
+### Changed
+
+- The administrator role always keeps `pos.adjust_paid`; the Roles page locks that box for the admin role.
+
 ## [0.26.0] - 2026-10-28
 
 ### Added
