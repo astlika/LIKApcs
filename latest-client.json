@@ -1,11 +1,11 @@
 {
-  "version": "0.26.0",
-  "notes": "### Added\n\n- Backups can be encrypted with a backup password (AES-256-GCM). The key is kept in a local file next to the data, never inside the database or in a backup. Set it on the Backups page (requires the account password).\n- Every archive contains a `report.txt` in Albanian: date, business, program and database versions, rows per table, photo/video files, and what is not included.\n- Optional copy outside the PC: set a folder on another disk (for example a USB drive). After each successful backup the file is copied there and checked by checksum. A failed copy does not fail the backup; the result is shown in the list and in the audit log.\n- Restoring or uploading an encrypted archive on a PC that does not know its key asks for the backup password. Older archives still open as before.",
-  "pub_date": "2026-10-28T15:03:41.260Z",
+  "version": "0.27.0",
+  "notes": "### Added\n\n- Change the price of a PC bill that is already paid (prepaid time, or a bill that was collected). A lower price gives the difference back as a `price_adjustment` refund, from the open cash shift for cash. A higher price takes the difference in on the same sale. The fixed price stays as the user set it.\n- New permission `pos.adjust_paid` (\"Change the price of a bill that is already paid\"). The owner and admin roles always have it; other roles can be given it in Roles & permissions.\n- \"Change price\" button on the Sales page for a sale that has PC time.\n- Several PCs: prepaid bills are now included when the user has `pos.adjust_paid`, and the payment method can be chosen.\n- Database migration `0049_pos_adjust_paid.sql` (permission, and `refunds.kind`).\n\n### Changed\n\n- The administrator role always keeps `pos.adjust_paid`; the Roles page locks that box for the admin role.",
+  "pub_date": "2026-10-29T01:19:07.512Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelZUVDR6a09lSUp6QWNFdDhiTTVkNzVCN21HWkhuUStOOEZFbHJFUVlZUHZaTEhFM0FYQ3JxYnh5RTJPNERDam1UVmtIdjNLa3VHZFRpQjdiaGRzTlFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTk5NTAwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNi4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI2LjAKNG90VjlKKzlNZFBmYzZOUzByTEZnQTMvaU85aXZWUEtPMFhRZHpvQW9sL2RTVlR1MzdEZWFWdUloNGdVWFNOQTQzUTRKbDJDdFpVY2ZaRWx2VnBDQUE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.26.0/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelcrZTR1L0h5MHBEMHNhMERzc1U4QW9ud1RvTDhrNmJmb3ZLRUQ4alhUeVpmQ1l2Znl5ei9lVFpnWTEweU9xbkVWS210R3VNMnp4QXkvUXFiZjdudGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjM2NTM2CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjAKMU5UMk0rSzFqR0YwV0U2QVhudnA5c0doYUJ1aVFaSy80U3UzMTA2MVdIZnZuMHpVOWZOMmoyZERSRGpieEg4YS95aHNkMmZWaDRJMzdCVmNodkhEQ3c9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.0/LIKApcs-Client-Setup.exe"
     }
   }
 }
