@@ -30,6 +30,8 @@ export const PERMISSIONS = {
   POS_REFUND: 'pos.refund',
   POS_SUSPEND: 'pos.suspend',
   POS_REPRINT: 'pos.reprint',
+  /** 0.27.0: change the price of a bill that is already paid. Owner and admin always have it. */
+  POS_ADJUST_PAID: 'pos.adjust_paid',
   INVOICES_VIEW: 'invoices.view',
   INVOICES_MANAGE: 'invoices.manage',
 

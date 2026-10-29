@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  adjustPriceSchema,
   bulkEndSessionsSchema,
   bulkRemoveTimeSchema,
   bulkSettleSchema,
@@ -69,6 +70,21 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sessions/bulk-settle', control, async (request) =>
     services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request)),
   );
+  // 0.27.0: change the price of a bill that is already paid (pos.adjust_paid, checked in the service).
+  app.post(
+    '/sessions/:id/adjust-price',
+    { preHandler: app.requirePermission(PERMISSIONS.POS_ADJUST_PAID) },
+    async (request) =>
+      services.sessions.adjustPrice(
+        idParams.parse(request.params).id,
+        adjustPriceSchema.parse(request.body),
+        actorOf(request),
+      ),
+  );
+  app.get('/sessions/by-sale/:saleId', view, async (request) => {
+    const { saleId } = z.object({ saleId: uuidSchema }).parse(request.params);
+    return { link: await services.sessions.saleLink(saleId) };
+  });
   app.post('/sessions/bulk-remove-time', control, async (request) =>
     services.sessions.bulkRemoveTime(bulkRemoveTimeSchema.parse(request.body), actorOf(request)),
   );

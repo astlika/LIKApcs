@@ -747,8 +747,46 @@ export const bulkSettleSchema = z.object({
   sessionIds: z.array(z.string().uuid()).min(1).max(60),
   mode: z.enum(['fixed', 'discount']),
   amountCents: z.number().int().min(0).max(1_000_000),
+  /** 0.27.0: how a change to an already paid bill is given back (or taken in). Unpaid bills ignore it. */
+  method: z.enum(['cash', 'card', 'bank_transfer', 'other']).default('cash'),
 });
 export type BulkSettleRequest = z.infer<typeof bulkSettleSchema>;
+
+/**
+ * 0.27.0 — change the price of a bill that is already paid (prepaid time, or a collected bill).
+ * `fixed`: the bill becomes exactly `amountCents`. `discount`: `amountCents` comes off the bill.
+ * A lower price gives the difference back from the drawer (or the card terminal); a higher one
+ * takes the difference in.
+ */
+export const adjustPriceSchema = z.object({
+  mode: z.enum(['fixed', 'discount']),
+  amountCents: z.number().int().min(0).max(1_000_000),
+  method: z.enum(['cash', 'card', 'bank_transfer', 'other']).default('cash'),
+  reason: z.string().trim().min(2).max(200).default('Ndryshim i çmimit'),
+});
+export type AdjustPriceRequest = z.infer<typeof adjustPriceSchema>;
+
+export interface AdjustPriceResult {
+  session: SessionSummary;
+  adjustment: {
+    previousCents: number;
+    newCents: number;
+    /** Negative: money given back. Positive: money taken in. */
+    deltaCents: number;
+    method: 'cash' | 'card' | 'bank_transfer' | 'other';
+    refundNo: string | null;
+  };
+}
+
+/** The session that paid for a sale (for the Sales page), or null when the sale has no PC time. */
+export interface SaleSessionLink {
+  sessionId: string;
+  stationCode: string;
+  billingMode: BillingMode;
+  finalPriceCents: number | null;
+  /** What the customer has paid for this sale (net of refunds). */
+  paidCents: number;
+}
 
 export interface BulkSettleResult {
   settled: number;

@@ -41,6 +41,9 @@ import {
   type BulkEndSessionsResult,
   type BulkRemoveTimeRequest,
   type BulkRemoveTimeResult,
+  type AdjustPriceRequest,
+  type AdjustPriceResult,
+  type SaleSessionLink,
   type BulkSettleRequest,
   type BulkSettleResult,
   type BulkMinutesApplied,
@@ -72,7 +75,7 @@ import { nextDocumentNumber } from './documents.js';
 import type { PricingService } from './pricing.js';
 import type { RequestCancelReason, SessionRequestsService } from './requests.js';
 import type { SettingsService } from './settings.js';
-import type { CashService } from './cash.js';
+import { shiftRequired, type CashService } from './cash.js';
 import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import type { TimeCreditsService } from './time-credits.js';
@@ -1473,8 +1476,9 @@ export class SessionsService {
    * is changed. The fixed mode and any discount need pos.discount.
    */
   async bulkSettle(req: BulkSettleRequest, actor: SessionActorContext): Promise<BulkSettleResult> {
-    if (!actor.permissions?.has(PERMISSIONS.POS_DISCOUNT))
-      throw forbidden('Missing permission: pos.discount');
+    const canDiscount = !!actor.permissions?.has(PERMISSIONS.POS_DISCOUNT);
+    const canAdjustPaid = !!actor.permissions?.has(PERMISSIONS.POS_ADJUST_PAID);
+    if (!canDiscount && !canAdjustPaid) throw forbidden('Missing permission: pos.discount');
     const results: BulkSettleResult['results'] = [];
     for (const sessionId of [...new Set(req.sessionIds)]) {
       try {
@@ -1487,10 +1491,28 @@ export class SessionsService {
         ]);
         if (!before.rowCount) throw notFound('Session');
         const b = before.rows[0]!;
-        if (b.billing_mode === 'prepaid')
-          throw conflict('Prepaid time is paid at the start; nothing to settle');
-        if (b.billed_at) throw conflict('Session is already paid');
         if (b.status === 'cancelled') throw conflict('Session was cancelled; nothing to settle');
+        // 0.27.0: a paid bill (prepaid time, or one already collected) gets a price change instead.
+        if (b.billing_mode === 'prepaid' || b.billed_at) {
+          const out = await this.adjustPrice(
+            sessionId,
+            {
+              mode: req.mode,
+              amountCents: req.amountCents,
+              method: req.method,
+              reason: 'Ndryshim i çmimit (shumë PC)',
+            },
+            actor,
+          );
+          results.push({
+            sessionId,
+            ok: true,
+            error: null,
+            finalCents: out.adjustment.newCents,
+          });
+          continue;
+        }
+        if (!canDiscount) throw forbidden('Missing permission: pos.discount');
         if (b.status === 'active' || b.status === 'paused')
           await this.end(sessionId, endSessionSchema.parse({ parkForDesk: true }), actor);
         const row = await this.pool.query<{
@@ -1529,6 +1551,176 @@ export class SessionsService {
       settled: results.filter((r) => r.ok).length,
       failed: results.filter((r) => !r.ok).length,
       results,
+    };
+  }
+
+  /**
+   * 0.27.0 — change the price of a bill that is already paid (prepaid time, or a collected bill).
+   * The new price is what the PC time costs from now on. A lower price gives the difference back
+   * as a refund (a `price_adjustment` refund, paid from the open cash shift for cash); a higher one
+   * takes the difference in as a payment on the same sale. Orders on the same bill are not touched.
+   * Refused when there is no open shift for a cash change, when the sale cannot take it, or when
+   * more would be given back than was paid. Recorded as a session correction and an audit row.
+   */
+  async adjustPrice(
+    id: string,
+    req: AdjustPriceRequest,
+    actor: SessionActorContext,
+  ): Promise<AdjustPriceResult> {
+    if (!actor.permissions?.has(PERMISSIONS.POS_ADJUST_PAID))
+      throw forbidden('Missing permission: pos.adjust_paid');
+    if (!actor.userId) throw forbidden('A signed-in user is required');
+    const userId = actor.userId;
+    const outcome = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      if (row.status === 'cancelled') throw conflict('Session was cancelled');
+      if (!row.billed_at || !row.sale_id)
+        throw conflict('This bill is not paid yet; collect it first, then change the price');
+      const saleId = row.sale_id;
+      const sale = await client.query<{
+        status: string;
+        total_cents: string;
+        refunded_cents: string;
+        customer_id: string | null;
+      }>(
+        'SELECT status, total_cents::text, refunded_cents::text, customer_id FROM sales WHERE id = $1 FOR UPDATE',
+        [saleId],
+      );
+      const s = sale.rows[0];
+      if (!s) throw notFound('Sale');
+      if (s.status !== 'completed' && s.status !== 'partially_refunded')
+        throw conflict('This sale cannot be changed');
+      const paidRes = await client.query<{ net: string }>(
+        `SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount_cents ELSE amount_cents END), 0)::text AS net
+           FROM payments WHERE sale_id = $1 AND kind IN ('sale', 'refund')`,
+        [saleId],
+      );
+      const netPaid = Number(paidRes.rows[0]!.net);
+
+      const current = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+      const target = req.mode === 'fixed' ? req.amountCents : current - req.amountCents;
+      if (target < 0) throw badRequest('The discount is more than the bill');
+      const delta = target - current;
+      if (delta === 0) throw conflict('The price is already this amount');
+      const now = new Date();
+      let refundNo: string | null = null;
+
+      if (delta < 0) {
+        const amount = -delta;
+        if (amount > netPaid)
+          throw conflict('More would be given back than was paid for this bill');
+        refundNo = await nextDocumentNumber(client, 'refund', now);
+        const refundId = (
+          await client.query<{ id: string }>(
+            `INSERT INTO refunds (refund_no, sale_id, total_cents, reason, restock, created_by, authorized_by, kind)
+             VALUES ($1, $2, $3, $4, false, $5, $5, 'price_adjustment') RETURNING id`,
+            [refundNo, saleId, amount, req.reason, userId],
+          )
+        ).rows[0]!.id;
+        const shiftId = await this.cash.attachTender(client, {
+          method: req.method,
+          amountCents: -amount,
+          type: 'refund',
+          referenceType: 'refund',
+          referenceId: refundId,
+          reason: `${refundNo} · ${req.reason}`,
+          actorUserId: userId,
+        });
+        if (req.method === 'cash' && !shiftId) throw shiftRequired();
+        await client.query(
+          `INSERT INTO payments (kind, method, amount_cents, sale_id, refund_id, customer_id, shift_id, received_at, created_by)
+           VALUES ('refund', $1, $2, $3, $4, $5, $6, $7, $8)`,
+          [req.method, amount, saleId, refundId, s.customer_id, shiftId, now, userId],
+        );
+        const refundedCents = Number(s.refunded_cents) + amount;
+        await client.query('UPDATE sales SET refunded_cents = $2, status = $3 WHERE id = $1', [
+          saleId,
+          refundedCents,
+          refundedCents >= Number(s.total_cents) ? 'refunded' : 'partially_refunded',
+        ]);
+      } else {
+        const shiftId = await this.cash.attachTender(client, {
+          method: req.method,
+          amountCents: delta,
+          type: 'sale',
+          referenceType: 'bill_adjustment',
+          referenceId: id,
+          reason: req.reason,
+          actorUserId: userId,
+        });
+        if (req.method === 'cash' && !shiftId) throw shiftRequired();
+        await client.query(
+          'UPDATE sales SET subtotal_cents = subtotal_cents + $2, total_cents = total_cents + $2 WHERE id = $1',
+          [saleId, delta],
+        );
+        await client.query(
+          `INSERT INTO payments (kind, method, amount_cents, sale_id, customer_id, shift_id, received_at, created_by)
+           VALUES ('sale', $1, $2, $3, $4, $5, $6, $7)`,
+          [req.method, delta, saleId, s.customer_id, shiftId, now, userId],
+        );
+      }
+
+      await client.query(
+        'UPDATE gaming_sessions SET final_price_cents = $2, version = version + 1 WHERE id = $1',
+        [id, target],
+      );
+      const details = {
+        previousCents: current,
+        newCents: target,
+        deltaCents: delta,
+        method: req.method,
+        reason: req.reason,
+        refundNo,
+      };
+      await this.addEvent(client, id, 'correction', actor, { kind: 'price_adjusted', ...details });
+      await recordAudit(client, actor, {
+        action: 'session.adjust_price',
+        entityType: 'gaming_session',
+        entityId: id,
+        details,
+        severity: 'warning',
+      });
+      return {
+        session: await this.getById(id, client),
+        result: {
+          previousCents: current,
+          newCents: target,
+          deltaCents: delta,
+          method: req.method,
+          refundNo,
+        },
+      };
+    });
+    await this.broadcast(outcome.session);
+    return { session: outcome.session, adjustment: outcome.result };
+  }
+
+  /** The PC session behind a sale (for the Sales page), or null when the sale has no PC time. */
+  async saleLink(saleId: string): Promise<SaleSessionLink | null> {
+    const found = await this.pool.query<{
+      id: string;
+      billing_mode: BillingMode;
+      final_price_cents: string | null;
+      code: string;
+    }>(
+      `SELECT g.id, g.billing_mode, g.final_price_cents::text, st.code
+         FROM gaming_sessions g JOIN stations st ON st.id = g.station_id
+        WHERE g.sale_id = $1 ORDER BY g.created_at DESC LIMIT 1`,
+      [saleId],
+    );
+    const row = found.rows[0];
+    if (!row) return null;
+    const paid = await this.pool.query<{ net: string }>(
+      `SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount_cents ELSE amount_cents END), 0)::text AS net
+         FROM payments WHERE sale_id = $1 AND kind IN ('sale', 'refund')`,
+      [saleId],
+    );
+    return {
+      sessionId: row.id,
+      stationCode: row.code,
+      billingMode: row.billing_mode,
+      finalPriceCents: row.final_price_cents === null ? null : Number(row.final_price_cents),
+      paidCents: Number(paid.rows[0]!.net),
     };
   }
 

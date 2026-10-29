@@ -13,6 +13,7 @@ import {
   type RefundRequest,
   type SaleDetail,
   type SaleStatus,
+  type SaleSessionLink,
   type SalesListResponse,
   type InvoiceData,
 } from '@likapcs/shared';
@@ -26,6 +27,7 @@ import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
 import { CreateInvoiceDialog, InvoicePreviewDialog } from '../components/invoices/InvoiceDialogs';
+import { AdjustPriceDialog } from '../components/sessions/AdjustPriceDialog';
 import {
   Badge,
   Button,
@@ -315,6 +317,9 @@ export function SaleDetailDialog({
   const fmt = useFormat();
   const toast = useToast();
   const [refunding, setRefunding] = useState(false);
+  const [adjusting, setAdjusting] = useState(false);
+  const { can } = useAuth();
+  const canAdjust = can(PERMISSIONS.POS_ADJUST_PAID);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [invoicing, setInvoicing] = useState(false);
   const [invoiceDoc, setInvoiceDoc] = useState<InvoiceData | null>(null);
@@ -332,6 +337,13 @@ export function SaleDetailDialog({
     onSuccess: (data) => setReceipt(data),
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
+  // 0.27.0: a sale with PC time can have its bill price changed (pos.adjust_paid).
+  const link = useQuery({
+    queryKey: ['sessions', 'by-sale', saleId],
+    queryFn: () => api<{ link: SaleSessionLink | null }>(`/sessions/by-sale/${saleId}`),
+    enabled: canAdjust,
+  });
+  const sessionLink = link.data?.link ?? null;
   const s = sale.data;
   const refundable = s ? s.items.some((i) => i.refundedMilli < i.quantityMilli) : false;
   const canRefundThis =
@@ -372,6 +384,13 @@ export function SaleDetailDialog({
               (s.status === 'completed' || s.status === 'partially_refunded') && (
                 <Button onClick={() => setInvoicing(true)} data-testid="sale-issue-invoice">
                   <FileText size={14} /> {t('invoice.issue')}
+                </Button>
+              )}
+            {canAdjust &&
+              sessionLink &&
+              (s.status === 'completed' || s.status === 'partially_refunded') && (
+                <Button onClick={() => setAdjusting(true)} data-testid="sale-adjust-price">
+                  {t('adjustPrice.title')}
                 </Button>
               )}
             {canRefundThis && (
@@ -513,6 +532,16 @@ export function SaleDetailDialog({
         </div>
       )}
       {refunding && s && <RefundDialog sale={s} onClose={() => setRefunding(false)} />}
+      {adjusting && sessionLink && (
+        <AdjustPriceDialog
+          sessionId={sessionLink.sessionId}
+          stationCode={sessionLink.stationCode}
+          currentCents={sessionLink.finalPriceCents ?? 0}
+          paidCents={sessionLink.paidCents}
+          onClose={() => setAdjusting(false)}
+          onDone={() => setAdjusting(false)}
+        />
+      )}
       {invoicing && s && (
         <CreateInvoiceDialog
           sale={s}

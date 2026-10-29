@@ -6,13 +6,22 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Wallet } from 'lucide-react';
-import { parseMoneyInput, type BulkSettleResult, type StationSummary } from '@likapcs/shared';
+import {
+  PERMISSIONS,
+  parseMoneyInput,
+  type BulkSettleRequest,
+  type BulkSettleResult,
+  type StationSummary,
+} from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import { useI18n } from '../../i18n';
+import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
 
 type Mode = 'fixed' | 'discount';
+type Method = BulkSettleRequest['method'];
+const METHODS: Method[] = ['cash', 'card', 'bank_transfer', 'other'];
 
 export function BulkSettleDialog({
   stations,
@@ -29,22 +38,24 @@ export function BulkSettleDialog({
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>('fixed');
   const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState<Method>('cash');
+  const { can } = useAuth();
+  // 0.27.0: prepaid time is already paid; with pos.adjust_paid its price can still be changed.
+  const canAdjustPaid = can(PERMISSIONS.POS_ADJUST_PAID);
   const amountCents = amount.trim() ? parseMoneyInput(amount) : null;
   const amountValid = amountCents !== null && amountCents >= 0;
 
   const billed = stations.filter(
-    (s) => s.activeSession && s.activeSession.billingMode !== 'prepaid',
+    (s) => s.activeSession && (s.activeSession.billingMode !== 'prepaid' || canAdjustPaid),
   );
-  const skipped = stations.filter(
-    (s) => s.activeSession && s.activeSession.billingMode === 'prepaid',
-  );
+  const skipped = stations.filter((s) => s.activeSession && !billed.some((b) => b.id === s.id));
   const sessionIds = billed.map((s) => s.activeSession!.id);
 
   const settle = useMutation({
     mutationFn: () =>
       api<BulkSettleResult>('/sessions/bulk-settle', {
         method: 'POST',
-        body: { sessionIds, mode, amountCents: amountCents ?? 0 },
+        body: { sessionIds, mode, amountCents: amountCents ?? 0, method },
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['stations'] });
@@ -108,6 +119,25 @@ export function BulkSettleDialog({
         <p className="muted" style={{ margin: 0 }}>
           {mode === 'fixed' ? t('map.settleFixedHint') : t('map.settleDiscountHint')}
         </p>
+        {canAdjustPaid && (
+          <Field label={t('adjustPrice.method')} hint={t('adjustPrice.hint')}>
+            {(id) => (
+              <select
+                id={id}
+                className="input"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as Method)}
+                style={{ maxWidth: 240 }}
+              >
+                {METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {t(`adjustPrice.${m}`)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        )}
         <Field
           label={mode === 'fixed' ? t('map.settleAmountFixed') : t('map.settleAmountDiscount')}
           error={amount.trim() && !amountValid ? t('common.invalid') : undefined}
@@ -128,7 +158,12 @@ export function BulkSettleDialog({
         <ul className="bulk-bills" data-testid="bulk-settle-list">
           {billed.map((s) => (
             <li key={s.id}>
-              <strong>{s.code}</strong> <span className="faint">{t('map.settleWillBill')}</span>
+              <strong>{s.code}</strong>{' '}
+              <span className="faint">
+                {s.activeSession?.billingMode === 'prepaid'
+                  ? t('adjustPrice.paidLabel')
+                  : t('map.settleWillBill')}
+              </span>
             </li>
           ))}
           {skipped.map((s) => (
