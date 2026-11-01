@@ -22,6 +22,7 @@ import {
   type ClientMenuItem,
   type OrderAccept,
   type OrderCreate,
+  type OrderStaffAdd,
   type OrderListQuery,
   type OrderPay,
   type OrderPrepare,
@@ -473,6 +474,108 @@ export class OrdersService implements SessionOrdersHook {
         return;
       }
       await this.sellInTransaction(client, row, input.payments ?? [], customerId, actor, 'accept');
+    });
+    const order = await this.getById(id);
+    await this.announceOne(order);
+    return order;
+  }
+
+  /**
+   * 0.27.1 — the desk adds products to a PC's bill (any active product, not only the PC menu).
+   * Unbilled session (running, or ended but not yet collected): the lines are accepted "on the bill"
+   * and join the session's receipt when it is paid. Billed session (prepaid, or already collected):
+   * the products are sold at once with `payments`, as a POS sale, and do not touch the session.
+   */
+  async addToSession(
+    sessionId: string,
+    input: OrderStaffAdd,
+    actor: SaleActor,
+  ): Promise<StationOrder> {
+    if (!actor.permissions.has('pos.sell')) throw forbidden('Missing permission: pos.sell');
+    const id = await withTransaction(this.pool, async (client) => {
+      const sess = await client.query<{
+        station_id: string;
+        status: string;
+        billed_at: Date | null;
+        customer_id: string | null;
+      }>(
+        'SELECT station_id, status, billed_at, customer_id FROM gaming_sessions WHERE id = $1 FOR UPDATE',
+        [sessionId],
+      );
+      const s = sess.rows[0];
+      if (!s) throw notFound('Session');
+      if (s.status === 'cancelled') throw conflict('Session was cancelled');
+      const billed = s.billed_at !== null;
+
+      const ids = [...new Set(input.items.map((i) => i.productId))];
+      const rows = await client.query<MenuProductRow>(
+        `${MENU_SELECT} WHERE p.id = ANY($1::uuid[]) ORDER BY p.id FOR UPDATE OF p`,
+        [ids],
+      );
+      const byId = new Map(rows.rows.map((p) => [p.id, p]));
+      const lines: { product: MenuProductRow; quantityMilli: number }[] = [];
+      for (const item of input.items) {
+        const product = byId.get(item.productId);
+        if (!product || !product.is_active)
+          throw new AppError(409, 'not_available', 'This product is not available', {
+            productId: item.productId,
+          });
+        if (!available(product))
+          throw new AppError(409, 'out_of_stock', `${product.name} is out of stock`, {
+            productId: item.productId,
+          });
+        const existing = lines.find((l) => l.product.id === product.id);
+        const quantityMilli = item.quantity * 1000;
+        if (existing) existing.quantityMilli += quantityMilli;
+        else lines.push({ product, quantityMilli });
+      }
+      const priced = lines.map((l) => {
+        const unit =
+          l.product.promo_price_cents === null
+            ? Number(l.product.selling_price_cents)
+            : Number(l.product.promo_price_cents);
+        return { ...l, unit, total: Math.round((unit * l.quantityMilli) / 1000) };
+      });
+      const total = priced.reduce((acc, l) => acc + l.total, 0);
+      const payments = input.payments ?? [];
+
+      const inserted = billed
+        ? await client.query<{ id: string }>(
+            `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, total_cents)
+             VALUES ($1, NULL, $2, $3, $4) RETURNING id`,
+            [s.station_id, sessionId, s.customer_id, total],
+          )
+        : await client.query<{ id: string }>(
+            `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, total_cents,
+                    status, settlement, decided_at, decided_by)
+             VALUES ($1, NULL, $2, $3, $4, 'accepted', 'on_bill', now(), $5) RETURNING id`,
+            [s.station_id, sessionId, s.customer_id, total, actor.userId],
+          );
+      const orderId = inserted.rows[0]!.id;
+      for (const l of priced) {
+        await client.query(
+          `INSERT INTO station_order_items (order_id, product_id, name, quantity_milli, unit_price_cents, line_total_cents)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [orderId, l.product.id, l.product.name, l.quantityMilli, l.unit, l.total],
+        );
+      }
+      if (billed) {
+        // Already billed: a POS sale now (stock, receipt and drawer as at the counter).
+        const row = await this.lock(client, orderId);
+        await this.sellInTransaction(client, row, payments, s.customer_id, actor, 'accept');
+      }
+      await recordAudit(client, actor, {
+        action: 'order.staff_add',
+        entityType: 'station_order',
+        entityId: orderId,
+        details: {
+          sessionId,
+          settlement: billed ? 'pay_now' : 'on_bill',
+          lines: priced.length,
+          totalCents: total,
+        },
+      });
+      return orderId;
     });
     const order = await this.getById(id);
     await this.announceOne(order);

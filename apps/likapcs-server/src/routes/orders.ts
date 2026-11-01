@@ -32,6 +32,7 @@ import {
   orderPaySchema,
   orderPrepareSchema,
   orderRejectSchema,
+  orderStaffAddSchema,
   orderVoidSchema,
   productListQuerySchema,
   uuidSchema,
@@ -144,6 +145,19 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     if (!order.saleId) throw notFound('Order has no receipt');
     return services.sales.receipt(order.saleId, actorOf(request), false);
   });
+  // 0.27.1: the desk adds products to a PC's bill (or sells them at once when the bill is paid).
+  app.post('/sessions/:id/orders', sell, async (request, reply) =>
+    reply
+      .code(201)
+      .send(
+        await services.orders.addToSession(
+          idParams.parse(request.params).id,
+          orderStaffAddSchema.parse(request.body),
+          saleActorOf(request),
+        ),
+      ),
+  );
+
   app.post('/orders/:id/accept', control, async (request) =>
     services.orders.accept(
       idParams.parse(request.params).id,

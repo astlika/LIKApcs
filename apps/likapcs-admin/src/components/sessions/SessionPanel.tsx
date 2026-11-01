@@ -45,6 +45,7 @@ import { useFormat } from '../../lib/format';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
+import { AddToSessionDialog } from './AddToSessionDialog';
 import { useToast } from '../../state/toast';
 import { useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
@@ -548,7 +549,9 @@ function ActiveSession({
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   const now = useNow();
-  const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | 'remove' | null>(null);
+  const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | 'remove' | 'addItems' | null>(
+    null,
+  );
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   useEffect(() => {
@@ -723,6 +726,11 @@ function ActiveSession({
               </Button>
             </div>
           )}
+          {can(PERMISSIONS.POS_SELL) && (
+            <Button onClick={() => setDialog('addItems')} data-testid="session-add-items">
+              {t('addItems.button')}
+            </Button>
+          )}
           <Button variant="primary" onClick={() => setDialog('end')} data-testid="session-end">
             <Square size={14} /> {t('sessions.end')}
           </Button>
@@ -732,6 +740,15 @@ function ActiveSession({
             </Button>
           )}
         </div>
+      )}
+
+      {dialog === 'addItems' && (
+        <AddToSessionDialog
+          sessionId={s.id}
+          billed={s.billedAt !== null}
+          onClose={() => setDialog(null)}
+          onDone={() => setDialog(null)}
+        />
       )}
 
       {dialog === 'end' && (

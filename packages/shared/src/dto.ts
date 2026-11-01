@@ -2186,6 +2186,25 @@ export type OrderPrepare = z.infer<typeof orderPrepareSchema>;
 export const orderRejectSchema = z.object({ reason: z.string().trim().max(120).optional() });
 export const orderVoidSchema = z.object({ reason: z.string().trim().min(2).max(200) });
 
+/**
+ * `POST /sessions/:id/orders` (0.27.1) — the desk adds products to a PC's bill. Unbilled session:
+ * the lines go onto its bill (paid with the session). Already billed (prepaid, or collected): the
+ * products are paid at once with `payments`, as a POS sale.
+ */
+export const orderStaffAddSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        quantity: z.number().int().min(1).max(ORDER_MAX_QUANTITY),
+      }),
+    )
+    .min(1)
+    .max(30),
+  payments: z.array(salePaymentInputSchema).max(10).optional(),
+});
+export type OrderStaffAdd = z.infer<typeof orderStaffAddSchema>;
+
 export const orderListQuerySchema = z.object({
   status: z.enum(ORDER_STATUSES).optional(),
   /** `open` = pending + accepted (the desk's working list). */
