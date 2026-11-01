@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-11-01
+
+### Added
+
+- The desk can add products to a PC's bill from the PC session panel and from the collect dialog (any active product, not only the PC menu). On a pay-later bill the products join the bill and are paid with the time; on a prepaid or already collected bill they are paid at once as a sale. `POST /sessions/:id/orders` (`pos.sell`), audited as `order.staff_add`.
+
 ## [0.27.0] - 2026-10-29
 
 ### Added
