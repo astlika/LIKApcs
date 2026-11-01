@@ -70,7 +70,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -100,7 +100,7 @@ jobs:
           cd $OUT && npm install --omit=dev --no-audit --no-fund && cd ..
           zip -qr $OUT.zip $OUT
           ls -la $OUT.zip
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: server-bundle
           path: likapcs-server-*.zip
@@ -116,7 +116,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -148,7 +148,7 @@ jobs:
           Copy-Item $exe.FullName out/LIKApcs-Setup.exe
           Copy-Item $sig.FullName out/LIKApcs-Setup.exe.sig
           Get-ChildItem out
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: admin-installer
           path: out/*
@@ -164,7 +164,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -193,7 +193,7 @@ jobs:
           Copy-Item $exe.FullName out-client/LIKApcs-Client-Setup.exe
           Copy-Item $sig.FullName out-client/LIKApcs-Client-Setup.exe.sig
           Get-ChildItem out-client
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: client-installer
           path: out-client/*
@@ -206,7 +206,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: '*-installer'
           path: artifacts
