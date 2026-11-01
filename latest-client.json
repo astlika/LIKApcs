@@ -1,11 +1,11 @@
 {
-  "version": "0.27.0",
-  "notes": "### Added\n\n- Change the price of a PC bill that is already paid (prepaid time, or a bill that was collected). A lower price gives the difference back as a `price_adjustment` refund, from the open cash shift for cash. A higher price takes the difference in on the same sale. The fixed price stays as the user set it.\n- New permission `pos.adjust_paid` (\"Change the price of a bill that is already paid\"). The owner and admin roles always have it; other roles can be given it in Roles & permissions.\n- \"Change price\" button on the Sales page for a sale that has PC time.\n- Several PCs: prepaid bills are now included when the user has `pos.adjust_paid`, and the payment method can be chosen.\n- Database migration `0049_pos_adjust_paid.sql` (permission, and `refunds.kind`).\n\n### Changed\n\n- The administrator role always keeps `pos.adjust_paid`; the Roles page locks that box for the admin role.",
-  "pub_date": "2026-10-29T01:19:07.512Z",
+  "version": "0.27.1",
+  "notes": "### Added\n\n- The desk can add products to a PC's bill from the PC session panel and from the collect dialog (any active product, not only the PC menu). On a pay-later bill the products join the bill and are paid with the time; on a prepaid or already collected bill they are paid at once as a sale. `POST /sessions/:id/orders` (`pos.sell`), audited as `order.staff_add`.",
+  "pub_date": "2026-11-01T21:31:35.030Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelcrZTR1L0h5MHBEMHNhMERzc1U4QW9ud1RvTDhrNmJmb3ZLRUQ4alhUeVpmQ1l2Znl5ei9lVFpnWTEweU9xbkVWS210R3VNMnp4QXkvUXFiZjdudGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjM2NTM2CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjAKMU5UMk0rSzFqR0YwV0U2QVhudnA5c0doYUJ1aVFaSy80U3UzMTA2MVdIZnZuMHpVOWZOMmoyZERSRGpieEg4YS95aHNkMmZWaDRJMzdCVmNodkhEQ3c9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.0/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemZNcFRmWW9zWE1md0xCbk5UNkNmK3VDTkRvdnhhc1l3OGZNUHVnVGNnU2EzWXJMRnZuVHVJb3ZoUHh2OGh1d1g1U3YzT0xyQU9haTQwUjA0dnFXYlFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTY4NTQwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4xX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjEKZTVaVVRvSjh3YjZ3RDlBdC9XR3loY05tVnR1R1ZmWXY0S0liWVhLRkdyZ0xTY2pkWG9hREVtRGRMVGlWN0JUV3FlYWhkZ2hnVEFERzlZMWt4VXJZQkE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.1/LIKApcs-Client-Setup.exe"
     }
   }
 }
