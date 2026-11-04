@@ -7157,6 +7157,26 @@ button.ads-album .ads-album__meta {
   gap: 6px;
   margin-left: auto;
 }
+.pos__pc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.pos__pc-label {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pos__pc select {
+  flex: 1;
+  min-width: 160px;
+}
+.pos__pc-hint {
+  flex-basis: 100%;
+  font-size: 12px;
+}
 .pos__staff-banner {
   display: flex;
   flex-direction: column;

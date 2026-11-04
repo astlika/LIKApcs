@@ -538,6 +538,9 @@ export class OrdersService implements SessionOrdersHook {
       });
       const total = priced.reduce((acc, l) => acc + l.total, 0);
       const payments = input.payments ?? [];
+      // 0.27.3: payment given on an unbilled session = paid now at the till (the lines still show
+      // on the PC); no payment = the lines join the PC's bill as before.
+      const payNow = billed || payments.length > 0;
 
       const inserted = billed
         ? await client.query<{ id: string }>(
@@ -559,10 +562,17 @@ export class OrdersService implements SessionOrdersHook {
           [orderId, l.product.id, l.product.name, l.quantityMilli, l.unit, l.total],
         );
       }
-      if (billed) {
-        // Already billed: a POS sale now (stock, receipt and drawer as at the counter).
+      if (payNow) {
+        // A POS sale now (stock, receipt and drawer as at the counter).
         const row = await this.lock(client, orderId);
-        await this.sellInTransaction(client, row, payments, s.customer_id, actor, 'accept');
+        await this.sellInTransaction(
+          client,
+          row,
+          payments,
+          s.customer_id,
+          actor,
+          billed ? 'accept' : 'pay',
+        );
       }
       await recordAudit(client, actor, {
         action: 'order.staff_add',
@@ -570,7 +580,7 @@ export class OrdersService implements SessionOrdersHook {
         entityId: orderId,
         details: {
           sessionId,
-          settlement: billed ? 'pay_now' : 'on_bill',
+          settlement: payNow ? 'pay_now' : 'on_bill',
           lines: priced.length,
           totalCents: total,
         },

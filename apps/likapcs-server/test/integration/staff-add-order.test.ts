@@ -155,6 +155,35 @@ describe('the desk adds products to a PC bill', () => {
     expect(during.body.openOrdersCents).toBe(0);
   });
 
+  it('on a running (unbilled) session, paying now sells the lines at once and they stay on the PC', async () => {
+    const station = await makeStation(5);
+    const started = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: station.id,
+      billingMode: 'endpay',
+      minutes: 60,
+    });
+    const sid = started.body.session.id;
+
+    const short = await call<{ error: { code: string } }>('POST', `/sessions/${sid}/orders`, {
+      items: [{ productId: cola.id, quantity: 2 }],
+      payments: [{ method: 'cash', amountCents: 100 }],
+    });
+    expect(short.status).toBe(400);
+
+    const paid = await call<StationOrder>('POST', `/sessions/${sid}/orders`, {
+      items: [{ productId: cola.id, quantity: 2 }],
+      payments: [{ method: 'cash', amountCents: 400 }],
+    });
+    expect(paid.status).toBe(201);
+    expect(paid.body).toMatchObject({ status: 'paid', totalCents: 400, sessionId: sid });
+    expect(paid.body.saleId).toBeTruthy();
+
+    const during = await call<SessionSummary>('GET', `/sessions/${sid}`);
+    expect(during.body.openOrdersCents).toBe(0);
+    // The session's own bill (time) is still open: it is not paid by this order.
+    expect(during.body.billedAt).toBeNull();
+  });
+
   it('refuses a product with no stock', async () => {
     const station = await makeStation(3);
     const started = await call<SessionMutationResponse>('POST', '/sessions', {

@@ -69,6 +69,35 @@ export interface Cart {
    * recorded as a stock outflow with no money taken. Undefined / false on a normal sale.
    */
   staff?: boolean;
+  /**
+   * 0.27.4: the products go to this PC's bill instead of a sale. Only product lines, whole units,
+   * no extras and no discounts (see `pcBlocker`).
+   */
+  pc?: PcTarget | null;
+}
+
+export interface PcTarget {
+  sessionId: string;
+  label: string;
+  /** Prepaid or already collected: the products are paid at the till, there is no later option. */
+  billed: boolean;
+}
+
+/** Why the cart cannot go to a PC's bill as it is (null: it can). */
+export function pcBlocker(cart: Cart): 'notPc' | 'addons' | 'whole' | 'discount' | null {
+  if (cart.lines.some((l) => l.kind !== 'product')) return 'notPc';
+  if (cart.lines.some((l) => l.kind === 'product' && l.addonIds.length > 0)) return 'addons';
+  if (cart.lines.some((l) => l.kind === 'product' && l.quantityMilli % 1000 !== 0)) return 'whole';
+  if (cart.discountCents > 0 || cart.lines.some((l) => l.kind === 'product' && l.discountCents > 0))
+    return 'discount';
+  return null;
+}
+
+/** The lines as the PC order endpoint takes them (whole units). */
+export function pcItemsFromCart(cart: Cart): { productId: string; quantity: number }[] {
+  return cart.lines.flatMap((l) =>
+    l.kind === 'product' ? [{ productId: l.product.id, quantity: l.quantityMilli / 1000 }] : [],
+  );
 }
 
 export const newRequestId = (): string =>

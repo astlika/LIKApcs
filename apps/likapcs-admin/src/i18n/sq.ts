@@ -801,7 +801,19 @@ export const sq: Dictionary = {
     weekdays: { 1: 'Hën', 2: 'Mar', 3: 'Mër', 4: 'Enj', 5: 'Pre', 6: 'Sht', 7: 'Die' },
   },
   pos: {
-    addToPc: 'Shto në PC',
+    pcLabel: 'PC',
+    pcNone: 'Shitje e zakonshme',
+    pcTagPaid: 'e paguar',
+    pcTagLater: 'në faturë',
+    pcPayNow: 'Shto te {name} · paguaj tani',
+    pcLater: 'Shto te {name} · më vonë',
+    pcAdded: 'U shtua te {name}',
+    pcBlock: {
+      notPc: 'Koha e PC-së dhe artikujt e lirë nuk shkojnë në faturën e PC-së.',
+      addons: 'Produktet me extra nuk shkojnë ende në faturën e PC-së.',
+      whole: 'Në faturën e PC-së shkojnë vetëm njësi të plota.',
+      discount: 'Hiq zbritjet më parë.',
+    },
     title: 'Arka (POS)',
     searchPlaceholder: 'Skano barkodin ose kërko produkte…',
     allCategories: 'Të gjitha',
@@ -2195,11 +2207,6 @@ export const sq: Dictionary = {
     notEnough: 'Shuma e marrë është më e vogël se totali.',
     confirm: 'Shto',
     added: 'Produktet u shtuan',
-    pickPc: 'PC',
-    noPcs:
-      'Asnjë PC nuk ka seancë aktive, të pezulluar ose të pa paguar tani. Nis kohën te një PC fillimisht.',
-    tagPaid: 'e paguar',
-    tagOnBill: 'në faturë',
   },
   adjustPrice: {
     paidLabel: 'e paguar — ndryshohet çmimi',

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ProductSummary } from '@likapcs/shared';
 import {
   addFreeItem,
+  pcBlocker,
+  pcItemsFromCart,
   addTimeItem,
   addToCart,
   cartToRequest,
@@ -284,5 +286,32 @@ describe('ScanBuffer', () => {
     });
     cart = addTimeItem(emptyCart(), { minutes: 30, unitPriceCents: 300, taxRateBp: 0 }, () => 'm');
     expect(cartToRequest(cart).items[0]).toEqual({ minutes: 30, discountCents: 0 });
+  });
+});
+
+describe('0.27.4: a cart can go to a PC bill', () => {
+  it('a product-only cart with whole units goes to a PC', () => {
+    const cart = addToCart(emptyCart(), product({ id: 'cola' }), 2000);
+    expect(pcBlocker(cart)).toBeNull();
+    expect(pcItemsFromCart(cart)).toEqual([{ productId: 'cola', quantity: 2 }]);
+  });
+
+  it('PC time and free items stop it', () => {
+    const timed = addTimeItem(emptyCart(), { minutes: 30, unitPriceCents: 75, taxRateBp: 0 });
+    expect(pcBlocker(timed)).toBe('notPc');
+    const free = addFreeItem(emptyCart(), { name: 'Kafe', unitPriceCents: 100, taxRateBp: 0 });
+    expect(pcBlocker(free)).toBe('notPc');
+    expect(pcItemsFromCart(free)).toEqual([]);
+  });
+
+  it('extras, fractions and discounts stop it', () => {
+    const base = addToCart(emptyCart(), product({ id: 'cola' }));
+    const line = base.lines[0]!;
+    if (line.kind !== 'product') throw new Error('expected a product line');
+    const withExtra = { ...base, lines: [{ ...line, addonIds: ['x'] }] };
+    expect(pcBlocker(withExtra)).toBe('addons');
+    expect(pcBlocker(addToCart(emptyCart(), product({ id: 'cola' }), 500))).toBe('whole');
+    expect(pcBlocker(setLineDiscount(base, lineKey(line), 50))).toBe('discount');
+    expect(pcBlocker({ ...base, discountCents: 100 })).toBe('discount');
   });
 });

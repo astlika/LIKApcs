@@ -19,8 +19,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
+  Tag,
   Clock,
-  Monitor,
   Minus,
   PauseCircle,
   Plus,
@@ -43,6 +43,8 @@ import {
   type ReceiptData,
   type SaleDetail,
   type SalesListResponse,
+  type SessionSummary,
+  type StationOrder,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
 import { usePosFlags } from '../lib/pos-flags';
@@ -53,6 +55,9 @@ import {
   cartItemCount,
   cartToRequest,
   cartTotals,
+  pcBlocker,
+  pcItemsFromCart,
+  type PcTarget,
   emptyCart,
   lineKey,
   lineName,
@@ -66,7 +71,6 @@ import {
 import { FreeItemDialog } from '../components/pos/FreeItemDialog';
 import { AddonDialog } from '../components/pos/AddonDialog';
 import { TimeItemDialog } from '../components/pos/TimeItemDialog';
-import { AddToPcDialog } from '../components/pos/AddToPcDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -88,6 +92,32 @@ import {
   Kbd,
   Loading,
 } from '../components/ui/primitives';
+
+/** 0.27.4: the PCs the desk can put products on: running, paused, or ended and not yet paid. */
+async function fetchPcTargets(): Promise<PcTarget[]> {
+  const query = { pageSize: 200 };
+  const [live, paused, waiting] = await Promise.all([
+    api<{ items: SessionSummary[] }>('/sessions', { query: { status: 'active', ...query } }),
+    api<{ items: SessionSummary[] }>('/sessions', { query: { status: 'paused', ...query } }),
+    api<{ items: SessionSummary[] }>('/sessions', { query: { awaitingPayment: 'true', ...query } }),
+  ]);
+  const byId = new Map<string, SessionSummary>();
+  for (const x of [...live.items, ...paused.items, ...waiting.items]) byId.set(x.id, x);
+  return [...byId.values()]
+    .map((x) => ({
+      sessionId: x.id,
+      label: x.customerName ? `${x.stationName} · ${x.customerName}` : x.stationName,
+      billed: x.billedAt !== null,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+}
+
+const PC_BLOCK_KEYS = {
+  notPc: 'pos.pcBlock.notPc',
+  addons: 'pos.pcBlock.addons',
+  whole: 'pos.pcBlock.whole',
+  discount: 'pos.pcBlock.discount',
+} as const;
 
 export function PosPage() {
   const { t } = useI18n();
@@ -118,7 +148,7 @@ export function PosPage() {
   // The payment dialog's first mode: "Add to debt" (F7) opens it on pay later (0.20.8).
   const [payStart, setPayStart] = useState<TenderMode>('cash');
   const [dialog, setDialog] = useState<
-    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | 'addToPc' | null
+    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
   >(null);
   // 0.19.1: a product with extras opens the extras dialog before it is added to the cart.
   const [addonPick, setAddonPick] = useState<{
@@ -396,6 +426,28 @@ export function PosPage() {
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
+  const pcTargets = useQuery({
+    queryKey: ['sessions', 'pos-pc-targets'],
+    queryFn: fetchPcTargets,
+    staleTime: 5_000,
+    refetchInterval: 20_000,
+  });
+  // The PC order paid later: the lines join the PC's bill (no payment here).
+  const addLater = useMutation({
+    mutationFn: (v: { pc: PcTarget; items: { productId: string; quantity: number }[] }) =>
+      api<StationOrder>(`/sessions/${v.pc.sessionId}/orders`, {
+        method: 'POST',
+        body: { items: v.items },
+      }),
+    onSuccess: (_order, v) => {
+      toast.success(t('pos.pcAdded', { name: v.pc.label }));
+      for (const key of ['sessions', 'stations', 'orders', 'sales', 'cash']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      resetCart();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
   const voidSale = useMutation({
     mutationFn: (id: string) => api<void>(`/sales/${id}/void`, { method: 'POST' }),
     onSuccess: () => {
@@ -532,34 +584,28 @@ export function PosPage() {
             {resumedId && <Badge tone="warning">{t('sales.status.suspended')}</Badge>}
           </div>
           <div className="pos__cart-tools">
-            {flags.offInventory && !cart.staff && (
+            {flags.offInventory && !cart.staff && !cart.pc && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => setDialog('freeItem')}
                 data-testid="pos-free-item"
+                title={t('pos.freeItem')}
+                aria-label={t('pos.freeItem')}
               >
-                <Plus size={14} /> {t('pos.freeItem')}
+                <Tag size={14} />
               </Button>
             )}
-            {flags.timeItems && (
+            {flags.timeItems && !cart.pc && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => setDialog('timeItem')}
                 data-testid="pos-time-item"
+                title={t('pos.timeItem')}
+                aria-label={t('pos.timeItem')}
               >
-                <Clock size={14} /> {t('pos.timeItem')}
-              </Button>
-            )}
-            {!cart.staff && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDialog('addToPc')}
-                data-testid="pos-add-to-pc"
-              >
-                <Monitor size={14} /> {t('pos.addToPc')}
+                <Clock size={14} />
               </Button>
             )}
             <Button
@@ -567,9 +613,12 @@ export function PosPage() {
               variant={cart.staff ? 'primary' : 'ghost'}
               aria-pressed={!!cart.staff}
               onClick={toggleStaff}
+              disabled={!!cart.pc}
               data-testid="pos-staff-toggle"
+              title={t('pos.staffPurchase')}
+              aria-label={t('pos.staffPurchase')}
             >
-              <Users size={14} /> {t('pos.staffPurchase')}
+              <Users size={14} />
             </Button>
           </div>
         </header>
@@ -580,6 +629,39 @@ export function PosPage() {
           </div>
         )}
         {!cart.staff && (
+          <div className="pos__pc" data-testid="pos-pc-row">
+            <label className="pos__pc-label" htmlFor="pos-pc-select">
+              {t('pos.pcLabel')}
+            </label>
+            <select
+              id="pos-pc-select"
+              className="input"
+              data-testid="pos-pc-select"
+              value={cart.pc?.sessionId ?? ''}
+              disabled={!cart.pc && pcBlocker(cart) !== null}
+              onChange={(e) => {
+                const options = pcTargets.data ?? [];
+                const picked = options.find((x) => x.sessionId === e.target.value) ?? null;
+                setCart((c) => ({ ...c, pc: picked, customerId: picked ? null : c.customerId }));
+                if (picked) setCustomer(null);
+              }}
+            >
+              <option value="">{t('pos.pcNone')}</option>
+              {(cart.pc && !(pcTargets.data ?? []).some((x) => x.sessionId === cart.pc?.sessionId)
+                ? [cart.pc, ...(pcTargets.data ?? [])]
+                : (pcTargets.data ?? [])
+              ).map((x) => (
+                <option key={x.sessionId} value={x.sessionId}>
+                  {x.label} · {x.billed ? t('pos.pcTagPaid') : t('pos.pcTagLater')}
+                </option>
+              ))}
+            </select>
+            {!cart.pc && pcBlocker(cart) !== null && (
+              <span className="faint pos__pc-hint">{t(PC_BLOCK_KEYS[pcBlocker(cart)!])}</span>
+            )}
+          </div>
+        )}
+        {!cart.staff && !cart.pc && (
           <div className="pos__customer" id="pos-cart-customer">
             <CustomerPicker
               value={shownCustomer}
@@ -659,7 +741,7 @@ export function PosPage() {
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
-                  {canDiscount && !cart.staff && (
+                  {canDiscount && !cart.staff && !cart.pc && (
                     <input
                       className="input pos-line__discount"
                       placeholder="−0.00"
@@ -687,7 +769,7 @@ export function PosPage() {
           })}
         </div>
         <div className="pos__totals">
-          {canDiscount && !cart.staff && (
+          {canDiscount && !cart.staff && !cart.pc && (
             <div className="row row--between">
               <span className="muted">{t('pos.saleDiscount')}</span>
               <input
@@ -734,7 +816,7 @@ export function PosPage() {
             <Button onClick={() => (cart.lines.length ? setDialog('confirmNew') : resetCart())}>
               {t('pos.newSale')} <Kbd>F4</Kbd>
             </Button>
-            {canSuspend && (
+            {canSuspend && !cart.pc && (
               <>
                 <Button
                   disabled={
@@ -763,7 +845,7 @@ export function PosPage() {
               </>
             )}
           </div>
-          {!cart.staff && canGiveDebt && (
+          {!cart.staff && !cart.pc && canGiveDebt && (
             <Button
               size="lg"
               className="pos__tab"
@@ -778,11 +860,22 @@ export function PosPage() {
               <CalendarClock size={14} /> {t('pos.addToTab')} <Kbd>F7</Kbd>
             </Button>
           )}
+          {cart.pc && !cart.pc.billed && (
+            <Button
+              size="lg"
+              disabled={cart.lines.length === 0 || pcBlocker(cart) !== null}
+              loading={addLater.isPending}
+              onClick={() => addLater.mutate({ pc: cart.pc!, items: pcItemsFromCart(cart) })}
+              data-testid="pos-pc-later"
+            >
+              <Clock size={14} /> {t('pos.pcLater', { name: cart.pc.label })}
+            </Button>
+          )}
           <Button
             variant="primary"
             size="lg"
             className="pos__pay"
-            disabled={cart.lines.length === 0}
+            disabled={cart.lines.length === 0 || (!!cart.pc && pcBlocker(cart) !== null)}
             onClick={() => {
               setPayStart('cash');
               setDialog('payment');
@@ -790,7 +883,12 @@ export function PosPage() {
             data-testid="pos-pay"
           >
             {cart.staff ? <Users size={16} /> : <Banknote size={16} />}{' '}
-            {cart.staff ? t('pos.staffRecord') : t('pos.pay')} <Kbd>Enter</Kbd>
+            {cart.staff
+              ? t('pos.staffRecord')
+              : cart.pc
+                ? t('pos.pcPayNow', { name: cart.pc.label })
+                : t('pos.pay')}{' '}
+            <Kbd>Enter</Kbd>
           </Button>
         </div>
         <div className="pos__hint faint">{t('pos.shortcuts')}</div>
@@ -901,18 +999,6 @@ export function PosPage() {
           }}
           onAdd={(item) => {
             setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
-            setDialog(null);
-            focusSearch();
-          }}
-        />
-      )}
-      {dialog === 'addToPc' && (
-        <AddToPcDialog
-          onClose={() => {
-            setDialog(null);
-            focusSearch();
-          }}
-          onDone={() => {
             setDialog(null);
             focusSearch();
           }}
@@ -1224,6 +1310,17 @@ function PaymentDialog({
 
   const complete = useMutation({
     mutationFn: async () => {
+      if (cart.pc) {
+        // Paid now at the till; the lines go on the PC's bill as a paid order.
+        const order = await api<StationOrder>(`/sessions/${cart.pc.sessionId}/orders`, {
+          method: 'POST',
+          body: { items: pcItemsFromCart(cart), payments: tender.payments },
+        });
+        if (!order.saleId) throw new Error('The order has no sale');
+        const sale = await api<SaleDetail>(`/sales/${order.saleId}`);
+        const receipt = await api<ReceiptData>(`/sales/${order.saleId}/receipt`);
+        return { sale, receipt };
+      }
       const body = { ...cartToRequest(cart), payments: tender.payments };
       const sale = resumedId
         ? await api<SaleDetail>(`/sales/${resumedId}/complete`, { method: 'POST', body })
