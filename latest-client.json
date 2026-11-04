@@ -1,11 +1,11 @@
 {
-  "version": "0.27.2",
-  "notes": "### Changed\n\n- Tests only, no change for users: a test that the PC lists a product the desk added to its session, and a test that the backup archive holds exactly the database tables.",
-  "pub_date": "2026-11-04T12:32:06.563Z",
+  "version": "0.27.3",
+  "notes": "### Added\n\n- Till (POS): an \"Add to PC\" button next to PC time. The desk picks a PC from a list of the PCs with a running, paused or unpaid session, then adds products (the normal price). A PC with a pay-at-the-end session gets the products on its bill; a prepaid or already collected PC gets them paid at once at the till.",
+  "pub_date": "2026-11-04T13:14:17.900Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemFWN29hMThVeE4rem82U0UxZnFwbk95QWc0NzIrOWdEOC8rcXVtQlJ3RGg0ajJoS3FwQXQvcUNOcXRESDFodThJU25jaUloVTNBaVF0Q3ZKeTh5eEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzk1MzU2CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4yX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjIKRFJUaytRd3Y5aW44bUVNbGhNMXRya1puWVVnd0NCazVkYUF0RUFmekRqcXRZdUs2cTFpQ2RjZkdxNDZ3U01KY0ZPR2JHa2NNbWdCbytHVE9maHVyQVE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.2/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJ0RlA4akFVV3hxU1dRUWZKRXpjMTZhbkFpdGpqUmhTangvVC9mZUt6RFRYenNqUmQ0VzNhQVBIMjJhT1pFODBXWnFKY1huaEJlQm5idTlRMmJKWGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzk4MDAyCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjMKckthUmRXRnpYV1NLU1VzSzdTUWUxeHpLeWloUUpuNXJsSFR2ajh4M3dXV05ZYndpZkY4ZndIL3RVb3o3UlFwRWpkTHViMXAza3pwakk4dDBzd0FMQlE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.3/LIKApcs-Client-Setup.exe"
     }
   }
 }
