@@ -1,11 +1,11 @@
 {
-  "version": "0.27.1",
-  "notes": "### Added\n\n- The desk can add products to a PC's bill from the PC session panel and from the collect dialog (any active product, not only the PC menu). On a pay-later bill the products join the bill and are paid with the time; on a prepaid or already collected bill they are paid at once as a sale. `POST /sessions/:id/orders` (`pos.sell`), audited as `order.staff_add`.",
-  "pub_date": "2026-11-01T21:31:34.989Z",
+  "version": "0.27.2",
+  "notes": "### Changed\n\n- Tests only, no change for users: a test that the PC lists a product the desk added to its session, and a test that the backup archive holds exactly the database tables.",
+  "pub_date": "2026-11-04T12:32:06.532Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelVwMEZlN3pZQXlRRzRGUVVsK3ZCTXBBRmV5eDVoVUoyOEMrN1BFQ0pjUjJ0UHZEUXRkaDJ2ajBEQTU3SXlocVkxWnpqZWlJSnRUb0NDU01pU0Mrb3c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTY4NjQ0CWZpbGU6TElLQXBjc18wLjI3LjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjcuMQp2MU55b1pMSU53VjRDUk5oQ09Va3ZKMFVzQUNQS0tvaWoyWjBwRFduMzRWbVR4ZFVYcGxLRTUvQ0wzVk1SQ0U3ejUyOUVLYWVJUzdkdHdGL3NlMU9DQT09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.1/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemVTeFNxQkxCWXJUUTdqbURRSnBFTXUyZkF6V2V4Y25CaXdhS28xK000VkJBcVp5aU1wMUxjbmgxcW1HRHR2dnFQTkxrbGgxMEhmeHBTVVQxSUtHaEFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzk1NDc1CWZpbGU6TElLQXBjc18wLjI3LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjcuMgo5Y3FoeC9ab1BKUExuZGZUK0ZDUUx2MDNJR09YTVhkUjBadXJPKzlscE9USktRb1cxL1QyazFETXpzTExKNXg3cGpkNVdkZGZRSUprQzd2QlZUbzhCQT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.2/LIKApcs-Setup.exe"
     }
   }
 }
