@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-11-04
+
+### Added
+
+- Till (POS): an "Add to PC" button next to PC time. The desk picks a PC from a list of the PCs with a running, paused or unpaid session, then adds products (the normal price). A PC with a pay-at-the-end session gets the products on its bill; a prepaid or already collected PC gets them paid at once at the till.
+
 ## [0.27.2] - 2026-11-01
 
 ### Changed
