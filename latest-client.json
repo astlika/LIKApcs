@@ -1,11 +1,11 @@
 {
-  "version": "0.27.3",
-  "notes": "### Added\n\n- Till (POS): an \"Add to PC\" button next to PC time. The desk picks a PC from a list of the PCs with a running, paused or unpaid session, then adds products (the normal price). A PC with a pay-at-the-end session gets the products on its bill; a prepaid or already collected PC gets them paid at once at the till.",
-  "pub_date": "2026-11-04T13:14:17.900Z",
+  "version": "0.27.4",
+  "notes": "### Added\n\n- Till (POS): choose a PC for the current sale in a row above the cart. Products added to the sale then go to that PC's bill: \"pay later\" puts them on the PC's bill (paid when the session ends), \"pay now\" takes the payment at the till while the lines stay on the PC. Only product lines, whole units, no extras and no discounts can go to a PC; the cart says why when it cannot.\n- Server: a payment given with an order on a running (unbilled) session sells the lines at once (`POST /sessions/:id/orders`).\n\n### Changed\n\n- Till: the cart's tool buttons (free item, PC time, staff purchase) are icons with a tooltip, in one row.\n- Removed the separate \"Add to PC\" button added in 0.27.3, in favour of the PC row in the sale.",
+  "pub_date": "2026-11-04T15:43:14.767Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJ0RlA4akFVV3hxU1dRUWZKRXpjMTZhbkFpdGpqUmhTangvVC9mZUt6RFRYenNqUmQ0VzNhQVBIMjJhT1pFODBXWnFKY1huaEJlQm5idTlRMmJKWGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzk4MDAyCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjMKckthUmRXRnpYV1NLU1VzSzdTUWUxeHpLeWloUUpuNXJsSFR2ajh4M3dXV05ZYndpZkY4ZndIL3RVb3o3UlFwRWpkTHViMXAza3pwakk4dDBzd0FMQlE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.3/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelpYZzZOV1hBOEtVaTM2eGdTbityYU9oZExPUDRmWTd3VjEvSThqK01EVGp0Z25oaVJlY3RCM0N3RWxtcVdyR1haMFBTMm1DVmpNUXNVUEFnQWh5endZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODA2ODA4CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yNy40X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI3LjQKMkw5aWFzYnlsRnAxQVU2am81WjlacVIybXArTTF1WlJYS3FnWWE0WlprZlVxMXRoVlpCNzJiaHRGVHBlMkRKald1ekJkTUpzM3BCT0E5RWw2TVdsQVE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.27.4/LIKApcs-Client-Setup.exe"
     }
   }
 }
