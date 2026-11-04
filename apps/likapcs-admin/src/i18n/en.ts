@@ -789,6 +789,7 @@ export const en = {
     weekdays: { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun' },
   },
   pos: {
+    addToPc: 'Add to PC',
     title: 'Point of Sale',
     searchPlaceholder: 'Scan a barcode or search products…',
     allCategories: 'All',
@@ -2181,6 +2182,10 @@ export const en = {
     notEnough: 'The amount received is less than the total.',
     confirm: 'Add',
     added: 'Products added',
+    pickPc: 'PC',
+    noPcs: 'No PC has a running, paused or unpaid session right now. Start the time on a PC first.',
+    tagPaid: 'paid',
+    tagOnBill: 'on the bill',
   },
   adjustPrice: {
     paidLabel: 'already paid — the price changes',

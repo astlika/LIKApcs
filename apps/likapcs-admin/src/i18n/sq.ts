@@ -801,6 +801,7 @@ export const sq: Dictionary = {
     weekdays: { 1: 'Hën', 2: 'Mar', 3: 'Mër', 4: 'Enj', 5: 'Pre', 6: 'Sht', 7: 'Die' },
   },
   pos: {
+    addToPc: 'Shto në PC',
     title: 'Arka (POS)',
     searchPlaceholder: 'Skano barkodin ose kërko produkte…',
     allCategories: 'Të gjitha',
@@ -2194,6 +2195,11 @@ export const sq: Dictionary = {
     notEnough: 'Shuma e marrë është më e vogël se totali.',
     confirm: 'Shto',
     added: 'Produktet u shtuan',
+    pickPc: 'PC',
+    noPcs:
+      'Asnjë PC nuk ka seancë aktive, të pezulluar ose të pa paguar tani. Nis kohën te një PC fillimisht.',
+    tagPaid: 'e paguar',
+    tagOnBill: 'në faturë',
   },
   adjustPrice: {
     paidLabel: 'e paguar — ndryshohet çmimi',

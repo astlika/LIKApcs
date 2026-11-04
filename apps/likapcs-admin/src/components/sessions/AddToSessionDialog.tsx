@@ -19,15 +19,27 @@ const METHODS: Method[] = ['cash', 'card', 'bank_transfer', 'other'];
 const priceOf = (p: ProductSummary) => p.promoPriceCents ?? p.sellingPriceCents;
 const inStock = (p: ProductSummary) => !p.trackStock || p.allowNegativeStock || p.stockMilli > 0;
 
+/** One PC the desk can add products to (0.27.3, the till picks it from a list). */
+export interface PcChoice {
+  sessionId: string;
+  label: string;
+  /** Prepaid or already collected: the products are paid now. */
+  billed: boolean;
+}
+
 export function AddToSessionDialog({
   sessionId,
-  billed,
+  billed: billedProp = false,
+  choices,
   onClose,
   onDone,
 }: {
-  sessionId: string;
+  /** One PC, whose bill is already known. */
+  sessionId?: string;
   /** Prepaid or already collected: the products are paid now. */
-  billed: boolean;
+  billed?: boolean;
+  /** Several PCs: the desk picks one from this list first. */
+  choices?: PcChoice[];
   onClose: () => void;
   onDone: (order: StationOrder) => void;
 }) {
@@ -39,6 +51,14 @@ export function AddToSessionDialog({
   const [cart, setCart] = useState<Record<string, number>>({});
   const [method, setMethod] = useState<Method>('cash');
   const [amount, setAmount] = useState('');
+  const [pickedId, setPickedId] = useState(choices?.[0]?.sessionId ?? sessionId ?? '');
+  const current: PcChoice | undefined = choices
+    ? choices.find((c) => c.sessionId === pickedId)
+    : sessionId
+      ? { sessionId, label: '', billed: billedProp }
+      : undefined;
+  const targetId = current?.sessionId ?? '';
+  const billed = current?.billed ?? false;
 
   const products = useQuery({
     queryKey: ['products', 'session-add', search],
@@ -59,14 +79,14 @@ export function AddToSessionDialog({
   const total = lines.reduce((acc, l) => acc + l.total, 0);
   const amountCents = amount.trim() ? parseMoneyInput(amount) : null;
   const paidNow = billed ? (amountCents ?? total) : 0;
-  const valid = lines.length > 0 && (!billed || paidNow >= total);
+  const valid = lines.length > 0 && !!current && (!billed || paidNow >= total);
 
   const setQty = (id: string, qty: number) =>
     setCart((c) => ({ ...c, [id]: Math.max(0, Math.min(20, qty)) }));
 
   const save = useMutation({
     mutationFn: () =>
-      api<StationOrder>(`/sessions/${sessionId}/orders`, {
+      api<StationOrder>(`/sessions/${targetId}/orders`, {
         method: 'POST',
         body: {
           items: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
@@ -113,6 +133,26 @@ export function AddToSessionDialog({
         <p className="muted" style={{ margin: 0 }}>
           {billed ? t('addItems.hintBilled') : t('addItems.hintOnBill')}
         </p>
+        {choices && (
+          <Field label={t('addItems.pickPc')}>
+            {(id) => (
+              <select
+                id={id}
+                className="input"
+                value={pickedId}
+                onChange={(e) => setPickedId(e.target.value)}
+                data-testid="add-items-pc"
+                style={{ maxWidth: 360 }}
+              >
+                {choices.map((c) => (
+                  <option key={c.sessionId} value={c.sessionId}>
+                    {c.label} · {c.billed ? t('addItems.tagPaid') : t('addItems.tagOnBill')}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        )}
         <Field label={t('addItems.search')}>
           {(id) => (
             <Input

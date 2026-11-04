@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
   Clock,
+  Monitor,
   Minus,
   PauseCircle,
   Plus,
@@ -65,6 +66,7 @@ import {
 import { FreeItemDialog } from '../components/pos/FreeItemDialog';
 import { AddonDialog } from '../components/pos/AddonDialog';
 import { TimeItemDialog } from '../components/pos/TimeItemDialog';
+import { AddToPcDialog } from '../components/pos/AddToPcDialog';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
@@ -116,7 +118,7 @@ export function PosPage() {
   // The payment dialog's first mode: "Add to debt" (F7) opens it on pay later (0.20.8).
   const [payStart, setPayStart] = useState<TenderMode>('cash');
   const [dialog, setDialog] = useState<
-    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | null
+    'payment' | 'confirmNew' | 'suspended' | 'freeItem' | 'timeItem' | 'addToPc' | null
   >(null);
   // 0.19.1: a product with extras opens the extras dialog before it is added to the cart.
   const [addonPick, setAddonPick] = useState<{
@@ -550,6 +552,16 @@ export function PosPage() {
                 <Clock size={14} /> {t('pos.timeItem')}
               </Button>
             )}
+            {!cart.staff && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDialog('addToPc')}
+                data-testid="pos-add-to-pc"
+              >
+                <Monitor size={14} /> {t('pos.addToPc')}
+              </Button>
+            )}
             <Button
               size="sm"
               variant={cart.staff ? 'primary' : 'ghost'}
@@ -889,6 +901,18 @@ export function PosPage() {
           }}
           onAdd={(item) => {
             setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {dialog === 'addToPc' && (
+        <AddToPcDialog
+          onClose={() => {
+            setDialog(null);
+            focusSearch();
+          }}
+          onDone={() => {
             setDialog(null);
             focusSearch();
           }}
