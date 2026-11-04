@@ -6,6 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-01
+
+### Changed
+
+- Tests only, no change for users: a test that the PC lists a product the desk added to its session, and a test that the backup archive holds exactly the database tables.
+
 ## [0.27.1] - 2026-11-01
 
 ### Added
