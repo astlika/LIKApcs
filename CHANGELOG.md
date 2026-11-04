@@ -6,6 +6,18 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-11-04
+
+### Added
+
+- Till (POS): choose a PC for the current sale in a row above the cart. Products added to the sale then go to that PC's bill: "pay later" puts them on the PC's bill (paid when the session ends), "pay now" takes the payment at the till while the lines stay on the PC. Only product lines, whole units, no extras and no discounts can go to a PC; the cart says why when it cannot.
+- Server: a payment given with an order on a running (unbilled) session sells the lines at once (`POST /sessions/:id/orders`).
+
+### Changed
+
+- Till: the cart's tool buttons (free item, PC time, staff purchase) are icons with a tooltip, in one row.
+- Removed the separate "Add to PC" button added in 0.27.3, in favour of the PC row in the sale.
+
 ## [0.27.3] - 2026-11-04
 
 ### Added
