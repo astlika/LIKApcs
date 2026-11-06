@@ -6,6 +6,17 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-06
+
+### Added
+
+- Android phone app (debug APK, Capacitor): the phone app can be installed on Android. On first sign-in the server address is entered once (for example `http://100.x.y.z:4700` over Tailscale). The APK is a debug build, not signed for Play Store publishing. Not yet tested on a physical phone; iOS is not built.
+- Server CORS default includes `https://localhost` so the Android app (which runs from that origin) can sign in.
+
+### Changed
+
+- Stations page (admin): the status counts are filters (click one to show only those PCs). Less-used actions (Connect a PC, Show archived) moved to a "More" menu. The selection bar is compact when nothing is selected. Empty filter results show a message.
+
 ## [0.28.0] - 2026-11-06
 
 ### Added

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import type { LoginResponse } from '@likapcs/shared';
 import { api, ApiError, setToken } from '../api';
+import { getServerUrl, isNative, normalizeServerUrl, setServerUrl } from '../native';
 
 /**
  * Phone sign-in: username + e-mail + password, all three (0.28.0). Nothing is remembered besides
@@ -10,14 +11,23 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [server, setServer] = useState(() => getServerUrl() ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    setBusy(true);
     setError(null);
+    if (isNative()) {
+      const url = normalizeServerUrl(server);
+      if (!url) {
+        setError('Adresa e serverit nuk është e saktë. Shembull: http://100.x.y.z:4700');
+        return;
+      }
+      setServerUrl(url);
+    }
+    setBusy(true);
     try {
       const res = await api<LoginResponse>('/auth/phone-login', {
         method: 'POST',
@@ -50,6 +60,19 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
           </div>
         </div>
         {notice && <p className="alert">{notice}</p>}
+        {isNative() && (
+          <label className="field">
+            <span>Serveri LIKApcs</span>
+            <input
+              autoCapitalize="none"
+              inputMode="url"
+              placeholder="http://100.x.y.z:4700"
+              value={server}
+              onChange={(e) => setServer(e.target.value)}
+              required
+            />
+          </label>
+        )}
         <label className="field">
           <span>Përdoruesi</span>
           <input

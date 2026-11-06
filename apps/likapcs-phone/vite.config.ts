@@ -5,8 +5,8 @@ import react from '@vitejs/plugin-react';
 const serverTarget = process.env.LIKAPCS_SERVER_URL ?? 'http://127.0.0.1:4700';
 
 // The production build is served by the LIKApcs Server at /phone/ (same origin as the API).
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/phone/' : '/',
+export default defineConfig(({ command, mode }) => ({
+  base: command === 'build' && mode !== 'capacitor' ? '/phone/' : '/',
   plugins: [react()],
   clearScreen: false,
   server: {

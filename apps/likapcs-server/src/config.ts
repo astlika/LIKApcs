@@ -39,7 +39,7 @@ const envSchema = z.object({
   LIKAPCS_CORS_ORIGINS: z
     .string()
     .default(
-      'http://localhost:1420,http://127.0.0.1:1420,tauri://localhost,http://tauri.localhost',
+      'http://localhost:1420,http://127.0.0.1:1420,tauri://localhost,http://tauri.localhost,https://localhost',
     ),
   LIKAPCS_TLS_CERT_FILE: z.string().optional(),
   LIKAPCS_TLS_KEY_FILE: z.string().optional(),

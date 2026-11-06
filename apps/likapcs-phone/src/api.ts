@@ -2,6 +2,8 @@
  * Small API client for the phone. Relative URLs only (the dev server or the LIKApcs server proxies
  * /api). The token lives in localStorage on this phone and is sent as a Bearer token.
  */
+import { apiOrigin, isNative } from './native';
+
 const TOKEN_KEY = 'likapcs-phone-token';
 
 export class ApiError extends Error {
@@ -27,9 +29,13 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   if (token) headers.authorization = `Bearer ${token}`;
   if (init.body !== undefined) headers['content-type'] = 'application/json';
 
+  if (isNative() && !apiOrigin()) {
+    throw new ApiError(0, 'no_server', 'Vendosni adresën e serverit LIKApcs.');
+  }
+
   let res: Response;
   try {
-    res = await fetch(`/api/v1${path}`, {
+    res = await fetch(`${apiOrigin()}/api/v1${path}`, {
       method: init.method ?? 'GET',
       headers,
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

@@ -1180,6 +1180,9 @@ export const en = {
     endTasksHint: 'Closes the programs listed in Settings › Stations — never LIKApcs itself',
     endTasksPressed: 'games closed',
     selectShort: 'Select a PC',
+    more: 'More',
+    noMatch: 'No PC matches the current filter.',
+    filterHint: 'Click to show only these PCs; click again to show all',
     help: {
       title: 'Mouse & keyboard',
       primary: 'Double-click or Enter — main action of the PC',

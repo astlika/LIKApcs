@@ -1192,6 +1192,9 @@ export const sq: Dictionary = {
     endTasksHint: 'Mbyll programet e listuara te Cilësimet › Stacionet — kurrë vetë LIKApcs',
     endTasksPressed: 'lojërat u mbyllën',
     selectShort: 'Zgjidh një PC',
+    more: 'Më shumë',
+    noMatch: 'Asnjë PC nuk përputhet me filtrin aktual.',
+    filterHint: 'Kliko për të shfaqur vetëm këto PC; kliko përsëri për të shfaqur të gjitha',
     help: {
       title: 'Mausi & tastiera',
       primary: 'Dyklik ose Enter — veprimi kryesor i PC-së',
