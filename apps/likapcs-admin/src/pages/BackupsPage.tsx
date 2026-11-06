@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  Usb,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -222,6 +223,7 @@ export function BackupsPage() {
         </div>
       )}
       {data && <ProtectionCard canManage={canManage} />}
+      {data && <TransferCard canManage={canManage} />}
       <div className="toolbar">
         <Checkbox
           checked={showDeleted}
@@ -774,6 +776,164 @@ function ArchivePasswordDialog({
               type="password"
               autoComplete="off"
               autoFocus
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Result of a USB transfer export (0.27.5). */
+interface TransferExportResult {
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+/** Whole-system transfer to another PC on a USB stick, behind a 4-digit code (0.27.5). */
+function TransferCard({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  if (!canManage) return null;
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Usb size={16} className="muted" />
+        <strong>{t('backups.transferTitle')}</strong>
+        <Button size="sm" style={{ marginLeft: 'auto' }} onClick={() => setOpen(true)}>
+          <Usb size={13} /> {t('backups.transferOpen')}
+        </Button>
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        {t('backups.transferHelp')}
+      </p>
+      {open && <TransferExportDialog onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+function TransferExportDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api<SettingsMap>('/settings'),
+  });
+  const savedFolder = ((settings.data?.['backup.external_dir'] as string | undefined) ?? '').trim();
+  const [folder, setFolder] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [codeAgain, setCodeAgain] = useState('');
+  const [password, setPassword] = useState('');
+  const shownFolder = (folder ?? savedFolder).trim();
+  const codeValid = /^\d{4}$/.test(code);
+  const codeMatches = codeValid && code === codeAgain;
+  const valid = codeMatches && password.length > 0 && shownFolder.length > 0;
+  const mutation = useMutation({
+    mutationFn: () =>
+      api<TransferExportResult>('/backups/transfer', {
+        method: 'POST',
+        body: { password, code, targetDir: shownFolder },
+      }),
+    onSuccess: (r) => {
+      toast.success(
+        t('backups.transferDone', { name: r.fileName, size: formatBytes(r.sizeBytes) }),
+      );
+      onClose();
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
+        toast.error(t('backups.wrongPassword'));
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
+  });
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('backups.transferTitle')}
+      size="md"
+      locked={mutation.isPending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!valid}
+            loading={mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            <Usb size={14} /> {t('backups.transferStart')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !mutation.isPending) mutation.mutate();
+        }}
+      >
+        <p className="muted">{t('backups.transferHelp')}</p>
+        <Alert tone="warning" icon={<AlertTriangle size={16} />}>
+          {t('backups.transferSessionsHint')}
+        </Alert>
+        <Field label={t('backups.transferFolder')} hint={t('backups.transferFolderHint')}>
+          {(id) => (
+            <Input
+              id={id}
+              value={folder ?? savedFolder}
+              placeholder={t('backups.extPlaceholder')}
+              onChange={(e) => setFolder(e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label={t('backups.transferCode')} hint={t('backups.transferCodeHint')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          )}
+        </Field>
+        <Field
+          label={t('backups.transferCodeAgain')}
+          error={
+            codeAgain.length > 0 && !codeMatches ? t('backups.transferCodeMismatch') : undefined
+          }
+        >
+          {(id, invalid) => (
+            <Input
+              id={id}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              aria-invalid={invalid}
+              value={codeAgain}
+              onChange={(e) => setCodeAgain(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          )}
+        </Field>
+        <Field label={t('backups.yourPassword')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />

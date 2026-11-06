@@ -119,6 +119,12 @@ export const loginRequestSchema = z.object({
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
+/** Phone (PWA) login, 0.28.0: username + e-mail + password, all three must match. */
+export const phoneLoginSchema = loginRequestSchema.extend({
+  email: z.string().trim().email().max(200),
+});
+export type PhoneLoginRequest = z.infer<typeof phoneLoginSchema>;
+
 export interface UserSummary {
   id: string;
   username: string;
@@ -1463,8 +1469,37 @@ const saleBody = {
   notes: z.string().trim().max(500).optional(),
   clientRequestId: z.string().trim().min(8).max(80).optional(),
 };
+/**
+ * Punkti 4, shtresa 1 (0.28.0): a POS sale made while this PC was offline. The PC numbers it
+ * itself (`localNumber`, e.g. `PC2-000001`); the server gives the official receipt number when
+ * it syncs. `unitPrices` are the prices the cashier saw. Only product lines, no customer tab,
+ * no pay-later: those need the live server.
+ */
+export const offlineSaleSchema = z
+  .object({
+    deviceCode: z.string().regex(/^PC[1-9]\d{0,2}$/),
+    localNumber: z.string().regex(/^PC[1-9]\d{0,2}-\d{6}$/),
+    createdAt: z.string().datetime({ offset: true }),
+    unitPrices: z
+      .array(
+        z.object({
+          productId: z.string().uuid(),
+          unitPriceCents: z.number().int().min(0).max(100_000_000),
+        }),
+      )
+      .min(1)
+      .max(200),
+  })
+  .refine((o) => o.localNumber.startsWith(`${o.deviceCode}-`), {
+    message: 'localNumber must start with deviceCode',
+    path: ['localNumber'],
+  });
+export type OfflineSaleInput = z.infer<typeof offlineSaleSchema>;
+
 export const createSaleSchema = z.object({
   ...saleBody,
+  /** Punkti 4: present only for a sale made offline (see `offlineSaleSchema`). */
+  offline: offlineSaleSchema.optional(),
   /**
    * Staff purchase (0.20.7): the items are priced at their purchase cost, the PC time is free,
    * nothing is taken in money, and the stock goes out. The server sets the payment itself, so
@@ -1474,6 +1509,54 @@ export const createSaleSchema = z.object({
   payments: z.array(salePaymentInputSchema).max(10),
 });
 export type CreateSaleRequest = z.infer<typeof createSaleSchema>;
+
+/**
+ * `POST /sales/sync` (0.28.0): the offline sales of one PC. Each sale is checked on its own
+ * (the server reads `sales` as raw items), so one malformed sale is reported as `failed` and
+ * never blocks the others.
+ */
+export const syncSalesEnvelopeSchema = z.object({
+  sales: z.array(z.unknown()).min(1).max(50),
+});
+export const syncSaleItemSchema = createSaleSchema.refine(
+  (s) => s.offline !== undefined && s.clientRequestId !== undefined,
+  { message: 'an offline sale needs an offline block and a clientRequestId' },
+);
+export type SyncSalesRequest = z.infer<typeof syncSalesEnvelopeSchema>;
+
+export interface SyncSaleResult {
+  clientRequestId: string;
+  localNumber: string;
+  /** created: new sale · duplicate: already synced earlier (nothing written) · failed: see error */
+  status: 'created' | 'duplicate' | 'failed';
+  saleId: string | null;
+  receiptNo: string | null;
+  priceChanged: boolean;
+  error: { code: string; message: string } | null;
+}
+export interface SyncSalesResponse {
+  results: SyncSaleResult[];
+}
+
+/** `POST /staff-purchases` (0.28.0): stock items taken by staff at their purchase cost. */
+export const staffPurchaseSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        productId: uuidSchema,
+        quantityMilli: z.number().int().positive().max(1_000_000_000),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+export type StaffPurchaseRequest = z.infer<typeof staffPurchaseSchema>;
+
+export interface StaffPurchaseSummary {
+  id: string;
+  totalCostCents: number;
+  expenseId: string;
+}
 export const suspendSaleSchema = z.object(saleBody);
 export type SuspendSaleRequest = z.infer<typeof suspendSaleSchema>;
 
@@ -1549,6 +1632,10 @@ export interface RefundSummary {
 export interface SaleSummary {
   id: string;
   receiptNo: string | null;
+  /** Punkti 4: the PC's own number when the sale was made offline (e.g. PC2-000001). */
+  localNumber: string | null;
+  /** Punkti 4: the price the cashier saw differed from the server's price at sync time. */
+  priceChanged: boolean;
   status: SaleStatus;
   source: 'retail' | 'gaming' | 'mixed';
   customerId: string | null;
@@ -2699,6 +2786,26 @@ export const restoreBackupSchema = z.object({
   archivePassword: z.string().min(1).max(200).optional(),
 });
 export type RestoreBackupRequest = z.infer<typeof restoreBackupSchema>;
+
+/**
+ * USB transfer export (0.27.5): writes the whole system to a folder (USB stick) encrypted with a
+ * 4-digit code. The owner's own password is re-confirmed first.
+ */
+export const transferExportSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().regex(/^\d{4}$/, 'The code must be exactly 4 digits'),
+  targetDir: z.string().trim().min(1).max(500),
+});
+
+export type TransferExportRequest = z.infer<typeof transferExportSchema>;
+
+/** Import on a fresh installation (no user yet): the archive id returned by the upload, and the code. */
+export const transferRestoreSchema = z.object({
+  backupId: z.string().uuid(),
+  code: z.string().regex(/^\d{4}$/, 'The code must be exactly 4 digits'),
+});
+
+export type TransferRestoreRequest = z.infer<typeof transferRestoreSchema>;
 
 /**
  * Factory reset: erases every business record, user, setting and uploaded picture or video after a

@@ -498,14 +498,19 @@ export class OrdersService implements SessionOrdersHook {
         status: string;
         billed_at: Date | null;
         customer_id: string | null;
+        billing_mode: string;
       }>(
-        'SELECT station_id, status, billed_at, customer_id FROM gaming_sessions WHERE id = $1 FOR UPDATE',
+        'SELECT station_id, status, billed_at, customer_id, billing_mode FROM gaming_sessions WHERE id = $1 FOR UPDATE',
         [sessionId],
       );
       const s = sess.rows[0];
       if (!s) throw notFound('Session');
       if (s.status === 'cancelled') throw conflict('Session was cancelled');
-      const billed = s.billed_at !== null;
+      // 0.28.0: a prepaid PC's time is paid at the start; while it runs, the products added to it
+      // go on its bill (paid later, the time stays paid). Everything else as before: a billed
+      // session is sold at once, an unbilled one takes the products on its bill.
+      const live = s.status === 'active' || s.status === 'paused';
+      const onBill = s.billing_mode === 'prepaid' ? live : s.billed_at === null;
 
       const ids = [...new Set(input.items.map((i) => i.productId))];
       const rows = await client.query<MenuProductRow>(
@@ -540,9 +545,9 @@ export class OrdersService implements SessionOrdersHook {
       const payments = input.payments ?? [];
       // 0.27.3: payment given on an unbilled session = paid now at the till (the lines still show
       // on the PC); no payment = the lines join the PC's bill as before.
-      const payNow = billed || payments.length > 0;
+      const payNow = !onBill || payments.length > 0;
 
-      const inserted = billed
+      const inserted = !onBill
         ? await client.query<{ id: string }>(
             `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, total_cents)
              VALUES ($1, NULL, $2, $3, $4) RETURNING id`,
@@ -571,7 +576,7 @@ export class OrdersService implements SessionOrdersHook {
           payments,
           s.customer_id,
           actor,
-          billed ? 'accept' : 'pay',
+          !onBill ? 'accept' : 'pay',
         );
       }
       await recordAudit(client, actor, {

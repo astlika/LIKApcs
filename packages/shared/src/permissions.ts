@@ -32,6 +32,8 @@ export const PERMISSIONS = {
   POS_REPRINT: 'pos.reprint',
   /** 0.27.0: change the price of a bill that is already paid. Owner and admin always have it. */
   POS_ADJUST_PAID: 'pos.adjust_paid',
+  /** 0.28.0: record a staff purchase (at cost, stock out, expense booked, no money in the drawer). */
+  POS_STAFF_PURCHASE: 'pos.staff_purchase',
   INVOICES_VIEW: 'invoices.view',
   INVOICES_MANAGE: 'invoices.manage',
 

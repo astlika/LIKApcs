@@ -4,6 +4,8 @@ import { forbidden } from '../errors.js';
 import {
   PERMISSIONS,
   createSaleSchema,
+  syncSalesEnvelopeSchema,
+  type SyncSalesResponse,
   refundSchema,
   saleListQuerySchema,
   suspendSaleSchema,
@@ -52,6 +54,12 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
       throw forbidden('Missing permission: pos.reprint');
     }
     return services.sales.receipt(idParams.parse(request.params).id, actorOf(request), reprint);
+  });
+  // Punkt 4 (0.28.0): the offline sales of one PC, synced in order. Each sale is its own
+  // transaction; the answer says per sale whether it was created, a duplicate, or failed.
+  app.post('/sales/sync', sell, async (request): Promise<SyncSalesResponse> => {
+    const body = syncSalesEnvelopeSchema.parse(request.body);
+    return { results: await services.sales.syncOffline(body.sales, actorOf(request)) };
   });
   app.post('/sales', sell, async (request, reply) =>
     reply

@@ -13,12 +13,15 @@ import {
   type SystemInfoResponse,
   factoryResetSchema,
   type FactoryResetResult,
+  backupUploadQuerySchema,
+  transferRestoreSchema,
 } from '@likapcs/shared';
 import crypto from 'node:crypto';
 import { AppError, conflict, forbidden, notFound } from '../errors.js';
 import { lanAddresses } from '../discovery.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
+import type { Readable } from 'node:stream';
 
 export const systemRoutes: FastifyPluginAsync = async (app) => {
   const { pool, services, startedAt } = app;
@@ -159,6 +162,69 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       });
       request.log.info({ userId: result.id }, 'first-run setup completed');
       return reply.status(201).send(login);
+    },
+  );
+
+  /**
+   * USB transfer on a FRESH installation (0.27.5): the archive made by another PC is uploaded and
+   * restored here before any user exists. Refused as soon as the system has a user, so it can never
+   * be used to overwrite a configured installation.
+   */
+  const UPLOAD_LIMIT_BYTES = 4 * 1024 * 1024 * 1024;
+  app.addContentTypeParser(
+    ['application/octet-stream', 'application/gzip', 'application/x-gzip'],
+    (_request, payload, done) => done(null, payload),
+  );
+  const assertFreshInstall = async () => {
+    if ((await services.users.count()) > 0) {
+      throw conflict('This installation already has users. Use Backups → USB transfer instead.');
+    }
+  };
+
+  app.post(
+    '/system/transfer/upload',
+    {
+      bodyLimit: UPLOAD_LIMIT_BYTES,
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      await assertFreshInstall();
+      const { fileName } = backupUploadQuerySchema.parse(request.query);
+      const body = request.body as NodeJS.ReadableStream | undefined;
+      if (!body || typeof (body as { pipe?: unknown }).pipe !== 'function') {
+        throw new AppError(
+          415,
+          'unsupported_media_type',
+          'Send the transfer file as application/octet-stream',
+        );
+      }
+      const code =
+        typeof request.headers['x-archive-password'] === 'string'
+          ? request.headers['x-archive-password'].slice(0, 4)
+          : undefined;
+      const backup = await services.backups.importUpload(
+        body as unknown as Readable,
+        fileName,
+        { label: 'transfer', ip: request.ip },
+        code,
+      );
+      return reply.code(201).send(backup);
+    },
+  );
+
+  app.post(
+    '/system/transfer/restore',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) => {
+      await assertFreshInstall();
+      const body = transferRestoreSchema.parse(request.body);
+      return services.backups.restore({
+        id: body.backupId,
+        actor: { label: 'transfer', ip: request.ip },
+        sessionId: null,
+        archivePassword: body.code,
+        transfer: true,
+      });
     },
   );
 

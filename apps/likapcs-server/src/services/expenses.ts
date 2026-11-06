@@ -264,8 +264,9 @@ export class ExpensesService {
         shift_id: string | null;
         amount_cents: string;
         shift_status: string | null;
+        staff_purchase_id: string | null;
       }>(
-        `SELECT e.voided_at, e.shift_id, e.amount_cents, cs.status AS shift_status
+        `SELECT e.voided_at, e.shift_id, e.amount_cents, cs.status AS shift_status, e.staff_purchase_id
            FROM expenses e LEFT JOIN cash_shifts cs ON cs.id = e.shift_id
           WHERE e.id = $1 FOR UPDATE OF e`,
         [id],
@@ -273,6 +274,10 @@ export class ExpensesService {
       const e = row.rows[0];
       if (!e) throw notFound('Expense');
       if (e.voided_at) throw conflict('This expense is already voided');
+      // 0.28.0: a staff purchase took the stock out; its expense is the record of that, so it stays.
+      if (e.staff_purchase_id) {
+        throw conflict('A staff purchase expense cannot be voided');
+      }
       if (e.shift_id) {
         if (e.shift_status !== 'open')
           throw conflict(

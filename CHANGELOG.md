@@ -6,6 +6,26 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-06
+
+### Added
+
+- Till (POS) works offline on a PC: when the server cannot be reached, a sale is kept in a local queue with a PC-numbered local number (e.g. `PC2-000001`; the PC number is set once per PC) and a provisional, non-fiscal 80 mm slip is printed at once. When the connection returns the queue is sent to the server, which gives each sale its official, gap-free `R-YYYY-NNNNNN` number. Scope of this release: POS sales only (no offline sessions, customers with debt, price or settings changes).
+- Staff purchases: an admin can record items taken for personal use. They are not sales and do not touch the cash drawer: stock goes out and an expense `staff_purchase` (method `other`) is recorded. Permission `pos.staff_purchase` (owner and admin by default, assignable under Roles & permissions). Earlier staff sales were converted to staff purchases and expenses and voided as sales.
+- PCs with prepaid time can take extra products that are paid later. The paid time is not changed; products left unpaid stay on the bill and the PC appears under "Awaiting payment", where the unpaid products are collected.
+- USB transfer: export the whole system to a USB drive as one encrypted archive, protected by a 4-digit transfer code, and import it on a fresh installation. Game-PC device links are not transferred and must be approved again. An archive from a newer version is refused, and the free space on the drive is checked before export.
+- Phone app (PWA), served by the server at `/phone/`: sign in with username, email and password; screens for the day's summary, debts and PCs. Phone login is restricted to the phone client and rate-limited. Not yet tested on a physical phone; remote access (Tailscale) is not set up by this release.
+- Backups archive every table of the database and the uploaded files.
+- Sales list: offline sales show their local number and an "Offline" tag; a sale whose price changed while offline shows a "Price changed" warning.
+
+### Changed
+
+- Staff purchases no longer appear in the sales list or in sales reports.
+
+### Fixed
+
+- Same-origin requests from the server's own address are no longer refused by CORS.
+
 ## [0.27.4] - 2026-11-04
 
 ### Added

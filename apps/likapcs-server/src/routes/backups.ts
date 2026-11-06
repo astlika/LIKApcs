@@ -12,6 +12,7 @@ import {
   backupListQuerySchema,
   backupUploadQuerySchema,
   restoreBackupSchema,
+  transferExportSchema,
   uuidSchema,
 } from '@likapcs/shared';
 import { AppError } from '../errors.js';
@@ -85,6 +86,19 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(201).send(backup);
     },
   );
+
+  // USB transfer (0.27.5): the whole system into one file encrypted with a 4-digit code.
+  app.post('/backups/transfer', manage, async (request) => {
+    const body = transferExportSchema.parse(request.body);
+    const auth = request.auth!;
+    const ok = await services.auth.confirmPassword(auth.user.id, body.password);
+    if (!ok) throw new AppError(403, 'PASSWORD_MISMATCH', 'The password is not correct');
+    return services.backups.exportTransfer({
+      code: body.code,
+      targetDir: body.targetDir,
+      actor: actorOf(request),
+    });
+  });
 
   app.get('/backups/:id', manage, async (request) =>
     services.backups.get(idParams.parse(request.params).id),

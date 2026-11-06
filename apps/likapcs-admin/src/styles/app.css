@@ -7285,3 +7285,27 @@ button.ads-album .ads-album__meta {
 .adv__body {
   margin-top: 12px;
 }
+
+/* Punkti 4 (0.28.0): offline queue bar on the POS */
+.pos__offline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border, #2a3350);
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.pos__offline:has(input) {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pos__offline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

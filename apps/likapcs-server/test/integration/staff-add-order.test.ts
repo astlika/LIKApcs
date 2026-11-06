@@ -121,7 +121,7 @@ describe('the desk adds products to a PC bill', () => {
     expect(lines).toEqual([{ quantity_milli: '2000', line_total_cents: '400' }]);
   });
 
-  it('on a prepaid (already billed) session the products are sold at once, and need a payment', async () => {
+  it('on a prepaid session the products wait on the bill, or are sold at once with a payment', async () => {
     const station = await makeStation(2);
     const started = await call<SessionMutationResponse>('POST', '/sessions', {
       stationId: station.id,
@@ -134,10 +134,15 @@ describe('the desk adds products to a PC bill', () => {
       (await q<{ n: string }>('SELECT count(*)::text AS n FROM sales'))[0]!.n,
     );
 
-    const unpaid = await call<{ error: { code: string } }>('POST', `/sessions/${sid}/orders`, {
+    // 0.28.0: the paid time is not touched; the products go on the bill and are paid later.
+    const onBill = await call<StationOrder>('POST', `/sessions/${sid}/orders`, {
       items: [{ productId: cola.id, quantity: 2 }],
     });
-    expect(unpaid.status).toBe(400);
+    expect(onBill.status).toBe(201);
+    expect(onBill.body).toMatchObject({ status: 'accepted', totalCents: 400 });
+    expect(Number((await q<{ n: string }>('SELECT count(*)::text AS n FROM sales'))[0]!.n)).toBe(
+      salesBefore,
+    );
 
     const paid = await call<StationOrder>('POST', `/sessions/${sid}/orders`, {
       items: [{ productId: cola.id, quantity: 2 }],
@@ -152,7 +157,7 @@ describe('the desk adds products to a PC bill', () => {
     );
     expect(salesAfter - salesBefore).toBe(1);
     const during = await call<SessionSummary>('GET', `/sessions/${sid}`);
-    expect(during.body.openOrdersCents).toBe(0);
+    expect(during.body.openOrdersCents).toBe(400);
   });
 
   it('on a running (unbilled) session, paying now sells the lines at once and they stay on the PC', async () => {

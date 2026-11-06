@@ -167,6 +167,18 @@ export const en = {
   setup: {
     title: 'Welcome to LIKApcs',
     subtitle: 'Let’s set up your gaming station in two short steps.',
+    importOpen: 'Or import a transfer from USB',
+    importTitle: 'Import a transfer from another PC',
+    importHelp:
+      'Choose the transfer file from the USB stick and type the 4-digit code. Gaming PCs must be approved again after the import.',
+    importFile: 'Transfer file',
+    importCode: '4-digit code',
+    importStart: 'Import',
+    importWrongCode: 'The code is not correct, or the file is damaged.',
+    importVersionNewer:
+      'This file was made with a newer LIKApcs version. Install that version first.',
+    importDone: 'The transfer was imported. Sign in with the owner account from the old PC.',
+    importContinue: 'Continue to sign in',
     stepBusiness: 'Business',
     stepOwner: 'Owner account',
     businessName: 'Business name',
@@ -521,6 +533,8 @@ export const en = {
       pos_suspend: 'Suspend and resume sales',
       pos_reprint: 'Reprint receipts and invoices',
       pos_adjust_paid: 'Change the price of a bill that is already paid',
+      pos_staff_purchase:
+        'Record a staff purchase (at cost, expense booked, no money in the drawer)',
       invoices_view: 'View invoices',
       invoices_manage: 'Issue and manage invoices',
       products_view: 'View products and stock',
@@ -789,6 +803,17 @@ export const en = {
     weekdays: { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun' },
   },
   pos: {
+    offlineDeviceAsk: 'Enter this PC’s number for offline sales (e.g. PC2):',
+    offlineDeviceLabel: 'PC number',
+    offlineDeviceInvalid: 'The PC number must look like PC2',
+    offlinePending: 'Offline sales waiting to be sent: {count}',
+    offlineFailedUnknown: 'Refused by the server',
+    offlineRemove: 'Remove from list',
+    offlineSaved: 'Sale saved offline as {number}. It will be sent when the server is back.',
+    offlineNoDevice: 'Enter this PC’s number before an offline sale.',
+    offlineNoCustomer: 'An offline sale cannot use a customer tab or pay later.',
+    offlineItems: 'An offline sale takes products only.',
+    offlineNoPrice: 'An offline sale has no price for a product.',
     pcLabel: 'PC',
     pcNone: 'Regular sale',
     pcTagPaid: 'paid',
@@ -844,15 +869,15 @@ export const en = {
     staffTag: 'Staff',
     staffBannerTitle: 'Staff purchase',
     staffBanner:
-      'Items at purchase cost, PC time free, no money taken. The stock goes out and it is recorded as an outflow.',
+      'Stock items at purchase cost. No money goes through the drawer; the stock goes out and an expense is booked.',
     staffNoFreeItems:
-      'Remove the free items first: a staff purchase takes stock items and PC time only.',
+      'Remove the PC time and the free items first: a staff purchase takes stock items only.',
     staffFree: 'free',
     staffCostTotal: 'Total at cost',
     staffConfirmTitle: 'Staff purchase',
     staffConfirmHint:
-      'No money is taken. The stock goes out and the purchase is recorded as an outflow for this user, with the date and time.',
-    staffRecord: 'Record outflow',
+      'No money is taken. The stock goes out and an expense of category "Staff purchase" is booked, with the date and time.',
+    staffRecord: 'Record staff purchase',
     staffNoPark: 'A staff purchase cannot be parked. Record it or remove it.',
     staffRecorded: 'Staff purchase recorded',
     staffReport: 'Staff purchases',
@@ -1062,6 +1087,10 @@ export const en = {
     deleteCategoryBody: 'Products in this category keep existing without a category.',
   },
   sales: {
+    offlineTag: 'Offline',
+    offlineHint: 'Sold offline; the PC’s local number',
+    priceChangedTag: 'Price changed',
+    priceChangedHint: 'The price at the till differed from the server price',
     title: 'Sales',
     subtitle: '{count} sales · {total} · refunded {refunded}',
     kindLabel: 'Type',
@@ -2308,6 +2337,21 @@ export const en = {
     safetyCopy: 'Safety copy made',
     sessionLost:
       'Your account does not exist in the restored data — sign in again with an account from that time.',
+    transferTitle: 'Transfer to another PC (USB)',
+    transferOpen: 'Export to USB',
+    transferHelp:
+      'Copies everything into one file on a USB stick, encrypted with a 4-digit code. The file cannot be opened without the code. Gaming PCs (devices) are not transferred: they must be approved again on the new PC. The new PC must have the same or a newer LIKApcs version.',
+    transferFolder: 'Folder on the USB stick (e.g. E:\\)',
+    transferFolderHint: 'Plug in the USB stick first and type its folder.',
+    transferCode: '4-digit code',
+    transferCodeAgain: 'Repeat the 4-digit code',
+    transferCodeMismatch: 'The two codes do not match.',
+    transferCodeHint:
+      'Write the code down and keep it apart from the USB stick. There are only 10,000 possible codes.',
+    transferSessionsHint:
+      'Close every running gaming session before exporting. The copy is refused while a session is active or paused.',
+    transferStart: 'Export now',
+    transferDone: 'Transfer saved: {name} ({size})',
   },
   expenses: {
     title: 'Expenses',

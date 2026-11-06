@@ -881,7 +881,8 @@ export function EndSessionDialog({
           <Button onClick={onClose}>
             {t('common.cancel')} <Kbd>Esc</Kbd>
           </Button>
-          {endpay && (
+          {/* 0.28.0: a prepaid PC whose products are still on the bill can be left to collect later too. */}
+          {(endpay || (session.billingMode === 'prepaid' && ordersCents > 0)) && (
             <Button
               variant="ghost"
               size="lg"

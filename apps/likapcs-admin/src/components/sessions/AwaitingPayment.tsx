@@ -299,7 +299,9 @@ export function CollectDialog({
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   // Fixed when the session ended: used time capped at the reservation, or the full reservation.
-  const due = session.finalPriceCents ?? session.currentPriceCents;
+  // 0.28.0: a prepaid PC's time was paid at the start, so only its products are due.
+  const due =
+    session.billingMode === 'prepaid' ? 0 : (session.finalPriceCents ?? session.currentPriceCents);
   const reserved = session.quotedPriceCents ?? due;
   const ordersCents = session.openOrdersCents;
   const [discount, setDiscount] = useState('');

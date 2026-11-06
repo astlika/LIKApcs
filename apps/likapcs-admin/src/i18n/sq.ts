@@ -172,6 +172,18 @@ export const sq: Dictionary = {
   setup: {
     title: 'Mirë se vini në LIKApcs',
     subtitle: 'Le ta konfigurojmë stacionin tuaj të lojërave në dy hapa të shkurtër.',
+    importOpen: 'Ose importo një transferim nga USB',
+    importTitle: 'Importo një transferim nga një PC tjetër',
+    importHelp:
+      'Zgjidhni skedarin e transferimit nga USB dhe shkruani kodin 4-shifror. PC-të e lojës duhen miratuar përsëri pas importit.',
+    importFile: 'Skedari i transferimit',
+    importCode: 'Kodi 4-shifror',
+    importStart: 'Importo',
+    importWrongCode: 'Kodi nuk është i saktë, ose skedari është i dëmtuar.',
+    importVersionNewer:
+      'Ky skedar u krijua me një version më të ri të LIKApcs. Instaloni fillimisht at version.',
+    importDone: 'Transferimi u importua. Hyni me llogarinë e pronarit nga PC-ja e vjetër.',
+    importContinue: 'Vazhdo te hyrja',
     stepBusiness: 'Biznesi',
     stepOwner: 'Llogaria e pronarit',
     businessName: 'Emri i biznesit',
@@ -534,6 +546,8 @@ export const sq: Dictionary = {
       pos_suspend: 'Pezullo dhe rikthe shitje',
       pos_reprint: 'Rishtyp kuponë dhe fatura',
       pos_adjust_paid: 'Ndrysho çmimin e faturës së paguar',
+      pos_staff_purchase:
+        'Regjistro blerje stafi (me çmim blerjeje, shpenzim i regjistruar, pa para në arkë)',
       invoices_view: 'Shiko faturat',
       invoices_manage: 'Lësho dhe menaxho fatura',
       products_view: 'Shiko produktet dhe stokun',
@@ -801,6 +815,17 @@ export const sq: Dictionary = {
     weekdays: { 1: 'Hën', 2: 'Mar', 3: 'Mër', 4: 'Enj', 5: 'Pre', 6: 'Sht', 7: 'Die' },
   },
   pos: {
+    offlineDeviceAsk: 'Shkruani numrin e kësaj PC-je për shitjet offline (p.sh. PC2):',
+    offlineDeviceLabel: 'Numri i PC-së',
+    offlineDeviceInvalid: 'Numri i PC-së duhet të jetë si PC2',
+    offlinePending: 'Shitje offline në pritje për t’u dërguar: {count}',
+    offlineFailedUnknown: 'Refuzuar nga serveri',
+    offlineRemove: 'Hiq nga lista',
+    offlineSaved: 'Shitja u ruajt offline me numrin {number}. Do të dërgohet kur të rilidhet serveri.',
+    offlineNoDevice: 'Vendosni numrin e kësaj PC-je para shitjes offline.',
+    offlineNoCustomer: 'Shitja offline nuk lejon klient me borxh apo pagesë më vonë.',
+    offlineItems: 'Shitja offline pranon vetëm produkte.',
+    offlineNoPrice: 'Shitja offline nuk ka çmim për produktin.',
     pcLabel: 'PC',
     pcNone: 'Shitje e zakonshme',
     pcTagPaid: 'e paguar',
@@ -857,15 +882,15 @@ export const sq: Dictionary = {
     staffTag: 'Staf',
     staffBannerTitle: 'Blerje e stafit',
     staffBanner:
-      'Artikujt me çmim blerjeje, koha e PC-së falas, pa pagesë me para. Stoku del dhe regjistrohet si dalje.',
+      'Artikujt me çmim blerjeje. Asnjë pagesë nuk hyn në arkë; stoku del dhe regjistrohet një shpenzim.',
     staffNoFreeItems:
-      'Hiqni më parë artikujt e lirë: blerja e stafit merr vetëm artikuj nga stoku dhe kohë PC-je.',
+      'Hiqni më parë kohën e PC-së dhe artikujt e lirë: blerja e stafit merr vetëm artikuj nga stoku.',
     staffFree: 'falas',
     staffCostTotal: 'Totali me çmim blerjeje',
     staffConfirmTitle: 'Blerje e stafit',
     staffConfirmHint:
-      'Asnjë pagesë me para. Stoku del dhe blerja regjistrohet si dalje për këtë përdorues, me datën dhe orën.',
-    staffRecord: 'Regjistro daljen',
+      'Asnjë pagesë nuk hyn në arkë. Stoku del dhe regjistrohet një shpenzim me kategorinë "Blerja e stafit", me datën dhe orën.',
+    staffRecord: 'Regjistro blerjen e stafit',
     staffNoPark: 'Blerja e stafit nuk mund të mbahet në pritje. Regjistroni ose hiqni.',
     staffRecorded: 'Blerja e stafit u regjistrua',
     staffReport: 'Blerjet e stafit',
@@ -1074,6 +1099,10 @@ export const sq: Dictionary = {
     deleteCategoryBody: 'Produktet e kësaj kategorie mbeten pa kategori.',
   },
   sales: {
+    offlineTag: 'Offline',
+    offlineHint: 'Shitur offline; numri lokal i PC-së',
+    priceChangedTag: 'Çmimi u ndryshua',
+    priceChangedHint: 'Çmimi në momentin e shitjes ndryshe nga çmimi në server',
     title: 'Shitjet',
     subtitle: '{count} shitje · {total} · rimbursuar {refunded}',
     kindLabel: 'Lloji',
@@ -2321,6 +2350,20 @@ export const sq: Dictionary = {
     safetyCopy: 'Kopja e sigurisë u bë',
     sessionLost:
       'Llogaria juaj nuk ekziston në të dhënat e rikthyera — hyni sërish me një llogari të asaj kohe.',
+    transferTitle: 'Transferim në PC tjetër (USB)',
+    transferOpen: 'Eksporto në USB',
+    transferHelp:
+      'Kopjon të gjitha të dhënat në një skedar të vetëm në USB, të enkriptuar me një kod 4-shifror. Skedari nuk hapet pa kodin. PC-të e lojës (pajisjet) nuk transferohen: në PC-në e re duhen miratuar përsëri. PC-ja e re duhet të ketë të njëjtën version të LIKApcs ose një më të re.',
+    transferFolder: 'Dosja në USB (p.sh. E:\\)',
+    transferFolderHint: 'Lidheni USB-në më parë dhe shkruani dosjen e saj.',
+    transferCode: 'Kodi 4-shifror',
+    transferCodeAgain: 'Përsëritni kodin 4-shifror',
+    transferCodeMismatch: 'Dy kodet nuk përputhen.',
+    transferCodeHint: 'Shkruajeni kodin dhe mbajeni larg USB-së. Ka vetëm 10.000 kode të mundshme.',
+    transferSessionsHint:
+      'Mbyllni çdo seancë loje që po zhvillohet para eksportit. Kopja refuzohet kur ka seancë aktive ose në pauzë.',
+    transferStart: 'Eksporto tani',
+    transferDone: 'Transferimi u ruajt: {name} ({size})',
   },
   expenses: {
     title: 'Shpenzimet',

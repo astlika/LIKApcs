@@ -366,11 +366,17 @@ export class SessionsService {
     else if (row.billing_mode === 'postpaid') currentPrice = priceForSeconds(seconds, terms);
     // Prepaid: what was paid. End pay: what will be due (the reserved amount).
     else currentPrice = Number(row.quoted_price_cents ?? 0);
+    // 0.28.0: a prepaid PC whose ended session still has products on its bill waits at the desk
+    // too (the time was paid at the start, so only the products are due).
     const awaitingPayment =
-      (row.billing_mode === 'endpay' || row.billing_mode === 'postpaid') &&
-      !live &&
-      row.status !== 'cancelled' &&
-      row.billed_at === null;
+      ((row.billing_mode === 'endpay' || row.billing_mode === 'postpaid') &&
+        !live &&
+        row.status !== 'cancelled' &&
+        row.billed_at === null) ||
+      (row.billing_mode === 'prepaid' &&
+        !live &&
+        row.status !== 'cancelled' &&
+        Number(row.open_orders_cents ?? 0) > 0);
     return {
       id: row.id,
       stationId: row.station_id,
@@ -455,7 +461,9 @@ export class SessionsService {
     }
     if (query.awaitingPayment)
       where.push(
-        `g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed')`,
+        `((g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed'))
+           OR (g.billing_mode = 'prepaid' AND g.status IN ('expired', 'completed')
+               AND EXISTS (SELECT 1 FROM station_orders o WHERE o.session_id = g.id AND o.status = 'accepted')))`,
       );
     if (query.from) {
       params.push(query.from);
@@ -1403,7 +1411,9 @@ export class SessionsService {
         }
       } else {
         // 0.19.4: a bulk stop leaves the orders open on the bill (nothing is charged now).
-        if (orderLines.length && this.orders && !req.parkForDesk) {
+        const ordersDueCents = orderLines.reduce((acc, l) => acc + l.lineTotalCents, 0);
+        const payNowOrders = !!req.payments && req.payments.length > 0;
+        if (orderLines.length && this.orders && !req.parkForDesk && payNowOrders) {
           // Prepaid time was paid at the start; only the orders are billed now.
           const sale = await this.recordSale(client, {
             sessionId: id,
@@ -1436,6 +1446,10 @@ export class SessionsService {
           endedAt: at.toISOString(),
           billableSeconds: seconds,
           unusedSeconds: Math.max(0, (row.planned_seconds ?? 0) - seconds),
+          // Products still on the bill wait at the desk (collected later, the time stays paid).
+          ...(orderLines.length && !payNowOrders
+            ? { awaitingPayment: true, dueCents: ordersDueCents }
+            : {}),
         });
       }
       await recordAudit(client, actor, {
@@ -1812,14 +1826,22 @@ export class SessionsService {
     const row = await this.lock(client, id);
     await lockCustomers(client, row.customer_id, req.customerId);
     // 0.19.4: a postpaid bill parked by a bulk stop waits at the desk too.
-    if (row.billing_mode !== 'endpay' && row.billing_mode !== 'postpaid')
+    // 0.28.0: a prepaid PC collects only its products (the time was paid at the start).
+    const prepaid = row.billing_mode === 'prepaid';
+    if (!prepaid && row.billing_mode !== 'endpay' && row.billing_mode !== 'postpaid')
       throw conflict('Only pay-at-the-end sessions are collected at the desk');
     if (row.status === 'active' || row.status === 'paused')
       throw conflict('Session is still running — end it first');
     if (row.status === 'cancelled') throw conflict('Session was cancelled; nothing to collect');
-    if (row.billed_at) throw conflict('Session is already paid');
+    if (!prepaid && row.billed_at) throw conflict('Session is already paid');
     const orderLines = this.orders ? await this.orders.openLinesForSession(client, id) : [];
     const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
+    if (prepaid) {
+      if (orderLines.length === 0)
+        throw conflict('Nothing to collect: the time was paid at the start');
+      if (req.discountCents > 0)
+        throw badRequest('A discount applies to time, not to products on a prepaid bill');
+    }
     if (req.customerId && req.customerId !== row.customer_id) {
       const found = await client.query<{ status: string }>(
         'SELECT status FROM customers WHERE id = $1',
@@ -1835,7 +1857,7 @@ export class SessionsService {
     }
     // The amount due was fixed when the session ended (used time capped at the reservation, or
     // the full reservation when it ran out); a discount already applied at the end stays.
-    const due = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+    const due = prepaid ? 0 : Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
     if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
       throw forbidden('Missing permission: pos.discount');
     if (req.discountCents > due) throw badRequest('Discount exceeds the amount due');
@@ -1843,7 +1865,8 @@ export class SessionsService {
     const sale = await this.recordSale(client, {
       sessionId: id,
       description: describe(row, row.billable_seconds ?? 0),
-      priceCents: due,
+      // A prepaid bill has no session line: only its products are sold.
+      priceCents: prepaid ? null : due,
       discountCents: req.discountCents,
       tenders: req,
       customerId: row.customer_id,
@@ -1856,17 +1879,22 @@ export class SessionsService {
       await this.orders.markBilled(client, orderIds, sale.saleId, actor);
       billedOrders = orderIds;
     }
-    const updated = await client.query(
-      `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4, billed_at = $5,
-       notes = COALESCE($6, notes), version = version + 1
-     WHERE id = $1 AND billed_at IS NULL`,
-      [id, req.discountCents, final, sale.saleId, at, req.notes ?? null],
-    );
-    if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
-    if (req.discountCents > 0)
-      await this.addEvent(client, id, 'discount_applied', actor, {
-        discountCents: req.discountCents,
-      });
+    if (prepaid) {
+      // The session keeps its paid time; the products are settled on their own receipt.
+      await client.query('UPDATE gaming_sessions SET version = version + 1 WHERE id = $1', [id]);
+    } else {
+      const updated = await client.query(
+        `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4, billed_at = $5,
+         notes = COALESCE($6, notes), version = version + 1
+       WHERE id = $1 AND billed_at IS NULL`,
+        [id, req.discountCents, final, sale.saleId, at, req.notes ?? null],
+      );
+      if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
+      if (req.discountCents > 0)
+        await this.addEvent(client, id, 'discount_applied', actor, {
+          discountCents: req.discountCents,
+        });
+    }
     await this.addEvent(client, id, 'billed', actor, {
       saleId: sale.saleId,
       receiptNo: sale.receiptNo,

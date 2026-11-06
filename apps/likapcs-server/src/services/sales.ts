@@ -14,6 +14,8 @@ import {
   settlePayments,
   SaleMathError,
   type CreateSaleRequest,
+  syncSaleItemSchema,
+  type SyncSaleResult,
   type FreeSaleItemInput,
   type ReceiptData,
   type SessionQuoteRequest,
@@ -35,7 +37,7 @@ import {
 import { millsToCents, multiplyMillsByQuantity } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ACTIVE_PROMO_SQL } from './ads.js';
 import { applyMovement } from './catalog.js';
@@ -77,6 +79,8 @@ export interface SaleActor extends AuditActor {
 interface SaleRow {
   id: string;
   receipt_no: string | null;
+  local_number: string | null;
+  price_changed: boolean;
   status: SaleSummary['status'];
   source: SaleSummary['source'];
   customer_id: string | null;
@@ -99,7 +103,7 @@ interface SaleRow {
 }
 
 const SALE_SELECT = `
-  SELECT s.id, s.receipt_no, s.status, s.source, s.customer_id, c.name AS customer_name, s.cashier_user_id,
+  SELECT s.id, s.receipt_no, s.local_number, s.price_changed, s.status, s.source, s.customer_id, c.name AS customer_name, s.cashier_user_id,
          u.full_name AS cashier_name, s.subtotal_cents::text, s.discount_cents::text, s.tax_cents::text,
          s.total_cents::text, s.paid_cents::text, s.change_cents::text, s.refunded_cents::text,
          (SELECT count(*) FROM sale_items i WHERE i.sale_id = s.id)::text AS item_count,
@@ -158,6 +162,8 @@ function mapSale(row: SaleRow): SaleSummary {
   return {
     id: row.id,
     receiptNo: row.receipt_no,
+    localNumber: row.local_number,
+    priceChanged: row.price_changed,
     status: row.status,
     source: row.source,
     customerId: row.customer_id,
@@ -178,6 +184,40 @@ function mapSale(row: SaleRow): SaleSummary {
     createdAt: row.created_at.toISOString(),
     completedAt: row.completed_at?.toISOString() ?? null,
   };
+}
+
+/**
+ * Punkti 4 (0.28.0): what an offline sale may contain. Anything that needs the live server
+ * (a customer tab, pay-later, time, free-typed items, a staff purchase) is refused here, so
+ * the PC never queues something the server cannot settle later.
+ */
+function assertOfflineRules(input: CreateSaleRequest): void {
+  if (!input.offline) return;
+  if (input.clientRequestId === undefined) {
+    throw badRequest('An offline sale needs a clientRequestId', { code: 'OFFLINE_ID' });
+  }
+  if (input.customerId) {
+    throw badRequest('An offline sale cannot use a customer tab', { code: 'OFFLINE_CUSTOMER' });
+  }
+  if (input.staff) {
+    throw badRequest('A staff purchase cannot be made offline', { code: 'OFFLINE_STAFF' });
+  }
+  if (input.payments.some((p) => p.method === 'credit' || p.method === 'staff')) {
+    throw badRequest('An offline sale cannot be paid later or with the staff tender', {
+      code: 'OFFLINE_PAYMENT',
+    });
+  }
+  const priced = new Set(input.offline.unitPrices.map((u) => u.productId));
+  for (const item of input.items) {
+    if (!('productId' in item)) {
+      throw badRequest('An offline sale takes product lines only', { code: 'OFFLINE_ITEMS' });
+    }
+    if (!priced.has(item.productId)) {
+      throw badRequest('Every product of an offline sale needs its unit price', {
+        code: 'OFFLINE_PRICES',
+      });
+    }
+  }
 }
 
 export class SalesService {
@@ -466,6 +506,13 @@ export class SalesService {
 
   /** Completes a sale (items + payments) in one transaction. */
   async create(input: CreateSaleRequest, actor: SaleActor): Promise<SaleDetail> {
+    // 0.28.0: a staff purchase is not a sale any more; it is recorded with POST /staff-purchases.
+    if (input.staff || input.payments.some((p) => p.method === 'staff')) {
+      throw badRequest('A staff purchase is recorded with POST /staff-purchases', {
+        code: 'STAFF_MOVED',
+      });
+    }
+    if (input.offline) assertOfflineRules(input);
     if (input.clientRequestId) {
       const existing = await this.pool.query<{ id: string }>(
         'SELECT id FROM sales WHERE client_request_id = $1',
@@ -476,6 +523,95 @@ export class SalesService {
     return withTransaction(this.pool, async (client) =>
       this.createInTransaction(client, input, actor),
     );
+  }
+
+  /**
+   * Punkti 4 (0.28.0): syncs the sales a PC made offline, one transaction per sale, in order.
+   * A sale that already reached the server (same clientRequestId) is reported as `duplicate`
+   * and nothing is written again. A failed sale does not stop the others; it is reported with
+   * its reason so the PC can show it for review.
+   */
+  async syncOffline(rawSales: unknown[], actor: SaleActor): Promise<SyncSaleResult[]> {
+    const results: SyncSaleResult[] = [];
+    for (const raw of rawSales) {
+      const parsed = syncSaleItemSchema.safeParse(raw);
+      if (!parsed.success) {
+        const id = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        results.push({
+          clientRequestId: typeof id.clientRequestId === 'string' ? id.clientRequestId : '',
+          localNumber:
+            typeof (id.offline as Record<string, unknown> | undefined)?.localNumber === 'string'
+              ? String((id.offline as Record<string, unknown>).localNumber)
+              : '',
+          status: 'failed',
+          saleId: null,
+          receiptNo: null,
+          priceChanged: false,
+          error: {
+            code: 'INVALID_SALE',
+            message: parsed.error.issues
+              .map((i) => `${i.path.join('.') || 'sale'}: ${i.message}`)
+              .join('; '),
+          },
+        });
+        continue;
+      }
+      const sale = parsed.data as CreateSaleRequest;
+      const offline = sale.offline!;
+      const clientRequestId = sale.clientRequestId!;
+      const base = {
+        clientRequestId,
+        localNumber: offline.localNumber,
+        saleId: null,
+        receiptNo: null,
+        priceChanged: false,
+      };
+      try {
+        const existing = await this.pool.query<{ id: string }>(
+          'SELECT id FROM sales WHERE client_request_id = $1',
+          [clientRequestId],
+        );
+        if (existing.rows[0]) {
+          const done = await this.getById(existing.rows[0].id);
+          results.push({
+            ...base,
+            status: 'duplicate',
+            saleId: done.id,
+            receiptNo: done.receiptNo,
+            error: null,
+          });
+          continue;
+        }
+        const created = await this.create(sale, actor);
+        const priced = await this.pool.query<{ price_changed: boolean }>(
+          'SELECT price_changed FROM sales WHERE id = $1',
+          [created.id],
+        );
+        results.push({
+          ...base,
+          status: 'created',
+          saleId: created.id,
+          receiptNo: created.receiptNo,
+          priceChanged: priced.rows[0]?.price_changed ?? false,
+          error: null,
+        });
+      } catch (err) {
+        if (err instanceof AppError) {
+          results.push({
+            ...base,
+            status: 'failed',
+            // The business reason (details.code, e.g. OFFLINE_PRICES) is more useful than the HTTP class.
+            error: {
+              code: (err.details as { code?: string } | undefined)?.code ?? err.code,
+              message: err.message,
+            },
+          });
+        } else {
+          throw err;
+        }
+      }
+    }
+    return results;
   }
 
   /**
@@ -500,6 +636,27 @@ export class SalesService {
     // deadlocking on the receipt number.
     await lockCustomers(client, input.customerId);
     const saleId = await this.insertSaleShell(client, input, actor, 'completed');
+    const offline = input.offline;
+    if (offline) {
+      await client
+        .query(
+          `UPDATE sales SET local_number = $2, device_code = $3, offline_created_at = $4
+            WHERE id = $1`,
+          [saleId, offline.localNumber, offline.deviceCode, offline.createdAt],
+        )
+        .catch((err: { code?: string }) => {
+          if (err.code === '23505')
+            throw conflict('This local number was already synced', {
+              field: 'localNumber',
+              code: 'LOCAL_NUMBER_TAKEN',
+            });
+          throw err;
+        });
+    }
+    // The prices the cashier saw win over the live prices (see `assertOfflineRules`).
+    const fixedPrices = offline
+      ? new Map(offline.unitPrices.map((u) => [u.productId, u.unitPriceCents]))
+      : opts.fixedPrices;
     const claimPins: ClaimPin[] = [];
     await this.fillAndComplete(
       client,
@@ -507,9 +664,10 @@ export class SalesService {
       input,
       input.payments,
       actor,
-      opts.fixedPrices,
+      fixedPrices,
       input.staff,
       claimPins,
+      Boolean(offline),
     );
     const sale = await this.getById(saleId, client);
     return claimPins.length > 0 ? { ...sale, claimPins } : sale;
@@ -1035,6 +1193,7 @@ export class SalesService {
     fixedPrices?: Map<string, number>,
     staff = false,
     claimPins: ClaimPin[] = [],
+    offline = false,
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
@@ -1126,8 +1285,22 @@ export class SalesService {
         referenceType: 'sale',
         referenceId: saleId,
         actorUserId: actor.userId,
-        allowNegative: p.allow_negative_stock,
+        // An offline sale already left the shelf: the stock may go below zero until it is counted.
+        allowNegative: p.allow_negative_stock || offline,
       });
+    }
+    if (offline && fixedPrices) {
+      // Punkti 4: the price the cashier saw differs from the price on the server now → flag it.
+      const changed = input.items.some((item) => {
+        if (!('productId' in item)) return false;
+        const p = products.get(item.productId);
+        if (!p) return false;
+        return (
+          fixedPrices.get(item.productId) !== Number(p.promo_price_cents ?? p.selling_price_cents)
+        );
+      });
+      if (changed)
+        await client.query('UPDATE sales SET price_changed = true WHERE id = $1', [saleId]);
     }
     const now = new Date();
     const receiptNo = await nextDocumentNumber(client, 'receipt', now);

@@ -246,6 +246,23 @@ export function SalesPage() {
                 >
                   <td className="mono">
                     {s.receiptNo ?? <span className="faint">—</span>}
+                    {s.localNumber && (
+                      <span
+                        className="faint"
+                        title={t('sales.offlineHint')}
+                        style={{ marginLeft: 6, fontSize: 12 }}
+                      >
+                        {s.localNumber} · {t('sales.offlineTag')}
+                      </span>
+                    )}
+                    {s.priceChanged && (
+                      <span
+                        title={t('sales.priceChangedHint')}
+                        style={{ marginLeft: 6, fontSize: 12, color: '#f59e0b' }}
+                      >
+                        ⚠ {t('sales.priceChangedTag')}
+                      </span>
+                    )}
                     {s.source !== 'retail' && (
                       <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
                         {t(`sales.source.${s.source}` as 'sales.source.retail')}

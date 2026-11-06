@@ -44,10 +44,21 @@ import {
   type SaleDetail,
   type SalesListResponse,
   type SessionSummary,
+  type StaffPurchaseSummary,
   type StationOrder,
 } from '@likapcs/shared';
 import { api, ApiError, fileUrl } from '../lib/api';
 import { usePosFlags } from '../lib/pos-flags';
+import { getLiveStatus } from '../lib/live-status';
+import {
+  getOfflineSnapshot,
+  OfflineRefusedError,
+  queueOfflineSale,
+  type OfflineSaleDraft,
+  type QueuedSale,
+} from '../lib/offline-sales';
+import { OfflineQueueBar } from '../components/pos/OfflineQueueBar';
+import { printOfflineSlip } from '../lib/offline-receipt';
 import {
   addFreeItem,
   addTimeItem,
@@ -107,7 +118,12 @@ async function fetchPcTargets(): Promise<PcTarget[]> {
     .map((x) => ({
       sessionId: x.id,
       label: x.customerName ? `${x.stationName} · ${x.customerName}` : x.stationName,
-      billed: x.billedAt !== null,
+      // 0.28.0: a prepaid PC's time is paid, but its products can still wait: "later" is open while
+      // it runs, and once it has ended its products are paid at the desk.
+      billed:
+        x.billingMode === 'prepaid'
+          ? x.status !== 'active' && x.status !== 'paused'
+          : x.billedAt !== null,
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
 }
@@ -127,9 +143,12 @@ export function PosPage() {
   const queryClient = useQueryClient();
   const display = useCustomerDisplay();
   const walletEnabled = useAppSettings()['wallet.enabled'];
+  const shopName = useAppSettings()['business.name'];
   const [params, setParams] = useSearchParams();
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canSuspend = can(PERMISSIONS.POS_SUSPEND);
+  // 0.28.0: a staff purchase is optional and only for the roles given pos.staff_purchase.
+  const canStaff = can(PERMISSIONS.POS_STAFF_PURCHASE);
 
   // The draft sale lives in PosCartProvider so it survives switching pages (F9 Stations ↔ POS).
   const {
@@ -221,13 +240,13 @@ export function PosPage() {
     focusSearch();
   }, [focusSearch, setCart, setCustomer, setResumedId]);
 
-  // Staff purchase (0.20.7): on, the sale is priced at purchase cost, no discounts and no customer;
-  // a free item cannot go on it (the server would charge its typed price), so the toggle refuses.
+  // Staff purchase (0.20.7, 0.28.0): on, the items are taken at purchase cost, with no discounts and
+  // no customer. Only stock items can go on it: a free item or PC time is refused.
   const toggleStaff = useCallback(() => {
     if (cart.staff) {
       setCart((c) => ({ ...c, staff: false }));
     } else {
-      if (cart.lines.some((l) => l.kind === 'free')) {
+      if (cart.lines.some((l) => l.kind !== 'product')) {
         toast.error(t('pos.staffNoFreeItems'));
         return;
       }
@@ -470,6 +489,7 @@ export function PosPage() {
   return (
     <div className="pos">
       <section className="pos__catalog">
+        <OfflineQueueBar />
         <div className="pos__search">
           <ScanLine size={18} className="muted" />
           <input
@@ -608,18 +628,20 @@ export function PosPage() {
                 <Clock size={14} />
               </Button>
             )}
-            <Button
-              size="sm"
-              variant={cart.staff ? 'primary' : 'ghost'}
-              aria-pressed={!!cart.staff}
-              onClick={toggleStaff}
-              disabled={!!cart.pc}
-              data-testid="pos-staff-toggle"
-              title={t('pos.staffPurchase')}
-              aria-label={t('pos.staffPurchase')}
-            >
-              <Users size={14} />
-            </Button>
+            {canStaff && (
+              <Button
+                size="sm"
+                variant={cart.staff ? 'primary' : 'ghost'}
+                aria-pressed={!!cart.staff}
+                onClick={toggleStaff}
+                disabled={!!cart.pc}
+                data-testid="pos-staff-toggle"
+                title={t('pos.staffPurchase')}
+                aria-label={t('pos.staffPurchase')}
+              >
+                <Users size={14} />
+              </Button>
+            )}
           </div>
         </header>
         {cart.staff && (
@@ -902,19 +924,14 @@ export function PosPage() {
             setDialog(null);
             focusSearch();
           }}
-          onCompleted={(sale, receiptData) => {
+          onCompleted={() => {
+            // No receipt and no money: the stock and the expenses are what changed.
             setDialog(null);
-            setReceipt({ ...receiptData, claimPins: sale.claimPins });
-            // The customer's debt and balance moved: every view of them refetches.
-            void queryClient.invalidateQueries({ queryKey: ['customers'] });
-            display.setDone({
-              receiptNo: sale.receiptNo,
-              totalCents: 0,
-              paidCents: 0,
-              changeCents: 0,
-              creditCents: 0,
-              customer: null,
-            });
+            resetCart();
+            void queryClient.invalidateQueries({ queryKey: ['products'] });
+            void queryClient.invalidateQueries({ queryKey: ['expenses'] });
+            void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            focusSearch();
           }}
         />
       )}
@@ -931,6 +948,13 @@ export function PosPage() {
           }}
           onClose={() => {
             setDialog(null);
+            focusSearch();
+          }}
+          onOffline={(queued) => {
+            setDialog(null);
+            resetCart();
+            toast.success(t('pos.offlineSaved', { number: queued.localNumber }));
+            printOfflineSlip(queued, shopName);
             focusSearch();
           }}
           onCompleted={(sale, receiptData) => {
@@ -1145,23 +1169,26 @@ function StaffPurchaseDialog({
   cart: Cart;
   totalCents: number;
   onClose: () => void;
-  onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
+  onCompleted: () => void;
 }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
   const complete = useMutation({
-    mutationFn: async () => {
-      const sale = await api<SaleDetail>('/sales', {
+    mutationFn: () =>
+      api<StaffPurchaseSummary>('/staff-purchases', {
         method: 'POST',
-        body: { ...cartToRequest(cart), discountCents: 0, staff: true, payments: [] },
-      });
-      const receipt = await api<ReceiptData>(`/sales/${sale.id}/receipt`);
-      return { sale, receipt };
-    },
-    onSuccess: ({ sale, receipt }) => {
+        body: {
+          items: cart.lines.flatMap((l) =>
+            l.kind === 'product'
+              ? [{ productId: l.product.id, quantityMilli: l.quantityMilli }]
+              : [],
+          ),
+        },
+      }),
+    onSuccess: () => {
       toast.success(t('pos.staffRecorded'));
-      onCompleted(sale, receipt);
+      onCompleted();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
@@ -1253,6 +1280,9 @@ function focusDialogCustomer(modes: TenderMode[]): void {
 }
 
 // ─── Payment dialog ────────────────────────────────────────────────────────────
+/** A payment either completed the sale on the server, or was queued offline (Punkti 4). */
+type CompletedOrOffline = { sale: SaleDetail; receipt: ReceiptData } | { offline: QueuedSale };
+
 function PaymentDialog({
   cart,
   resumedId,
@@ -1261,6 +1291,7 @@ function PaymentDialog({
   onCustomerChange,
   onClose,
   onCompleted,
+  onOffline,
   startMode = 'cash',
 }: {
   cart: Cart;
@@ -1271,6 +1302,8 @@ function PaymentDialog({
   onCustomerChange: (customer: CustomerSummary | null) => void;
   onClose: () => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
+  /** Punkti 4: no connection, so the sale waits in the offline queue with its own number. */
+  onOffline: (queued: QueuedSale) => void;
   /** 0.20.8: the first mode of the dialog ("Add to debt" opens on pay later). */
   startMode?: TenderMode;
 }) {
@@ -1308,8 +1341,37 @@ function PaymentDialog({
   ]);
   useEffect(() => () => reportTender(null), [reportTender]);
 
+  // Punkti 4 (0.28.0): a sale made while this PC cannot reach the server waits in the offline
+  // queue with its own number. Anything the server could not settle later is refused here.
+  const queueOffline = (request: OfflineSaleDraft['request']): QueuedSale => {
+    if (!getOfflineSnapshot().deviceCode) throw new OfflineRefusedError(t('pos.offlineNoDevice'));
+    if (cart.lines.some((l) => l.kind !== 'product')) {
+      throw new OfflineRefusedError(t('pos.offlineItems'));
+    }
+    if (
+      request.customerId ||
+      request.payments.some((p) => p.method === 'credit' || p.method === 'wallet')
+    ) {
+      throw new OfflineRefusedError(t('pos.offlineNoCustomer'));
+    }
+    const unitPrices = cart.lines.flatMap((l) =>
+      l.kind === 'product'
+        ? [{ productId: l.product.id, unitPriceCents: unitPriceOf(l.product) }]
+        : [],
+    );
+    const lines = cart.lines.flatMap((l) => {
+      if (l.kind !== 'product') return [];
+      const unit = unitPriceOf(l.product);
+      const lineCents = Math.max(0, Math.round((unit * l.quantityMilli) / 1000) - l.discountCents);
+      return [
+        { name: l.product.name, quantityMilli: l.quantityMilli, unitPriceCents: unit, lineCents },
+      ];
+    });
+    return queueOfflineSale({ request, unitPrices, lines, totalCents });
+  };
+
   const complete = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<CompletedOrOffline> => {
       if (cart.pc) {
         // Paid now at the till; the lines go on the PC's bill as a paid order.
         const order = await api<StationOrder>(`/sessions/${cart.pc.sessionId}/orders`, {
@@ -1322,14 +1384,37 @@ function PaymentDialog({
         return { sale, receipt };
       }
       const body = { ...cartToRequest(cart), payments: tender.payments };
-      const sale = resumedId
-        ? await api<SaleDetail>(`/sales/${resumedId}/complete`, { method: 'POST', body })
-        : await api<SaleDetail>('/sales', { method: 'POST', body });
+      if (!resumedId && getLiveStatus() !== 'connected') {
+        return { offline: queueOffline(body as OfflineSaleDraft['request']) };
+      }
+      let sale: SaleDetail;
+      try {
+        sale = resumedId
+          ? await api<SaleDetail>(`/sales/${resumedId}/complete`, { method: 'POST', body })
+          : await api<SaleDetail>('/sales', { method: 'POST', body });
+      } catch (err) {
+        // The connection broke during the sale: it goes to the queue with the same
+        // clientRequestId, so a retry can never sell twice (the server answers `duplicate`).
+        if (!resumedId && err instanceof ApiError && err.status === 0) {
+          return { offline: queueOffline(body as OfflineSaleDraft['request']) };
+        }
+        throw err;
+      }
       const receipt = await api<ReceiptData>(`/sales/${sale.id}/receipt`);
       return { sale, receipt };
     },
-    onSuccess: ({ sale, receipt }) => onCompleted(sale, receipt),
+    onSuccess: (res) => {
+      if ('offline' in res) {
+        onOffline(res.offline);
+        return;
+      }
+      onCompleted(res.sale, res.receipt);
+    },
     onError: (err) => {
+      if (err instanceof OfflineRefusedError) {
+        toast.error(err.message);
+        return;
+      }
       if (shiftGuard.handle(err, () => complete.mutate())) return;
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },

@@ -232,7 +232,6 @@ export class BackupService {
     await fsp.mkdir(this.backupDir, { recursive: true });
     const startedAt = new Date();
     const timeZone = await this.settings.get('locale.timezone');
-    const businessName = await this.settings.get('business.name');
     const key = await this.keys.currentKey();
     const baseName = `likapcs-${kind}-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}`;
     const fileName = key ? `${baseName}${ENCRYPTED_EXTENSION}` : baseName;
@@ -244,6 +243,67 @@ export class BackupService {
     );
     const id = inserted[0]!.id;
     const tmpDir = await fsp.mkdtemp(path.join(this.backupDir, '.tmp-'));
+    try {
+      const { plainArchive, tables } = await this.dumpPlainArchive(tmpDir, {
+        kind,
+        startedAt,
+        timeZone,
+        fileName,
+        encrypted: key !== null,
+      });
+      if (key) await encryptFile(plainArchive, finalPath, key.key, key.salt);
+      else await fsp.rename(plainArchive, finalPath);
+      const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
+      await this.pool.query(
+        `UPDATE backup_history
+            SET status = 'succeeded', size_bytes = $2, sha256 = $3, finished_at = now()
+          WHERE id = $1`,
+        [id, stat.size, sha256],
+      );
+      if (actor) {
+        await recordAudit(this.pool, actor, {
+          action: 'backup.create',
+          entityType: 'backup',
+          entityId: id,
+          details: { kind, fileName, sizeBytes: stat.size, tables },
+        });
+      }
+      this.options.log?.info({ id, kind, fileName, sizeBytes: stat.size }, 'backup written');
+      await this.copyToExternal({ id, kind, fileName, finalPath, sha256 });
+      if (kind === 'scheduled') await this.applyRetention();
+      return this.get(id);
+    } catch (err) {
+      await fsp.rm(finalPath, { force: true }).catch(() => undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      await this.pool
+        .query(
+          `UPDATE backup_history SET status = 'failed', error_message = $2, finished_at = now()
+            WHERE id = $1`,
+          [id, message.slice(0, 1000)],
+        )
+        .catch(() => undefined);
+      this.options.log?.error({ err, id, kind }, 'backup failed');
+      throw err;
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Dumps every table (a consistent snapshot) and the uploads folder into a plain, unencrypted
+   * `.tar.gz` inside `tmpDir`. Shared by normal backups and USB transfers (0.27.5).
+   */
+  private async dumpPlainArchive(
+    tmpDir: string,
+    input: {
+      kind: BackupKind;
+      startedAt: Date;
+      timeZone: string;
+      fileName: string;
+      encrypted: boolean;
+    },
+  ): Promise<{ plainArchive: string; tables: number; manifest: BackupManifest }> {
+    const businessName = await this.settings.get('business.name');
     const client = await this.pool.connect();
     try {
       await fsp.mkdir(path.join(tmpDir, 'tables'));
@@ -265,18 +325,22 @@ export class BackupService {
       const manifest: BackupManifest = {
         format: BACKUP_FORMAT,
         formatVersion: BACKUP_FORMAT_VERSION,
-        createdAt: startedAt.toISOString(),
+        createdAt: input.startedAt.toISOString(),
         serverVersion: SERVER_VERSION,
         schemaVersion: this.options.schemaVersion(),
         businessName,
-        kind,
+        kind: input.kind,
         tables: manifestTables,
         uploads,
       };
       await fsp.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
       await fsp.writeFile(
         path.join(tmpDir, 'report.txt'),
-        buildReport(manifest, { timeZone, fileName, encrypted: key !== null }),
+        buildReport(manifest, {
+          timeZone: input.timeZone,
+          fileName: input.fileName,
+          encrypted: input.encrypted,
+        }),
       );
       const plainArchive = path.join(tmpDir, PLAIN_ARCHIVE);
       await tar.create({ gzip: true, file: plainArchive, cwd: tmpDir, portable: true }, [
@@ -285,43 +349,12 @@ export class BackupService {
         'tables',
         ...(uploads ? ['uploads'] : []),
       ]);
-      if (key) await encryptFile(plainArchive, finalPath, key.key, key.salt);
-      else await fsp.rename(plainArchive, finalPath);
-      const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
-      await this.pool.query(
-        `UPDATE backup_history
-            SET status = 'succeeded', size_bytes = $2, sha256 = $3, finished_at = now()
-          WHERE id = $1`,
-        [id, stat.size, sha256],
-      );
-      if (actor) {
-        await recordAudit(this.pool, actor, {
-          action: 'backup.create',
-          entityType: 'backup',
-          entityId: id,
-          details: { kind, fileName, sizeBytes: stat.size, tables: manifestTables.length },
-        });
-      }
-      this.options.log?.info({ id, kind, fileName, sizeBytes: stat.size }, 'backup written');
-      await this.copyToExternal({ id, kind, fileName, finalPath, sha256 });
-      if (kind === 'scheduled') await this.applyRetention();
-      return this.get(id);
+      return { plainArchive, tables: manifestTables.length, manifest };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
-      await fsp.rm(finalPath, { force: true }).catch(() => undefined);
-      const message = err instanceof Error ? err.message : String(err);
-      await this.pool
-        .query(
-          `UPDATE backup_history SET status = 'failed', error_message = $2, finished_at = now()
-            WHERE id = $1`,
-          [id, message.slice(0, 1000)],
-        )
-        .catch(() => undefined);
-      this.options.log?.error({ err, id, kind }, 'backup failed');
       throw err;
     } finally {
       client.release();
-      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
@@ -635,9 +668,15 @@ export class BackupService {
     id: string;
     actor: AuditActor;
     /** The caller's own session — re-created after the restore so they stay signed in. */
-    sessionId: string;
+    sessionId: string | null;
     /** Backup password, only needed for an encrypted archive this PC has no key for. */
     archivePassword?: string;
+    /**
+     * USB transfer (0.27.5): the archive comes from another PC. It must not be newer than this
+     * server, and the devices of the old PC are revoked (each PC is approved again) and every
+     * old login session is ended.
+     */
+    transfer?: boolean;
   }): Promise<RestoreResult> {
     const row = await this.row(input.id);
     if (row.status !== 'succeeded' || !row.file_path || !fs.existsSync(row.file_path)) {
@@ -655,6 +694,14 @@ export class BackupService {
       const manifest = parseManifest(
         await fsp.readFile(path.join(tmpDir, 'manifest.json'), 'utf8'),
       );
+      if (input.transfer && isNewerVersion(manifest.serverVersion, SERVER_VERSION)) {
+        throw new AppError(
+          409,
+          'TRANSFER_VERSION_NEWER',
+          `Ky transferim u krijua me LIKApcs ${manifest.serverVersion}; ky PC ka ${SERVER_VERSION}. Instaloni versionin e ri për të importuar.`,
+          { archiveVersion: manifest.serverVersion, serverVersion: SERVER_VERSION },
+        );
+      }
       const current = this.options.schemaVersion();
       if (manifest.schemaVersion !== current) {
         throw new AppError(
@@ -708,6 +755,17 @@ export class BackupService {
           rowsRestored += stream.rowCount;
         }
         await this.resetSequences(client);
+        if (input.transfer) {
+          // Devices belong to the PC that registered them: they are revoked here and must be
+          // approved again on this installation. Old login sessions end too.
+          await client.query(
+            `UPDATE station_devices SET status = 'revoked', token_hash = NULL, revoked_at = now()
+              WHERE status <> 'revoked'`,
+          );
+          await client.query(
+            'UPDATE user_sessions SET revoked_at = now() WHERE revoked_at IS NULL',
+          );
+        }
         for (const h of history) {
           const keys = Object.keys(h);
           await client.query(
@@ -739,7 +797,7 @@ export class BackupService {
           sessionKept = (rowCount ?? 0) > 0;
         }
         await recordAudit(client, input.actor, {
-          action: 'backup.restore',
+          action: input.transfer ? 'backup.transfer_import' : 'backup.restore',
           entityType: 'backup',
           entityId: input.id,
           severity: 'warning',
@@ -777,6 +835,100 @@ export class BackupService {
     } finally {
       this.busy = null;
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  // ─── USB transfer (0.27.5) ─────────────────────────────────────────────
+
+  /**
+   * Writes the whole system to `targetDir` (a USB stick or any folder) as ONE encrypted file whose
+   * key comes from a 4-digit code the owner chooses. Nothing is stored in the local backup list.
+   * Refused while a gaming session is still running or paused: the copy must be a clean stop.
+   */
+  async exportTransfer(input: {
+    code: string;
+    targetDir: string;
+    actor: AuditActor;
+  }): Promise<TransferExportResult> {
+    if (!TRANSFER_CODE_PATTERN.test(input.code)) {
+      throw badRequest('The transfer code must be exactly 4 digits');
+    }
+    const dir = path.resolve(input.targetDir.trim());
+    const dirStat = await fsp.stat(dir).catch(() => null);
+    if (!dirStat?.isDirectory()) {
+      throw new AppError(
+        400,
+        'TRANSFER_TARGET_MISSING',
+        'Dosja e destinacionit nuk ekziston. Lidhni USB-në dhe shkruani rrugën e saktë.',
+      );
+    }
+    const { rows: running } = await this.pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM gaming_sessions WHERE status IN ('active', 'paused')`,
+    );
+    if ((running[0]?.count ?? 0) > 0) {
+      throw new AppError(
+        409,
+        'TRANSFER_SESSIONS_RUNNING',
+        'Mbyllni të gjitha seancat aktive ose në pauzë para transferimit.',
+      );
+    }
+    this.acquire('backup');
+    try {
+      await fsp.mkdir(this.backupDir, { recursive: true });
+      const startedAt = new Date();
+      const timeZone = await this.settings.get('locale.timezone');
+      const fileName = `LIKApcs-transfer-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}${ENCRYPTED_EXTENSION}`;
+      const tmpDir = await fsp.mkdtemp(path.join(this.backupDir, '.transfer-'));
+      try {
+        const { plainArchive, tables } = await this.dumpPlainArchive(tmpDir, {
+          kind: 'manual',
+          startedAt,
+          timeZone,
+          fileName,
+          encrypted: true,
+        });
+        const { size } = await fsp.stat(plainArchive);
+        const free = await freeBytes(dir);
+        if (free < size + TRANSFER_SPACE_MARGIN_BYTES) {
+          throw new AppError(
+            409,
+            'TRANSFER_NOT_ENOUGH_SPACE',
+            `Nuk ka hapësirë të mjaftueshme në USB: nevojiten rreth ${formatBytes(size)}, ka ${formatBytes(free)}.`,
+            { neededBytes: size, freeBytes: free },
+          );
+        }
+        const salt = crypto.randomBytes(16);
+        const key = deriveKey(input.code, salt);
+        const target = path.join(dir, fileName);
+        const partial = `${target}.part`;
+        try {
+          await encryptFile(plainArchive, partial, key, salt);
+          await fsp.rename(partial, target);
+        } catch (err) {
+          await fsp.rm(partial, { force: true }).catch(() => undefined);
+          throw err;
+        }
+        const [sha256, stat] = await Promise.all([sha256Of(target), fsp.stat(target)]);
+        await recordAudit(this.pool, input.actor, {
+          action: 'backup.transfer_export',
+          entityType: 'backup',
+          entityId: null,
+          details: { fileName, sizeBytes: stat.size, tables },
+        });
+        this.options.log?.info({ fileName, sizeBytes: stat.size }, 'transfer archive written');
+        return {
+          fileName,
+          path: target,
+          sizeBytes: stat.size,
+          sha256,
+          tables,
+          createdAt: startedAt.toISOString(),
+        };
+      } finally {
+        await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    } finally {
+      this.busy = null;
     }
   }
 
@@ -1134,4 +1286,43 @@ function buildReport(
     '',
   ];
   return lines.join('\n');
+}
+
+/** A 4-digit transfer code (0000–9999). */
+export const TRANSFER_CODE_PATTERN = /^\d{4}$/;
+/** Free space kept on the USB stick on top of the archive itself. */
+const TRANSFER_SPACE_MARGIN_BYTES = 1024 * 1024;
+
+export interface TransferExportResult {
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  sha256: string;
+  tables: number;
+  createdAt: string;
+}
+
+/** Free bytes available to non-root users on the disk that holds `dir`. */
+export async function freeBytes(dir: string): Promise<number> {
+  const s = await fsp.statfs(dir);
+  return Number(s.bavail) * Number(s.bsize);
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
+}
+
+/** True when version `a` is strictly newer than `b` (dotted numbers, e.g. 0.27.5). */
+export function isNewerVersion(a: string, b: string): boolean {
+  const parse = (v: string) => v.split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return false;
 }

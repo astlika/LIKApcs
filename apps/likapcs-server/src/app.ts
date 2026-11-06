@@ -18,6 +18,7 @@ import { WakeService, type WakeSender } from './services/wake.js';
 import { PricingService } from './services/pricing.js';
 import { SessionsService } from './services/sessions.js';
 import { SessionRequestsService } from './services/requests.js';
+import { registerPhoneRoutes } from './routes/phone.js';
 import { requestRoutes } from './routes/requests.js';
 import { OrdersService } from './services/orders.js';
 import { AdVideoStore } from './services/ad-videos.js';
@@ -34,6 +35,7 @@ import { SalesService } from './services/sales.js';
 import { TimeCreditsService } from './services/time-credits.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
+import { StaffPurchasesService } from './services/staff-purchases.js';
 import { CustomersService } from './services/customers.js';
 import { DebtsService } from './services/debts.js';
 import { StatementService } from './services/statement.js';
@@ -46,6 +48,7 @@ import { UpdatesService } from './services/updates.js';
 import { InvoiceService } from './services/invoices.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
+import { staffPurchaseRoutes } from './routes/staff-purchases.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { purchasingRoutes } from './routes/purchasing.js';
@@ -87,6 +90,7 @@ export interface Services {
   timeCredits: TimeCreditsService;
   cash: CashService;
   expenses: ExpensesService;
+  staffPurchases: StaffPurchasesService;
   customers: CustomersService;
   debts: DebtsService;
   wallet: WalletService;
@@ -227,6 +231,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const orders = new OrdersService(pool, hub, settings, stations, sales);
   sessions.useOrders(orders);
   const expenses = new ExpensesService(pool, cash);
+  const staffPurchases = new StaffPurchasesService(pool);
   const customers = new CustomersService(pool, sales, sessions);
   const statements = new StatementService(pool);
   const reports = new ReportsService(pool, cash, settings);
@@ -286,6 +291,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     timeCredits,
     cash,
     expenses,
+    staffPurchases,
     customers,
     debts,
     wallet,
@@ -305,6 +311,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.decorate('control', {
     token: options.controlToken ?? null,
     requestShutdown: options.requestShutdown ?? (() => undefined),
+  });
+
+  // Same-origin browser requests (the phone PWA at /phone is served by this server) need no CORS
+  // handling. Their Origin is this server's own host:port, so drop it before the allowlist check.
+  // Any other site sends its own Origin, which never equals our Host, and is still refused.
+  app.addHook('onRequest', async (request) => {
+    const origin = request.headers.origin;
+    if (!origin || !request.headers.host) return;
+    try {
+      if (new URL(origin).host === request.headers.host) delete request.headers.origin;
+    } catch {
+      // malformed Origin: leave it to the allowlist check below
+    }
   });
 
   await app.register(cors, {
@@ -345,6 +364,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(salesRoutes);
       await api.register(cashRoutes);
       await api.register(expenseRoutes);
+      await api.register(staffPurchaseRoutes);
       await api.register(customerRoutes);
       await api.register(debtRoutes);
       await api.register(reportRoutes);
@@ -360,6 +380,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   );
   await app.register(clientSocketRoutes);
   await app.register(adminSocketRoutes);
+  if (config.phoneDir) registerPhoneRoutes(app, config.phoneDir);
 
   // Customer-screen settings → every connected PC, instantly (no reconnect needed).
   // Each PC gets its own display: the house settings plus its look and wallpaper (0.20.0).
