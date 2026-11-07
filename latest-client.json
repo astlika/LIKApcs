@@ -1,11 +1,11 @@
 {
-  "version": "0.29.2",
-  "notes": "### Added\n\n- Phone app (`/phone/`), now complete for daily work from a phone (iPhone 6s/SE 375 px up to Pro Max):\n  - **Debts:** customers with open debts, oldest first, with overdue markers. Pay the full balance or part of it, by cash, card, bank transfer or other. For cash, the amount received gives the change. Payment is applied to the oldest invoices first.\n  - **PCs:** running and paused PCs with live time and price. Pause/resume, add time with payment, stop and collect. Open-time sessions are billed by the server to the minute. Starting a PC is allowed only when the PC is online.\n  - **POS:** product search and categories, cart with quantities, optional customer, payment by cash, card, bank transfer, other, or on credit (requires a customer).\n  - Start page with PC and debt totals and quick shortcuts. Only the actions the signed-in user is allowed to perform are shown.\n\n### Changed\n\n- Phone app: bottom navigation with four tabs; money actions are blocked while the phone has no connection; every money request carries an idempotency key.",
-  "pub_date": "2026-11-07T17:02:58.821Z",
+  "version": "0.29.3",
+  "notes": "### Added\n\n- Phone app, PCs: wake offline PCs from the phone (Wake-on-LAN), one at a time or several together. Wake needs a MAC address on record for the PC.\n- Phone app, PCs: select several PCs and start them together with the same settings. PCs that fail to start stay in the list with the reason.\n- Phone app, PCs: pay with credit (debt) when starting or stopping a PC. A customer must be chosen. Stopping a postpaid PC on credit re-reads the live price before sending.\n\n### Changed\n\n- Phone app, POS: products whose tracked stock is 0 (negative stock not allowed) are no longer shown.",
+  "pub_date": "2026-11-07T18:20:06.659Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemE3N1RIZElnbWpDMDJUeEtJczhPdjF2bzJBOTZQNk43N1k1QVphdHJIa1REMi9kQ0U2UkRkWFJ1RmdiNVpIQ25Eb0h5b1BPQ2tZdU5JNFRpalRrblFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDcwODkzCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS4yX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjIKaHFIQytITklUMENwZDAzZnJGdWNMMC8wRDdhNlpzRkhoRkJVVTY3a3BWeW9wbEk4Zm5POFFYckNCK0dWTmdkZmYzSzlxc0VsT05sVWFNQ01mQlBDQ3c9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.2/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemRNcFUwM3FRQTJaOFdlL2hnMXFYMFhEYW5uVUxTeUJPdkp1WWhzMEhkNDZTM1lZenVEenZWT0FrbEJuTWRXSXdrT2NXd3lVTlpXT1B1L2RPbVp1eXdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDc1NTA0CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjMKNzRVdkJ6OWtaaitCaDZVOFpnTUwzbkdyNnhxWHRhT2ZEM1pmd1NQWWRwaEl3VTdmOWNScmtIdmkxRStxeXhzRkhxZW45ampXZDJ3NXFEdk96Z0VaQVE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.3/LIKApcs-Client-Setup.exe"
     }
   }
 }
