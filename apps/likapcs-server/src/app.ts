@@ -3,13 +3,9 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
-import {
-  CLIENT_DISPLAY_SETTING_KEYS,
-  WS_CLOSE_CODES,
-  clientDisplayFromSettings,
-  type SettingsMap,
-} from '@likapcs/shared';
+import { CLIENT_DISPLAY_SETTING_KEYS, WS_CLOSE_CODES, type SettingsMap } from '@likapcs/shared';
 import type { ServerConfig } from './config.js';
 import type { DbPool } from './db/pool.js';
 import { getMigrationStatus } from './db/migrate.js';
@@ -22,6 +18,7 @@ import { WakeService, type WakeSender } from './services/wake.js';
 import { PricingService } from './services/pricing.js';
 import { SessionsService } from './services/sessions.js';
 import { SessionRequestsService } from './services/requests.js';
+import { registerPhoneRoutes } from './routes/phone.js';
 import { requestRoutes } from './routes/requests.js';
 import { OrdersService } from './services/orders.js';
 import { AdVideoStore } from './services/ad-videos.js';
@@ -35,8 +32,10 @@ import { CatalogService } from './services/catalog.js';
 import { MaintenanceService } from './services/maintenance.js';
 import { ProductImageStore } from './services/product-images.js';
 import { SalesService } from './services/sales.js';
+import { TimeCreditsService } from './services/time-credits.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
+import { StaffPurchasesService } from './services/staff-purchases.js';
 import { CustomersService } from './services/customers.js';
 import { DebtsService } from './services/debts.js';
 import { StatementService } from './services/statement.js';
@@ -49,6 +48,7 @@ import { UpdatesService } from './services/updates.js';
 import { InvoiceService } from './services/invoices.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
+import { staffPurchaseRoutes } from './routes/staff-purchases.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { purchasingRoutes } from './routes/purchasing.js';
@@ -64,6 +64,7 @@ import { importRoutes } from './routes/imports.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
+import { looksRoutes } from './routes/looks.js';
 import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
@@ -75,6 +76,7 @@ import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
 import { SettingsService } from './services/settings.js';
 import { StationsService } from './services/stations.js';
+import { LooksService } from './services/looks.js';
 import { UsersService } from './services/users.js';
 
 export interface Services {
@@ -85,8 +87,10 @@ export interface Services {
   ads: AdsService;
   maintenance: MaintenanceService;
   sales: SalesService;
+  timeCredits: TimeCreditsService;
   cash: CashService;
   expenses: ExpensesService;
+  staffPurchases: StaffPurchasesService;
   customers: CustomersService;
   debts: DebtsService;
   wallet: WalletService;
@@ -99,6 +103,7 @@ export interface Services {
   users: UsersService;
   auth: AuthService;
   stations: StationsService;
+  looks: LooksService;
   devices: DevicesService;
   audit: AuditQueryService;
   search: SearchService;
@@ -168,6 +173,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
+  // 0.20.0: per-PC looks, wallpapers and layout presets.
+  const looks = new LooksService(
+    pool,
+    hub,
+    settings,
+    stations,
+    new ProductImageStore(path.join(config.uploadDir, 'wallpapers')),
+  );
   // Archive / delete take the PC off the station: StationsService asks DevicesService to revoke.
   stations.useRevokeDevice((deviceId, actor) => devices.revoke(deviceId, actor));
   const audit = new AuditQueryService(pool);
@@ -181,6 +194,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // Customer balance (0.11.0): spent inside sale / bill / debt transactions, told to the PCs.
   const wallet = new WalletService(pool, settings, cash, hub);
   const debts = new DebtsService(pool, settings, cash, wallet);
+  // 0.19.0: prepaid PC time sold at the till (sales create credits, sessions redeem them).
+  const timeCredits = new TimeCreditsService(pool);
   const sessions = new SessionsService(
     pool,
     hub,
@@ -190,6 +205,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cash,
     debts,
     wallet,
+    timeCredits,
     app.log,
   );
   const requests = new SessionRequestsService(pool, hub, settings, stations, {
@@ -209,18 +225,28 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     productImages,
     new AdVideoStore(path.join(config.uploadDir, 'videos')),
   );
-  const sales = new SalesService(pool, settings, cash, debts, wallet);
+  const sales = new SalesService(pool, settings, cash, debts, wallet, timeCredits, sessions);
   // Orders from the PC (0.10.0): accepted "pay now" through the sales service, "on the bill"
   // settled inside the session's end transaction.
   const orders = new OrdersService(pool, hub, settings, stations, sales);
   sessions.useOrders(orders);
   const expenses = new ExpensesService(pool, cash);
+  const staffPurchases = new StaffPurchasesService(pool);
   const customers = new CustomersService(pool, sales, sessions);
   const statements = new StatementService(pool);
   const reports = new ReportsService(pool, cash, settings);
   const purchasing = new PurchasingService(pool, cash);
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
+    uploadDir: config.uploadDir,
+    keyFile: path.join(config.dataDir, 'backup-keys.json'),
+    wipeUploads: async () => {
+      for (const dir of ['wallpapers', 'products', 'videos']) {
+        const target = path.join(config.uploadDir, dir);
+        await fsp.rm(target, { recursive: true, force: true });
+        await fsp.mkdir(target, { recursive: true });
+      }
+    },
     afterRestore: () => {
       settings.invalidate();
       hub.broadcastToAdmins('system.restored', { at: new Date().toISOString() });
@@ -262,8 +288,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     catalog,
     ads,
     sales,
+    timeCredits,
     cash,
     expenses,
+    staffPurchases,
     customers,
     debts,
     wallet,
@@ -275,6 +303,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     invoices,
     requests,
     orders,
+    looks,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -282,6 +311,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.decorate('control', {
     token: options.controlToken ?? null,
     requestShutdown: options.requestShutdown ?? (() => undefined),
+  });
+
+  // Same-origin browser requests (the phone PWA at /phone is served by this server) need no CORS
+  // handling. Their Origin is this server's own host:port, so drop it before the allowlist check.
+  // Any other site sends its own Origin, which never equals our Host, and is still refused.
+  app.addHook('onRequest', async (request) => {
+    const origin = request.headers.origin;
+    if (!origin || !request.headers.host) return;
+    try {
+      if (new URL(origin).host === request.headers.host) delete request.headers.origin;
+    } catch {
+      // malformed Origin: leave it to the allowlist check below
+    }
   });
 
   await app.register(cors, {
@@ -311,6 +353,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(userRoutes);
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
+      await api.register(looksRoutes);
       await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
@@ -321,6 +364,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(salesRoutes);
       await api.register(cashRoutes);
       await api.register(expenseRoutes);
+      await api.register(staffPurchaseRoutes);
       await api.register(customerRoutes);
       await api.register(debtRoutes);
       await api.register(reportRoutes);
@@ -336,19 +380,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   );
   await app.register(clientSocketRoutes);
   await app.register(adminSocketRoutes);
+  if (config.phoneDir) registerPhoneRoutes(app, config.phoneDir);
 
   // Customer-screen settings → every connected PC, instantly (no reconnect needed).
+  // Each PC gets its own display: the house settings plus its look and wallpaper (0.20.0).
   const pushDisplay = (all: SettingsMap) =>
-    hub.broadcastToDevices({
-      type: 'server.display',
-      display: clientDisplayFromSettings(all),
-      businessName: all['business.name'],
-      welcomeMessage: all['stations.client_welcome_message'],
-      language: all['locale.default_language'],
-    });
+    looks.pushAll(all).catch((err: unknown) => app.log.warn({ err }, 'display push failed'));
   settings.onChange((keys, all) => {
     if (!keys.some((k) => CLIENT_DISPLAY_SETTING_KEYS.includes(k))) return;
-    pushDisplay(all);
+    void pushDisplay(all);
   });
   // Ads changed → same push; the PCs refetch `/client/ads` on it.
   ads.onChange(() => {

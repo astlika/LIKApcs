@@ -48,6 +48,8 @@ import {
 import { api } from '../../lib/api';
 import { storage } from '../../lib/storage';
 import { useAdminSocket } from '../../lib/ws';
+import { publishLiveStatus } from '../../lib/live-status';
+import { flushOfflineQueue, getOfflineSnapshot } from '../../lib/offline-sales';
 import { toggleFullscreen, useFullscreen } from '../../lib/fullscreen';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -94,6 +96,22 @@ export function AppShell() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const live = useAdminSocket(Boolean(user));
+  // Punkti 4 (0.28.0): the POS reads this to choose between a live sale and the offline queue.
+  // While the connection is up, queued offline sales are sent (now, then every 30 s).
+  useEffect(() => {
+    publishLiveStatus(live);
+  }, [live]);
+  useEffect(() => {
+    if (live !== 'connected') return;
+    const run = () => {
+      if (getOfflineSnapshot().queue.some((q) => q.status === 'pending')) {
+        void flushOfflineQueue();
+      }
+    };
+    run();
+    const timer = window.setInterval(run, 30_000);
+    return () => window.clearInterval(timer);
+  }, [live]);
   const fullscreen = useFullscreen();
   const updates = useUpdates();
 

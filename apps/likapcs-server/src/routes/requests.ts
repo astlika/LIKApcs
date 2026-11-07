@@ -6,6 +6,7 @@ import {
   sessionRequestCreateSchema,
   sessionRequestListQuerySchema,
   sessionRequestRejectSchema,
+  timeClaimSchema,
   uuidSchema,
 } from '@likapcs/shared';
 import { unauthorized } from '../errors.js';
@@ -57,6 +58,32 @@ export const requestRoutes: FastifyPluginAsync = async (app) => {
       const device = await deviceOf(request);
       const body = customerLoginSchema.parse(request.body);
       return services.requests.login(device, body, request.ip);
+    },
+  );
+
+  /**
+   * 0.20.8: prepaid PC time bought without a PC. The customer types the name and the PIN printed
+   * on the sale; this PC starts the minutes left. They were paid at the till: nothing is billed here.
+   */
+  app.post(
+    '/client/time-credit/claim',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request) => {
+      const device = await deviceOf(request);
+      const body = timeClaimSchema.parse(request.body);
+      const credit = await services.timeCredits.findByPin(body.name, body.pin);
+      await services.sessions.start(
+        {
+          stationId: device.station.id,
+          billingMode: 'prepaid',
+          // Not used: a credit is already paid, so no payment is taken here.
+          paymentMethod: 'cash',
+          minutes: credit.minutesLeft,
+          creditId: credit.creditId,
+        },
+        { userId: null },
+      );
+      return { ok: true, minutes: credit.minutesLeft };
     },
   );
 

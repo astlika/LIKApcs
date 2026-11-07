@@ -9,22 +9,28 @@
  * pause/resume) stay single-PC: each one has its own amount and payment.
  */
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Clock,
+  Gift,
   Info,
   Lock,
   LockOpen,
   MessageSquare,
+  MonitorPlay,
   OctagonX,
   Pause,
   Play,
+  Minus,
   Plus,
   Power,
   RotateCcw,
   Square,
+  Image as ImageIcon,
   Timer,
+  Wallet,
   XCircle,
   Zap,
   type LucideIcon,
@@ -42,12 +48,14 @@ import {
   type StationCommandResponse,
   type StationSummary,
   type StationWakeResponse,
+  type TimeCreditSummary,
   type WakeIssue,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
+import { assignCredits } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -57,11 +65,16 @@ import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
+import { BulkRemoveTimeDialog } from '../sessions/BulkRemoveTimeDialog';
+import { BulkSettleDialog } from '../sessions/BulkSettleDialog';
+import { BulkWallpaperDialog } from './BulkWallpaperDialog';
+import { BulkStopDialog } from '../sessions/BulkStopDialog';
 import { SessionPaidDialog, type SessionPaid } from '../sessions/SessionPaidDialog';
 import {
   CancelSessionDialog,
   EndSessionDialog,
   ExtendSessionDialog,
+  RemoveTimeDialog,
   notifyClientAck,
   paidFrom,
   useNow,
@@ -74,6 +87,10 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'remove-time'
+  | 'settle'
+  | 'wallpaper'
+  | 'gift'
   | 'cancel'
   | 'lock'
   | 'unlock'
@@ -82,6 +99,7 @@ export type StationActionId =
   | 'shutdown'
   | 'wake'
   | 'tasks'
+  | 'remote'
   | 'details';
 
 /** Offline PC with a MAC on record — the only kind a magic packet can help. */
@@ -112,10 +130,15 @@ type BulkOutcome = BulkOutcomeOf<StationSummary>;
 type Flow =
   | { kind: 'start' }
   | { kind: 'end'; sessionId: string }
-  | { kind: 'extend'; sessionId: string }
+  | { kind: 'extend'; sessionId: string; gift?: boolean }
+  | { kind: 'remove-time'; sessionId: string }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
   | { kind: 'bulk-minutes' }
+  | { kind: 'bulk-end' }
+  | { kind: 'bulk-remove-time' }
+  | { kind: 'bulk-settle' }
+  | { kind: 'bulk-wallpaper' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -145,7 +168,11 @@ export function useStationActions(
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
+  const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
+  const canManageStations = can(PERMISSIONS.STATIONS_MANAGE);
   const canPower = can(PERMISSIONS.STATIONS_POWER);
+  const canRemote = can(PERMISSIONS.REMOTE_VIEW);
+  const navigate = useNavigate();
   const group = useMemo<StationSummary[]>(
     () => (targets.length > 1 ? targets : station ? [station] : []),
     [targets, station],
@@ -177,6 +204,7 @@ export function useStationActions(
         pause: t('sessions.paused'),
         resume: t('sessions.resumed'),
         extend: t('sessions.extended'),
+        'remove-time': t('sessions.timeRemoved'),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
               total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
@@ -356,12 +384,45 @@ export function useStationActions(
           hint: groupStartable === 0 ? t('map.noneStartable') : undefined,
         },
         {
+          // 0.19.4: "Ndalo" works for the whole selection (one confirm, nothing charged now).
           id: 'end',
-          label: t('map.stop'),
+          label: `${t('map.stop')} (${groupWithSession})`,
           icon: Square,
           bar: true,
-          enabled: false,
-          hint: singleOnly,
+          enabled: canControl && groupWithSession > 0,
+          tone: 'danger',
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
+        {
+          // 0.23.0: a fixed payment or a discount for the whole selection.
+          id: 'settle',
+          label: `${t('map.settle')} (${groupWithSession})`,
+          icon: Wallet,
+          bar: true,
+          enabled: canControl && canDiscount && groupWithSession > 0,
+          hint:
+            groupWithSession === 0
+              ? t('map.noneWithSession')
+              : !canDiscount
+                ? t('map.settleNeedsDiscount')
+                : undefined,
+        },
+        {
+          // 0.23.0: one picture for the selection (or all PCs): lock screen or Windows desktop.
+          id: 'wallpaper',
+          label: `${t('map.wallpaper')} (${n})`,
+          icon: ImageIcon,
+          bar: true,
+          enabled: canManageStations && n > 0,
+        },
+        {
+          // "Zbrit kohën" for the whole selection: same minutes off each running session.
+          id: 'remove-time',
+          label: `${t('sessions.removeTime')} (${groupWithSession})`,
+          icon: Minus,
+          bar: true,
+          enabled: canControl && groupWithSession > 0,
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
           // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
@@ -470,6 +531,29 @@ export function useStationActions(
         hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
       },
       {
+        // 0.20.11: the "−" beside "+ Add time" — minutes come off a running prepaid / end-pay session.
+        id: 'remove-time' as const,
+        label: t('sessions.removeTime'),
+        icon: Minus,
+        bar: true,
+        enabled: canControl && !!live && live.billingMode !== 'postpaid',
+        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+      },
+      ...(canGift
+        ? [
+            {
+              // 0.19.1 (item 3): gift minutes get their own button, not only inside "+ time".
+              id: 'gift' as const,
+              label: t('map.gift'),
+              icon: Gift,
+              bar: true,
+              enabled: canControl && !!live && live.billingMode !== 'postpaid',
+              tone: 'primary' as const,
+              hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+            },
+          ]
+        : []),
+      {
         // An idle PC shows its lock screen; staff can open it for maintenance (time-limited grant
         // on the server). In maintenance or during a session the action locks the screen.
         id: unlockable ? 'unlock' : 'lock',
@@ -527,6 +611,19 @@ export function useStationActions(
             ? undefined
             : t('stations.wake.noMac'),
       },
+      // Context menu only (not in the bar): opens this PC in the live screens, focus view.
+      ...(canRemote
+        ? [
+            {
+              id: 'remote' as const,
+              label: t('remote.viewScreen'),
+              icon: MonitorPlay,
+              bar: false,
+              enabled: online,
+              hint: online ? undefined : t('remote.offline'),
+            },
+          ]
+        : []),
       {
         id: 'cancel',
         label: t('sessions.cancel'),
@@ -547,6 +644,10 @@ export function useStationActions(
     wakeable,
     canControl,
     canPower,
+    canRemote,
+    canGift,
+    canDiscount,
+    canManageStations,
     t,
     multi,
     group.length,
@@ -581,11 +682,26 @@ export function useStationActions(
           setFlow({ kind: 'start' });
           break;
         case 'end':
-          if (live) setFlow({ kind: 'end', sessionId: live.id });
+          // 0.19.4: several PCs → one confirm, every running session stopped, nothing charged now.
+          if (multi) setFlow({ kind: 'bulk-end' });
+          else if (live) setFlow({ kind: 'end', sessionId: live.id });
           break;
         case 'extend':
           if (multi) setFlow({ kind: 'bulk-minutes' });
           else if (live) setFlow({ kind: 'extend', sessionId: live.id });
+          break;
+        case 'settle':
+          if (multi) setFlow({ kind: 'bulk-settle' });
+          break;
+        case 'wallpaper':
+          if (multi) setFlow({ kind: 'bulk-wallpaper' });
+          break;
+        case 'remove-time':
+          if (multi) setFlow({ kind: 'bulk-remove-time' });
+          else if (live) setFlow({ kind: 'remove-time', sessionId: live.id });
+          break;
+        case 'gift':
+          if (live) setFlow({ kind: 'extend', sessionId: live.id, gift: true });
           break;
         case 'cancel':
           if (live) setFlow({ kind: 'cancel', sessionId: live.id });
@@ -621,9 +737,24 @@ export function useStationActions(
         case 'details':
           onDetails(station.id);
           break;
+        case 'remote':
+          navigate(`/remote?focus=${encodeURIComponent(station.id)}`);
+          break;
       }
     },
-    [station, actions, live, sessionAct, command, commandMany, wake, wakeMany, multi, onDetails],
+    [
+      station,
+      actions,
+      live,
+      sessionAct,
+      command,
+      commandMany,
+      wake,
+      wakeMany,
+      multi,
+      onDetails,
+      navigate,
+    ],
   );
 
   const busy =
@@ -670,12 +801,92 @@ export function useStationActions(
               busy={sessionAct.isPending}
               onClose={close}
               canGift={canGift}
+              initialGift={!!flow.gift}
               onConfirm={(body, action) =>
                 sessionAct.mutate({ sessionId: s.id, action: action ?? 'extend', body })
               }
             />
           )}
         </SessionFlow>
+      )}
+      {flow.kind === 'remove-time' && (
+        <SessionFlow sessionId={flow.sessionId} onClose={close}>
+          {(s) => (
+            <RemoveTimeDialog
+              session={s}
+              busy={sessionAct.isPending}
+              onClose={close}
+              onConfirm={(body) =>
+                sessionAct.mutate({ sessionId: s.id, action: 'remove-time', body })
+              }
+            />
+          )}
+        </SessionFlow>
+      )}
+      {flow.kind === 'bulk-end' && (
+        <BulkStopDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.ended === 0) toast.toast('info', t('map.stopNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.stopResult', { ended: result.ended }));
+            else
+              toast.toast(
+                'warning',
+                t('map.stopPartial', { ended: result.ended, failed: result.failed }),
+              );
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-wallpaper' && (
+        <BulkWallpaperDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            toast.success(t('map.wallpaperDone', { n: result.updated }));
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-settle' && (
+        <BulkSettleDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.settled === 0) toast.toast('info', t('map.settleNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.settleResult', { settled: result.settled }));
+            else
+              toast.toast(
+                'warning',
+                t('map.settlePartial', { settled: result.settled, failed: result.failed }),
+              );
+          }}
+        />
+      )}
+      {flow.kind === 'bulk-remove-time' && (
+        <BulkRemoveTimeDialog
+          stations={group}
+          onClose={close}
+          onDone={(result) => {
+            setFlow(null);
+            refresh();
+            if (result.removed === 0) toast.toast('info', t('map.removeTimeNone'));
+            else if (result.failed === 0)
+              toast.success(t('map.removeTimeResult', { ended: result.removed }));
+            else
+              toast.toast(
+                'warning',
+                t('map.removeTimePartial', { ended: result.removed, failed: result.failed }),
+              );
+          }}
+        />
       )}
       {flow.kind === 'bulk-minutes' && (
         <BulkMinutesDialog
@@ -697,6 +908,21 @@ export function useStationActions(
                       total: fmt.money(result.totalCents),
                     }),
               );
+            // Name the PCs that did not get the minutes, and why (not just a count).
+            if (skipped > 0) {
+              const list = result.skipped
+                .map((s) => {
+                  const why =
+                    s.reason === 'not_extendable'
+                      ? t('map.skipPostpaid')
+                      : s.reason === 'error'
+                        ? (s.detail ?? t('map.skipError'))
+                        : t('map.skipNoSession');
+                  return `${s.code} (${why})`;
+                })
+                .join(', ');
+              toast.toast('info', t('map.bulkSkippedList', { list }));
+            }
             refresh();
           }}
         />
@@ -833,6 +1059,21 @@ export function QuickStartDialog({
   );
   const bulk = others.length > 0;
 
+  // 0.19.0: PC time sold at the till and not yet used. One PC: what it can take (its own credits
+  // and the any-PC ones). Several PCs (0.20.9): every open credit, so each PC can get its own.
+  const credits = useQuery({
+    queryKey: ['time-credits', bulk ? 'all' : station.id],
+    queryFn: () =>
+      api<{ credits: TimeCreditSummary[] }>(
+        '/time-credits',
+        bulk ? {} : { query: { stationId: station.id } },
+      ),
+    staleTime: 0,
+  });
+  const bulkCredits = useMemo(
+    () => (bulk ? assignCredits(startTargets, credits.data?.credits ?? []) : []),
+    [bulk, startTargets, credits.data],
+  );
   const packages = useQuery({
     queryKey: ['pricing', 'packages', 'available', station.id],
     queryFn: () =>
@@ -886,27 +1127,36 @@ export function QuickStartDialog({
     body: Record<string, unknown>;
     /** Bulk + paid now: the tenders of each target, split from the one amount handed over. */
     perTarget?: SalePaymentInput[][];
+    /** Bulk + PC time credits (0.20.9): each PC's own body; only the PCs listed here start. */
+    targetBodies?: Record<string, Record<string, unknown>>;
     /** Bulk + cash: what goes back to the customer (shown in the toast). */
     changeCents?: number;
   };
   const start = useMutation({
-    mutationFn: async ({ body, perTarget }: StartVars) => {
+    mutationFn: async ({ body, perTarget, targetBodies }: StartVars) => {
       if (!bulk) return { single: await startOne(station, body), outcomes: [] as BulkOutcome[] };
       const outcomes = await Promise.all(
-        startTargets.map(async (s, i): Promise<BulkOutcome> => {
-          try {
-            await startOne(s, perTarget ? { ...body, payments: perTarget[i] ?? [] } : body);
-            return { station: s, ok: true };
-          } catch (err) {
-            // A missing cash shift stops the whole batch: onError offers to open one and retries.
-            if (isShiftRequired(err)) throw err;
-            return {
-              station: s,
-              ok: false,
-              error: err instanceof ApiError ? err.message : String(err),
-            };
-          }
-        }),
+        startTargets
+          .flatMap((s, i) => {
+            const own = targetBodies?.[s.id];
+            if (targetBodies && !own) return [];
+            return [{ s, i, own }];
+          })
+          .map(async ({ s, i, own }): Promise<BulkOutcome> => {
+            try {
+              const b = own ?? body;
+              await startOne(s, perTarget ? { ...b, payments: perTarget[i] ?? [] } : b);
+              return { station: s, ok: true };
+            } catch (err) {
+              // A missing cash shift stops the whole batch: onError offers to open one and retries.
+              if (isShiftRequired(err)) throw err;
+              return {
+                station: s,
+                ok: false,
+                error: err instanceof ApiError ? err.message : String(err),
+              };
+            }
+          }),
       );
       return { single: null, outcomes };
     },
@@ -941,6 +1191,20 @@ export function QuickStartDialog({
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
+  // Several PCs with PC time from the till (0.20.9): each assigned PC starts with its own credit.
+  // The minutes were paid at the till, so there is no bill and no tender here.
+  const creditTargets = bulkCredits.filter((a) => a.credit);
+  const startWithCredits = () => {
+    const targetBodies: Record<string, Record<string, unknown>> = {};
+    for (const a of creditTargets) {
+      targetBodies[a.target.id] = {
+        billingMode: 'prepaid',
+        minutes: a.credit!.minutesRemaining,
+        creditId: a.credit!.id,
+      };
+    }
+    start.mutate({ body: {}, targetBodies });
+  };
   const noPricing = openQuote && !openQuote.rule;
   /**
    * A tile was chosen: open time and free time start right away; paid time goes to the tender
@@ -1059,7 +1323,58 @@ export function QuickStartDialog({
           />
         </div>
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
+        {bulk && bulkCredits.length > 0 && (
+          <section className="bulk-credits" data-testid="bulk-credits">
+            <p className="bulk-credits__title">{t('map.bulkCreditsTitle')}</p>
+            <ul className="bulk-bills">
+              {bulkCredits.map((a) => (
+                <li key={a.target.id} data-testid="bulk-credit-row">
+                  <span>{a.target.code}</span>
+                  <strong>
+                    {a.credit
+                      ? [
+                          a.credit.holderName,
+                          t('map.useCreditSub', { n: a.credit.minutesRemaining }),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
+                      : t('map.bulkCreditNone')}
+                  </strong>
+                </li>
+              ))}
+            </ul>
+            <Button
+              variant="primary"
+              disabled={start.isPending || quoting || creditTargets.length === 0}
+              onClick={startWithCredits}
+              data-testid="bulk-start-credits"
+            >
+              <Timer size={16} /> {t('map.bulkCreditStart', { n: creditTargets.length })}
+            </Button>
+          </section>
+        )}
         <div className="start-grid">
+          {!bulk &&
+            (credits.data?.credits ?? []).map((cr) => (
+              <button
+                key={cr.id}
+                type="button"
+                className="start-tile"
+                disabled={start.isPending || quoting}
+                onClick={() =>
+                  start.mutate({
+                    body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
+                  })
+                }
+                data-testid="start-use-credit"
+              >
+                <Timer size={22} />
+                <span className="start-tile__title">{t('map.useCredit')}</span>
+                <span className="start-tile__sub">
+                  {t('map.useCreditSub', { n: cr.minutesRemaining })}
+                </span>
+              </button>
+            ))}
           <button
             type="button"
             className="start-tile start-tile--open"

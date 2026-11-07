@@ -3,7 +3,7 @@
  * CSS bar charts (no chart library) and CSV exports. All numbers come from the server; nothing
  * is recomputed here except percentages for the bars.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, LineChart } from 'lucide-react';
 import {
@@ -15,6 +15,8 @@ import {
   type SalesReport,
 } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, getToken } from '../lib/api';
+import { CashBookCard } from '../components/reports/CashBookCard';
+import { ProfitReportView } from '../components/reports/ProfitReportView';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -33,6 +35,8 @@ import {
 } from '../components/ui/primitives';
 
 type Preset = 'today' | 'yesterday' | 'week' | 'month' | 'lastMonth' | 'custom';
+/** The two halves of Reports: the sales picture, or profit & spending (0.21.0). */
+type ReportView = 'sales' | 'profit';
 
 function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -105,6 +109,7 @@ export function ReportsPage() {
   const [custom, setCustom] = useState(presetRange('today'));
   const [exportKind, setExportKind] = useState<ReportExportKind>('sales');
   const [exporting, setExporting] = useState(false);
+  const [view, setView] = useState<ReportView>('sales');
   const range = useMemo(
     () => (preset === 'custom' ? custom : presetRange(preset)),
     [preset, custom],
@@ -114,10 +119,10 @@ export function ReportsPage() {
   const report = useQuery({
     queryKey: ['reports', 'sales', range],
     queryFn: () => api<SalesReport>('/reports/sales', { query: range }),
-    enabled: valid,
+    enabled: valid && view === 'sales',
     placeholderData: (prev) => prev,
   });
-  const r = report.data;
+  const r = view === 'sales' ? report.data : undefined;
 
   const onExport = async () => {
     setExporting(true);
@@ -159,6 +164,16 @@ export function ReportsPage() {
         }
       />
       <div className="toolbar">
+        <Segmented<ReportView>
+          value={view}
+          onChange={setView}
+          ariaLabel={t('reports.viewLabel')}
+          testId="reports-view"
+          options={[
+            { value: 'sales', label: t('reports.view.sales') },
+            { value: 'profit', label: t('reports.view.profit') },
+          ]}
+        />
         <Segmented<Preset>
           value={preset}
           onChange={(p) => {
@@ -198,14 +213,17 @@ export function ReportsPage() {
         </label>
       </div>
       {!valid && <Alert tone="warning">{t('reports.invalidRange')}</Alert>}
-      {report.isLoading && <Loading />}
-      {report.isError && (
+      {view === 'sales' && report.isLoading && <Loading />}
+      {view === 'sales' && report.isError && (
         <Alert tone="danger">
           {report.error instanceof ApiError ? report.error.message : t('common.errorGeneric')}
         </Alert>
       )}
+      {view === 'profit' && valid && <ProfitReportView from={range.from} to={range.to} />}
       {r && (
-        <div className="stack" style={{ gap: 20 }}>
+        <div className="stack rep" style={{ gap: 24 }}>
+          <ResultHero report={r} />
+
           <div className="grid grid--stats">
             <StatTile
               label={t('reports.netSales')}
@@ -236,12 +254,6 @@ export function ReportsPage() {
               sub={t('expenses.count') + `: ${r.expenses.count}`}
             />
             <StatTile
-              label={t('reports.result')}
-              value={fmt.money(r.sales.netCents - r.expenses.totalCents)}
-              sub={t('reports.resultHint')}
-              tone={r.sales.netCents - r.expenses.totalCents >= 0 ? 'success' : 'danger'}
-            />
-            <StatTile
               label={t('reports.vat')}
               value={fmt.money(r.sales.taxCents)}
               sub={t('reports.discounts', { amount: fmt.money(r.sales.discountCents) })}
@@ -252,150 +264,181 @@ export function ReportsPage() {
             <EmptyState icon={<LineChart size={22} />} title={t('reports.empty')} />
           )}
 
-          {r.byDay.length > 0 && (
-            <Card title={t('reports.byDay')}>
-              <Bars
-                rows={r.byDay.map((d) => ({
-                  key: d.date,
-                  label: fmt.date(d.date),
-                  value: d.amountCents,
-                  detail: `${t('sales.source.retail')} ${fmt.money(d.retailCents)} · ${t('sales.source.gaming')} ${fmt.money(d.gamingCents)} · ${d.count}×`,
-                }))}
-                money={fmt.money}
-              />
-            </Card>
+          {(r.byDay.length > 0 || r.byHour.length > 0) && (
+            <ReportSection title={t('reports.section.sales')} hint={t('reports.section.salesHint')}>
+              {r.byDay.length > 0 && (
+                <Card title={t('reports.byDay')}>
+                  <ColumnChart
+                    money={fmt.money}
+                    rows={r.byDay.map((d) => {
+                      const [, month, day] = d.date.split('-');
+                      return {
+                        key: d.date,
+                        label: `${day}.${month}`,
+                        value: d.amountCents,
+                        detail: `${t('sales.source.retail')} ${fmt.money(d.retailCents)} · ${t('sales.source.gaming')} ${fmt.money(d.gamingCents)} · ${d.count}×`,
+                      };
+                    })}
+                  />
+                </Card>
+              )}
+              {r.byHour.length > 0 && (
+                <Card title={t('reports.byHour')}>
+                  <ColumnChart
+                    money={fmt.money}
+                    rows={Array.from({ length: 24 }, (_, h) => {
+                      const row = r.byHour.find((x) => x.hour === h);
+                      return {
+                        key: String(h),
+                        label: String(h).padStart(2, '0'),
+                        value: row?.amountCents ?? 0,
+                        detail: row
+                          ? `${String(h).padStart(2, '0')}:00 · ${row.count}×`
+                          : undefined,
+                      };
+                    }).filter((x, i, arr) => {
+                      // trim leading/trailing empty hours
+                      const firstIdx = arr.findIndex((y) => y.value > 0);
+                      let lastIdx = -1;
+                      arr.forEach((y, j) => {
+                        if (y.value > 0) lastIdx = j;
+                      });
+                      return i >= firstIdx && i <= lastIdx;
+                    })}
+                    showValues={false}
+                  />
+                </Card>
+              )}
+            </ReportSection>
           )}
 
-          <div className="grid grid--2" style={{ alignItems: 'start' }}>
-            <Card title={t('reports.byMethod')}>
-              <BucketTable
-                rows={r.byMethod.map((b) => ({
-                  ...b,
-                  label: t(`sessions.methods.${b.key}` as 'sessions.methods.cash'),
-                }))}
-                money={fmt.money}
-                countLabel={t('reports.tenders')}
-              />
-            </Card>
-            <Card title={t('reports.bySource')}>
-              <BucketTable
-                rows={r.bySource.map((b) => ({
-                  ...b,
-                  label: t(`sales.source.${b.key}` as 'sales.source.retail'),
-                }))}
-                money={fmt.money}
-                countLabel={t('reports.salesCount')}
-              />
-            </Card>
-          </div>
+          <ReportSection
+            title={t('reports.section.payments')}
+            hint={t('reports.section.paymentsHint')}
+          >
+            <div className="grid grid--2">
+              <Card title={t('reports.byMethod')}>
+                <Composition
+                  money={fmt.money}
+                  rows={r.byMethod.map((b) => ({
+                    key: b.key,
+                    label: t(`sessions.methods.${b.key}` as 'sessions.methods.cash'),
+                    amountCents: b.amountCents,
+                  }))}
+                />
+                <BucketTable
+                  rows={r.byMethod.map((b) => ({
+                    ...b,
+                    label: t(`sessions.methods.${b.key}` as 'sessions.methods.cash'),
+                  }))}
+                  money={fmt.money}
+                  countLabel={t('reports.tenders')}
+                />
+              </Card>
+              <Card title={t('reports.bySource')}>
+                <Composition
+                  money={fmt.money}
+                  rows={r.bySource.map((b) => ({
+                    key: b.key,
+                    label: t(`sales.source.${b.key}` as 'sales.source.retail'),
+                    amountCents: b.amountCents,
+                  }))}
+                />
+                <BucketTable
+                  rows={r.bySource.map((b) => ({
+                    ...b,
+                    label: t(`sales.source.${b.key}` as 'sales.source.retail'),
+                  }))}
+                  money={fmt.money}
+                  countLabel={t('reports.salesCount')}
+                />
+              </Card>
+            </div>
+          </ReportSection>
 
-          {r.byHour.length > 0 && (
-            <Card title={t('reports.byHour')}>
-              <Bars
-                rows={Array.from({ length: 24 }, (_, h) => {
-                  const row = r.byHour.find((x) => x.hour === h);
-                  return {
-                    key: String(h),
-                    label: `${String(h).padStart(2, '0')}:00`,
-                    value: row?.amountCents ?? 0,
-                    detail: row ? `${row.count}×` : '',
-                  };
-                }).filter((x, i, arr) => {
-                  // trim leading/trailing empty hours
-                  const firstIdx = arr.findIndex((y) => y.value > 0);
-                  let lastIdx = -1;
-                  arr.forEach((y, j) => {
-                    if (y.value > 0) lastIdx = j;
-                  });
-                  return i >= firstIdx && i <= lastIdx;
-                })}
-                money={fmt.money}
-                compact
-              />
-            </Card>
-          )}
-
-          <div className="grid grid--2" style={{ alignItems: 'start' }}>
-            <Card title={t('reports.topProducts')}>
-              {r.topProducts.length === 0 ? (
-                <p className="muted">{t('common.none')}</p>
-              ) : (
-                <table className="table table--compact">
-                  <thead>
-                    <tr>
-                      <th>{t('products.name')}</th>
-                      <th className="right">{t('receipt.qty')}</th>
-                      <th className="right">{t('receipt.amount')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.topProducts.map((p) => (
-                      <tr key={p.productId}>
-                        <td>{p.name}</td>
-                        <td className="right num">
-                          {p.quantityMilli % 1000 === 0
-                            ? p.quantityMilli / 1000
-                            : (p.quantityMilli / 1000).toFixed(3)}
-                        </td>
-                        <td className="right num">{fmt.money(p.amountCents)}</td>
+          <ReportSection
+            title={t('reports.section.products')}
+            hint={t('reports.section.productsHint')}
+          >
+            <div className="grid grid--2">
+              <Card title={t('reports.topProducts')}>
+                {r.topProducts.length === 0 ? (
+                  <p className="muted">{t('common.none')}</p>
+                ) : (
+                  <table className="table table--compact">
+                    <thead>
+                      <tr>
+                        <th>{t('products.name')}</th>
+                        <th className="right">{t('receipt.qty')}</th>
+                        <th className="right">{t('receipt.amount')}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Card>
-            <Card title={t('reports.byCategory')}>
-              <BucketTable
-                rows={r.byCategory.map((b) => ({
-                  ...b,
-                  label: b.label ?? t('reports.uncategorised'),
-                }))}
-                money={fmt.money}
-                countLabel={t('receipt.qty')}
-              />
-            </Card>
-          </div>
-
-          <div className="grid grid--2" style={{ alignItems: 'start' }}>
-            <Card title={t('reports.byStation')}>
-              {r.gaming.byStation.length === 0 ? (
-                <p className="muted">{t('common.none')}</p>
-              ) : (
-                <table className="table table--compact">
-                  <thead>
-                    <tr>
-                      <th>{t('nav.stations')}</th>
-                      <th className="right">{t('reports.sessions')}</th>
-                      <th className="right">{t('sessions.duration')}</th>
-                      <th className="right">{t('receipt.amount')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.gaming.byStation.map((s) => (
-                      <tr key={s.stationId}>
-                        <td>
-                          <span className="mono">{s.code}</span>{' '}
-                          <span className="muted">{s.name}</span>
-                        </td>
-                        <td className="right num">{s.sessions}</td>
-                        <td className="right num">{formatMinutesShort(s.minutes)}</td>
-                        <td className="right num">{fmt.money(s.amountCents)}</td>
+                    </thead>
+                    <tbody>
+                      {r.topProducts.map((p) => (
+                        <tr key={p.productId}>
+                          <td>{p.name}</td>
+                          <td className="right num">
+                            {p.quantityMilli % 1000 === 0
+                              ? p.quantityMilli / 1000
+                              : (p.quantityMilli / 1000).toFixed(3)}
+                          </td>
+                          <td className="right num">{fmt.money(p.amountCents)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+              <Card title={t('reports.byCategory')}>
+                <BucketTable
+                  rows={r.byCategory.map((b) => ({
+                    ...b,
+                    label: b.label ?? t('reports.uncategorised'),
+                  }))}
+                  money={fmt.money}
+                  countLabel={t('receipt.qty')}
+                />
+              </Card>
+              <Card title={t('reports.byEmployee')}>
+                <BucketTable
+                  rows={r.byEmployee.map((b) => ({ ...b, label: b.label ?? '—' }))}
+                  money={fmt.money}
+                  countLabel={t('reports.salesCount')}
+                />
+              </Card>
+              <Card title={t('reports.byStation')}>
+                {r.gaming.byStation.length === 0 ? (
+                  <p className="muted">{t('common.none')}</p>
+                ) : (
+                  <table className="table table--compact">
+                    <thead>
+                      <tr>
+                        <th>{t('nav.stations')}</th>
+                        <th className="right">{t('reports.sessions')}</th>
+                        <th className="right">{t('sessions.duration')}</th>
+                        <th className="right">{t('receipt.amount')}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Card>
-            <Card title={t('reports.byEmployee')}>
-              <BucketTable
-                rows={r.byEmployee.map((b) => ({ ...b, label: b.label ?? '—' }))}
-                money={fmt.money}
-                countLabel={t('reports.salesCount')}
-              />
-            </Card>
-          </div>
+                    </thead>
+                    <tbody>
+                      {r.gaming.byStation.map((s) => (
+                        <tr key={s.stationId}>
+                          <td>
+                            <span className="mono">{s.code}</span>{' '}
+                            <span className="muted">{s.name}</span>
+                          </td>
+                          <td className="right num">{s.sessions}</td>
+                          <td className="right num">{formatMinutesShort(s.minutes)}</td>
+                          <td className="right num">{fmt.money(s.amountCents)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            </div>
+          </ReportSection>
 
-          <div className="grid grid--2" style={{ alignItems: 'start' }}>
+          <ReportSection title={t('reports.section.money')} hint={t('reports.section.moneyHint')}>
             <Card title={t('reports.expensesByCategory')}>
               <BucketTable
                 rows={r.expenses.byCategory.map((b) => ({ ...b, label: b.label ?? b.key }))}
@@ -403,53 +446,64 @@ export function ReportsPage() {
                 countLabel={t('expenses.count')}
               />
             </Card>
-            <Card title={t('reports.cashShifts')}>
-              {r.cash.shifts.length === 0 ? (
-                <p className="muted">{t('common.none')}</p>
-              ) : (
-                <>
-                  <p className="muted" style={{ marginTop: 0 }}>
-                    {t('reports.cashShiftsSummary', {
-                      count: r.cash.shiftsCount,
-                      difference: fmt.money(r.cash.differenceCents),
-                    })}
-                  </p>
-                  <table className="table table--compact">
-                    <thead>
-                      <tr>
-                        <th>{t('cash.opened')}</th>
-                        <th>{t('cash.register')}</th>
-                        <th className="right">{t('cash.expectedCash')}</th>
-                        <th className="right">{t('cash.difference')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {r.cash.shifts.map((s) => (
-                        <tr key={s.id}>
-                          <td className="num">
-                            {fmt.dateTime(s.openedAt)}
-                            <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
-                              {s.openedBy.name}
-                            </span>
-                          </td>
-                          <td>{s.registerName}</td>
-                          <td className="right num">
-                            {s.expectedCashCents != null ? fmt.money(s.expectedCashCents) : '—'}
-                          </td>
-                          <td className={`right num ${s.differenceCents ? 'text-danger' : ''}`}>
-                            {s.differenceCents != null ? fmt.money(s.differenceCents) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
-            </Card>
-          </div>
+            <CashBookCard from={range.from} to={range.to} enabled={valid} />
+          </ReportSection>
         </div>
       )}
     </>
+  );
+}
+
+/** The result of the period up top, with where the sales came from underneath. */
+function ResultHero({ report: r }: { report: SalesReport }) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const result = r.sales.netCents - r.expenses.totalCents;
+  return (
+    <section className="card rep-hero" data-testid="reports-hero">
+      <div className="rep-hero__main">
+        <div className="rep-hero__label">{t('reports.result')}</div>
+        <div className={`rep-hero__value num ${result >= 0 ? 'is-good' : 'is-bad'}`}>
+          {fmt.money(result)}
+        </div>
+        <div className="muted rep-hero__hint">
+          {t('reports.resultHint')} · {fmt.money(r.sales.netCents)} −{' '}
+          {fmt.money(r.expenses.totalCents)}
+        </div>
+      </div>
+      <div className="rep-hero__split">
+        <div className="rep-hero__split-title muted">{t('reports.bySource')}</div>
+        <Composition
+          money={fmt.money}
+          rows={r.bySource.map((b) => ({
+            key: b.key,
+            label: t(`sales.source.${b.key}` as 'sales.source.retail'),
+            amountCents: b.amountCents,
+          }))}
+        />
+      </div>
+    </section>
+  );
+}
+
+/** A titled group of cards: the heading says what the group answers. */
+function ReportSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rep-section">
+      <header className="rep-section__head">
+        <h2 className="rep-section__title">{title}</h2>
+        <p className="muted rep-section__hint">{hint}</p>
+      </header>
+      <div className="stack">{children}</div>
+    </section>
   );
 }
 
@@ -491,27 +545,92 @@ function BucketTable({
   );
 }
 
-function Bars({
+const PALETTE = [
+  'var(--accent)',
+  'var(--success)',
+  'var(--warning)',
+  'var(--purple)',
+  'var(--info)',
+  'var(--danger)',
+];
+
+/** Vertical columns, one per row, scaled to the largest value. Values print above the columns
+ *  when there are few enough to fit; every column keeps its full detail as a tooltip. */
+function ColumnChart({
   rows,
   money,
-  compact,
+  showValues,
 }: {
   rows: { key: string; label: string; value: number; detail?: string }[];
   money: (c: number) => string;
-  compact?: boolean;
+  showValues?: boolean;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
+  const values = showValues ?? rows.length <= 12;
   return (
-    <div className={`bars ${compact ? 'bars--compact' : ''}`}>
+    <div
+      className="rep-cols"
+      style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}
+    >
       {rows.map((r) => (
-        <div className="bars__row" key={r.key} title={r.detail}>
-          <div className="bars__label">{r.label}</div>
-          <div className="bars__track">
-            <div className="bars__fill" style={{ width: `${(r.value / max) * 100}%` }} />
+        <div
+          className="rep-col"
+          key={r.key}
+          title={
+            r.detail
+              ? `${r.label} · ${money(r.value)} · ${r.detail}`
+              : `${r.label} · ${money(r.value)}`
+          }
+        >
+          <div className="rep-col__value num">{values && r.value > 0 ? money(r.value) : ''}</div>
+          <div className="rep-col__track">
+            <div
+              className="rep-col__bar"
+              style={{ height: `${(r.value / max) * 100}%` }}
+              data-empty={r.value === 0 ? 'true' : undefined}
+            />
           </div>
-          <div className="bars__value num">{money(r.value)}</div>
+          <div className="rep-col__label num">{r.label}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** One bar split by share, with a legend. Colours follow the row order, so they match the table. */
+function Composition({
+  rows,
+  money,
+}: {
+  rows: { key: string; label: string; amountCents: number }[];
+  money: (c: number) => string;
+}) {
+  const total = rows.reduce((a, b) => a + Math.max(0, b.amountCents), 0);
+  if (total === 0) return null;
+  const pct = (v: number) => `${Math.round((Math.max(0, v) / total) * 100)}%`;
+  return (
+    <div className="rep-comp">
+      <div className="rep-comp__bar" role="img" aria-label={rows.map((b) => b.label).join(', ')}>
+        {rows.map((b, i) =>
+          b.amountCents > 0 ? (
+            <span
+              key={b.key}
+              style={{ width: pct(b.amountCents), background: PALETTE[i % PALETTE.length] }}
+              title={`${b.label} · ${money(b.amountCents)}`}
+            />
+          ) : null,
+        )}
+      </div>
+      <ul className="rep-comp__legend">
+        {rows.map((b, i) => (
+          <li key={b.key}>
+            <i style={{ background: PALETTE[i % PALETTE.length] }} aria-hidden="true" />
+            <span>{b.label}</span>
+            <span className="num">{money(b.amountCents)}</span>
+            <span className="muted num">{pct(b.amountCents)}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

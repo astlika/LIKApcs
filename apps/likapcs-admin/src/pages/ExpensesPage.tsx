@@ -4,16 +4,20 @@
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, FolderPlus, Plus, Receipt } from 'lucide-react';
+import { Ban, Download, FolderPlus, Plus, Receipt } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   PERMISSIONS,
+  formatQuantity,
   parseMoneyInput,
   type ExpenseCategorySummary,
   type ExpenseListResponse,
   type ExpenseSummary,
   type PaymentMethod,
+  type StockPurchaseListResponse,
+  type SupplierSummary,
 } from '@likapcs/shared';
-import { api, ApiError, fieldError } from '../lib/api';
+import { api, ApiError, apiDownload, fieldError } from '../lib/api';
 import { useFormat } from '../lib/format';
 import { usePaymentMethods } from '../lib/payment-methods';
 import { useI18n } from '../i18n';
@@ -63,6 +67,7 @@ export function ExpensesPage() {
   const [creating, setCreating] = useState(false);
   const [categories, setCategories] = useState(false);
   const [voiding, setVoiding] = useState<ExpenseSummary | null>(null);
+  const [view, setView] = useState<'expenses' | 'stock'>('expenses');
 
   const cats = useQuery({
     queryKey: ['expenses', 'categories', { includeInactive: false }],
@@ -99,6 +104,7 @@ export function ExpensesPage() {
         title={t('expenses.title')}
         subtitle={t('expenses.subtitle')}
         actions={
+          view === 'expenses' &&
           canManage && (
             <>
               <Button onClick={() => setCategories(true)}>
@@ -111,44 +117,255 @@ export function ExpensesPage() {
           )
         }
       />
+      <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+        <Button
+          variant={view === 'expenses' ? 'primary' : 'default'}
+          onClick={() => setView('expenses')}
+        >
+          {t('expenses.views.expenses')}
+        </Button>
+        <Button variant={view === 'stock' ? 'primary' : 'default'} onClick={() => setView('stock')}>
+          {t('expenses.views.stock')}
+        </Button>
+      </div>
+      {view === 'stock' ? (
+        <StockPurchasesPanel />
+      ) : (
+        <>
+          <div className="toolbar">
+            <Input
+              placeholder={t('expenses.search')}
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+              style={{ maxWidth: 220 }}
+              aria-label={t('expenses.search')}
+            />
+            <Select
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setPage(1);
+              }}
+              aria-label={t('expenses.category')}
+            >
+              <option value="">{t('expenses.allCategories')}</option>
+              {cats.data?.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {language === 'sq' ? c.nameSq : c.nameEn}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={method}
+              onChange={(e) => {
+                setMethod(e.target.value as '' | PaymentMethod);
+                setPage(1);
+              }}
+              aria-label={t('sessions.paymentMethod')}
+            >
+              <option value="">{t('expenses.allMethods')}</option>
+              {paymentMethods.map((m) => (
+                <option key={m} value={m}>
+                  {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
+                </option>
+              ))}
+            </Select>
+            <label className="row" style={{ gap: 6 }}>
+              <span className="muted">{t('sales.from')}</span>
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+            <label className="row" style={{ gap: 6 }}>
+              <span className="muted">{t('sales.to')}</span>
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+            <Switch
+              checked={includeVoided}
+              onChange={(v) => {
+                setIncludeVoided(v);
+                setPage(1);
+              }}
+              label={t('expenses.showVoided')}
+            />
+          </div>
+          {list.data && (
+            <div className="grid grid--stats" style={{ marginBottom: 16 }}>
+              <StatTile label={t('expenses.count')} value={String(list.data.total)} />
+              <StatTile label={t('expenses.periodTotal')} value={fmt.money(list.data.totalCents)} />
+            </div>
+          )}
+          {list.isLoading && <Loading />}
+          {list.isSuccess && list.data.items.length === 0 && (
+            <EmptyState icon={<Receipt size={22} />} title={t('expenses.empty')} />
+          )}
+          {list.isSuccess && list.data.items.length > 0 && (
+            <div className="card table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t('common.date')}</th>
+                    <th>{t('expenses.category')}</th>
+                    <th>{t('expenses.description')}</th>
+                    <th>{t('sessions.paymentMethod')}</th>
+                    <th>{t('expenses.recordedBy')}</th>
+                    <th className="right">{t('receipt.amount')}</th>
+                    {canManage && <th className="right">{t('common.actions')}</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.data.items.map((e) => (
+                    <tr key={e.id} className={e.voidedAt ? 'row--muted' : undefined}>
+                      <td className="num">{fmt.date(e.expenseDate)}</td>
+                      <td>{catName(e.categoryCode, e.categoryName)}</td>
+                      <td>
+                        {e.description}
+                        {e.voidedAt && (
+                          <span style={{ marginLeft: 8 }}>
+                            <Badge tone="danger">{t('expenses.voided')}</Badge>
+                          </span>
+                        )}
+                        {e.voidReason && (
+                          <div className="faint" style={{ fontSize: 12 }}>
+                            {e.voidReason}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {t(`sessions.methods.${e.paymentMethod}` as 'sessions.methods.cash')}
+                        {e.shiftId && (
+                          <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
+                            {t('expenses.fromDrawerShort')}
+                          </span>
+                        )}
+                      </td>
+                      <td className="muted">{e.createdBy?.name ?? '—'}</td>
+                      <td className={`right num ${e.voidedAt ? 'faint' : ''}`}>
+                        {fmt.money(e.amountCents)}
+                      </td>
+                      {canManage && (
+                        <td className="right">
+                          {!e.voidedAt && (
+                            <Button size="sm" variant="ghost" onClick={() => setVoiding(e)}>
+                              <Ban size={14} /> {t('expenses.void')}
+                            </Button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Pagination
+                page={page}
+                pageSize={PAGE_SIZE}
+                total={list.data.total}
+                onPage={setPage}
+              />
+            </div>
+          )}
+        </>
+      )}
+      {creating && (
+        <ExpenseDialog categories={cats.data ?? []} onClose={() => setCreating(false)} />
+      )}
+      {categories && <CategoriesDialog onClose={() => setCategories(false)} />}
+      {voiding && <VoidDialog expense={voiding} onClose={() => setVoiding(null)} />}
+    </>
+  );
+}
+
+// ─── Stock purchases (information only; not spending) ──────────────────────────
+
+function StockPurchasesPanel() {
+  const { t, language } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const [from, setFrom] = useState(monthStart());
+  const [to, setTo] = useState(todayLocal());
+  const [supplierId, setSupplierId] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+
+  const suppliers = useQuery({
+    queryKey: ['suppliers', { q: '', includeInactive: true }],
+    queryFn: () => api<SupplierSummary[]>('/suppliers', { query: { includeInactive: true } }),
+    staleTime: 60_000,
+  });
+  const filters = useMemo(
+    () => ({
+      from: from || undefined,
+      to: to || undefined,
+      supplierId: supplierId || undefined,
+      q: q.trim() || undefined,
+    }),
+    [from, to, supplierId, q],
+  );
+  const list = useQuery({
+    queryKey: ['expenses', 'stock-purchases', filters, page],
+    queryFn: () =>
+      api<StockPurchaseListResponse>('/expenses/stock-purchases', {
+        query: { ...filters, page, pageSize: PAGE_SIZE },
+      }),
+    placeholderData: (prev) => prev,
+  });
+
+  const exportCsv = async () => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+    try {
+      await apiDownload(
+        `/expenses/stock-purchases/export?${params.toString()}`,
+        'likapcs-stock-purchases.csv',
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    }
+  };
+
+  return (
+    <>
+      <div className="card" style={{ padding: 12, marginBottom: 16 }}>
+        <span className="muted">{t('expenses.stock.note')}</span>
+      </div>
       <div className="toolbar">
         <Input
-          placeholder={t('expenses.search')}
+          placeholder={t('expenses.stock.search')}
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
             setPage(1);
           }}
-          style={{ maxWidth: 220 }}
-          aria-label={t('expenses.search')}
+          style={{ maxWidth: 240 }}
+          aria-label={t('expenses.stock.search')}
         />
         <Select
-          value={category}
+          value={supplierId}
           onChange={(e) => {
-            setCategory(e.target.value);
+            setSupplierId(e.target.value);
             setPage(1);
           }}
-          aria-label={t('expenses.category')}
+          aria-label={t('expenses.stock.supplier')}
         >
-          <option value="">{t('expenses.allCategories')}</option>
-          {cats.data?.map((c) => (
-            <option key={c.code} value={c.code}>
-              {language === 'sq' ? c.nameSq : c.nameEn}
-            </option>
-          ))}
-        </Select>
-        <Select
-          value={method}
-          onChange={(e) => {
-            setMethod(e.target.value as '' | PaymentMethod);
-            setPage(1);
-          }}
-          aria-label={t('sessions.paymentMethod')}
-        >
-          <option value="">{t('expenses.allMethods')}</option>
-          {paymentMethods.map((m) => (
-            <option key={m} value={m}>
-              {t(`sessions.methods.${m}` as 'sessions.methods.cash')}
+          <option value="">{t('expenses.stock.allSuppliers')}</option>
+          {suppliers.data?.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
             </option>
           ))}
         </Select>
@@ -174,24 +391,19 @@ export function ExpensesPage() {
             }}
           />
         </label>
-        <Switch
-          checked={includeVoided}
-          onChange={(v) => {
-            setIncludeVoided(v);
-            setPage(1);
-          }}
-          label={t('expenses.showVoided')}
-        />
+        <Button onClick={() => void exportCsv()}>
+          <Download size={14} /> {t('reports.exportCsv')}
+        </Button>
       </div>
       {list.data && (
         <div className="grid grid--stats" style={{ marginBottom: 16 }}>
-          <StatTile label={t('expenses.count')} value={String(list.data.total)} />
-          <StatTile label={t('expenses.periodTotal')} value={fmt.money(list.data.totalCents)} />
+          <StatTile label={t('expenses.stock.count')} value={String(list.data.total)} />
+          <StatTile label={t('expenses.stock.total')} value={fmt.money(list.data.totalCents)} />
         </div>
       )}
       {list.isLoading && <Loading />}
       {list.isSuccess && list.data.items.length === 0 && (
-        <EmptyState icon={<Receipt size={22} />} title={t('expenses.empty')} />
+        <EmptyState icon={<Receipt size={22} />} title={t('expenses.stock.empty')} />
       )}
       {list.isSuccess && list.data.items.length > 0 && (
         <div className="card table-wrap">
@@ -199,53 +411,33 @@ export function ExpensesPage() {
             <thead>
               <tr>
                 <th>{t('common.date')}</th>
-                <th>{t('expenses.category')}</th>
-                <th>{t('expenses.description')}</th>
-                <th>{t('sessions.paymentMethod')}</th>
-                <th>{t('expenses.recordedBy')}</th>
+                <th>{t('expenses.stock.supplier')}</th>
+                <th>{t('expenses.stock.product')}</th>
+                <th className="right">{t('expenses.stock.quantity')}</th>
+                <th className="right">{t('expenses.stock.unitCost')}</th>
                 <th className="right">{t('receipt.amount')}</th>
-                {canManage && <th className="right">{t('common.actions')}</th>}
+                <th>{t('expenses.stock.purchase')}</th>
               </tr>
             </thead>
             <tbody>
-              {list.data.items.map((e) => (
-                <tr key={e.id} className={e.voidedAt ? 'row--muted' : undefined}>
-                  <td className="num">{fmt.date(e.expenseDate)}</td>
-                  <td>{catName(e.categoryCode, e.categoryName)}</td>
+              {list.data.items.map((r, i) => (
+                <tr key={`${r.receiptId}-${r.productId}-${i}`}>
+                  <td className="num">{fmt.dateTime(r.receivedAt)}</td>
+                  <td>{r.supplierName}</td>
                   <td>
-                    {e.description}
-                    {e.voidedAt && (
-                      <span style={{ marginLeft: 8 }}>
-                        <Badge tone="danger">{t('expenses.voided')}</Badge>
-                      </span>
-                    )}
-                    {e.voidReason && (
-                      <div className="faint" style={{ fontSize: 12 }}>
-                        {e.voidReason}
-                      </div>
-                    )}
+                    {r.productName}
+                    <span style={{ marginLeft: 8 }}>
+                      <Badge tone="info">{t('expenses.stock.badge')}</Badge>
+                    </span>
                   </td>
+                  <td className="right num">
+                    {formatQuantity(r.quantityMilli, language === 'sq' ? 'sq' : 'en')}
+                  </td>
+                  <td className="right num">{fmt.unitMoney(r.unitCostMills)}</td>
+                  <td className="right num">{fmt.money(r.amountCents)}</td>
                   <td>
-                    {t(`sessions.methods.${e.paymentMethod}` as 'sessions.methods.cash')}
-                    {e.shiftId && (
-                      <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
-                        {t('expenses.fromDrawerShort')}
-                      </span>
-                    )}
+                    <Link to={`/purchases?open=${r.purchaseId}`}>{r.purchaseRef}</Link>
                   </td>
-                  <td className="muted">{e.createdBy?.name ?? '—'}</td>
-                  <td className={`right num ${e.voidedAt ? 'faint' : ''}`}>
-                    {fmt.money(e.amountCents)}
-                  </td>
-                  {canManage && (
-                    <td className="right">
-                      {!e.voidedAt && (
-                        <Button size="sm" variant="ghost" onClick={() => setVoiding(e)}>
-                          <Ban size={14} /> {t('expenses.void')}
-                        </Button>
-                      )}
-                    </td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -253,11 +445,6 @@ export function ExpensesPage() {
           <Pagination page={page} pageSize={PAGE_SIZE} total={list.data.total} onPage={setPage} />
         </div>
       )}
-      {creating && (
-        <ExpenseDialog categories={cats.data ?? []} onClose={() => setCreating(false)} />
-      )}
-      {categories && <CategoriesDialog onClose={() => setCategories(false)} />}
-      {voiding && <VoidDialog expense={voiding} onClose={() => setVoiding(null)} />}
     </>
   );
 }

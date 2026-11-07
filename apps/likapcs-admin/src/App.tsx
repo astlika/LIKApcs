@@ -14,6 +14,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { StationsPage } from './pages/StationsPage';
+import { RemotePage } from './pages/RemotePage';
 import { PricingPage } from './pages/PricingPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -135,6 +136,7 @@ export function App() {
         >
           <Route index element={<HomeRoute />} />
           <Route path="stations" element={<StationsPage />} />
+          <Route path="remote" element={<RemotePage />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="products" element={<ProductsPage />} />

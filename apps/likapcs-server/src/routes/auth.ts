@@ -1,8 +1,31 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { changePasswordSchema, loginRequestSchema, type AuthenticatedUser } from '@likapcs/shared';
+import {
+  changePasswordSchema,
+  loginRequestSchema,
+  phoneLoginSchema,
+  type AuthenticatedUser,
+} from '@likapcs/shared';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
+
+  // Phone (PWA) login, 0.28.0: username + e-mail + password. Same lockout and audit as /auth/login.
+  app.post(
+    '/auth/phone-login',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) => {
+      const body = phoneLoginSchema.parse(request.body);
+      return services.auth.login({
+        username: body.username,
+        password: body.password,
+        email: body.email,
+        rememberMe: body.rememberMe,
+        clientApp: 'phone',
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      });
+    },
+  );
 
   app.post(
     '/auth/login',

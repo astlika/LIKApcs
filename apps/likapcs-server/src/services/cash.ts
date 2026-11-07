@@ -409,6 +409,23 @@ export class CashService {
     return rows.rows.map(toShift);
   }
 
+  /** Every drawer movement of the given shifts, grouped by shift (oldest first). */
+  async movementsForShifts(shiftIds: string[]): Promise<Map<string, CashMovementSummary[]>> {
+    const byShift = new Map<string, CashMovementSummary[]>();
+    if (shiftIds.length === 0) return byShift;
+    const r = await this.pool.query<MovementRow>(
+      `${MOVEMENT_SELECT} WHERE m.shift_id = ANY($1::uuid[]) ORDER BY m.created_at, m.id`,
+      [shiftIds],
+    );
+    for (const row of r.rows) {
+      const movement = toMovement(row);
+      const list = byShift.get(movement.shiftId) ?? [];
+      list.push(movement);
+      byShift.set(movement.shiftId, list);
+    }
+    return byShift;
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────────
 
   private async lockOpenShift(client: DbClient, registerId?: string | null) {

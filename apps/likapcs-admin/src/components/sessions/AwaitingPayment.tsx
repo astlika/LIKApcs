@@ -12,6 +12,7 @@ import { useState } from 'react';
 import {
   PERMISSIONS,
   parseMoneyInput,
+  type CollectStationResponse,
   type SessionMutationResponse,
   type SessionSummary,
 } from '@likapcs/shared';
@@ -22,18 +23,24 @@ import { formatHms } from '../../lib/session-time';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
+import {
+  allPcsBills,
+  awaitingAmountCents,
+  multiBillPcs,
+  pcGroups,
+  payAllTotalCents,
+  type PcBills,
+} from '../../lib/pay-all';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
+import { AddToSessionDialog } from './AddToSessionDialog';
 import { paidFrom, useSessionCustomer } from './SessionPanel';
 import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 
 export const AWAITING_PAYMENT_KEY = ['sessions', 'awaiting-payment'] as const;
 
 /** Amount still owed for an ended end-pay session: the fixed time price plus orders on the bill. */
-export function awaitingAmountCents(s: SessionSummary): number {
-  return (s.finalPriceCents ?? s.currentPriceCents) + s.openOrdersCents;
-}
 
 export function useAwaitingPayment(enabled = true) {
   return useQuery({
@@ -56,10 +63,14 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   const canCollect = can(PERMISSIONS.STATIONS_CONTROL);
   const list = useAwaitingPayment(canView);
   const [collecting, setCollecting] = useState<SessionSummary | null>(null);
-  const [paid, setPaid] = useState<SessionPaid | null>(null);
+  const [collectingAll, setCollectingAll] = useState<PcBills | null>(null);
+  /** Receipts to show, one "done" dialog after another (a pay-all step has one per bill). */
+  const [paidQueue, setPaidQueue] = useState<SessionPaid[]>([]);
+  const paid = paidQueue[0] ?? null;
+  const finishPaid = () => setPaidQueue((q) => q.slice(1));
   const items = list.data?.items ?? [];
   if (!canView || items.length === 0) {
-    return paid ? <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} /> : null;
+    return paid ? <SessionPaidDialog paid={paid} onFinish={finishPaid} /> : null;
   }
   const total = items.reduce((a, s) => a + awaitingAmountCents(s), 0);
   return (
@@ -78,6 +89,28 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           </span>
           <span className="muted num">· {fmt.money(total)}</span>
           <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>
+          {canCollect && pcGroups(items).length >= 2 && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setCollectingAll(allPcsBills(items))}
+              data-testid={`${testId}-collect-everything`}
+            >
+              <Wallet size={13} /> {t('sessions.awaiting.collectEverything', { n: items.length })}
+            </Button>
+          )}
+          {canCollect &&
+            multiBillPcs(items).map((group) => (
+              <Button
+                key={group.stationId}
+                size="sm"
+                onClick={() => setCollectingAll(group)}
+                data-testid={`${testId}-collect-all`}
+              >
+                <Wallet size={13} />{' '}
+                {t('sessions.awaiting.collectAll', { code: group.code, n: group.bills.length })}
+              </Button>
+            ))}
         </div>
         <div className="awaiting__chips">
           {items.map((s) => (
@@ -106,18 +139,147 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           ))}
         </div>
       </div>
+      {collectingAll && (
+        <CollectStationDialog
+          group={collectingAll}
+          onClose={() => setCollectingAll(null)}
+          onPaid={(receipts) => {
+            setCollectingAll(null);
+            setPaidQueue(receipts);
+          }}
+        />
+      )}
       {collecting && (
         <CollectDialog
           session={collecting}
           onClose={() => setCollecting(null)}
           onPaid={(p) => {
             setCollecting(null);
-            setPaid(p);
+            setPaidQueue(p ? [p] : []);
           }}
         />
       )}
-      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+      {paid && <SessionPaidDialog paid={paid} onFinish={finishPaid} />}
     </>
+  );
+}
+
+/**
+ * 0.21.0 — pay all: the bills of one PC in one tender step (cash, card or split; no pay-later,
+ * which needs one customer). The server settles every bill in one transaction, each with its own
+ * receipt, or refuses the whole step. 0.19.5: `group.stationId` null means every PC at once.
+ */
+export function CollectStationDialog({
+  group,
+  onClose,
+  onPaid,
+}: {
+  group: PcBills;
+  onClose: () => void;
+  onPaid: (receipts: SessionPaid[]) => void;
+}) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const shiftGuard = useShiftGuard();
+  const queryClient = useQueryClient();
+  const total = payAllTotalCents(group.bills);
+  const tender = useTender({ totalCents: total, customer: null, allowCredit: false });
+  const everyPc = group.stationId === null;
+  const collectAll = useMutation({
+    mutationFn: () =>
+      api<CollectStationResponse>(
+        everyPc ? '/sessions/collect-all' : `/stations/${group.stationId}/collect-all`,
+        { method: 'POST', body: { paymentMethod: 'cash', payments: tender.payments } },
+      ),
+    onSuccess: (result) => {
+      toast.success(
+        everyPc
+          ? t('sessions.awaiting.collectedEverything', {
+              n: result.collected.length,
+              total: fmt.money(result.totalCents),
+            })
+          : t('sessions.awaiting.collectedAll', {
+              code: group.code,
+              n: result.collected.length,
+              total: fmt.money(result.totalCents),
+            }),
+      );
+      for (const key of [['sessions'], ['stations'], ['cash'], ['dashboard'], ['orders']])
+        void queryClient.invalidateQueries({ queryKey: key });
+      onPaid(
+        result.collected.flatMap((c) =>
+          c.payment ? [{ sessionId: c.sessionId, payment: c.payment }] : [],
+        ),
+      );
+    },
+    onError: (err) => {
+      if (shiftGuard.handle(err, () => collectAll.mutate())) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+      void queryClient.invalidateQueries({ queryKey: AWAITING_PAYMENT_KEY });
+    },
+  });
+  const ready = tender.covered && !collectAll.isPending;
+  const submit = () => {
+    if (ready) collectAll.mutate();
+  };
+  useEnterSubmits(submit);
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={
+        everyPc
+          ? t('sessions.awaiting.collectEverythingTitle')
+          : t('sessions.awaiting.collectAllTitle', { code: group.code })
+      }
+      description={
+        everyPc
+          ? t('sessions.awaiting.collectEverythingBody')
+          : t('sessions.awaiting.collectAllBody')
+      }
+      size="md"
+      footer={
+        <>
+          <Button onClick={onClose}>
+            {t('common.cancel')} <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            loading={collectAll.isPending}
+            disabled={!ready}
+            onClick={submit}
+            data-testid="collect-all-confirm"
+          >
+            <Wallet size={14} /> {t('sessions.collectAmount', { amount: fmt.money(total) })}{' '}
+            <Kbd>Enter</Kbd>
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="quote" data-testid="collect-all-bills">
+          {group.bills.map((s) => (
+            <div className="quote__row" key={s.id}>
+              <span className="muted">
+                {everyPc ? `${s.stationCode} · ` : ''}
+                {s.customerName ?? t('pos.walkIn')} · {formatHms(s.billableSeconds)}
+              </span>
+              <span className="num">{fmt.money(awaitingAmountCents(s))}</span>
+            </div>
+          ))}
+          <div className="quote__row">
+            <strong>{t('sessions.awaiting.total')}</strong>
+            <strong className="num" data-testid="collect-all-total">
+              {fmt.money(total)}
+            </strong>
+          </div>
+        </div>
+        <TenderPanel tender={tender} onSubmit={submit} testId="collect-all" />
+      </div>
+    </Dialog>
   );
 }
 
@@ -137,10 +299,13 @@ export function CollectDialog({
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   // Fixed when the session ended: used time capped at the reservation, or the full reservation.
-  const due = session.finalPriceCents ?? session.currentPriceCents;
+  // 0.28.0: a prepaid PC's time was paid at the start, so only its products are due.
+  const due =
+    session.billingMode === 'prepaid' ? 0 : (session.finalPriceCents ?? session.currentPriceCents);
   const reserved = session.quotedPriceCents ?? due;
   const ordersCents = session.openOrdersCents;
   const [discount, setDiscount] = useState('');
+  const [adding, setAdding] = useState(false);
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
   const discountInvalid = discountCents === null || discountCents < 0 || discountCents > due;
   const timeCents = Math.max(0, due - (discountCents ?? 0));
@@ -186,132 +351,145 @@ export function CollectDialog({
   useEnterSubmits(submit);
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={t('sessions.collectTitle', { code: session.stationCode })}
-      description={t('sessions.collectBody')}
-      size="md"
-      footer={
-        <>
-          <Button onClick={onClose}>
-            {t('common.cancel')} <Kbd>Esc</Kbd>
-          </Button>
-          <Button
-            variant="primary"
-            size="lg"
-            loading={collect.isPending}
-            disabled={!ready}
-            onClick={submit}
-            data-testid="collect-confirm"
-          >
-            {tender.mode === 'credit' && tender.creditCents > 0 ? (
-              <>
-                <CalendarClock size={14} /> {t('pos.completeOnTab')}
-              </>
-            ) : (
-              <>
-                <Wallet size={14} /> {t('sessions.collectAmount', { amount: fmt.money(total) })}
-              </>
-            )}{' '}
-            <Kbd>Enter</Kbd>
-          </Button>
-        </>
-      }
-    >
-      <div className="stack">
-        <div className="quote">
-          <div className="quote__row">
-            <span className="muted">{t('pos.customer')}</span>
-            <span>{customer?.name ?? session.customerName ?? t('pos.walkIn')}</span>
-          </div>
-          <div className="quote__row">
-            <span className="muted">{t('sessions.billable')}</span>
-            <span className="num">
-              {formatHms(session.billableSeconds)}
-              {session.endedAt && (
-                <span className="faint">
-                  {' '}
-                  · {t('sessions.endedAt', { time: fmt.time(session.endedAt) })}
-                </span>
-              )}
-            </span>
-          </div>
-          {due < reserved && (
-            <div className="quote__row" data-testid="collect-reserved">
-              <span className="muted">{t('sessions.reserved')}</span>
-              <span className="num">
-                <s className="faint">{fmt.money(reserved)}</s>
-              </span>
-            </div>
-          )}
-          <div className="quote__row">
-            <span className="muted">{t('sessions.timePrice')}</span>
-            <span className="num" data-testid="collect-time">
-              {fmt.money(timeCents)}
-            </span>
-          </div>
-          {ordersCents > 0 && (
-            <div className="quote__row" data-testid="collect-orders">
-              <span className="muted">
-                {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
-              </span>
-              <span className="num">{fmt.money(ordersCents)}</span>
-            </div>
-          )}
-          <div className="quote__row quote__row--total">
-            <span>{t('sessions.totalDue')}</span>
-            <strong className="num" data-testid="collect-total">
-              {fmt.money(total)}
-            </strong>
-          </div>
-        </div>
-        {canDiscount && (
-          <div className="row row--wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
-            <Field
-              label={t('sessions.discount')}
-              optional
-              error={discount.trim() && discountInvalid ? t('common.invalid') : undefined}
+    <>
+      <Dialog
+        open
+        onClose={onClose}
+        title={t('sessions.collectTitle', { code: session.stationCode })}
+        description={t('sessions.collectBody')}
+        size="md"
+        footer={
+          <>
+            <Button onClick={() => setAdding(true)} data-testid="collect-add-items">
+              {t('addItems.button')}
+            </Button>
+            <Button onClick={onClose}>
+              {t('common.cancel')} <Kbd>Esc</Kbd>
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              loading={collect.isPending}
+              disabled={!ready}
+              onClick={submit}
+              data-testid="collect-confirm"
             >
-              {(id) => (
-                <Input
-                  id={id}
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={discount}
-                  style={{ maxWidth: 160 }}
-                  onChange={(e) => setDiscount(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      submit();
-                    }
-                  }}
-                  data-testid="collect-discount"
-                />
-              )}
-            </Field>
-            {due > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-pressed={discountCents === due}
-                title={t('sessions.waiveHint')}
-                onClick={() => setDiscount(discountCents === due ? '' : (due / 100).toFixed(2))}
-                data-testid="collect-waive"
-              >
-                {t('sessions.waive')}
-              </Button>
+              {tender.mode === 'credit' && tender.creditCents > 0 ? (
+                <>
+                  <CalendarClock size={14} /> {t('pos.completeOnTab')}
+                </>
+              ) : (
+                <>
+                  <Wallet size={14} /> {t('sessions.collectAmount', { amount: fmt.money(total) })}
+                </>
+              )}{' '}
+              <Kbd>Enter</Kbd>
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <div className="quote">
+            <div className="quote__row">
+              <span className="muted">{t('pos.customer')}</span>
+              <span>{customer?.name ?? session.customerName ?? t('pos.walkIn')}</span>
+            </div>
+            <div className="quote__row">
+              <span className="muted">{t('sessions.billable')}</span>
+              <span className="num">
+                {formatHms(session.billableSeconds)}
+                {session.endedAt && (
+                  <span className="faint">
+                    {' '}
+                    · {t('sessions.endedAt', { time: fmt.time(session.endedAt) })}
+                  </span>
+                )}
+              </span>
+            </div>
+            {due < reserved && (
+              <div className="quote__row" data-testid="collect-reserved">
+                <span className="muted">{t('sessions.reserved')}</span>
+                <span className="num">
+                  <s className="faint">{fmt.money(reserved)}</s>
+                </span>
+              </div>
             )}
+            <div className="quote__row">
+              <span className="muted">{t('sessions.timePrice')}</span>
+              <span className="num" data-testid="collect-time">
+                {fmt.money(timeCents)}
+              </span>
+            </div>
+            {ordersCents > 0 && (
+              <div className="quote__row" data-testid="collect-orders">
+                <span className="muted">
+                  {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
+                </span>
+                <span className="num">{fmt.money(ordersCents)}</span>
+              </div>
+            )}
+            <div className="quote__row quote__row--total">
+              <span>{t('sessions.totalDue')}</span>
+              <strong className="num" data-testid="collect-total">
+                {fmt.money(total)}
+              </strong>
+            </div>
           </div>
-        )}
-        <TenderPanel
-          tender={tender}
-          onSubmit={submit}
-          onCustomerChange={setCustomer}
-          testId="collect"
+          {canDiscount && (
+            <div className="row row--wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+              <Field
+                label={t('sessions.discount')}
+                optional
+                error={discount.trim() && discountInvalid ? t('common.invalid') : undefined}
+              >
+                {(id) => (
+                  <Input
+                    id={id}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={discount}
+                    style={{ maxWidth: 160 }}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submit();
+                      }
+                    }}
+                    data-testid="collect-discount"
+                  />
+                )}
+              </Field>
+              {due > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={discountCents === due}
+                  title={t('sessions.waiveHint')}
+                  onClick={() => setDiscount(discountCents === due ? '' : (due / 100).toFixed(2))}
+                  data-testid="collect-waive"
+                >
+                  {t('sessions.waive')}
+                </Button>
+              )}
+            </div>
+          )}
+          <TenderPanel
+            tender={tender}
+            onSubmit={submit}
+            onCustomerChange={setCustomer}
+            testId="collect"
+          />
+        </div>
+      </Dialog>
+      {adding && (
+        <AddToSessionDialog
+          sessionId={session.id}
+          billed={false}
+          onClose={() => setAdding(false)}
+          onDone={() => setAdding(false)}
         />
-      </div>
-    </Dialog>
+      )}
+    </>
   );
 }

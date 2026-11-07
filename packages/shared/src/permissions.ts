@@ -30,6 +30,10 @@ export const PERMISSIONS = {
   POS_REFUND: 'pos.refund',
   POS_SUSPEND: 'pos.suspend',
   POS_REPRINT: 'pos.reprint',
+  /** 0.27.0: change the price of a bill that is already paid. Owner and admin always have it. */
+  POS_ADJUST_PAID: 'pos.adjust_paid',
+  /** 0.28.0: record a staff purchase (at cost, stock out, expense booked, no money in the drawer). */
+  POS_STAFF_PURCHASE: 'pos.staff_purchase',
   INVOICES_VIEW: 'invoices.view',
   INVOICES_MANAGE: 'invoices.manage',
 
@@ -49,6 +53,10 @@ export const PERMISSIONS = {
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_MANAGE: 'customers.manage',
   DEBTS_GIVE: 'debts.give',
+  /** Watch the live screen of a station PC (read-only). Owner, admin and manager by default. */
+  REMOTE_VIEW: 'remote.view',
+  /** Send mouse and keyboard to a station PC from the focus view (phase 2). Owner and admin only by default. */
+  REMOTE_CONTROL: 'remote.control',
   DEBTS_WRITE_OFF: 'debts.write_off',
   WALLET_TOPUP: 'wallet.topup',
   WALLET_REFUND: 'wallet.refund',

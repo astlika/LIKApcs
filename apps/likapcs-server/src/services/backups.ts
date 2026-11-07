@@ -30,11 +30,14 @@ import {
   BACKUP_FILE_EXTENSION,
   BACKUP_FORMAT,
   BACKUP_FORMAT_VERSION,
+  type BackupEncryptionStatus,
+  type BackupExternalCopy,
   type BackupKind,
   type BackupManifest,
   type BackupStatus,
   type BackupSummary,
   type BackupsResponse,
+  type FactoryResetResult,
   type RestoreResult,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
@@ -42,6 +45,20 @@ import { AppError, badRequest, conflict, notFound } from '../errors.js';
 import { SERVER_VERSION } from '../version.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { SettingsService } from './settings.js';
+import {
+  ArchiveCryptoError,
+  BackupKeyRing,
+  decryptFile,
+  deriveKey,
+  encryptFile,
+  isEncryptedFile,
+  readEncryptedHeader,
+} from './backup-crypto.js';
+
+/** Plain archive name inside staging folders (the encrypted file is built from it). */
+const PLAIN_ARCHIVE = 'archive.tar.gz';
+/** Added to the archive name when the backup is encrypted (0.26.0). */
+const ENCRYPTED_EXTENSION = '.enc';
 
 interface BackupRow {
   id: string;
@@ -62,6 +79,12 @@ export interface BackupServiceOptions {
   schemaVersion: () => number;
   /** Called after a successful restore (drop caches, notify Admins, disconnect clients). */
   afterRestore?: () => void;
+  /** Factory reset: erases uploaded pictures and videos (the backup folder is never touched). */
+  wipeUploads?: () => Promise<void>;
+  /** Uploaded files folder: pictures, wallpapers and ad videos go into every backup (`uploads/`). */
+  uploadDir?: string;
+  /** Local key file (0.26.0): kept outside the database and outside every backup. */
+  keyFile: string;
   log?: { info: (o: object, msg: string) => void; error: (o: object, msg: string) => void };
 }
 
@@ -72,17 +95,52 @@ const SKIP_ON_RESTORE = new Set(['schema_migrations']);
  * right now, not the files that existed when the archive was taken.
  */
 const PRESERVE_CURRENT = new Set(['backup_history']);
+/**
+ * Factory reset keeps the system's own configuration: migration bookkeeping, and the access roles
+ * and permission catalogue that first-run setup needs. Every other table is erased.
+ */
+const KEEP_ON_FACTORY_RESET = new Set([
+  'schema_migrations',
+  'roles',
+  'permissions',
+  'role_permissions',
+]);
 
 export class BackupService {
   private busy: 'backup' | 'restore' | null = null;
   private lastScheduledDay: string | null = null;
+  private readonly keys: BackupKeyRing;
 
   constructor(
     private readonly pool: DbPool,
     private readonly backupDir: string,
     private readonly settings: SettingsService,
     private readonly options: BackupServiceOptions,
-  ) {}
+  ) {
+    this.keys = new BackupKeyRing(options.keyFile);
+  }
+
+  // ─── Encryption & external copy (0.26.0) ─────────────────────────────
+
+  encryptionStatus(): Promise<BackupEncryptionStatus> {
+    return this.keys.status();
+  }
+
+  /** Sets the backup password. The account password was already re-checked by the route. */
+  async setEncryption(input: {
+    archivePassword: string;
+    actor: AuditActor;
+  }): Promise<BackupEncryptionStatus> {
+    await this.keys.setPassword(input.archivePassword);
+    await recordAudit(this.pool, input.actor, {
+      action: 'backup.encryption.set',
+      entityType: null,
+      entityId: null,
+      details: {},
+      severity: 'warning',
+    });
+    return this.keys.status();
+  }
 
   get directory(): string {
     return this.backupDir;
@@ -101,6 +159,7 @@ export class BackupService {
         LIMIT $2`,
       [query.includeDeleted, query.limit],
     );
+    const copies = await this.externalCopies(rows.map((r) => r.id));
     const [enabled, time, keepCount, timeZone] = await Promise.all([
       this.settings.get('backup.enabled'),
       this.settings.get('backup.time'),
@@ -116,12 +175,13 @@ export class BackupService {
         keepCount,
         nextRunAt: enabled ? nextOccurrence(time, timeZone, new Date()).toISOString() : null,
       },
-      items: rows.map((r) => this.toSummary(r)),
+      items: rows.map((r) => this.toSummary(r, copies.get(r.id) ?? null)),
     };
   }
 
   async get(id: string): Promise<BackupSummary> {
-    return this.toSummary(await this.row(id));
+    const copies = await this.externalCopies([id]);
+    return this.toSummary(await this.row(id), copies.get(id) ?? null);
   }
 
   /** Absolute path + download name of a stored archive. */
@@ -132,6 +192,29 @@ export class BackupService {
     }
     const stat = await fsp.stat(row.file_path);
     return { path: row.file_path, fileName: path.basename(row.file_path), sizeBytes: stat.size };
+  }
+
+  // ─── Uploaded files ──────────────────────────────────────────────────────────
+
+  /** Copies the uploads folder into the archive staging area; null when there is none. */
+  private async copyUploads(target: string): Promise<{ files: number; bytes: number } | null> {
+    const source = this.options.uploadDir;
+    if (!source || !fs.existsSync(source)) return null;
+    await fsp.cp(source, target, { recursive: true });
+    return treeSize(target);
+  }
+
+  /** Replaces the uploads folder with the archived one (entries not in the archive are removed). */
+  private async replaceUploads(archived: string): Promise<void> {
+    const target = this.options.uploadDir;
+    if (!target) return;
+    await fsp.mkdir(target, { recursive: true });
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.rm(path.join(target, entry), { recursive: true, force: true });
+    }
+    for (const entry of await fsp.readdir(archived)) {
+      await fsp.cp(path.join(archived, entry), path.join(target, entry), { recursive: true });
+    }
   }
 
   // ─── Create ──────────────────────────────────────────────────────────────────
@@ -149,8 +232,9 @@ export class BackupService {
     await fsp.mkdir(this.backupDir, { recursive: true });
     const startedAt = new Date();
     const timeZone = await this.settings.get('locale.timezone');
-    const businessName = await this.settings.get('business.name');
-    const fileName = `likapcs-${kind}-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}`;
+    const key = await this.keys.currentKey();
+    const baseName = `likapcs-${kind}-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}`;
+    const fileName = key ? `${baseName}${ENCRYPTED_EXTENSION}` : baseName;
     const finalPath = path.join(this.backupDir, fileName);
     const { rows: inserted } = await this.pool.query<{ id: string }>(
       `INSERT INTO backup_history (kind, status, file_path, schema_version, started_at, created_by)
@@ -159,6 +243,67 @@ export class BackupService {
     );
     const id = inserted[0]!.id;
     const tmpDir = await fsp.mkdtemp(path.join(this.backupDir, '.tmp-'));
+    try {
+      const { plainArchive, tables } = await this.dumpPlainArchive(tmpDir, {
+        kind,
+        startedAt,
+        timeZone,
+        fileName,
+        encrypted: key !== null,
+      });
+      if (key) await encryptFile(plainArchive, finalPath, key.key, key.salt);
+      else await fsp.rename(plainArchive, finalPath);
+      const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
+      await this.pool.query(
+        `UPDATE backup_history
+            SET status = 'succeeded', size_bytes = $2, sha256 = $3, finished_at = now()
+          WHERE id = $1`,
+        [id, stat.size, sha256],
+      );
+      if (actor) {
+        await recordAudit(this.pool, actor, {
+          action: 'backup.create',
+          entityType: 'backup',
+          entityId: id,
+          details: { kind, fileName, sizeBytes: stat.size, tables },
+        });
+      }
+      this.options.log?.info({ id, kind, fileName, sizeBytes: stat.size }, 'backup written');
+      await this.copyToExternal({ id, kind, fileName, finalPath, sha256 });
+      if (kind === 'scheduled') await this.applyRetention();
+      return this.get(id);
+    } catch (err) {
+      await fsp.rm(finalPath, { force: true }).catch(() => undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      await this.pool
+        .query(
+          `UPDATE backup_history SET status = 'failed', error_message = $2, finished_at = now()
+            WHERE id = $1`,
+          [id, message.slice(0, 1000)],
+        )
+        .catch(() => undefined);
+      this.options.log?.error({ err, id, kind }, 'backup failed');
+      throw err;
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Dumps every table (a consistent snapshot) and the uploads folder into a plain, unencrypted
+   * `.tar.gz` inside `tmpDir`. Shared by normal backups and USB transfers (0.27.5).
+   */
+  private async dumpPlainArchive(
+    tmpDir: string,
+    input: {
+      kind: BackupKind;
+      startedAt: Date;
+      timeZone: string;
+      fileName: string;
+      encrypted: boolean;
+    },
+  ): Promise<{ plainArchive: string; tables: number; manifest: BackupManifest }> {
+    const businessName = await this.settings.get('business.name');
     const client = await this.pool.connect();
     try {
       await fsp.mkdir(path.join(tmpDir, 'tables'));
@@ -175,55 +320,41 @@ export class BackupService {
         manifestTables.push({ name: table, rows: stream.rowCount, bytes: stat.size });
       }
       await client.query('COMMIT');
+      // Uploaded files are part of the backup too: product pictures, wallpapers, ad videos.
+      const uploads = await this.copyUploads(path.join(tmpDir, 'uploads'));
       const manifest: BackupManifest = {
         format: BACKUP_FORMAT,
         formatVersion: BACKUP_FORMAT_VERSION,
-        createdAt: startedAt.toISOString(),
+        createdAt: input.startedAt.toISOString(),
         serverVersion: SERVER_VERSION,
         schemaVersion: this.options.schemaVersion(),
         businessName,
-        kind,
+        kind: input.kind,
         tables: manifestTables,
+        uploads,
       };
       await fsp.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-      await tar.create({ gzip: true, file: finalPath, cwd: tmpDir, portable: true }, [
-        'manifest.json',
-        'tables',
-      ]);
-      const [sha256, stat] = await Promise.all([sha256Of(finalPath), fsp.stat(finalPath)]);
-      await this.pool.query(
-        `UPDATE backup_history
-            SET status = 'succeeded', size_bytes = $2, sha256 = $3, finished_at = now()
-          WHERE id = $1`,
-        [id, stat.size, sha256],
+      await fsp.writeFile(
+        path.join(tmpDir, 'report.txt'),
+        buildReport(manifest, {
+          timeZone: input.timeZone,
+          fileName: input.fileName,
+          encrypted: input.encrypted,
+        }),
       );
-      if (actor) {
-        await recordAudit(this.pool, actor, {
-          action: 'backup.create',
-          entityType: 'backup',
-          entityId: id,
-          details: { kind, fileName, sizeBytes: stat.size, tables: manifestTables.length },
-        });
-      }
-      this.options.log?.info({ id, kind, fileName, sizeBytes: stat.size }, 'backup written');
-      if (kind === 'scheduled') await this.applyRetention();
-      return this.get(id);
+      const plainArchive = path.join(tmpDir, PLAIN_ARCHIVE);
+      await tar.create({ gzip: true, file: plainArchive, cwd: tmpDir, portable: true }, [
+        'manifest.json',
+        'report.txt',
+        'tables',
+        ...(uploads ? ['uploads'] : []),
+      ]);
+      return { plainArchive, tables: manifestTables.length, manifest };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
-      await fsp.rm(finalPath, { force: true }).catch(() => undefined);
-      const message = err instanceof Error ? err.message : String(err);
-      await this.pool
-        .query(
-          `UPDATE backup_history SET status = 'failed', error_message = $2, finished_at = now()
-            WHERE id = $1`,
-          [id, message.slice(0, 1000)],
-        )
-        .catch(() => undefined);
-      this.options.log?.error({ err, id, kind }, 'backup failed');
       throw err;
     } finally {
       client.release();
-      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
@@ -263,11 +394,13 @@ export class BackupService {
     body: Readable,
     requestedName: string,
     actor: AuditActor,
+    archivePassword?: string,
   ): Promise<BackupSummary> {
     await fsp.mkdir(this.backupDir, { recursive: true });
-    const base = requestedName.endsWith(BACKUP_FILE_EXTENSION)
-      ? requestedName
-      : `${requestedName.replace(/\.(tar\.gz|tgz)$/i, '')}${BACKUP_FILE_EXTENSION}`;
+    const base =
+      requestedName.endsWith(BACKUP_FILE_EXTENSION) || requestedName.endsWith(ENCRYPTED_EXTENSION)
+        ? requestedName
+        : `${requestedName.replace(/\.(tar\.gz|tgz)$/i, '')}${BACKUP_FILE_EXTENSION}`;
     const target = path.join(this.backupDir, base);
     if (fs.existsSync(target)) throw conflict(`A backup named ${base} already exists`);
     const hash = crypto.createHash('sha256');
@@ -286,9 +419,10 @@ export class BackupService {
     );
     let manifest: BackupManifest;
     try {
-      manifest = await readManifest(target);
+      manifest = await this.manifestOf(target, archivePassword);
     } catch (err) {
       await fsp.rm(target, { force: true }).catch(() => undefined);
+      if (err instanceof AppError) throw err;
       throw badRequest(
         `Not a LIKApcs backup archive: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -308,13 +442,241 @@ export class BackupService {
     return this.get(rows[0]!.id);
   }
 
+  // ─── Archive helpers (0.26.0) ─────────────────────────────────────────
+
+  /** The key for an encrypted archive: the typed password, else a key this PC already has. */
+  private async archiveKey(file: string, password?: string): Promise<Buffer> {
+    let salt: Buffer;
+    try {
+      ({ salt } = await readEncryptedHeader(file));
+    } catch {
+      throw new AppError(409, 'ARCHIVE_CORRUPT', 'Kopja është e dëmtuar ose e paplotë.');
+    }
+    if (password) return deriveKey(password, salt);
+    const known = await this.keys.keyForSalt(salt);
+    if (known) return known;
+    throw new AppError(
+      400,
+      'ARCHIVE_PASSWORD_REQUIRED',
+      'Kjo kopje është e enkriptuar. Shkruani fjalëkalimin e kopjeve për ta hapur.',
+    );
+  }
+
+  /** Returns a plain .tar.gz to read: the file itself, or a decrypted copy inside `dir`. */
+  private async plainArchiveOf(file: string, dir: string, password?: string): Promise<string> {
+    if (!(await isEncryptedFile(file))) return file;
+    const key = await this.archiveKey(file, password);
+    const out = path.join(dir, PLAIN_ARCHIVE);
+    try {
+      await decryptFile(file, out, key);
+    } catch (err) {
+      if (err instanceof ArchiveCryptoError && err.reason === 'wrong_password') {
+        throw new AppError(
+          403,
+          'ARCHIVE_PASSWORD_WRONG',
+          'Fjalëkalimi i kopjes nuk është i saktë (ose kopja është e dëmtuar).',
+        );
+      }
+      throw err;
+    }
+    return out;
+  }
+
+  private async manifestOf(file: string, password?: string): Promise<BackupManifest> {
+    if (!(await isEncryptedFile(file))) return readManifest(file);
+    const scratch = await fsp.mkdtemp(path.join(this.backupDir, '.inspect-'));
+    try {
+      return await readManifest(await this.plainArchiveOf(file, scratch, password));
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Copies a finished, encrypted backup to the external folder (`backup.external_dir`) and checks
+   * the copy by its checksum. Never fails the backup itself: the result is kept in the audit log
+   * and shown on the Backups page.
+   */
+  private async copyToExternal(input: {
+    id: string;
+    kind: BackupKind;
+    fileName: string;
+    finalPath: string;
+    sha256: string;
+  }): Promise<void> {
+    const dir = (await this.settings.get('backup.external_dir')).trim();
+    if (!dir) return;
+    const at = new Date();
+    let result: BackupExternalCopy;
+    try {
+      const stat = await fsp.stat(dir).catch(() => null);
+      if (!stat?.isDirectory()) {
+        throw new Error(
+          `Folderi "${dir}" nuk u gjet. Kontrolloni që disku jashtë të jetë i lidhur.`,
+        );
+      }
+      if (!(await isEncryptedFile(input.finalPath))) {
+        throw new Error('Vendosni fjalëkalimin e kopjeve para se të ruani kopje jashtë PC-së.');
+      }
+      const target = path.join(dir, input.fileName);
+      await fsp.copyFile(input.finalPath, target);
+      if ((await sha256Of(target)) !== input.sha256) {
+        await fsp.rm(target, { force: true }).catch(() => undefined);
+        throw new Error('Kopja jashtë nuk u verifikua (checksum-i nuk përputhet). U fshi.');
+      }
+      if (input.kind === 'scheduled') await this.pruneExternal(dir);
+      result = { ok: true, path: target, error: null, at: at.toISOString() };
+    } catch (err) {
+      result = {
+        ok: false,
+        path: null,
+        error: err instanceof Error ? err.message : String(err),
+        at: at.toISOString(),
+      };
+    }
+    await recordAudit(
+      this.pool,
+      { label: 'sistemi' },
+      {
+        action: 'backup.external_copy',
+        entityType: 'backup',
+        entityId: input.id,
+        details: {
+          ok: result.ok,
+          path: result.path,
+          error: result.error,
+          fileName: input.fileName,
+        },
+        severity: result.ok ? 'info' : 'warning',
+      },
+    );
+    if (result.ok)
+      this.options.log?.info({ id: input.id, path: result.path }, 'backup copied outside');
+    else
+      this.options.log?.error({ id: input.id, error: result.error }, 'external backup copy failed');
+  }
+
+  /** Keeps the newest `backup.keep_count` scheduled copies on the external disk (only our files). */
+  private async pruneExternal(dir: string): Promise<void> {
+    const keep = await this.settings.get('backup.keep_count');
+    const names = (await fsp.readdir(dir).catch(() => [] as string[])).filter((n) =>
+      /^likapcs-scheduled-.*\.likapcs-backup\.tar\.gz(\.enc)?$/.test(n),
+    );
+    const withTime = await Promise.all(
+      names.map(async (n) => ({ n, t: (await fsp.stat(path.join(dir, n))).mtimeMs })),
+    );
+    withTime.sort((a, b) => b.t - a.t);
+    for (const old of withTime.slice(keep)) {
+      await fsp.rm(path.join(dir, old.n), { force: true }).catch(() => undefined);
+    }
+  }
+
   // ─── Restore ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Factory reset. A safety backup is taken first; then every table (except migration bookkeeping)
+   * and every uploaded picture/video is erased, users and settings included, so the system starts
+   * again at first-run setup. The backup history survives, with its links to the erased users
+   * cleared, so the safety backup stays listed. The backup folder is never touched.
+   */
+  async factoryReset(input: {
+    userId: string;
+    username: string;
+    ip: string;
+  }): Promise<FactoryResetResult> {
+    this.acquire('backup');
+    try {
+      const { rows: owners } = await this.pool.query(
+        `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = $1 AND r.code = 'owner'`,
+        [input.userId],
+      );
+      if (owners.length === 0) {
+        throw new AppError(403, 'FORBIDDEN', 'Only the owner can reset the system');
+      }
+      const safety = await this.runBackup('pre_reset', {
+        userId: input.userId,
+        label: input.username,
+        ip: input.ip,
+      });
+      const client = await this.pool.connect();
+      let tablesErased = 0;
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL lock_timeout = '60s'`);
+        const { rows: history } = await client.query<Record<string, unknown>>(
+          'SELECT * FROM backup_history',
+        );
+        const erasable = (await this.publicTables(client)).filter(
+          (t) => !KEEP_ON_FACTORY_RESET.has(t),
+        );
+        // Built-in rows (units, expense categories) carry `is_system`: they stay, user rows go.
+        const { rows: flagged } = await client.query<{ table_name: string }>(
+          `SELECT table_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND column_name = 'is_system'`,
+        );
+        const withFlag = new Set(flagged.map((r) => r.table_name));
+        const plain = erasable.filter((t) => !withFlag.has(t));
+        const builtIn = erasable.filter((t) => withFlag.has(t));
+        if (plain.length > 0) {
+          await client.query(`TRUNCATE ${plain.map(quoteIdent).join(', ')} RESTART IDENTITY`);
+        }
+        for (const t of builtIn) {
+          await client.query(`DELETE FROM ${quoteIdent(t)} WHERE is_system IS NOT TRUE`);
+        }
+        // Rows a fresh install starts with (same as migrations 0004, 0009).
+        await client.query(
+          `INSERT INTO cash_registers (name)
+           SELECT 'Main register' WHERE NOT EXISTS (SELECT 1 FROM cash_registers)`,
+        );
+        await client.query(
+          `INSERT INTO document_sequences (kind, period, prefix, next_value)
+           VALUES ('customer', '', 'C', 1) ON CONFLICT (kind, period) DO NOTHING`,
+        );
+        tablesErased = erasable.length;
+        for (const h of history) {
+          const row: Record<string, unknown> = { ...h, created_by: null };
+          const keys = Object.keys(row);
+          await client.query(
+            `INSERT INTO backup_history (${keys.map(quoteIdent).join(', ')})
+             VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')})
+             ON CONFLICT (id) DO NOTHING`,
+            keys.map((k) => row[k]),
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      await this.options.wipeUploads?.();
+      await this.settings.ensureDefaults();
+      this.options.afterRestore?.();
+      this.options.log?.info(
+        { preResetBackupId: safety.id, tablesErased },
+        'factory reset completed',
+      );
+      return { preResetBackupId: safety.id, tablesErased };
+    } finally {
+      this.busy = null;
+    }
+  }
 
   async restore(input: {
     id: string;
     actor: AuditActor;
     /** The caller's own session — re-created after the restore so they stay signed in. */
-    sessionId: string;
+    sessionId: string | null;
+    /** Backup password, only needed for an encrypted archive this PC has no key for. */
+    archivePassword?: string;
+    /**
+     * USB transfer (0.27.5): the archive comes from another PC. It must not be newer than this
+     * server, and the devices of the old PC are revoked (each PC is approved again) and every
+     * old login session is ended.
+     */
+    transfer?: boolean;
   }): Promise<RestoreResult> {
     const row = await this.row(input.id);
     if (row.status !== 'succeeded' || !row.file_path || !fs.existsSync(row.file_path)) {
@@ -327,10 +689,19 @@ export class BackupService {
     const t0 = Date.now();
     const tmpDir = await fsp.mkdtemp(path.join(this.backupDir, '.restore-'));
     try {
-      await tar.extract({ file: row.file_path, cwd: tmpDir, strict: true });
+      const plainArchive = await this.plainArchiveOf(row.file_path, tmpDir, input.archivePassword);
+      await tar.extract({ file: plainArchive, cwd: tmpDir, strict: true });
       const manifest = parseManifest(
         await fsp.readFile(path.join(tmpDir, 'manifest.json'), 'utf8'),
       );
+      if (input.transfer && isNewerVersion(manifest.serverVersion, SERVER_VERSION)) {
+        throw new AppError(
+          409,
+          'TRANSFER_VERSION_NEWER',
+          `Ky transferim u krijua me LIKApcs ${manifest.serverVersion}; ky PC ka ${SERVER_VERSION}. Instaloni versionin e ri për të importuar.`,
+          { archiveVersion: manifest.serverVersion, serverVersion: SERVER_VERSION },
+        );
+      }
       const current = this.options.schemaVersion();
       if (manifest.schemaVersion !== current) {
         throw new AppError(
@@ -384,6 +755,17 @@ export class BackupService {
           rowsRestored += stream.rowCount;
         }
         await this.resetSequences(client);
+        if (input.transfer) {
+          // Devices belong to the PC that registered them: they are revoked here and must be
+          // approved again on this installation. Old login sessions end too.
+          await client.query(
+            `UPDATE station_devices SET status = 'revoked', token_hash = NULL, revoked_at = now()
+              WHERE status <> 'revoked'`,
+          );
+          await client.query(
+            'UPDATE user_sessions SET revoked_at = now() WHERE revoked_at IS NULL',
+          );
+        }
         for (const h of history) {
           const keys = Object.keys(h);
           await client.query(
@@ -415,7 +797,7 @@ export class BackupService {
           sessionKept = (rowCount ?? 0) > 0;
         }
         await recordAudit(client, input.actor, {
-          action: 'backup.restore',
+          action: input.transfer ? 'backup.transfer_import' : 'backup.restore',
           entityType: 'backup',
           entityId: input.id,
           severity: 'warning',
@@ -434,6 +816,10 @@ export class BackupService {
       } finally {
         client.release();
       }
+      // Files come back with the data: the archive's uploads replace the current ones, so every
+      // restored product, wallpaper and ad points at a file that is really there.
+      const archivedUploads = path.join(tmpDir, 'uploads');
+      if (fs.existsSync(archivedUploads)) await this.replaceUploads(archivedUploads);
       this.settings.invalidate();
       this.options.afterRestore?.();
       const result: RestoreResult = {
@@ -449,6 +835,100 @@ export class BackupService {
     } finally {
       this.busy = null;
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  // ─── USB transfer (0.27.5) ─────────────────────────────────────────────
+
+  /**
+   * Writes the whole system to `targetDir` (a USB stick or any folder) as ONE encrypted file whose
+   * key comes from a 4-digit code the owner chooses. Nothing is stored in the local backup list.
+   * Refused while a gaming session is still running or paused: the copy must be a clean stop.
+   */
+  async exportTransfer(input: {
+    code: string;
+    targetDir: string;
+    actor: AuditActor;
+  }): Promise<TransferExportResult> {
+    if (!TRANSFER_CODE_PATTERN.test(input.code)) {
+      throw badRequest('The transfer code must be exactly 4 digits');
+    }
+    const dir = path.resolve(input.targetDir.trim());
+    const dirStat = await fsp.stat(dir).catch(() => null);
+    if (!dirStat?.isDirectory()) {
+      throw new AppError(
+        400,
+        'TRANSFER_TARGET_MISSING',
+        'Dosja e destinacionit nuk ekziston. Lidhni USB-në dhe shkruani rrugën e saktë.',
+      );
+    }
+    const { rows: running } = await this.pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM gaming_sessions WHERE status IN ('active', 'paused')`,
+    );
+    if ((running[0]?.count ?? 0) > 0) {
+      throw new AppError(
+        409,
+        'TRANSFER_SESSIONS_RUNNING',
+        'Mbyllni të gjitha seancat aktive ose në pauzë para transferimit.',
+      );
+    }
+    this.acquire('backup');
+    try {
+      await fsp.mkdir(this.backupDir, { recursive: true });
+      const startedAt = new Date();
+      const timeZone = await this.settings.get('locale.timezone');
+      const fileName = `LIKApcs-transfer-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}${ENCRYPTED_EXTENSION}`;
+      const tmpDir = await fsp.mkdtemp(path.join(this.backupDir, '.transfer-'));
+      try {
+        const { plainArchive, tables } = await this.dumpPlainArchive(tmpDir, {
+          kind: 'manual',
+          startedAt,
+          timeZone,
+          fileName,
+          encrypted: true,
+        });
+        const { size } = await fsp.stat(plainArchive);
+        const free = await freeBytes(dir);
+        if (free < size + TRANSFER_SPACE_MARGIN_BYTES) {
+          throw new AppError(
+            409,
+            'TRANSFER_NOT_ENOUGH_SPACE',
+            `Nuk ka hapësirë të mjaftueshme në USB: nevojiten rreth ${formatBytes(size)}, ka ${formatBytes(free)}.`,
+            { neededBytes: size, freeBytes: free },
+          );
+        }
+        const salt = crypto.randomBytes(16);
+        const key = deriveKey(input.code, salt);
+        const target = path.join(dir, fileName);
+        const partial = `${target}.part`;
+        try {
+          await encryptFile(plainArchive, partial, key, salt);
+          await fsp.rename(partial, target);
+        } catch (err) {
+          await fsp.rm(partial, { force: true }).catch(() => undefined);
+          throw err;
+        }
+        const [sha256, stat] = await Promise.all([sha256Of(target), fsp.stat(target)]);
+        await recordAudit(this.pool, input.actor, {
+          action: 'backup.transfer_export',
+          entityType: 'backup',
+          entityId: null,
+          details: { fileName, sizeBytes: stat.size, tables },
+        });
+        this.options.log?.info({ fileName, sizeBytes: stat.size }, 'transfer archive written');
+        return {
+          fileName,
+          path: target,
+          sizeBytes: stat.size,
+          sha256,
+          tables,
+          createdAt: startedAt.toISOString(),
+        };
+      } finally {
+        await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    } finally {
+      this.busy = null;
     }
   }
 
@@ -506,7 +986,33 @@ export class BackupService {
     return rows[0];
   }
 
-  private toSummary(r: BackupRow): BackupSummary {
+  /** Latest external-disk result per backup, read from the audit log (no schema change). */
+  private async externalCopies(ids: string[]): Promise<Map<string, BackupExternalCopy>> {
+    const map = new Map<string, BackupExternalCopy>();
+    if (ids.length === 0) return map;
+    const { rows } = await this.pool.query<{
+      entity_id: string;
+      details: Record<string, unknown>;
+      occurred_at: Date;
+    }>(
+      `SELECT DISTINCT ON (entity_id) entity_id::text AS entity_id, details, occurred_at
+         FROM audit_logs
+        WHERE action = 'backup.external_copy' AND entity_id::text = ANY($1::text[])
+        ORDER BY entity_id, occurred_at DESC`,
+      [ids],
+    );
+    for (const r of rows) {
+      map.set(r.entity_id, {
+        ok: r.details.ok === true,
+        path: typeof r.details.path === 'string' ? r.details.path : null,
+        error: typeof r.details.error === 'string' ? r.details.error : null,
+        at: r.occurred_at.toISOString(),
+      });
+    }
+    return map;
+  }
+
+  private toSummary(r: BackupRow, externalCopy: BackupExternalCopy | null = null): BackupSummary {
     const exists = r.status === 'succeeded' && !!r.file_path && fs.existsSync(r.file_path);
     return {
       id: r.id,
@@ -522,6 +1028,8 @@ export class BackupService {
       durationMs: r.finished_at ? r.finished_at.getTime() - r.started_at.getTime() : null,
       errorMessage: r.error_message,
       createdByName: r.created_by_name,
+      encrypted: !!r.file_path && r.file_path.endsWith(ENCRYPTED_EXTENSION),
+      externalCopy,
     };
   }
 
@@ -623,6 +1131,24 @@ async function csvHeader(file: string): Promise<string[]> {
   }
 }
 
+/** Number of files and their total size under a folder. */
+async function treeSize(dir: string): Promise<{ files: number; bytes: number }> {
+  let files = 0;
+  let bytes = 0;
+  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const inner = await treeSize(full);
+      files += inner.files;
+      bytes += inner.bytes;
+    } else if (entry.isFile()) {
+      files += 1;
+      bytes += (await fsp.stat(full)).size;
+    }
+  }
+  return { files, bytes };
+}
+
 export function parseManifest(text: string): BackupManifest {
   let data: unknown;
   try {
@@ -719,4 +1245,84 @@ export function nextOccurrence(time: string, timeZone: string, now: Date): Date 
     if (instant > now.getTime()) return new Date(instant);
   }
   return new Date(now.getTime() + 24 * 3600 * 1000);
+}
+
+/** Human-readable report written inside every archive (report.txt). Albanian, for the owner. */
+function buildReport(
+  manifest: BackupManifest,
+  opts: { timeZone: string; fileName: string; encrypted: boolean },
+): string {
+  const when = new Date(manifest.createdAt).toLocaleString('en-GB', {
+    timeZone: opts.timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  });
+  const width = Math.max(...manifest.tables.map((t) => t.name.length), 10);
+  const totalRows = manifest.tables.reduce((sum, t) => sum + t.rows, 0);
+  const lines = [
+    'RAPORTI I KOPJES SË RUAJTUR — LIKApcs',
+    '======================================',
+    `Skedari:            ${opts.fileName}`,
+    `Krijuar:            ${when} (${opts.timeZone})`,
+    `Lloji:              ${manifest.kind}`,
+    `Biznesi:            ${manifest.businessName}`,
+    `Versioni i programit: ${manifest.serverVersion}`,
+    `Versioni i bazës:     ${manifest.schemaVersion}`,
+    `Enkriptimi:         ${opts.encrypted ? 'PO (me fjalëkalimin e kopjeve)' : 'JO'}`,
+    '',
+    `TABELAT (${manifest.tables.length}) — rreshta gjithsej: ${totalRows}`,
+    ...manifest.tables.map(
+      (t) => `  ${t.name.padEnd(width)}  ${String(t.rows).padStart(8)} rreshta`,
+    ),
+    '',
+    manifest.uploads
+      ? `FOTO / VIDEO: ${manifest.uploads.files} skedarë, ${(manifest.uploads.bytes / 1024 / 1024).toFixed(1)} MB`
+      : 'FOTO / VIDEO: asnjë skedar',
+    '',
+    'NUK PËRFSHIHEN NË KOPJE',
+    '  - Vetë instaluesi i programit (ruaje ose instalo versionin e njëjtë).',
+    '  - Skedari i konfigurimit të serverit (.env), që përmban çelësat sekretë.',
+    '  - Fjalëkalimi i kopjeve: ruhet në PC, jo në kopje. Pa të, kopja e enkriptuar nuk hapet në PC tjetër.',
+    '',
+  ];
+  return lines.join('\n');
+}
+
+/** A 4-digit transfer code (0000–9999). */
+export const TRANSFER_CODE_PATTERN = /^\d{4}$/;
+/** Free space kept on the USB stick on top of the archive itself. */
+const TRANSFER_SPACE_MARGIN_BYTES = 1024 * 1024;
+
+export interface TransferExportResult {
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  sha256: string;
+  tables: number;
+  createdAt: string;
+}
+
+/** Free bytes available to non-root users on the disk that holds `dir`. */
+export async function freeBytes(dir: string): Promise<number> {
+  const s = await fsp.statfs(dir);
+  return Number(s.bavail) * Number(s.bsize);
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
+}
+
+/** True when version `a` is strictly newer than `b` (dotted numbers, e.g. 0.27.5). */
+export function isNewerVersion(a: string, b: string): boolean {
+  const parse = (v: string) => v.split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return false;
 }
