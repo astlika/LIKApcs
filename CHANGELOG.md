@@ -6,6 +6,18 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.3] - 2026-11-07
+
+### Added
+
+- Phone app, PCs: wake offline PCs from the phone (Wake-on-LAN), one at a time or several together. Wake needs a MAC address on record for the PC.
+- Phone app, PCs: select several PCs and start them together with the same settings. PCs that fail to start stay in the list with the reason.
+- Phone app, PCs: pay with credit (debt) when starting or stopping a PC. A customer must be chosen. Stopping a postpaid PC on credit re-reads the live price before sending.
+
+### Changed
+
+- Phone app, POS: products whose tracked stock is 0 (negative stock not allowed) are no longer shown.
+
 ## [0.29.2] - 2026-11-07
 
 ### Added
