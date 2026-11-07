@@ -10,7 +10,6 @@ import { Btn, Choices, Loading, Notice, QueryError, Sheet, cx } from '../compone
 import { CustomerPicker } from '../components/CustomerPicker';
 
 const START_MINUTES = [30, 60, 90, 120, 180];
-const EXTEND_MINUTES = [15, 30, 60, 120];
 const PAY_METHODS: PaymentMethod[] = ['cash', 'card', 'bank_transfer', 'other'];
 /** How a PC is paid. `credit` opens a debt on the customer (requires a customer). */
 type PcMethod = PaymentMethod | 'credit';
@@ -85,14 +84,25 @@ export function Pcs(perms: PcPerms) {
             {busy} nga {shown.length} në përdorim
           </span>
         </div>
-        <button
-          type="button"
-          className={cx('ghost small-btn', selecting && 'ghost--on')}
-          aria-pressed={selecting}
-          onClick={() => (selecting ? leaveSelecting() : setSelecting(true))}
-        >
-          {selecting ? 'Mbyll' : 'Zgjidh'}
-        </button>
+        <div className="select-tools">
+          {selecting && (
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={() => setPicked(picked.length === shown.length ? [] : shown.map((s) => s.id))}
+            >
+              {picked.length === shown.length && shown.length > 0 ? 'Asnjë' : 'Të gjitha'}
+            </button>
+          )}
+          <button
+            type="button"
+            className={cx('ghost small-btn', selecting && 'ghost--on')}
+            aria-pressed={selecting}
+            onClick={() => (selecting ? leaveSelecting() : setSelecting(true))}
+          >
+            {selecting ? 'Mbyll' : 'Zgjidh'}
+          </button>
+        </div>
       </div>
 
       {shown.length === 0 && <p className="empty">Nuk ka PC aktive.</p>}
@@ -415,7 +425,7 @@ function StartPc({ stations, canCredit, onDone }: { stations: StationSummary[]; 
   );
 }
 
-/** A PC that is running or paused: pause/resume, add time, stop and collect. */
+/** A PC that is running or paused: pause/resume, add or remove time, stop and collect. */
 function RunningPc({
   stationId,
   stationName,
@@ -432,7 +442,7 @@ function RunningPc({
   const notify = useNotify();
   const online = useOnline();
   const qc = useQueryClient();
-  const [panel, setPanel] = useState<'extend' | 'stop' | null>(null);
+  const [panel, setPanel] = useState<'time' | 'stop' | null>(null);
   const paused = session.status === 'paused';
   const prepaid = session.billingMode === 'prepaid';
 
@@ -454,17 +464,22 @@ function RunningPc({
           <span className={cx('badge', paused ? 'badge--warn' : 'badge--ok')}>{paused ? 'Në pauzë' : 'Në punë'}</span>
         </div>
         <p className="big-line">{session.customerName ?? 'Pa emër klienti'}</p>
-        <div className="grid-2">
+        <div className="clock-grid">
           <div>
-            <span className="muted small">Koha</span>
-            <strong className="block">{duration(session.elapsedSeconds)}</strong>
+            <span className="muted small">Koha e shpenzuar</span>
+            <strong>{duration(session.elapsedSeconds)}</strong>
           </div>
-          <div>
-            <span className="muted small">{prepaid ? 'Mbeten' : 'Për t’u paguar'}</span>
-            <strong className="block">
-              {prepaid ? (session.remainingSeconds !== null ? duration(session.remainingSeconds) : '—') : money(session.currentPriceCents)}
-            </strong>
-          </div>
+          {prepaid ? (
+            <div>
+              <span className="muted small">Kohë e mbetur</span>
+              <strong>{session.remainingSeconds !== null ? duration(session.remainingSeconds) : '—'}</strong>
+            </div>
+          ) : (
+            <div>
+              <span className="muted small">Për t’u paguar</span>
+              <strong>{money(session.currentPriceCents)}</strong>
+            </div>
+          )}
         </div>
       </div>
 
@@ -477,8 +492,8 @@ function RunningPc({
               {paused ? 'Vazhdo' : 'Pauzë'}
             </Btn>
             {prepaid ? (
-              <Btn variant="ghost" onClick={() => setPanel('extend')} disabled={!online}>
-                Shto kohë
+              <Btn variant="ghost" onClick={() => setPanel('time')} disabled={!online}>
+                Shto / hiq kohë
               </Btn>
             ) : (
               <span />
@@ -491,15 +506,16 @@ function RunningPc({
         </div>
       )}
 
-      {panel === 'extend' && (
-        <ExtendPanel
+      {panel === 'time' && (
+        <TimePanel
           stationId={stationId}
           sessionId={session.id}
+          remainingSeconds={session.remainingSeconds}
           onBack={() => setPanel(null)}
-          onDone={() => {
-            notify(`${stationName}: koha u shtua.`);
+          onDone={(text) => {
+            notify(`${stationName}: ${text}`);
             refresh();
-            onDone();
+            setPanel(null);
           }}
         />
       )}
@@ -521,21 +537,46 @@ function RunningPc({
   );
 }
 
-function ExtendPanel({
+const ADD_MINUTES = [15, 30, 60, 120];
+const REMOVE_MINUTES = [5, 10, 15, 30, 60];
+
+/**
+ * Add or remove prepaid minutes. Adding is paid now (like the desk). Removing takes minutes off
+ * the running time and gives no money back, so the choices stop at what is left on the clock.
+ */
+function TimePanel({
   stationId,
   sessionId,
+  remainingSeconds,
   onBack,
   onDone,
 }: {
   stationId: string;
   sessionId: string;
+  remainingSeconds: number | null;
   onBack: () => void;
-  onDone: () => void;
+  onDone: (text: string) => void;
 }) {
   const online = useOnline();
-  const [requestId] = useState(newRequestId);
+  const [mode, setMode] = useState<'add' | 'remove'>('add');
   const [minutes, setMinutes] = useState(30);
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [requestId, setRequestId] = useState(newRequestId);
+
+  // The server keeps at least one second on the clock.
+  const maxRemove = remainingSeconds === null ? 0 : Math.max(0, Math.floor((remainingSeconds - 1) / 60));
+  const removable = REMOVE_MINUTES.filter((m) => m <= maxRemove);
+
+  // A new key for new settings: a key is never reused for a different request.
+  useEffect(() => {
+    setRequestId(newRequestId());
+  }, [mode, minutes, method]);
+
+  const switchMode = (next: 'add' | 'remove') => {
+    setMode(next);
+    if (next === 'add') setMinutes(30);
+    else setMinutes(removable[removable.length - 1] ?? 5);
+  };
 
   const quote = useQuery({
     queryKey: ['phone', 'quote', stationId, minutes, 'extend'],
@@ -544,44 +585,99 @@ function ExtendPanel({
         method: 'POST',
         body: { stationId, billingMode: 'prepaid', minutes },
       }),
+    enabled: mode === 'add',
   });
 
-  const extend = useMutation({
+  const add = useMutation({
     mutationFn: () =>
       api(`/sessions/${sessionId}/extend`, {
         method: 'POST',
         body: { minutes, paymentMethod: method, clientRequestId: requestId },
       }),
-    onSuccess: onDone,
+    onSuccess: () => onDone(`koha u shtua (${minutes} min).`),
+  });
+
+  const remove = useMutation({
+    mutationFn: () =>
+      api(`/sessions/${sessionId}/remove-time`, {
+        method: 'POST',
+        body: { minutes, clientRequestId: requestId },
+      }),
+    onSuccess: () => onDone(`u hoqën ${minutes} min.`),
   });
 
   const price = quote.data?.priceCents;
+  const busy = add.isPending || remove.isPending;
+  const error = add.error ?? remove.error;
+
   return (
-    <div className="stack">
-      <Choices
-        label="Shto"
-        value={minutes}
-        onChange={setMinutes}
-        options={EXTEND_MINUTES.map((m) => ({ value: m, label: `${m} min` }))}
+    <div className="time-panel">
+      <Choices<'add' | 'remove'>
+        label="Veprimi"
+        value={mode}
+        onChange={switchMode}
+        disabled={busy}
+        options={[
+          { value: 'add', label: 'Shto kohë' },
+          { value: 'remove', label: 'Hiq kohë' },
+        ]}
       />
-      <div className="total-row">
-        <span>Paguhet tani</span>
-        <strong>{quote.isFetching ? '…' : money(price)}</strong>
-      </div>
-      <Choices
-        label="Pagesa"
-        value={method}
-        onChange={setMethod}
-        options={PAY_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m] ?? m }))}
-      />
-      {extend.isError && <Notice tone="danger">{errorText(extend.error)}</Notice>}
+
+      {mode === 'add' ? (
+        <>
+          <Choices
+            label="Shto"
+            value={minutes}
+            onChange={setMinutes}
+            options={ADD_MINUTES.map((m) => ({ value: m, label: `${m} min` }))}
+          />
+          <div className="total-row">
+            <span>Paguhet tani</span>
+            <strong>{quote.isFetching ? '…' : money(price)}</strong>
+          </div>
+          <Choices
+            label="Pagesa"
+            value={method}
+            onChange={setMethod}
+            options={PAY_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m] ?? m }))}
+          />
+        </>
+      ) : (
+        <>
+          {removable.length === 0 ? (
+            <Notice tone="warn">Koha e mbetur është shumë e shkurtër. Nuk mund të hiqet asnjë minutë.</Notice>
+          ) : (
+            <Choices
+              label="Hiq"
+              value={minutes}
+              onChange={setMinutes}
+              options={REMOVE_MINUTES.map((m) => ({ value: m, label: `${m} min`, disabled: m > maxRemove }))}
+            />
+          )}
+          <p className="time-hint">Minutat e hequra nuk kthehen në para. Koha e mbetur zvogëlohet menjëherë.</p>
+        </>
+      )}
+
+      {!online && <Notice tone="danger">Pa lidhje me serverin.</Notice>}
+      {error && <Notice tone="danger">{errorText(error)}</Notice>}
+
       <div className="grid-2">
-        <Btn variant="ghost" onClick={onBack}>
+        <Btn variant="ghost" onClick={onBack} disabled={busy}>
           Kthehu
         </Btn>
-        <Btn onClick={() => extend.mutate()} disabled={!online || extend.isPending || price === undefined}>
-          {extend.isPending ? 'Duke ruajtur…' : `Shto · ${money(price)}`}
-        </Btn>
+        {mode === 'add' ? (
+          <Btn onClick={() => add.mutate()} disabled={!online || busy || price === undefined}>
+            {add.isPending ? 'Duke ruajtur…' : `Shto · ${money(price)}`}
+          </Btn>
+        ) : (
+          <Btn
+            variant="danger"
+            onClick={() => remove.mutate()}
+            disabled={!online || busy || removable.length === 0 || minutes > maxRemove}
+          >
+            {remove.isPending ? 'Duke hequr…' : `Hiq ${minutes} min`}
+          </Btn>
+        )}
       </div>
     </div>
   );

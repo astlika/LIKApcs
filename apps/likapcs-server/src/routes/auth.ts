@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
   changePasswordSchema,
+  userPreferencesPatchSchema,
   loginRequestSchema,
   phoneLoginSchema,
   type AuthenticatedUser,
@@ -53,6 +54,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     async (request): Promise<AuthenticatedUser> => {
       return request.auth!.user;
     },
+  );
+
+  // 0.29.4: the signed-in user's own display preferences (theme, text size).
+  app.get('/auth/preferences', { preHandler: app.requireAuth }, async (request) =>
+    services.userPreferences.get(request.auth!.user.id),
+  );
+  app.put('/auth/preferences', { preHandler: app.requireAuth }, async (request) =>
+    services.userPreferences.update(request.auth!.user.id, userPreferencesPatchSchema.parse(request.body)),
   );
 
   app.post('/auth/change-password', { preHandler: app.requireAuth }, async (request, reply) => {

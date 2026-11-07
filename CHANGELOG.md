@@ -6,6 +6,21 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.4] - 2026-11-07
+
+### Added
+
+- Phone app, PCs: add or remove time on a running prepaid PC from one button. Removing takes 5–60 minutes off the clock with no payment (removed minutes are not refunded); adding is paid now, as at the desk. Removing is limited to what is left on the clock.
+- Phone app, PCs: the spent time and the remaining time show hours, minutes and seconds.
+- Phone app, PCs: «Të gjitha» selects every PC in selection mode, and «Asnjë» clears it.
+- Phone app: a Menu button with Reports (sales, cash book and, with permission, profit; read only), Settings and sign-out.
+- Phone app, Settings: theme (dark, light or follow the phone) and text size (normal or large). The choice is saved on the account, so the same username has the same look on every phone. New endpoints: `GET /auth/preferences` and `PUT /auth/preferences` (migration 0052).
+- Phone app, POS: products with extras can be sold. Extras are chosen per line, and the same product with different extras is a separate cart line.
+
+### Changed
+
+- Phone app: the header «Dil» button moved into the Menu.
+
 ## [0.29.3] - 2026-11-07
 
 ### Added

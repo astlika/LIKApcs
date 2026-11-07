@@ -89,14 +89,16 @@ export function parseEuroToCents(text: string): number | null {
   return cents > 0 ? cents : null;
 }
 
-/** Seconds → "1 h 05 min" / "42 min" / "30 s". */
+/** Seconds → "1 h 05 min 09 s" / "42 min 07 s" / "30 s". Always shows the seconds too. */
 export function duration(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h} h ${String(m).padStart(2, '0')} min`;
-  if (m > 0) return `${m} min`;
-  return `${s} s`;
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (h > 0) return `${h} h ${pad(m)} min ${pad(sec)} s`;
+  if (m > 0) return `${m} min ${pad(sec)} s`;
+  return `${sec} s`;
 }
 
 /** Today's date (YYYY-MM-DD) in the phone's own time zone. */

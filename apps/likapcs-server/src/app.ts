@@ -72,6 +72,7 @@ import { AuditQueryService } from './services/audit-query.js';
 import { SearchService } from './services/search.js';
 import { ImportService } from './services/imports.js';
 import { AuthService } from './services/auth.js';
+import { UserPreferencesService } from './services/user-preferences.js';
 import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
 import { SettingsService } from './services/settings.js';
@@ -102,6 +103,7 @@ export interface Services {
   invoices: InvoiceService;
   users: UsersService;
   auth: AuthService;
+  userPreferences: UserPreferencesService;
   stations: StationsService;
   looks: LooksService;
   devices: DevicesService;
@@ -171,6 +173,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const settings = new SettingsService(pool);
   const users = new UsersService(pool, settings, hub);
   const auth = new AuthService(pool, users, settings, config.sessionHours, config.rememberDays);
+  const userPreferences = new UserPreferencesService(pool);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
   // 0.20.0: per-PC looks, wallpapers and layout presets.
@@ -274,6 +277,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     settings,
     users,
     auth,
+    userPreferences,
     stations,
     devices,
     audit,

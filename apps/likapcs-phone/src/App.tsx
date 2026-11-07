@@ -10,7 +10,11 @@ import { Home, type Tab } from './screens/Home';
 import { Pcs } from './screens/Pcs';
 import { Pos } from './screens/Pos';
 import { Debts } from './screens/Debts';
-import { Loading, QueryError } from './components/ui';
+import { Loading, QueryError, Sheet } from './components/ui';
+import { Reports } from './screens/Reports';
+import { Settings } from './screens/Settings';
+import { applyPrefs, DEFAULT_PREFS, usePrefsQuery } from './prefs';
+import type { UserPreferences } from '@likapcs/shared';
 
 function Icon({ name }: { name: Tab }) {
   const common = { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
@@ -53,9 +57,26 @@ export function App() {
   const queryClient = useQueryClient();
   const [signedIn, setSignedIn] = useState(() => getToken() !== null);
   const [tab, setTab] = useState<Tab>('home');
+  const [page, setPage] = useState<'tab' | 'reports' | 'settings'>('tab');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const me = useMe(signedIn);
+  const prefs = usePrefsQuery(signedIn);
   const online = useOnline();
+
+  // The account's look: applied when it arrives, and again when the phone's theme changes (Sipas telefonit).
+  useEffect(() => {
+    if (prefs.data) applyPrefs(prefs.data);
+  }, [prefs.data]);
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const onChange = () => {
+      const p: UserPreferences = prefs.data ?? DEFAULT_PREFS;
+      if (p.theme === 'system') applyPrefs(p);
+    };
+    media?.addEventListener?.('change', onChange);
+    return () => media?.removeEventListener?.('change', onChange);
+  }, [prefs.data]);
 
   useEffect(() => {
     const lost = () => {
@@ -89,6 +110,9 @@ export function App() {
     queryClient.clear(); // the next person on this phone must not see the last one's data
     setSignedIn(false);
     setTab('home');
+    setPage('tab');
+    setMenuOpen(false);
+    applyPrefs(DEFAULT_PREFS); // the next sign-in shows its own saved look
   };
 
   const user = me.data;
@@ -99,12 +123,21 @@ export function App() {
   const canCollect = can(user, PERMISSIONS.POS_SELL);
   const canPower = can(user, PERMISSIONS.STATIONS_POWER);
 
+  const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
+  const canProfit = canReports;
   const tabs: Tab[] = ['home', ...(canPcs ? (['pcs'] as Tab[]) : []), ...(canPos ? (['pos'] as Tab[]) : []), ...(canDebts ? (['debts'] as Tab[]) : [])];
   const active: Tab = tabs.includes(tab) ? tab : 'home';
+
+  const go = (next: Tab) => {
+    setPage('tab');
+    setTab(next);
+  };
 
   let body: ReactNode;
   if (me.isLoading) body = <Loading text="Duke hapur…" />;
   else if (me.error || !user) body = <QueryError message="Nuk u lexuan llogaria. Provoni përsëri." onRetry={() => void me.refetch()} />;
+  else if (page === 'reports' && canReports) body = <Reports canProfit={canProfit} />;
+  else if (page === 'settings') body = <Settings user={user} onSignOut={signOut} />;
   else if (active === 'home')
     body = (
       <Home
@@ -112,7 +145,7 @@ export function App() {
         canPcs={canPcs}
         canPos={canPos}
         canDebts={canDebts}
-        onGo={setTab}
+        onGo={go}
       />
     );
   else if (active === 'pcs')
@@ -120,18 +153,61 @@ export function App() {
   else if (active === 'pos') body = <Pos />;
   else body = <Debts canCollect={canCollect} />;
 
+  const title = page === 'reports' ? 'Raportet' : page === 'settings' ? 'Cilësimet' : TITLES[active];
   return (
     <NotifyProvider>
       <div className="shell">
         <header className="topbar">
           <div className="brand">
             <span className="brand-mark brand-mark--sm">LK</span>
-            <strong>{TITLES[active]}</strong>
+            <strong>{title}</strong>
           </div>
-          <button type="button" className="ghost small-btn" onClick={signOut}>
-            Dil
+          <button type="button" className="ghost small-btn menu-btn" onClick={() => setMenuOpen(true)} aria-label="Menyja">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+            Menu
           </button>
         </header>
+        {menuOpen && (
+          <Sheet title="Menyja" onClose={() => setMenuOpen(false)}>
+            <ul className="menu-list">
+              {canReports && (
+                <li>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPage('reports');
+                    }}
+                  >
+                    Raportet
+                    <small className="muted">Shitjet, arka, fitimi</small>
+                  </button>
+                </li>
+              )}
+              <li>
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setPage('settings');
+                  }}
+                >
+                  Cilësimet
+                  <small className="muted">Tema, teksti, llogaria</small>
+                </button>
+              </li>
+              <li>
+                <button type="button" className="menu-item menu-item--danger" onClick={() => void signOut()}>
+                  Dil nga llogaria
+                </button>
+              </li>
+            </ul>
+          </Sheet>
+        )}
         {!online && (
           <div className="offline-bar" role="status">
             Pa lidhje me serverin. Veprimet me para janë të bllokuara.
@@ -144,9 +220,9 @@ export function App() {
               <button
                 key={t}
                 type="button"
-                className={active === t ? 'tab tab--on' : 'tab'}
-                aria-current={active === t ? 'page' : undefined}
-                onClick={() => setTab(t)}
+                className={active === t && page === 'tab' ? 'tab tab--on' : 'tab'}
+                aria-current={active === t && page === 'tab' ? 'page' : undefined}
+                onClick={() => go(t)}
               >
                 <Icon name={t} />
                 <span>{t === 'home' ? 'Kryefaqja' : TITLES[t]}</span>
