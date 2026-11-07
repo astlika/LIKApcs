@@ -1,11 +1,11 @@
 {
-  "version": "0.29.1",
-  "notes": "### Added\n\n- Backups › Server and network: lists every address and port the server answers on (local network addresses found automatically, plus addresses typed by hand such as Tailscale IPv4, IPv6 or MagicDNS names), with API and phone-app URLs and copy buttons. Typed addresses are validated and must be a plain IP or host name (no scheme, port or path).",
-  "pub_date": "2026-11-07T15:35:00.817Z",
+  "version": "0.29.2",
+  "notes": "### Added\n\n- Phone app (`/phone/`), now complete for daily work from a phone (iPhone 6s/SE 375 px up to Pro Max):\n  - **Debts:** customers with open debts, oldest first, with overdue markers. Pay the full balance or part of it, by cash, card, bank transfer or other. For cash, the amount received gives the change. Payment is applied to the oldest invoices first.\n  - **PCs:** running and paused PCs with live time and price. Pause/resume, add time with payment, stop and collect. Open-time sessions are billed by the server to the minute. Starting a PC is allowed only when the PC is online.\n  - **POS:** product search and categories, cart with quantities, optional customer, payment by cash, card, bank transfer, other, or on credit (requires a customer).\n  - Start page with PC and debt totals and quick shortcuts. Only the actions the signed-in user is allowed to perform are shown.\n\n### Changed\n\n- Phone app: bottom navigation with four tabs; money actions are blocked while the phone has no connection; every money request carries an idempotency key.",
+  "pub_date": "2026-11-07T17:02:58.709Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJXVFd1T0FNYUVScVZGNG91cVo2QTRBT1gzYVBJcEFBUDJQTlRxRmFJZ0pGajFFWXFHL2kyWklialhOY1Frdk02UThzaFlhRUpNMUdueTA0WDdyR3c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDY1NjM0CWZpbGU6TElLQXBjc18wLjI5LjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjkuMQpRVjBXd295MFR1TXltYzF1YzlYOTRoVGhvVGJjaVlsTEF4a1AyVlJNOU1oRDVhcWhtZzA1RVZSZHVkWlQ2cGw0OCtieGpDbVZxREVUMlpKN2JKTWlCZz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.1/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelhHOUcvR1lnZjZmSFB6ZGhCT0N2S09VdDluUVRXM202RzRKeFFOelBpQTNtS05kbURlYkllWjExZ2JwUHRORW1naUxZa21Bb0YwRy9JQnJOUDhUZ0EwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDcwOTMwCWZpbGU6TElLQXBjc18wLjI5LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjkuMgpwckVZdnBpT3hRdVFpS3NqeEFDbnl4NjArOWZYTHppOWM1SzBYQXlLQ25DbHlnZkZrWE5OZ0IzR2s1SFUxVmw0S1VqNmVZZG9qUjlZMEVhQm1tMmJDdz09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.2/LIKApcs-Setup.exe"
     }
   }
 }
