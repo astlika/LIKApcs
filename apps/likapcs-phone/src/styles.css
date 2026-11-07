@@ -221,6 +221,30 @@ input, button, select { font-family: inherit; }
 }
 .chip--on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+/* ---------- PC selection and bulk actions ---------- */
+.ghost--on { background: rgba(37, 99, 235, 0.22); border-color: var(--accent); color: #dbeafe; }
+.pc-row--picked { background: rgba(37, 99, 235, 0.12); border-color: var(--accent); }
+.check {
+  width: 26px; height: 26px; flex-shrink: 0; border-radius: 8px; border: 2px solid var(--muted);
+  display: grid; place-items: center; font-weight: 800; font-size: 0.95rem; color: #fff;
+}
+.check--on { background: var(--accent); border-color: var(--accent); }
+.bulk-bar {
+  position: fixed; left: 0; right: 0; z-index: 4;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  max-width: 560px; margin: 0 auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  left: 12px; right: 12px;
+}
+.bulk-bar__count { font-weight: 700; }
+.bulk-bar__btns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bulk-bar__btns .btn { min-height: 48px; font-size: 0.98rem; }
+.result-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); }
+.result-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.result-dot--ok { background: var(--ok); }
+.result-dot--err { background: var(--danger); }
+
 /* ---------- Point of sale ---------- */
 .tiles {
   list-style: none; margin: 0; padding: 0;

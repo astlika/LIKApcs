@@ -97,6 +97,7 @@ export function App() {
   const canPos = can(user, PERMISSIONS.POS_SELL) && can(user, PERMISSIONS.PRODUCTS_VIEW);
   const canDebts = can(user, PERMISSIONS.CUSTOMERS_VIEW);
   const canCollect = can(user, PERMISSIONS.POS_SELL);
+  const canPower = can(user, PERMISSIONS.STATIONS_POWER);
 
   const tabs: Tab[] = ['home', ...(canPcs ? (['pcs'] as Tab[]) : []), ...(canPos ? (['pos'] as Tab[]) : []), ...(canDebts ? (['debts'] as Tab[]) : [])];
   const active: Tab = tabs.includes(tab) ? tab : 'home';
@@ -114,7 +115,8 @@ export function App() {
         onGo={setTab}
       />
     );
-  else if (active === 'pcs') body = <Pcs canControl={canPcControl} />;
+  else if (active === 'pcs')
+    body = <Pcs canControl={canPcControl} canCredit={canCollect} canPower={canPower} />;
   else if (active === 'pos') body = <Pos />;
   else body = <Debts canCollect={canCollect} />;
 

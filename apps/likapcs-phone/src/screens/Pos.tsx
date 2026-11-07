@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { CategorySummary, CustomerSummary, Paginated, ProductSummary, SalePaymentMethod } from '@likapcs/shared';
 import { api, errorText, money, newRequestId } from '../api';
 import { METHOD_LABEL } from '../labels';
@@ -7,6 +7,8 @@ import { useLive } from '../useLive';
 import { useNotify } from '../notify';
 import { useOnline } from '../useOnline';
 import { Btn, Choices, Empty, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
+import { CustomerPicker } from '../components/CustomerPicker';
+import { useDebounced } from '../useDebounced';
 
 interface CartLine {
   product: ProductSummary;
@@ -20,15 +22,6 @@ function sellState(p: ProductSummary): 'ok' | 'out' | 'extras' {
   if (p.addons.length > 0) return 'extras';
   if (p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0) return 'out';
   return 'ok';
-}
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = window.setTimeout(() => setV(value), ms);
-    return () => window.clearTimeout(t);
-  }, [value, ms]);
-  return v;
 }
 
 /** Point of sale: pick products, check the cart, take the money. Online only. */
@@ -68,6 +61,8 @@ export function Pos() {
   };
 
   const cats = categories.data?.filter((c) => c.isActive) ?? [];
+  // Products with no stock left are not shown at all (the till only offers what can be sold).
+  const sellable = (products.data?.items ?? []).filter((p) => sellState(p) !== 'out');
 
   return (
     <div className="stack pos">
@@ -105,11 +100,11 @@ export function Pos() {
 
       {products.isLoading && <Loading />}
       {products.error && <QueryError message="Produktet nuk u ngarkuan." onRetry={() => void products.refetch()} />}
-      {products.data && products.data.items.length === 0 && <Empty>Nuk ka produkte për këtë kërkim.</Empty>}
+      {products.data && sellable.length === 0 && <Empty>Nuk ka produkte për këtë kërkim.</Empty>}
 
-      {products.data && products.data.items.length > 0 && (
+      {products.data && sellable.length > 0 && (
         <ul className="tiles">
-          {products.data.items.map((p) => {
+          {sellable.map((p) => {
             const state = sellState(p);
             const inCart = cart[p.id]?.qty ?? 0;
             const price = unitPrice(p);
@@ -125,7 +120,6 @@ export function Pos() {
                   {inCart > 0 && <span className="tile__count">{inCart}</span>}
                   <span className="tile__name">{p.name}</span>
                   <span className="tile__price">{money(price)}</span>
-                  {state === 'out' && <span className="tile__note">Pa stok</span>}
                   {state === 'extras' && <span className="tile__note">Me opsione</span>}
                 </button>
               </li>
@@ -262,64 +256,5 @@ function CartSheet({
         <strong>{money(total)}</strong>
       </div>
     </Sheet>
-  );
-}
-
-function CustomerPicker({
-  selected,
-  onSelect,
-}: {
-  selected: CustomerSummary | null;
-  onSelect: (c: CustomerSummary | null) => void;
-}) {
-  const [text, setText] = useState('');
-  const q = useDebounced(text.trim(), 250);
-  const customers = useQuery({
-    queryKey: ['phone', 'customers', q],
-    queryFn: () => api<Paginated<CustomerSummary>>(`/customers?${new URLSearchParams({ pageSize: '8', q }).toString()}`),
-    enabled: q.length > 0,
-  });
-
-  if (selected) {
-    return (
-      <div className="field">
-        <span className="field__label">Klienti</span>
-        <div className="picked">
-          <span>
-            <strong>{selected.name}</strong>
-            <span className="muted small block">{selected.code}</span>
-          </span>
-          <button type="button" className="ghost" onClick={() => onSelect(null)}>
-            Hiq
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="field">
-      <span className="field__label">Klienti (opsional)</span>
-      <input
-        type="search"
-        placeholder="Kërko klientin me emër ose telefon"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        autoComplete="off"
-      />
-      {text.trim() && customers.data && (
-        <ul className="list list--tight">
-          {customers.data.items.map((c) => (
-            <li key={c.id}>
-              <button type="button" className="list-btn" onClick={() => onSelect(c)}>
-                <span>{c.name}</span>
-                <span className="muted small">{c.phone ?? c.code}</span>
-              </button>
-            </li>
-          ))}
-          {customers.data.items.length === 0 && <li className="muted small">Asnjë klient.</li>}
-        </ul>
-      )}
-    </div>
   );
 }
