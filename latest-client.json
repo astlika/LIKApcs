@@ -1,11 +1,11 @@
 {
-  "version": "0.29.3",
-  "notes": "### Added\n\n- Phone app, PCs: wake offline PCs from the phone (Wake-on-LAN), one at a time or several together. Wake needs a MAC address on record for the PC.\n- Phone app, PCs: select several PCs and start them together with the same settings. PCs that fail to start stay in the list with the reason.\n- Phone app, PCs: pay with credit (debt) when starting or stopping a PC. A customer must be chosen. Stopping a postpaid PC on credit re-reads the live price before sending.\n\n### Changed\n\n- Phone app, POS: products whose tracked stock is 0 (negative stock not allowed) are no longer shown.",
-  "pub_date": "2026-11-07T18:20:06.659Z",
+  "version": "0.29.4",
+  "notes": "### Added\n\n- Phone app, PCs: add or remove time on a running prepaid PC from one button. Removing takes 5–60 minutes off the clock with no payment (removed minutes are not refunded); adding is paid now, as at the desk. Removing is limited to what is left on the clock.\n- Phone app, PCs: the spent time and the remaining time show hours, minutes and seconds.\n- Phone app, PCs: «Të gjitha» selects every PC in selection mode, and «Asnjë» clears it.\n- Phone app: a Menu button with Reports (sales, cash book and, with permission, profit; read only), Settings and sign-out.\n- Phone app, Settings: theme (dark, light or follow the phone) and text size (normal or large). The choice is saved on the account, so the same username has the same look on every phone. New endpoints: `GET /auth/preferences` and `PUT /auth/preferences` (migration 0052).\n- Phone app, POS: products with extras can be sold. Extras are chosen per line, and the same product with different extras is a separate cart line.\n\n### Changed\n\n- Phone app: the header «Dil» button moved into the Menu.",
+  "pub_date": "2026-11-07T22:30:54.237Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemRNcFUwM3FRQTJaOFdlL2hnMXFYMFhEYW5uVUxTeUJPdkp1WWhzMEhkNDZTM1lZenVEenZWT0FrbEJuTWRXSXdrT2NXd3lVTlpXT1B1L2RPbVp1eXdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDc1NTA0CWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS4zX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjMKNzRVdkJ6OWtaaitCaDZVOFpnTUwzbkdyNnhxWHRhT2ZEM1pmd1NQWWRwaEl3VTdmOWNScmtIdmkxRStxeXhzRkhxZW45ampXZDJ3NXFEdk96Z0VaQVE9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.3/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemRnaTRqTDFCQVcrYWJRcVliUEVIaWphY1FvTTFHNUw1NjRuaEZnazJPd05MOERKdGczK1BFU3Q5Nzh0UENzSGgyemU2d0o5RTZudGxLQ2lzb3ZvQnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDkwNjExCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS40X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjQKcWlzYTUyR01Na0dZcXVlQzNneDlKcVdheVZ4blQwdmgvUmpCeVNBZDdJTFJPRmd2emNrSGFGL3JaZFE1TlFBNDJrMjZDSEV3WkFYZFlDK3pDVU5HQlE9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.4/LIKApcs-Client-Setup.exe"
     }
   }
 }
