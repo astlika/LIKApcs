@@ -102,6 +102,9 @@ export type Language = (typeof LANGUAGES)[number];
 
 export const SETTING_SCHEMAS = {
   'business.name': z.string().min(1).max(120),
+  // Extra addresses of this server typed by staff (e.g. Tailscale IPv4/IPv6 or MagicDNS names).
+  // Shown in Backups › Server and network; not public.
+  'network.remote_addresses': z.array(z.string().min(1).max(253)).max(20),
   'business.legal_name': z.string().max(160),
   'business.address': z.string().max(300),
   'business.city': z.string().max(80),
@@ -293,6 +296,7 @@ export type SettingsMap = { [K in SettingKey]: z.infer<(typeof SETTING_SCHEMAS)[
 
 export const SETTING_DEFAULTS: SettingsMap = {
   'business.name': 'LIKApcs Gaming Station',
+  'network.remote_addresses': [],
   'business.legal_name': '',
   'business.address': '',
   'business.city': '',

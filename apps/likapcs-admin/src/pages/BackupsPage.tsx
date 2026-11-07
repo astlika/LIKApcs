@@ -13,10 +13,13 @@ import {
   HardDriveDownload,
   Import,
   Lock,
+  Network,
+  Plus,
   RotateCcw,
   ShieldCheck,
   Trash2,
   Upload,
+  Copy,
   Usb,
 } from 'lucide-react';
 import {
@@ -25,6 +28,8 @@ import {
   type BackupSummary,
   type BackupsResponse,
   type RestoreResult,
+  type ServerEndpoint,
+  type ServerInfoResponse,
   type SettingsMap,
 } from '@likapcs/shared';
 import { api, ApiError, apiDownload, apiUpload } from '../lib/api';
@@ -222,6 +227,7 @@ export function BackupsPage() {
           </div>
         </div>
       )}
+      <ServerCard canManage={canManage} />
       {data && <ProtectionCard canManage={canManage} />}
       {data && <TransferCard canManage={canManage} />}
       <div className="toolbar">
@@ -536,6 +542,182 @@ function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: ()
 }
 
 /** Backup password + copy outside the PC (0.26.0). The folder is only a setting; no network. */
+/** Backups › Server and network: every address and port this server answers on, with copy buttons. */
+function ServerCard({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState('');
+  const info = useQuery({
+    queryKey: ['system', 'server-info'],
+    queryFn: () => api<ServerInfoResponse>('/system/server-info'),
+    enabled: canManage,
+  });
+  const save = useMutation({
+    mutationFn: (addresses: string[]) =>
+      api<ServerInfoResponse>('/system/server-info/remote-addresses', {
+        method: 'PUT',
+        body: { addresses },
+      }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(['system', 'server-info'], next);
+      setDraft('');
+      toast.success(t('backups.netSaved'));
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  if (!canManage) return null;
+  const data = info.data;
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t('backups.netCopied'));
+    } catch {
+      toast.error(t('common.errorGeneric'));
+    }
+  };
+  const addDraft = () => {
+    const value = draft.trim();
+    if (!value || !data) return;
+    save.mutate([...data.remoteAddresses, value]);
+  };
+  const removeEndpoint = (endpoint: ServerEndpoint) => {
+    if (!data) return;
+    save.mutate(data.remoteAddresses.filter((a) => a !== endpoint.address));
+  };
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }} data-testid="server-card">
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Network size={16} className="muted" />
+        <strong>{t('backups.netCardTitle')}</strong>
+        {data && <Badge tone="success">{t('backups.netListening', { port: data.bind.port })}</Badge>}
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        {t('backups.netHelp')}
+      </p>
+
+      {data && (
+        <>
+          <div
+            className="row"
+            style={{ gap: 18, flexWrap: 'wrap', marginTop: 12, fontSize: 13 }}
+            data-testid="server-facts"
+          >
+            <span>
+              <span className="faint">{t('backups.netVersion')}: </span>
+              <span className="num">{data.version}</span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netProtocol')}: </span>
+              <span className="num">{data.scheme.toUpperCase()}</span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netBind')}: </span>
+              <span className="num">
+                {data.bind.host}:{data.bind.port}
+              </span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netDiscovery')}: </span>
+              <span className="num">
+                {data.discovery.enabled
+                  ? t('backups.netUdpPort', { port: data.discovery.port })
+                  : t('backups.netOff')}
+              </span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netCors')}: </span>
+              <span className="num">{data.corsOrigins.join(', ') || '—'}</span>
+            </span>
+          </div>
+
+          <table className="table" style={{ marginTop: 14 }} data-testid="server-endpoints">
+            <thead>
+              <tr>
+                <th>{t('backups.netColSource')}</th>
+                <th>{t('backups.netColAddress')}</th>
+                <th>{t('backups.netColApi')}</th>
+                <th>{t('backups.netColPhone')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.endpoints.map((endpoint) => (
+                <tr key={`${endpoint.source}-${endpoint.address}`}>
+                  <td>
+                    <Badge tone={endpoint.source === 'lan' ? 'info' : undefined}>
+                      {endpoint.source === 'lan' ? t('backups.netLan') : t('backups.netManual')}
+                    </Badge>
+                  </td>
+                  <td className="num">{endpoint.address}</td>
+                  <td className="num">
+                    {endpoint.api}{' '}
+                    <Button size="sm" variant="ghost" onClick={() => void copy(endpoint.api)}>
+                      <Copy size={12} />
+                    </Button>
+                  </td>
+                  <td className="num">
+                    {endpoint.phone}{' '}
+                    <Button size="sm" variant="ghost" onClick={() => void copy(endpoint.phone)}>
+                      <Copy size={12} />
+                    </Button>
+                  </td>
+                  <td>
+                    {endpoint.source === 'manual' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={save.isPending}
+                        onClick={() => removeEndpoint(endpoint)}
+                        title={t('backups.netRemove')}
+                        aria-label={t('backups.netRemove')}
+                      >
+                        <Trash2 size={12} />
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.remoteAddresses.length === 0 && (
+            <p className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+              {t('backups.netNone')}
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') addDraft();
+          }}
+          placeholder={t('backups.netPlaceholder')}
+          aria-label={t('backups.netAddLabel')}
+          style={{ maxWidth: 360 }}
+          data-testid="server-address-input"
+        />
+        <Button
+          size="sm"
+          onClick={addDraft}
+          disabled={!draft.trim() || !data || save.isPending}
+          data-testid="server-address-add"
+        >
+          <Plus size={13} /> {t('backups.netAdd')}
+        </Button>
+      </div>
+      <p className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+        {t('backups.netRestartNote')}
+      </p>
+    </div>
+  );
+}
+
 function ProtectionCard({ canManage }: { canManage: boolean }) {
   const { t } = useI18n();
   const fmt = useFormat();

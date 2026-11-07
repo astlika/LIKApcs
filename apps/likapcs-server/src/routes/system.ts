@@ -15,9 +15,13 @@ import {
   type FactoryResetResult,
   backupUploadQuerySchema,
   transferRestoreSchema,
+  buildServerEndpoints,
+  normalizeRemoteAddress,
+  REMOTE_ADDRESS_MAX_COUNT,
+  type ServerInfoResponse,
 } from '@likapcs/shared';
 import crypto from 'node:crypto';
-import { AppError, conflict, forbidden, notFound } from '../errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { lanAddresses } from '../discovery.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
@@ -59,6 +63,64 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       addresses: lanAddresses(),
       installationId: app.installationId,
     }),
+  );
+
+  /**
+   * Backups › Server and network: every address and port this server answers on (LAN addresses found
+   * on this machine plus the addresses staff typed, e.g. Tailscale). Read-only apart from the list below.
+   */
+  const serverInfo = (remoteAddresses: string[]): ServerInfoResponse => {
+    const lan = lanAddresses();
+    const scheme = app.config.tls ? 'https' : 'http';
+    return {
+      version: SERVER_VERSION,
+      startedAt: startedAt.toISOString(),
+      scheme,
+      bind: { host: app.config.host, port: app.config.port },
+      discovery: { enabled: app.config.discovery.enabled, port: app.config.discovery.port },
+      corsOrigins: app.config.corsOrigins,
+      lanAddresses: lan,
+      remoteAddresses,
+      endpoints: buildServerEndpoints({
+        lanAddresses: lan,
+        remoteAddresses,
+        port: app.config.port,
+        scheme,
+      }),
+    };
+  };
+
+  app.get(
+    '/system/server-info',
+    { preHandler: app.requirePermission(PERMISSIONS.BACKUPS_MANAGE) },
+    async (): Promise<ServerInfoResponse> => {
+      const settings = await services.settings.getAll();
+      return serverInfo(settings['network.remote_addresses']);
+    },
+  );
+
+  /** Replaces the list of addresses typed by staff. Each entry must be an IP or host name, never a URL. */
+  app.put(
+    '/system/server-info/remote-addresses',
+    { preHandler: app.requirePermission(PERMISSIONS.BACKUPS_MANAGE) },
+    async (request): Promise<ServerInfoResponse> => {
+      const ctx = request.auth!;
+      const body = z
+        .object({ addresses: z.array(z.string().max(253)).max(REMOTE_ADDRESS_MAX_COUNT) })
+        .parse(request.body);
+      const invalid = body.addresses.filter((a) => normalizeRemoteAddress(a) === null);
+      if (invalid.length > 0) {
+        throw badRequest(`Invalid server address: ${invalid[0]}`, { invalid });
+      }
+      const normalized = [
+        ...new Set(body.addresses.map((a) => normalizeRemoteAddress(a) as string)),
+      ];
+      await services.settings.update(
+        { 'network.remote_addresses': normalized },
+        { userId: ctx.user.id, label: ctx.user.username, ip: request.ip },
+      );
+      return serverInfo(normalized);
+    },
   );
 
   /**
