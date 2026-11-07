@@ -46,16 +46,31 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   }
 
   const text = await res.text();
-  const data = text ? (JSON.parse(text) as unknown) : null;
+  let data: unknown = null;
+  try {
+    data = text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    data = null;
+  }
   if (!res.ok) {
     const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
     if (res.status === 401 && token && path !== '/auth/phone-login') {
       clearToken();
       window.dispatchEvent(new Event(SESSION_LOST));
     }
-    throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? `Gabim ${res.status}`);
   }
   return data as T;
+}
+
+/** A message that is safe to show to staff, whatever went wrong. */
+export function errorText(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) return 'Nuk keni leje për këtë veprim.';
+    if (err.code === 'network') return err.message;
+    return err.message;
+  }
+  return 'Diçka shkoi keq. Provoni përsëri.';
 }
 
 /** Money in euro cents → "12.50 €". */
@@ -64,6 +79,14 @@ export function money(cents: number | null | undefined): string {
   const sign = cents < 0 ? '-' : '';
   const abs = Math.abs(cents);
   return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')} €`;
+}
+
+/** "12,50" / "12.5" / "12" → 1250 cents. Returns null when the text is not a positive amount. */
+export function parseEuroToCents(text: string): number | null {
+  const normalized = text.trim().replace(',', '.');
+  if (!/^\d{1,9}(\.\d{0,2})?$/.test(normalized)) return null;
+  const cents = Math.round(Number(normalized) * 100);
+  return cents > 0 ? cents : null;
 }
 
 /** Seconds → "1 h 05 min" / "42 min" / "30 s". */
@@ -78,3 +101,23 @@ export function duration(seconds: number): string {
 
 /** Today's date (YYYY-MM-DD) in the phone's own time zone. */
 export const todayIso = (): string => new Date().toLocaleDateString('sv-SE');
+
+/** Short date for lists: 2026-11-07 → 07.11.2026 */
+export function shortDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return y && m && d ? `${d}.${m}.${y}` : iso;
+}
+
+/**
+ * Idempotency key for money requests. `crypto.randomUUID` only exists in secure contexts, and the
+ * phone is often opened over plain http on the Tailscale address, so use getRandomValues.
+ */
+export function newRequestId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}

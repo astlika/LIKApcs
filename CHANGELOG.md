@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-11-07
+
+### Added
+
+- Phone app (`/phone/`), now complete for daily work from a phone (iPhone 6s/SE 375 px up to Pro Max):
+  - **Debts:** customers with open debts, oldest first, with overdue markers. Pay the full balance or part of it, by cash, card, bank transfer or other. For cash, the amount received gives the change. Payment is applied to the oldest invoices first.
+  - **PCs:** running and paused PCs with live time and price. Pause/resume, add time with payment, stop and collect. Open-time sessions are billed by the server to the minute. Starting a PC is allowed only when the PC is online.
+  - **POS:** product search and categories, cart with quantities, optional customer, payment by cash, card, bank transfer, other, or on credit (requires a customer).
+  - Start page with PC and debt totals and quick shortcuts. Only the actions the signed-in user is allowed to perform are shown.
+
+### Changed
+
+- Phone app: bottom navigation with four tabs; money actions are blocked while the phone has no connection; every money request carries an idempotency key.
+
 ## [0.29.1] - 2026-11-07
 
 ### Added
