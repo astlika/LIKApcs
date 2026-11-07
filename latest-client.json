@@ -1,11 +1,11 @@
 {
-  "version": "0.29.0",
-  "notes": "### Added\n\n- Android phone app (debug APK, Capacitor): the phone app can be installed on Android. On first sign-in the server address is entered once (for example `http://100.x.y.z:4700` over Tailscale). The APK is a debug build, not signed for Play Store publishing. Not yet tested on a physical phone; iOS is not built.\n- Server CORS default includes `https://localhost` so the Android app (which runs from that origin) can sign in.\n\n### Changed\n\n- Stations page (admin): the status counts are filters (click one to show only those PCs). Less-used actions (Connect a PC, Show archived) moved to a \"More\" menu. The selection bar is compact when nothing is selected. Empty filter results show a message.",
-  "pub_date": "2026-11-06T18:08:52.758Z",
+  "version": "0.29.1",
+  "notes": "### Added\n\n- Backups › Server and network: lists every address and port the server answers on (local network addresses found automatically, plus addresses typed by hand such as Tailscale IPv4, IPv6 or MagicDNS names), with API and phone-app URLs and copy buttons. Typed addresses are validated and must be a plain IP or host name (no scheme, port or path).",
+  "pub_date": "2026-11-07T15:35:00.861Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBheldCVzhtQ0NSN1RVaVR0d0pkOXBnL3V1RUNITUpPbXZoVVpsNnA2UU82MnBjbFlxZzQyOWNXRmVVbWFheG9QVktQSlpycE4yYmZNOHg0VGdkVlBrY1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzOTg4MjkwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjAKemYwN3lzaDczb2w3RHVDVzd2ZGJoOUhjRElRR2o2Tk9zUFprT2MycmQzMk9oVmQ1enM2a1RPMnJjL1FOUCs1QmtEbkwvcjVSM3dmVzl3Q3hkUVVsQWc9PQo=",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.0/LIKApcs-Client-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelc2M3QzVk5sOXEwNFJWcUhnZ0o2dGp1ck5SaDhpZ2tXaVZRVkFYNEkzaUd0dnhXbURFSTBLdjFDSkRsTVZLK3luSE1tbFdZSjFpVEphM2NrSE1sc3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDY1NDgwCWZpbGU6TElLQXBjcy1DbGllbnRfMC4yOS4xX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjI5LjEKSzBJUXpwZkVZMzdwVitzaW9Bd2NFTk12eVBjZWcwZmFqa0dZWWNBZitFR212VXpvTG91bW0yd3RDWVNoODBWd1hwSDdBZnROMmlhbHVGemtlMVNsQ1E9PQo=",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.1/LIKApcs-Client-Setup.exe"
     }
   }
 }
