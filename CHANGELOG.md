@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-07
+
 ### Added
 
 - Backups › Server and network: lists every address and port the server answers on (local network addresses found automatically, plus addresses typed by hand such as Tailscale IPv4, IPv6 or MagicDNS names), with API and phone-app URLs and copy buttons. Typed addresses are validated and must be a plain IP or host name (no scheme, port or path).
