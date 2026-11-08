@@ -8,6 +8,7 @@ import { useNotify } from '../notify';
 import { useOnline } from '../useOnline';
 import { Btn, Choices, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
 import { CustomerPicker } from '../components/CustomerPicker';
+import { BulkEndButton, BulkTimeSheet, PcCommands } from './PcExtras';
 
 const START_MINUTES = [30, 60, 90, 120, 180];
 const PAY_METHODS: PaymentMethod[] = ['cash', 'card', 'bank_transfer', 'other'];
@@ -41,6 +42,7 @@ export function Pcs(perms: PcPerms) {
   const [startIds, setStartIds] = useState<string[] | null>(null);
   const [wakeBusy, setWakeBusy] = useState(false);
   const [wakeResults, setWakeResults] = useState<WakeOutcome[] | null>(null);
+  const [bulkTime, setBulkTime] = useState(false);
 
   if (isLoading) return <Loading />;
   if (error || !data) return <QueryError message="Nuk u ngarkuan PC-të." onRetry={() => void refetch()} />;
@@ -52,6 +54,8 @@ export function Pcs(perms: PcPerms) {
   const wakeable = selected.filter((s) => s.status === 'offline');
   const openStation = shown.find((s) => s.id === openId) ?? null;
   const startStations = shown.filter((s) => startIds?.includes(s.id) && s.status === 'available');
+  const activeSel = selected.filter((s) => s.activeSession);
+  const prepaidSel = selected.filter((s) => s.activeSession?.billingMode === 'prepaid');
 
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const leaveSelecting = () => {
@@ -159,9 +163,28 @@ export function Pcs(perms: PcPerms) {
                 {`Nis (${startable.length})`}
               </Btn>
             )}
+            {perms.canControl && prepaidSel.length > 0 && (
+              <Btn variant="ghost" onClick={() => setBulkTime(true)} disabled={!online}>
+                {`Hiq kohë (${prepaidSel.length})`}
+              </Btn>
+            )}
+            {perms.canControl && activeSel.length > 0 && (
+              <BulkEndButton sessionIds={activeSel.flatMap((s) => (s.activeSession ? [s.activeSession.id] : []))} disabled={!online} />
+            )}
           </div>
           {!online && <span className="small text-danger">Pa lidhje me serverin.</span>}
         </div>
+      )}
+
+      {bulkTime && prepaidSel.length > 0 && (
+        <BulkTimeSheet
+          sessionIds={prepaidSel.flatMap((s) => (s.activeSession ? [s.activeSession.id] : []))}
+          onClose={() => setBulkTime(false)}
+          onDone={() => {
+            setBulkTime(false);
+            leaveSelecting();
+          }}
+        />
       )}
 
       {openStation && (
@@ -228,6 +251,7 @@ function PcSheet({ station, perms, onClose }: { station: StationSummary; perms: 
       {!session && station.status === 'offline' && !perms.canPower && (
         <Notice tone="warn">PC-ja është offline. Ndezja kërkon lejen «Fuqia e PC-ve».</Notice>
       )}
+      <PcCommands station={station} canControl={perms.canControl} canPower={perms.canPower} />
     </Sheet>
   );
 }

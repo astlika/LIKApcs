@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { CashBookReport, ProfitReport, ReportBucket, SalesReport } from '@likapcs/shared';
-import { api, duration, money, shortDate } from '../api';
+import { api, downloadFile, duration, errorText, money, shortDate } from '../api';
+import { useNotify } from '../notify';
 import { METHOD_LABEL } from '../labels';
 import { Empty, Loading, QueryError, cx } from '../components/ui';
 
@@ -66,6 +67,7 @@ export function Reports({ canProfit }: { canProfit: boolean }) {
       <div className="page-head">
         <h1>Raportet</h1>
       </div>
+      <ExportRow from={range.from} to={range.to} disabled={invalid} canProfit={canProfit} />
 
       <div className="chips" role="group" aria-label="Periudha">
         {(
@@ -385,5 +387,35 @@ function ProfitView({ q }: { q: Q<ProfitReport> }) {
         </>
       )}
     </Wait>
+  );
+}
+
+/** CSV downloads for the chosen period. The file has the same numbers as the report on screen. */
+function ExportRow({ from, to, disabled, canProfit }: { from: string; to: string; disabled: boolean; canProfit: boolean }) {
+  const notify = useNotify();
+  const [busy, setBusy] = useState<string | null>(null);
+  const items: { kind: string; label: string }[] = [
+    { kind: 'sales', label: 'Shitjet' },
+    { kind: 'cash_book', label: 'Arka' },
+    ...(canProfit ? [{ kind: 'sale_items', label: 'Produktet' }] : []),
+  ];
+  const run = async (kind: string) => {
+    setBusy(kind);
+    try {
+      await downloadFile(`/reports/export?${new URLSearchParams({ kind, from, to }).toString()}`, `${kind}-${from}-${to}.csv`);
+    } catch (err) {
+      notify(errorText(err), 'err');
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="chips" role="group" aria-label="Shkarko CSV">
+      {items.map((i) => (
+        <button key={i.kind} type="button" className="chip" disabled={disabled || busy !== null} onClick={() => void run(i.kind)}>
+          {busy === i.kind ? '…' : `CSV · ${i.label}`}
+        </button>
+      ))}
+    </div>
   );
 }

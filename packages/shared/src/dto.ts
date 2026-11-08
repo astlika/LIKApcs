@@ -158,14 +158,18 @@ export type ChangePasswordRequest = z.infer<typeof changePasswordSchema>;
 /** 0.29.4: display preferences of one account, used by the phone app. Stored per user. */
 export const USER_THEMES = ['dark', 'light', 'system'] as const;
 export const USER_TEXT_SIZES = ['normal', 'large'] as const;
+/** Phone language: `sq` (default) or `en`. Saved per account, like the look. */
+export const USER_LANGUAGES = ['sq', 'en'] as const;
 export const userPreferencesSchema = z.object({
   theme: z.enum(USER_THEMES).default('dark'),
   textSize: z.enum(USER_TEXT_SIZES).default('normal'),
+  language: z.enum(USER_LANGUAGES).default('sq'),
 });
 export type UserPreferences = z.infer<typeof userPreferencesSchema>;
 export const userPreferencesPatchSchema = z.object({
   theme: z.enum(USER_THEMES).optional(),
   textSize: z.enum(USER_TEXT_SIZES).optional(),
+  language: z.enum(USER_LANGUAGES).optional(),
 });
 export type UserPreferencesPatch = z.infer<typeof userPreferencesPatchSchema>;
 

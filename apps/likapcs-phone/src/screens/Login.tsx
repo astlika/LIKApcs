@@ -2,12 +2,14 @@ import { useState, type FormEvent } from 'react';
 import type { LoginResponse } from '@likapcs/shared';
 import { api, ApiError, setToken } from '../api';
 import { getServerUrl, isNative, normalizeServerUrl, setServerUrl } from '../native';
+import { translate, useT } from '../i18n';
 
 /**
  * Phone sign-in: username + e-mail + password, all three (0.28.0). Nothing is remembered besides
  * the token on this phone.
  */
 export function Login({ notice, onSignedIn }: { notice: string | null; onSignedIn: () => void }) {
+  const t = useT();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -22,7 +24,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
     if (isNative()) {
       const url = normalizeServerUrl(server);
       if (!url) {
-        setError('Adresa e serverit nuk është e saktë. Shembull: http://100.x.y.z:4700');
+        setError(translate('Adresa e serverit nuk është e saktë. Shembull: http://100.x.y.z:4700'));
         return;
       }
       setServerUrl(url);
@@ -38,11 +40,11 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
       onSignedIn();
     } catch (err) {
       if (err instanceof ApiError && err.status === 423) {
-        setError('Llogaria është e kyçur përkohësisht. Provoni më vonë.');
+        setError(translate('Llogaria është e kyçur përkohësisht. Provoni më vonë.'));
       } else if (err instanceof ApiError && err.status === 429) {
-        setError('Shumë përpjekje. Prisni një minutë.');
+        setError(translate('Shumë përpjekje. Prisni një minutë.'));
       } else {
-        setError(err instanceof ApiError ? err.message : 'Hyrja dështoi.');
+        setError(err instanceof ApiError ? err.message : translate('Hyrja dështoi.'));
       }
     } finally {
       setBusy(false);
@@ -62,7 +64,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
         {notice && <p className="alert">{notice}</p>}
         {isNative() && (
           <label className="field">
-            <span>Serveri LIKApcs</span>
+            <span>{t('Serveri LIKApcs')}</span>
             <input
               autoCapitalize="none"
               inputMode="url"
@@ -74,7 +76,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
           </label>
         )}
         <label className="field">
-          <span>Përdoruesi</span>
+          <span>{t('Përdoruesi')}</span>
           <input
             autoComplete="username"
             autoCapitalize="none"
@@ -84,7 +86,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
           />
         </label>
         <label className="field">
-          <span>E-mail</span>
+          <span>{t('E-mail')}</span>
           <input
             type="email"
             autoComplete="email"
@@ -96,7 +98,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
           />
         </label>
         <label className="field">
-          <span>Fjalëkalimi</span>
+          <span>{t('Fjalëkalimi')}</span>
           <input
             type="password"
             autoComplete="current-password"
@@ -107,7 +109,7 @@ export function Login({ notice, onSignedIn }: { notice: string | null; onSignedI
         </label>
         {error && <p className="alert alert--danger">{error}</p>}
         <button className="primary big" type="submit" disabled={busy}>
-          {busy ? 'Duke hyrë…' : 'Hyr'}
+          {busy ? t('Duke hyrë…') : t('Hyr')}
         </button>
       </form>
     </div>

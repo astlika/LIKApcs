@@ -17,7 +17,7 @@ describe('phone display preferences (per account)', () => {
   it('returns the defaults until the account saves something', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/preferences', headers: authHeader(owner.token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json<UserPreferences>()).toEqual({ theme: 'dark', textSize: 'normal' });
+    expect(res.json<UserPreferences>()).toEqual({ theme: 'dark', textSize: 'normal', language: 'sq' });
   });
 
   it('saves a partial change and keeps the other fields', async () => {
@@ -28,10 +28,10 @@ describe('phone display preferences (per account)', () => {
       payload: { theme: 'light' },
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json<UserPreferences>()).toEqual({ theme: 'light', textSize: 'normal' });
+    expect(put.json<UserPreferences>()).toEqual({ theme: 'light', textSize: 'normal', language: 'sq' });
 
     const again = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/preferences', headers: authHeader(owner.token) });
-    expect(again.json<UserPreferences>()).toEqual({ theme: 'light', textSize: 'normal' });
+    expect(again.json<UserPreferences>()).toEqual({ theme: 'light', textSize: 'normal', language: 'sq' });
   });
 
   it('refuses unknown values', async () => {

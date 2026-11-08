@@ -6,6 +6,25 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.5] - 2026-10-09
+
+### Added
+
+- Phone app, PCs: lock and unlock a PC, send it a message (10 s, 20 s or 1 min), and restart or shut it down. Restart and shutdown need «Fuqia e PC-ve» and ask for confirmation twice.
+- Phone app, PCs: in selection mode, remove minutes from several prepaid PCs at once, or end the running sessions of the selected PCs (asks twice).
+- Phone app, PCs: a warning when a PC goes offline, and once per session when a prepaid session has 5 minutes left.
+- Phone app: cash drawer page (open the shift, deposits and withdrawals, close the shift with a count and a confirmation).
+- Phone app: expenses page (list by period, add, void with a reason). A cash expense is taken from the open drawer.
+- Phone app: low-stock page and a barcode check. In POS, a barcode typed or scanned and confirmed with Enter adds the product to the cart.
+- Phone app, POS: discount (for users with «pos.discount»), suspend a sale, open a suspended sale from the list and finish it, or cancel it. Favourite products (★) are kept on the phone.
+- Phone app, reports: CSV downloads for sales, cash book and sold products, for the chosen period.
+- Phone app: new customer from the customer picker (name and phone), for users with «customers.manage».
+- Phone app, Settings: language (Shqip or English), saved on the account. New field `language` in the preferences (`GET`/`PUT /auth/preferences`), default `sq`.
+
+### Changed
+
+- Phone app: the shell, menu, Settings, login, home, customer picker, cash, expenses, stock, PC commands and warnings are translated to English. The PC, POS, debts and reports screens are not translated yet.
+
 ## [0.29.4] - 2026-11-07
 
 ### Added

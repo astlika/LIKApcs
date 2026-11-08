@@ -13,7 +13,12 @@ import { Debts } from './screens/Debts';
 import { Loading, QueryError, Sheet } from './components/ui';
 import { Reports } from './screens/Reports';
 import { Settings } from './screens/Settings';
+import { Cash } from './screens/Cash';
+import { Expenses } from './screens/Expenses';
+import { Stock } from './screens/Stock';
+import { PcAlerts } from './Alerts';
 import { applyPrefs, DEFAULT_PREFS, usePrefsQuery } from './prefs';
+import { translate, useT } from './i18n';
 import type { UserPreferences } from '@likapcs/shared';
 
 function Icon({ name }: { name: Tab }) {
@@ -55,9 +60,10 @@ const TITLES: Record<Tab, string> = { home: 'Kryefaqja', pcs: 'PC-të', pos: 'Sh
 
 export function App() {
   const queryClient = useQueryClient();
+  const tr = useT();
   const [signedIn, setSignedIn] = useState(() => getToken() !== null);
   const [tab, setTab] = useState<Tab>('home');
-  const [page, setPage] = useState<'tab' | 'reports' | 'settings'>('tab');
+  const [page, setPage] = useState<'tab' | 'reports' | 'settings' | 'cash' | 'expenses' | 'stock'>('tab');
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const me = useMe(signedIn);
@@ -82,7 +88,7 @@ export function App() {
     const lost = () => {
       queryClient.clear();
       setSignedIn(false);
-      setNotice('Sesioni skadoi. Hyni përsëri.');
+      setNotice(translate('Sesioni skadoi. Hyni përsëri.'));
     };
     window.addEventListener(SESSION_LOST, lost);
     return () => window.removeEventListener(SESSION_LOST, lost);
@@ -125,6 +131,9 @@ export function App() {
 
   const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
   const canProfit = canReports;
+  const canCash = can(user, PERMISSIONS.CASH_VIEW);
+  const canExpenses = can(user, PERMISSIONS.EXPENSES_VIEW);
+  const canStock = can(user, PERMISSIONS.PRODUCTS_VIEW);
   const tabs: Tab[] = ['home', ...(canPcs ? (['pcs'] as Tab[]) : []), ...(canPos ? (['pos'] as Tab[]) : []), ...(canDebts ? (['debts'] as Tab[]) : [])];
   const active: Tab = tabs.includes(tab) ? tab : 'home';
 
@@ -134,10 +143,16 @@ export function App() {
   };
 
   let body: ReactNode;
-  if (me.isLoading) body = <Loading text="Duke hapur…" />;
-  else if (me.error || !user) body = <QueryError message="Nuk u lexuan llogaria. Provoni përsëri." onRetry={() => void me.refetch()} />;
+  if (me.isLoading) body = <Loading text={tr('Duke hapur…')} />;
+  else if (me.error || !user) body = <QueryError message={tr('Nuk u lexuan llogaria. Provoni përsëri.')} onRetry={() => void me.refetch()} />;
   else if (page === 'reports' && canReports) body = <Reports canProfit={canProfit} />;
   else if (page === 'settings') body = <Settings user={user} onSignOut={signOut} />;
+  else if (page === 'cash' && canCash)
+    body = (
+      <Cash canOpenClose={can(user, PERMISSIONS.CASH_OPEN_CLOSE)} canMove={can(user, PERMISSIONS.CASH_MOVE)} />
+    );
+  else if (page === 'expenses' && canExpenses) body = <Expenses canManage={can(user, PERMISSIONS.EXPENSES_MANAGE)} />;
+  else if (page === 'stock' && canStock) body = <Stock />;
   else if (active === 'home')
     body = (
       <Home
@@ -153,25 +168,81 @@ export function App() {
   else if (active === 'pos') body = <Pos />;
   else body = <Debts canCollect={canCollect} />;
 
-  const title = page === 'reports' ? 'Raportet' : page === 'settings' ? 'Cilësimet' : TITLES[active];
+  const title =
+    page === 'reports'
+      ? 'Raportet'
+      : page === 'settings'
+        ? 'Cilësimet'
+        : page === 'cash'
+          ? 'Arka'
+          : page === 'expenses'
+            ? 'Shpenzimet'
+            : page === 'stock'
+              ? 'Stoku'
+              : TITLES[active];
   return (
     <NotifyProvider>
       <div className="shell">
         <header className="topbar">
           <div className="brand">
             <span className="brand-mark brand-mark--sm">LK</span>
-            <strong>{title}</strong>
+            <strong>{tr(title)}</strong>
           </div>
-          <button type="button" className="ghost small-btn menu-btn" onClick={() => setMenuOpen(true)} aria-label="Menyja">
+          <button type="button" className="ghost small-btn menu-btn" onClick={() => setMenuOpen(true)} aria-label={tr('Menyja')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
               <path d="M4 7h16M4 12h16M4 17h16" />
             </svg>
-            Menu
+            {tr('Menu')}
           </button>
         </header>
         {menuOpen && (
-          <Sheet title="Menyja" onClose={() => setMenuOpen(false)}>
+          <Sheet title={tr('Menyja')} onClose={() => setMenuOpen(false)}>
             <ul className="menu-list">
+              {canCash && (
+                <li>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPage('cash');
+                    }}
+                  >
+                    {tr('Arka')}
+                    <small className="muted">{tr('Hapja, mbyllja, depozita')}</small>
+                  </button>
+                </li>
+              )}
+              {canExpenses && (
+                <li>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPage('expenses');
+                    }}
+                  >
+                    {tr('Shpenzimet')}
+                    <small className="muted">{tr('Regjistro dhe anulo')}</small>
+                  </button>
+                </li>
+              )}
+              {canStock && (
+                <li>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPage('stock');
+                    }}
+                  >
+                    {tr('Stoku')}
+                    <small className="muted">{tr('Stoku i ulët, kontroll barkodi')}</small>
+                  </button>
+                </li>
+              )}
               {canReports && (
                 <li>
                   <button
@@ -182,8 +253,8 @@ export function App() {
                       setPage('reports');
                     }}
                   >
-                    Raportet
-                    <small className="muted">Shitjet, arka, fitimi</small>
+                    {tr('Raportet')}
+                    <small className="muted">{tr('Shitjet, arka, fitimi')}</small>
                   </button>
                 </li>
               )}
@@ -196,26 +267,27 @@ export function App() {
                     setPage('settings');
                   }}
                 >
-                  Cilësimet
-                  <small className="muted">Tema, teksti, llogaria</small>
+                  {tr('Cilësimet')}
+                  <small className="muted">{tr('Tema, teksti, llogaria')}</small>
                 </button>
               </li>
               <li>
                 <button type="button" className="menu-item menu-item--danger" onClick={() => void signOut()}>
-                  Dil nga llogaria
+                  {tr('Dil nga llogaria')}
                 </button>
               </li>
             </ul>
           </Sheet>
         )}
+        {canPcs && <PcAlerts enabled />}
         {!online && (
           <div className="offline-bar" role="status">
-            Pa lidhje me serverin. Veprimet me para janë të bllokuara.
+            {tr('Pa lidhje me serverin. Veprimet me para janë të bllokuara.')}
           </div>
         )}
         <main className="content">{body}</main>
         {tabs.length > 1 && (
-          <nav className="tabbar" aria-label="Menyja">
+          <nav className="tabbar" aria-label={tr('Menyja')}>
             {tabs.map((t) => (
               <button
                 key={t}
@@ -225,7 +297,7 @@ export function App() {
                 onClick={() => go(t)}
               >
                 <Icon name={t} />
-                <span>{t === 'home' ? 'Kryefaqja' : TITLES[t]}</span>
+                <span>{tr(TITLES[t])}</span>
               </button>
             ))}
           </nav>

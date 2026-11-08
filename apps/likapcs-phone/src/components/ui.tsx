@@ -1,4 +1,5 @@
 import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useT } from '../i18n';
 
 export const cx = (...parts: (string | false | null | undefined)[]): string => parts.filter(Boolean).join(' ');
 
@@ -14,6 +15,7 @@ export function Sheet({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  const tClose = useT()('Mbyll');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -24,12 +26,12 @@ export function Sheet({
 
   return (
     <div className="sheet-root">
-      <button type="button" className="sheet-backdrop" aria-label="Mbyll" onClick={onClose} />
+      <button type="button" className="sheet-backdrop" aria-label={tClose} onClick={onClose} />
       <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
         <div className="sheet__grip" aria-hidden="true" />
         <header className="sheet__head">
           <h2>{title}</h2>
-          <button type="button" className="icon-btn" aria-label="Mbyll" onClick={onClose}>
+          <button type="button" className="icon-btn" aria-label={tClose} onClick={onClose}>
             ✕
           </button>
         </header>
@@ -104,16 +106,18 @@ export function Notice({ tone = 'info', children }: { tone?: 'info' | 'warn' | '
   );
 }
 
-export function Loading({ text = 'Duke ngarkuar…' }: { text?: string }) {
-  return <p className="muted center">{text}</p>;
+export function Loading({ text }: { text?: string }) {
+  const t = useT();
+  return <p className="muted center">{text ?? t('Duke ngarkuar…')}</p>;
 }
 
 export function QueryError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT();
   return (
     <div className="card stack">
       <Notice tone="danger">{message}</Notice>
       <Btn onClick={onRetry} block>
-        Provo përsëri
+        {t('Provo përsëri')}
       </Btn>
     </div>
   );

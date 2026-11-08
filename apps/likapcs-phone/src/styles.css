@@ -441,3 +441,15 @@ input, button, select { font-family: inherit; }
 .cart-line__extras { display: block; color: var(--muted); font-size: 0.8rem; }
 .tile__note { display: block; }
 .menu-empty { color: var(--muted); }
+
+/* 0.30 phone additions: drawer, expenses, stock, PC commands, favourites, discount */
+.kv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.neg { color: var(--danger, #e5484d); }
+.pos { color: var(--ok, #30a46c); }
+.tile-wrap { position: relative; }
+.fav-btn {
+  position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface, transparent); color: var(--muted, #888);
+  font-size: 15px; line-height: 1; display: grid; place-items: center; cursor: pointer;
+}
+.fav-btn--on { color: #f5b301; border-color: #f5b301; }

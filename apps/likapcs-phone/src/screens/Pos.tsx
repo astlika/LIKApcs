@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { CategorySummary, CustomerSummary, Paginated, ProductAddonSummary, ProductSummary, SalePaymentMethod } from '@likapcs/shared';
-import { api, errorText, money, newRequestId } from '../api';
+import { PERMISSIONS, type CategorySummary, type CustomerSummary, type Paginated, type ProductAddonSummary, type ProductLookupResponse, type ProductSummary, type SaleDetail, type SalePaymentMethod, type SalesListResponse } from '@likapcs/shared';
+import { api, errorText, money, newRequestId, parseEuroToCents, shortDate } from '../api';
+import { can, useMe } from '../me';
 import { METHOD_LABEL } from '../labels';
 import { useLive } from '../useLive';
 import { useNotify } from '../notify';
 import { useOnline } from '../useOnline';
-import { Btn, Choices, Empty, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
+import { Btn, Choices, Empty, EuroInput, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useDebounced } from '../useDebounced';
 
@@ -29,6 +30,30 @@ function inStock(p: ProductSummary): boolean {
   return !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0);
 }
 
+const FAV_KEY = 'likapcs-phone-favs';
+function useFavs(): [Set<string>, (id: string) => void] {
+  const [favs, setFavs] = useState<Set<string>>(() => {
+    try {
+      return new Set<string>(JSON.parse(localStorage.getItem(FAV_KEY) ?? '[]') as string[]);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const toggle = (id: string) =>
+    setFavs((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(FAV_KEY, JSON.stringify([...next]));
+      } catch {
+        // Private mode: the favourites last for this visit only.
+      }
+      return next;
+    });
+  return [favs, toggle];
+}
+
 /** Point of sale: pick products (with extras when they have them), check the cart, take the money. Online only. */
 export function Pos() {
   const notify = useNotify();
@@ -38,6 +63,14 @@ export function Pos() {
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [extrasFor, setExtrasFor] = useState<ProductSummary | null>(null);
+  const [favOnly, setFavOnly] = useState(false);
+  const [resume, setResume] = useState<ResumeState | null>(null);
+  const [suspendedOpen, setSuspendedOpen] = useState(false);
+  const suspendedList = useLive(['suspended'], () => api<SalesListResponse>('/sales?status=suspended&pageSize=50'));
+  const suspendedCount = suspendedList.data?.total ?? 0;
+  const [favs, toggleFav] = useFavs();
+  const me = useMe(true);
+  const canDiscount = can(me.data, PERMISSIONS.POS_DISCOUNT);
 
   const categories = useLive(['categories'], () => api<CategorySummary[]>('/catalog/categories'));
   const products = useLive(['products', q, categoryId], () => {
@@ -67,15 +100,68 @@ export function Pos() {
     });
   };
 
+  /** Opens a suspended sale: its lines go back into the cart, and paying it completes that same sale. */
+  const resumeSale = async (id: string) => {
+    if (lines.length > 0) {
+      notify('Pezulloni ose përfundoni shportën aktuale para se të hapni një shitje.', 'err');
+      return;
+    }
+    try {
+      const sale = await api<SaleDetail>(`/sales/${id}`);
+      if (sale.items.some((i) => !i.productId)) throw new Error('Kjo shitje ka rreshta që nuk hapen nga telefoni (p.sh. kohë PC).');
+      if (sale.items.some((i) => i.discountCents > 0)) throw new Error('Kjo shitje ka zbritje për produkt. Hapeni nga desktopi.');
+      if (sale.discountCents > 0 && !canDiscount) throw new Error('Kjo shitje ka zbritje. Nuk keni leje ta hapni nga telefoni.');
+      const next: Record<string, CartLine> = {};
+      for (const item of sale.items) {
+        if (!item.productId || item.quantityMilli % 1000 !== 0) throw new Error('Sasia e një rreshti nuk mund të hapet nga telefoni.');
+        const product = await api<ProductSummary>(`/products/${item.productId}`);
+        const addons = product.addons.filter((a) => item.addonIds.includes(a.id));
+        if (addons.length !== item.addonIds.length) throw new Error(`Opsionet e ${product.name} nuk gjenden më.`);
+        const key = lineKey(product, addons);
+        next[key] = { key, product, addons, qty: (next[key]?.qty ?? 0) + item.quantityMilli / 1000 };
+      }
+      const customer = sale.customerId ? await api<CustomerSummary>(`/customers/${sale.customerId}`) : null;
+      setCart(next);
+      setResume({ id, receiptNo: sale.receiptNo, discountCents: sale.discountCents, customer });
+      setSuspendedOpen(false);
+      setCartOpen(true);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : errorText(err), 'err');
+    }
+  };
+
   const cats = categories.data?.filter((c) => c.isActive) ?? [];
   // Products with no stock left are not shown at all (the till only offers what can be sold).
-  const sellable = (products.data?.items ?? []).filter(inStock);
+  const sellable = (products.data?.items ?? []).filter(inStock).filter((p) => !favOnly || favs.has(p.id));
+
+  // A barcode typed or scanned into the search box (Enter) adds the product straight to the cart.
+  const scanCode = async () => {
+    const code = search.trim();
+    if (!code) return;
+    try {
+      const res = await api<ProductLookupResponse>(`/products/lookup?${new URLSearchParams({ code }).toString()}`);
+      if (!inStock(res.product)) {
+        notify('Ky produkt nuk ka stok.', 'err');
+        return;
+      }
+      if (res.product.addons.length > 0) setExtrasFor(res.product);
+      else addLine(res.product, []);
+      setSearch('');
+    } catch {
+      // Not a barcode: the text stays in the search box and filters the list.
+    }
+  };
   const inCartCount = (p: ProductSummary) => lines.filter((l) => l.product.id === p.id).reduce((sum, l) => sum + l.qty, 0);
 
   return (
     <div className="stack pos">
       <div className="page-head">
         <h1>Shitje</h1>
+        {suspendedCount > 0 && (
+          <button type="button" className="ghost small-btn" onClick={() => setSuspendedOpen(true)}>
+            Pezulluara ({suspendedCount})
+          </button>
+        )}
       </div>
 
       <input
@@ -84,13 +170,22 @@ export function Pos() {
         placeholder="Kërko produkt…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        aria-label="Kërko produkt"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void scanCode();
+          }
+        }}
+        aria-label="Kërko produkt ose skano barkodin"
       />
 
       {cats.length > 0 && (
         <div className="chips" role="group" aria-label="Kategoritë">
           <button type="button" className={cx('chip', categoryId === null && 'chip--on')} onClick={() => setCategoryId(null)}>
             Të gjitha
+          </button>
+          <button type="button" className={cx('chip', favOnly && 'chip--on')} aria-pressed={favOnly} onClick={() => setFavOnly((v) => !v)}>
+            ★ Të preferuarat
           </button>
           {cats.map((c) => (
             <button
@@ -116,7 +211,7 @@ export function Pos() {
             const inCart = inCartCount(p);
             const hasExtras = p.addons.length > 0;
             return (
-              <li key={p.id}>
+              <li key={p.id} className="tile-wrap">
                 <button
                   type="button"
                   className={cx('tile', inCart > 0 && 'tile--in')}
@@ -127,6 +222,15 @@ export function Pos() {
                   <span className="tile__name">{p.name}</span>
                   <span className="tile__price">{money(unitPrice(p))}</span>
                   {hasExtras && <span className="tile__note">Me opsione</span>}
+                </button>
+                <button
+                  type="button"
+                  className={cx('fav-btn', favs.has(p.id) && 'fav-btn--on')}
+                  aria-pressed={favs.has(p.id)}
+                  aria-label={favs.has(p.id) ? `Hiqe ${p.name} nga të preferuarat` : `Shto ${p.name} te të preferuarat`}
+                  onClick={() => toggleFav(p.id)}
+                >
+                  ★
                 </button>
               </li>
             );
@@ -156,16 +260,38 @@ export function Pos() {
         />
       )}
 
+      {suspendedOpen && (
+        <SuspendedSheet
+          sales={suspendedList.data?.items ?? []}
+          onResume={(id) => void resumeSale(id)}
+          onClose={() => setSuspendedOpen(false)}
+        />
+      )}
+
       {cartOpen && (
         <CartSheet
+          resume={resume}
+          onVoidResume={() => {
+            setCart({});
+            setResume(null);
+            setCartOpen(false);
+          }}
           lines={lines}
           total={total}
           onQty={setQty}
+          canDiscount={canDiscount}
           onClose={() => setCartOpen(false)}
           onSold={(receipt) => {
             setCart({});
+            setResume(null);
             setCartOpen(false);
             notify(receipt ? `Shitja u regjistrua · ${receipt}` : 'Shitja u regjistrua.');
+          }}
+          onSuspended={(ref) => {
+            setCart({});
+            setResume(null);
+            setCartOpen(false);
+            notify(`Shitja u pezullua${ref ? ` · ${ref}` : ''}.`);
           }}
         />
       )}
@@ -226,22 +352,35 @@ function ExtrasSheet({
 
 function CartSheet({
   lines,
-  total,
+  total: subtotal,
   onQty,
+  canDiscount,
+  resume,
+  onVoidResume,
   onClose,
   onSold,
+  onSuspended,
 }: {
   lines: CartLine[];
   total: number;
   onQty: (key: string, qty: number) => void;
+  canDiscount: boolean;
+  resume: ResumeState | null;
+  onVoidResume: () => void;
   onClose: () => void;
   onSold: (receipt: string | null) => void;
+  onSuspended: (ref: string | null) => void;
 }) {
   const online = useOnline();
   const qc = useQueryClient();
+  const notify = useNotify();
   const requestId = useState(newRequestId)[0];
-  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
+  const [customer, setCustomer] = useState<CustomerSummary | null>(resume?.customer ?? null);
   const [method, setMethod] = useState<SalePaymentMethod>('cash');
+  const [discountText, setDiscountText] = useState(resume && resume.discountCents > 0 ? centsText(resume.discountCents) : '');
+  const discount = canDiscount ? (parseEuroToCents(discountText) ?? 0) : 0;
+  const discountBad = discount < 0 || discount > subtotal;
+  const total = Math.max(0, subtotal - discount);
 
   const creditNeedsCustomer = method === 'credit' && !customer;
   const payOptions: { value: SalePaymentMethod; label: string; disabled?: boolean }[] = [
@@ -251,28 +390,56 @@ function CartSheet({
     { value: 'credit', label: 'Me borxh', disabled: !customer },
   ];
 
+  const saleBody = () => ({
+    items: lines.map((l) => ({
+      productId: l.product.id,
+      quantityMilli: l.qty * 1000,
+      discountCents: 0,
+      addonIds: l.addons.map((a) => a.id),
+    })),
+    discountCents: discount,
+    customerId: customer?.id ?? null,
+    clientRequestId: requestId,
+  });
+
+  // Keeps the sale open (e.g. the customer is coming back); it is not paid or counted yet.
+  const suspend = useMutation({
+    mutationFn: () => api<{ id?: string; receiptNo?: string | null }>('/sales/suspend', { method: 'POST', body: saleBody() }),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['phone', 'products'] });
+      void qc.invalidateQueries({ queryKey: ['phone', 'suspended'] });
+      onSuspended(res.receiptNo ?? null);
+    },
+  });
+
+  // A suspended sale that was opened again is completed in place (same sale number), not copied.
   const sell = useMutation({
     mutationFn: () =>
-      api<{ sale?: { receiptNo?: string | null }; receiptNo?: string | null }>('/sales', {
-        method: 'POST',
-        body: {
-          items: lines.map((l) => ({
-            productId: l.product.id,
-            quantityMilli: l.qty * 1000,
-            discountCents: 0,
-            addonIds: l.addons.map((a) => a.id),
-          })),
-          discountCents: 0,
-          customerId: customer?.id ?? null,
-          payments: [{ method, amountCents: total }],
-          clientRequestId: requestId,
-          staff: false,
+      api<{ sale?: { receiptNo?: string | null }; receiptNo?: string | null }>(
+        resume ? `/sales/${resume.id}/complete` : '/sales',
+        {
+          method: 'POST',
+          body: {
+            ...saleBody(),
+            payments: [{ method, amountCents: total }],
+            staff: false,
+          },
         },
-      }),
+      ),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ['phone', 'products'] });
       void qc.invalidateQueries({ queryKey: ['phone', 'debts'] });
-      onSold(res.sale?.receiptNo ?? res.receiptNo ?? null);
+      void qc.invalidateQueries({ queryKey: ['phone', 'suspended'] });
+      onSold(res.sale?.receiptNo ?? res.receiptNo ?? resume?.receiptNo ?? null);
+    },
+  });
+
+  const voidResume = useMutation({
+    mutationFn: () => api(`/sales/${resume!.id}/void`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['phone', 'suspended'] });
+      notify('Shitja e pezulluar u anulua.');
+      onVoidResume();
     },
   });
 
@@ -284,12 +451,25 @@ function CartSheet({
         <>
           {!online && <Notice tone="danger">Pa lidhje me serverin. Shitja nuk mund të regjistrohet tani.</Notice>}
           {sell.isError && <Notice tone="danger">{errorText(sell.error)}</Notice>}
-          <Btn block onClick={() => sell.mutate()} disabled={!online || sell.isPending || lines.length === 0 || creditNeedsCustomer}>
+          {suspend.isError && <Notice tone="danger">{errorText(suspend.error)}</Notice>}
+          <Btn block onClick={() => sell.mutate()} disabled={!online || sell.isPending || lines.length === 0 || creditNeedsCustomer || discountBad}>
             {sell.isPending ? 'Duke regjistruar…' : `Përfundo · ${money(total)}`}
           </Btn>
+          {resume ? (
+            <Btn variant="danger" block onClick={() => voidResume.mutate()} disabled={!online || voidResume.isPending}>
+              {voidResume.isPending ? 'Duke anuluar…' : 'Anulo shitjen e pezulluar'}
+            </Btn>
+          ) : (
+            <Btn variant="ghost" block onClick={() => suspend.mutate()} disabled={!online || suspend.isPending || lines.length === 0 || discountBad}>
+              {suspend.isPending ? 'Duke pezulluar…' : 'Pezullo shitjen'}
+            </Btn>
+          )}
         </>
       }
     >
+      {resume && (
+        <Notice tone="info">Po përfundoni shitjen e pezulluar{resume.receiptNo ? ` ${resume.receiptNo}` : ''}.</Notice>
+      )}
       <ul className="cart-lines">
         {lines.map((l) => (
           <li key={l.key} className="cart-line">
@@ -316,16 +496,77 @@ function CartSheet({
 
       <CustomerPicker selected={customer} onSelect={setCustomer} />
 
+      {canDiscount && (
+        <EuroInput label="Zbritja (opsionale)" value={discountText} onChange={setDiscountText} placeholder="0,00" />
+      )}
+      {discountBad && <Notice tone="danger">Zbritja nuk mund të jetë më e madhe se shuma e shportës.</Notice>}
+
       <Choices label="Mënyra e pagesës" value={method} onChange={setMethod} options={payOptions} />
       {creditNeedsCustomer && <Notice tone="warn">Për pagesë me borxh zgjidhni klientin.</Notice>}
       {method === 'credit' && customer && (
         <Notice tone="info">Shuma {money(total)} shtohet te borxhi i {customer.name}.</Notice>
       )}
 
+      {discount > 0 && (
+        <div className="total-row">
+          <span>Nëntotali</span>
+          <strong>{money(subtotal)}</strong>
+        </div>
+      )}
+      {discount > 0 && (
+        <div className="total-row">
+          <span>Zbritja</span>
+          <strong>−{money(discount)}</strong>
+        </div>
+      )}
       <div className="total-row total-row--big">
         <span>Totali</span>
         <strong>{money(total)}</strong>
       </div>
+    </Sheet>
+  );
+}
+
+interface ResumeState {
+  id: string;
+  receiptNo: string | null;
+  discountCents: number;
+  customer: CustomerSummary | null;
+}
+
+const centsText = (cents: number): string => (cents / 100).toFixed(2).replace('.', ',');
+
+/** The sales that were suspended on this till or elsewhere: open one to finish it, or cancel it. */
+function SuspendedSheet({
+  sales,
+  onResume,
+  onClose,
+}: {
+  sales: SalesListResponse['items'];
+  onResume: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet title="Shitje të pezulluara" onClose={onClose}>
+      {sales.length === 0 && <Empty>Nuk ka shitje të pezulluara.</Empty>}
+      <ul className="list">
+        {sales.map((sale) => (
+          <li key={sale.id} className="debt-row">
+            <span className="pc-row__main">
+              <strong>{sale.receiptNo ?? sale.localNumber ?? 'Pa numër'}</strong>
+              <span className="muted small">
+                {sale.customerName ?? 'Pa klient'} · {shortDate(sale.createdAt)}
+              </span>
+            </span>
+            <span className="row">
+              <strong>{money(sale.totalCents)}</strong>
+              <button type="button" className="ghost small-btn" onClick={() => onResume(sale.id)}>
+                Hap
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
     </Sheet>
   );
 }

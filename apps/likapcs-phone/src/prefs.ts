@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import type { UserPreferences } from '@likapcs/shared';
 import { api } from './api';
+import { setLanguage } from './i18n';
 
 /**
  * Display preferences of the signed-in account (theme, text size). The server keeps them per
  * username; this file applies them to the page and keeps a copy on the phone so the login
  * screen uses the same look before anyone has signed in.
  */
-export const DEFAULT_PREFS: UserPreferences = { theme: 'dark', textSize: 'normal' };
+export const DEFAULT_PREFS: UserPreferences = { theme: 'dark', textSize: 'normal', language: 'sq' };
 const CACHE_KEY = 'likapcs-phone-prefs';
 
 export function cachedPrefs(): UserPreferences {
@@ -26,6 +27,8 @@ export function applyPrefs(p: UserPreferences): void {
   const dark = p.theme === 'dark' || (p.theme === 'system' && systemDark());
   root.dataset.theme = dark ? 'dark' : 'light';
   root.dataset.text = p.textSize;
+  root.lang = p.language;
+  setLanguage(p.language);
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(p));
   } catch {
