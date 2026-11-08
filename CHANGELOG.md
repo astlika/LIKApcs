@@ -6,6 +6,13 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.6] - 2026-10-09
+
+### Added (desktop in the browser)
+
+- Admin desktop UI as a browser app at `/desktop/` on the LIKApcs Server (same origin as the API, like `/phone/`). Build with `pnpm run build:web` in `apps/likapcs-admin` (folder `dist-web`). The server reads it from `LIKAPCS_DESKTOP_DIR`, or from a `desktop/` folder next to the installed server. `stage-runtime.ps1` copies it there.
+- Desktop-only features (embedded server, LAN discovery, Windows firewall, start at login, native updater) are not available in the browser; they show as unavailable there. The customer display works in the browser as `/desktop/display.html` (same origin).
+
 ## [0.29.5] - 2026-10-09
 
 ### Added

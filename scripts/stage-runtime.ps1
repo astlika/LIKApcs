@@ -56,6 +56,12 @@ try { pnpm run build; if ($LASTEXITCODE -ne 0) { throw 'phone build failed' } } 
 New-Item -ItemType Directory -Force "$runtime/phone" | Out-Null
 Copy-Item -Recurse -Force "$root/apps/likapcs-phone/dist/*" "$runtime/phone/"
 
+# 0.29.5: the Admin desktop UI in the browser, served by the server at /desktop/ (same origin).
+Push-Location "$root/apps/likapcs-admin"
+try { pnpm run build:web; if ($LASTEXITCODE -ne 0) { throw 'desktop web build failed' } } finally { Pop-Location }
+New-Item -ItemType Directory -Force "$runtime/desktop" | Out-Null
+Copy-Item -Recurse -Force "$root/apps/likapcs-admin/dist-web/*" "$runtime/desktop/"
+
 # 2. Node.js runtime ----------------------------------------------------------------------------------
 $nodeZip = Join-Path $cache "node-v$NodeVersion-win-x64.zip"
 Get-Verified "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-win-x64.zip" $nodeZip $NodeSha256

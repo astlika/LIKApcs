@@ -19,7 +19,11 @@ const TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-export function registerPhoneRoutes(app: FastifyInstance, root: string): void {
+/**
+ * Serves a built browser app from `root` under `mount` (`/phone` for the phone PWA, `/desktop` for
+ * the Admin desktop UI in the browser). Same origin as the API.
+ */
+export function registerPhoneRoutes(app: FastifyInstance, root: string, mount = '/phone'): void {
   const base = path.resolve(root);
 
   const send = async (rel: string, reply: FastifyReply) => {
@@ -43,7 +47,7 @@ export function registerPhoneRoutes(app: FastifyInstance, root: string): void {
       if (path.extname(decoded)) return reply.code(404).send('not found');
       file = path.join(base, 'index.html');
       stat = await fs.stat(file).catch(() => null);
-      if (!stat) return reply.code(404).send('phone app not built');
+      if (!stat) return reply.code(404).send('app not built');
     }
     const name = path.basename(file);
     const ext = path.extname(file).toLowerCase();
@@ -59,9 +63,9 @@ export function registerPhoneRoutes(app: FastifyInstance, root: string): void {
     return reply.send(await fs.readFile(file));
   };
 
-  app.get('/phone', async (_req, reply) => reply.redirect('/phone/', 308));
-  app.get('/phone/', async (_req, reply) => send('index.html', reply));
-  app.get('/phone/*', async (req, reply) => {
+  app.get(mount, async (_req, reply) => reply.redirect(`${mount}/`, 308));
+  app.get(`${mount}/`, async (_req, reply) => send('index.html', reply));
+  app.get(`${mount}/*`, async (req, reply) => {
     const rel = (req.params as { '*': string })['*'] ?? '';
     return send(rel || 'index.html', reply);
   });

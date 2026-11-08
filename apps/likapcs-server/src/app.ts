@@ -385,6 +385,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(clientSocketRoutes);
   await app.register(adminSocketRoutes);
   if (config.phoneDir) registerPhoneRoutes(app, config.phoneDir);
+  if (config.desktopDir) registerPhoneRoutes(app, config.desktopDir, '/desktop');
 
   // Customer-screen settings → every connected PC, instantly (no reconnect needed).
   // Each PC gets its own display: the house settings plus its look and wallpaper (0.20.0).

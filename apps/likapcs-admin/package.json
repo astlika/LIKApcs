@@ -1,6 +1,6 @@
 {
   "name": "@likapcs/admin",
-  "version": "0.29.5",
+  "version": "0.29.6",
   "private": true,
   "description": "LIKApcs Admin — POS, ERP and Gaming Station control desktop application",
   "type": "module",
@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "build:web": "tsc --noEmit && vite build --mode web",
     "test": "vitest run",
     "tauri": "tauri"
   },

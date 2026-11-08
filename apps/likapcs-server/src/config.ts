@@ -20,6 +20,7 @@ const envSchema = z.object({
   LIKAPCS_BACKUP_DIR: z.string().optional(),
   /** Built phone PWA (`apps/likapcs-phone/dist`) served at /phone — unset = not served. */
   LIKAPCS_PHONE_DIR: z.string().optional(),
+  LIKAPCS_DESKTOP_DIR: z.string().optional(),
   LIKAPCS_UPLOAD_DIR: z.string().optional(),
   LIKAPCS_UPDATE_FEED_URL: z.string().url().optional(),
   LIKAPCS_DISCOVERY: z
@@ -65,6 +66,8 @@ export interface ServerConfig {
   backupDir: string;
   /** Built phone PWA served at /phone; null = not served. */
   phoneDir: string | null;
+  /** The Admin desktop UI built for the browser (`apps/likapcs-admin/dist-web`), served at /desktop. */
+  desktopDir: string | null;
   /** Uploaded files (product pictures) — `<dataDir>/uploads` by default. */
   uploadDir: string;
   /** Release feed with `latest.json` / `latest-client.json`; null = the `release-feed` branch on GitHub. */
@@ -111,8 +114,13 @@ export function findMigrationsDir(explicit?: string): string {
  * server runtime (the installer ships it there, see scripts/stage-runtime.ps1). Null = not served.
  */
 function phoneDirFrom(configured: string | undefined): string | null {
+  return appDirFrom(configured, 'phone');
+}
+
+/** A browser app folder: the configured path, else the folder of that name next to the installed server. */
+function appDirFrom(configured: string | undefined, name: string): string | null {
   if (configured) return path.resolve(configured);
-  const beside = path.join(path.dirname(process.execPath), 'phone');
+  const beside = path.join(path.dirname(process.execPath), name);
   return fs.existsSync(path.join(beside, 'index.html')) ? beside : null;
 }
 
@@ -151,6 +159,7 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Ser
       ? path.resolve(env.LIKAPCS_BACKUP_DIR)
       : path.join(dataDir, 'backups'),
     phoneDir: phoneDirFrom(env.LIKAPCS_PHONE_DIR),
+    desktopDir: appDirFrom(env.LIKAPCS_DESKTOP_DIR, 'desktop'),
     uploadDir: env.LIKAPCS_UPLOAD_DIR
       ? path.resolve(env.LIKAPCS_UPLOAD_DIR)
       : path.join(dataDir, 'uploads'),
