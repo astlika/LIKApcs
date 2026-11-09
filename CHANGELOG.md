@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-10-09
+
+### Added
+
+- Reports in the admin and the desktop (`/desktop/`): the «Summary» and «Staff» tabs of 0.30.0, with the same figures and the same date range.
+- Live reports: when a sale, cash movement, expense, debt, wallet, purchase, order, product, stock or session changes, the server pushes a `reports.changed` event to the admin and to the phone and tablet. The admin and the phone refresh their reports at once. The staff screen keeps a 15-second refresh as a fallback. The event carries no data: the screens fetch the figures again.
+- Tests: `test/integration/reports-live.test.ts` (a sale sends `reports.changed` to the admin socket; a read does not).
+
+### Known gaps (not in this release)
+
+- The hours of a person count only from the cash shifts they opened. Staff who never open a shift have no hours.
+- Profit is only as complete as the product costs: a product without a purchase cost makes the gross profit too high. The screens show a warning when this happens.
+- The phone and tablet screens were tested in a simulated browser only; touch on a real device is not tested yet.
+
 ## [0.30.0] - 2026-10-09
 
 ### Added

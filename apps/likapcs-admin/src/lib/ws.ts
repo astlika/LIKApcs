@@ -88,6 +88,12 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               void queryClient.invalidateQueries({ queryKey: ['stations'] });
               void queryClient.invalidateQueries({ queryKey: ['sessions'] });
               break;
+            case 'reports.changed':
+              // Money or stock moved: the summary, the staff report, the drawer and the dashboard follow.
+              void queryClient.invalidateQueries({ queryKey: ['reports'] });
+              void queryClient.invalidateQueries({ queryKey: ['cash'] });
+              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              break;
             case 'ads.changed':
               // A slide / album / promo changed: the ads page and the customer display follow.
               void queryClient.invalidateQueries({ queryKey: ['ads'] });

@@ -320,6 +320,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // Same-origin browser requests (the phone PWA at /phone is served by this server) need no CORS
   // handling. Their Origin is this server's own host:port, so drop it before the allowlist check.
   // Any other site sends its own Origin, which never equals our Host, and is still refused.
+  // 0.30.0 — after a successful write that moves money or stock (PCs and requests do not), tell the open screens (admin,
+  // desktop and the phone's reports) to refresh. It is sent after the response, so the data is committed.
+  const reportWrites =
+    /^\/api\/v1\/(sales|cash|expenses|sessions|debts|wallet|purchasing|orders|products|stock)(\/|\?|$)/;
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.method === 'GET' || reply.statusCode >= 300) return;
+    if (!reportWrites.test(request.url)) return;
+    hub.broadcastToAdmins('reports.changed', null);
+  });
+
   app.addHook('onRequest', async (request) => {
     const origin = request.headers.origin;
     if (!origin || !request.headers.host) return;

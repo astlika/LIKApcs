@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type {
   CashBookReport,
   ProfitReport,
@@ -8,7 +8,8 @@ import type {
   SalesReport,
   StaffReport,
 } from '@likapcs/shared';
-import { api, downloadFile, duration, errorText, money, shortDate } from '../api';
+import { PROTOCOL_VERSION, type ServerToAdminMessage } from '@likapcs/shared';
+import { api, downloadFile, duration, errorText, getToken, money, shortDate } from '../api';
 import { useNotify } from '../notify';
 import { METHOD_LABEL } from '../labels';
 import { Empty, Loading, Notice, QueryError, Stat, cx } from '../components/ui';
@@ -35,10 +36,66 @@ const pct = (bp: number | null | undefined) => (bp === null || bp === undefined 
 const when = (iso: string) =>
   new Date(iso).toLocaleString('sq-AL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-/** Reports for the phone: sales, the cash book and profit. Read only. Needs «Raportet». */
+/**
+ * Live: the server sends "reports.changed" after every sale, refund, drawer movement, expense, debt
+ * payment, purchase or stock change. While this screen is open, the reports refresh at once.
+ * Reconnects by itself; the screens also refresh every 15 seconds as a fallback.
+ */
+function useReportsLive() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    let socket: WebSocket | null = null;
+    let retry: number | null = null;
+    let ping: number | null = null;
+    let closed = false;
+    const connect = () => {
+      const token = getToken();
+      if (!token) return;
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${proto}//${window.location.host}/ws/admin`);
+      socket.onopen = () =>
+        socket?.send(JSON.stringify({ type: 'admin.hello', token, protocolVersion: PROTOCOL_VERSION }));
+      socket.onmessage = (event) => {
+        let message: ServerToAdminMessage;
+        try {
+          message = JSON.parse(event.data as string) as ServerToAdminMessage;
+        } catch {
+          return;
+        }
+        if (message.type === 'server.welcome') {
+          ping = window.setInterval(
+            () => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ type: 'admin.ping' })),
+            25_000,
+          );
+          return;
+        }
+        if (message.type === 'server.event' && message.event === 'reports.changed') {
+          void qc.invalidateQueries({ queryKey: ['phone', 'report'] });
+          void qc.invalidateQueries({ queryKey: ['phone', 'cash'] });
+        }
+      };
+      socket.onclose = (event) => {
+        if (ping) window.clearInterval(ping);
+        ping = null;
+        if (closed || event.code === 4001) return;
+        retry = window.setTimeout(connect, 5_000);
+      };
+      socket.onerror = () => socket?.close();
+    };
+    connect();
+    return () => {
+      closed = true;
+      if (retry) window.clearTimeout(retry);
+      if (ping) window.clearInterval(ping);
+      socket?.close();
+    };
+  }, [qc]);
+}
+
 /** Reports for the phone and the tablet: summary, sales, cash book, profit, and staff. Read only. */
 export function Reports({ canProfit, canStaff = false }: { canProfit: boolean; canStaff?: boolean }) {
   const t = useT();
+  useReportsLive();
   const [tab, setTab] = useState<Tab>('summary');
   const [preset, setPreset] = useState<Preset | 'custom'>('today');
   const [range, setRange] = useState(() => rangeOf('today'));

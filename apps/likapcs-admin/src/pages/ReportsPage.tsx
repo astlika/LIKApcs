@@ -17,6 +17,8 @@ import {
 import { api, ApiError, getServerUrl, getToken } from '../lib/api';
 import { CashBookCard } from '../components/reports/CashBookCard';
 import { ProfitReportView } from '../components/reports/ProfitReportView';
+import { SummaryView } from '../components/reports/SummaryView';
+import { StaffView } from '../components/reports/StaffView';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -36,7 +38,7 @@ import {
 
 type Preset = 'today' | 'yesterday' | 'week' | 'month' | 'lastMonth' | 'custom';
 /** The two halves of Reports: the sales picture, or profit & spending (0.21.0). */
-type ReportView = 'sales' | 'profit';
+type ReportView = 'summary' | 'sales' | 'profit' | 'staff';
 
 function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -109,7 +111,7 @@ export function ReportsPage() {
   const [custom, setCustom] = useState(presetRange('today'));
   const [exportKind, setExportKind] = useState<ReportExportKind>('sales');
   const [exporting, setExporting] = useState(false);
-  const [view, setView] = useState<ReportView>('sales');
+  const [view, setView] = useState<ReportView>('summary');
   const range = useMemo(
     () => (preset === 'custom' ? custom : presetRange(preset)),
     [preset, custom],
@@ -170,8 +172,12 @@ export function ReportsPage() {
           ariaLabel={t('reports.viewLabel')}
           testId="reports-view"
           options={[
+            { value: 'summary', label: t('reports.view.summary') },
             { value: 'sales', label: t('reports.view.sales') },
             { value: 'profit', label: t('reports.view.profit') },
+            ...(can(PERMISSIONS.USERS_VIEW)
+              ? [{ value: 'staff' as ReportView, label: t('reports.view.staff') }]
+              : []),
           ]}
         />
         <Segmented<Preset>
@@ -220,6 +226,8 @@ export function ReportsPage() {
         </Alert>
       )}
       {view === 'profit' && valid && <ProfitReportView from={range.from} to={range.to} />}
+      {view === 'summary' && valid && <SummaryView from={range.from} to={range.to} enabled />}
+      {view === 'staff' && valid && <StaffView from={range.from} to={range.to} enabled />}
       {r && (
         <div className="stack rep" style={{ gap: 24 }}>
           <ResultHero report={r} />

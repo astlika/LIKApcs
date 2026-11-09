@@ -582,6 +582,8 @@ export const ADMIN_EVENTS = [
   'order.changed',
   /** 0.16.0: a slide / album / promo changed — the customer display's feed is stale (no payload). */
   'ads.changed',
+  /** 0.30.0: money or stock moved (sale, refund, cash, expense, debt, purchase, stock). Payload: none. Reports refresh. */
+  'reports.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 
