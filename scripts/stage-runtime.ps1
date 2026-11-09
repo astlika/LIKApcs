@@ -62,6 +62,12 @@ try { pnpm run build:web; if ($LASTEXITCODE -ne 0) { throw 'desktop web build fa
 New-Item -ItemType Directory -Force "$runtime/desktop" | Out-Null
 Copy-Item -Recurse -Force "$root/apps/likapcs-admin/dist-web/*" "$runtime/desktop/"
 
+# 0.29.6: the touch-first tablet app, served by the server at /tab/ (same origin).
+Push-Location "$root/apps/likapcs-tablet"
+try { pnpm run build; if ($LASTEXITCODE -ne 0) { throw 'tablet build failed' } } finally { Pop-Location }
+New-Item -ItemType Directory -Force "$runtime/tab" | Out-Null
+Copy-Item -Recurse -Force "$root/apps/likapcs-tablet/dist/*" "$runtime/tab/"
+
 # 2. Node.js runtime ----------------------------------------------------------------------------------
 $nodeZip = Join-Path $cache "node-v$NodeVersion-win-x64.zip"
 Get-Verified "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-win-x64.zip" $nodeZip $NodeSha256

@@ -49,3 +49,41 @@ describe('browser apps served by the server', () => {
     expect(escape.statusCode).toBe(404);
   });
 });
+
+describe('tablet app served at /tab', () => {
+  let root: string;
+  const app = Fastify();
+
+  beforeAll(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'likapcs-tab-'));
+    fs.mkdirSync(path.join(root, 'assets'));
+    fs.writeFileSync(path.join(root, 'index.html'), '<html>tablet shell</html>');
+    fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log(2);');
+    registerPhoneRoutes(app, root, '/tab');
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('serves the tablet shell, its assets and the client routes under /tab', async () => {
+    const home = await app.inject({ method: 'GET', url: '/tab/' });
+    expect(home.statusCode).toBe(200);
+    expect(home.body).toContain('tablet shell');
+    const asset = await app.inject({ method: 'GET', url: '/tab/assets/app.js' });
+    expect(asset.statusCode).toBe(200);
+    const route = await app.inject({ method: 'GET', url: '/tab/pos' });
+    expect(route.statusCode).toBe(200);
+    expect(route.body).toContain('tablet shell');
+  });
+
+  it('redirects /tab to /tab/ and keeps missing assets as 404', async () => {
+    const redirect = await app.inject({ method: 'GET', url: '/tab' });
+    expect(redirect.statusCode).toBe(308);
+    expect(redirect.headers.location).toBe('/tab/');
+    const missing = await app.inject({ method: 'GET', url: '/tab/assets/none.js' });
+    expect(missing.statusCode).toBe(404);
+  });
+});

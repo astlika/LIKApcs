@@ -6,7 +6,12 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.29.6] - 2026-10-09
+## [0.29.7] - 2026-10-09
+
+### Added (tablet at /tab/)
+
+- Touch-first tablet app at `/tab/` on the LIKApcs Server (same origin, like `/phone/` and `/desktop/`). Side navigation, large touch targets (52px+), and grids that use the width of the tablet. It reuses the phone's screens and logic, and screens load on demand so the first load stays small. Build with `pnpm run build` in `apps/likapcs-tablet`; the server reads it from `LIKAPCS_TAB_DIR`, or from a `tab/` folder next to the installed server. `stage-runtime.ps1` copies it there.
+- Phone app: new labels in English for the tablet shell (Main, More, Connected, Offline).
 
 ### Added (desktop in the browser)
 

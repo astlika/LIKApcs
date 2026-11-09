@@ -21,6 +21,7 @@ const envSchema = z.object({
   /** Built phone PWA (`apps/likapcs-phone/dist`) served at /phone — unset = not served. */
   LIKAPCS_PHONE_DIR: z.string().optional(),
   LIKAPCS_DESKTOP_DIR: z.string().optional(),
+  LIKAPCS_TAB_DIR: z.string().optional(),
   LIKAPCS_UPLOAD_DIR: z.string().optional(),
   LIKAPCS_UPDATE_FEED_URL: z.string().url().optional(),
   LIKAPCS_DISCOVERY: z
@@ -68,6 +69,8 @@ export interface ServerConfig {
   phoneDir: string | null;
   /** The Admin desktop UI built for the browser (`apps/likapcs-admin/dist-web`), served at /desktop. */
   desktopDir: string | null;
+  /** The LIKApcs Tablet build (`apps/likapcs-tablet/dist`) served at /tab; null = not served. */
+  tabDir: string | null;
   /** Uploaded files (product pictures) — `<dataDir>/uploads` by default. */
   uploadDir: string;
   /** Release feed with `latest.json` / `latest-client.json`; null = the `release-feed` branch on GitHub. */
@@ -160,6 +163,7 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Ser
       : path.join(dataDir, 'backups'),
     phoneDir: phoneDirFrom(env.LIKAPCS_PHONE_DIR),
     desktopDir: appDirFrom(env.LIKAPCS_DESKTOP_DIR, 'desktop'),
+    tabDir: appDirFrom(env.LIKAPCS_TAB_DIR, 'tab'),
     uploadDir: env.LIKAPCS_UPLOAD_DIR
       ? path.resolve(env.LIKAPCS_UPLOAD_DIR)
       : path.join(dataDir, 'uploads'),
