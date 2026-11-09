@@ -476,3 +476,87 @@ input, button, select { font-family: inherit; }
 
 /* ---------- Touch targets ---------- */
 .fav-btn { min-width: 44px; min-height: 44px; }
+
+/* ---------- Live tracking (0.31.0): navy palette, same figures as the admin page ---------- */
+.live-screen {
+  --live-bg: #0b1220;
+  --live-panel: #111a2e;
+  --live-line: #1f2b45;
+  --live-accent: #3b82f6;
+  --live-text: #e2e8f0;
+  --live-muted: #8a97b1;
+  --live-good: #34d399;
+  --live-bad: #f87171;
+  background: var(--live-bg);
+  color: var(--live-text);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.live-screen .card { background: var(--live-panel); border-color: var(--live-line); color: var(--live-text); }
+.live-screen h3 { margin: 0 0 8px; font-size: 1rem; color: var(--live-text); }
+.live-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.live-muted { color: var(--live-muted); font-size: 0.85rem; }
+.live-pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--live-line); color: var(--live-text); font-size: 0.9rem; font-weight: 600;
+}
+.live-pill__dot, .live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--live-good); flex: 0 0 auto;
+  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); animation: live-pulse 1.8s infinite;
+}
+.live-dot { display: inline-block; margin-right: 6px; }
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+.live-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.live-kpi {
+  background: var(--live-panel); border: 1px solid var(--live-line); border-radius: 12px; padding: 12px;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.live-kpi > span { color: var(--live-muted); font-size: 0.8rem; }
+.live-kpi strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; line-height: 1.2; }
+.live-kpi small { color: var(--live-muted); font-size: 0.75rem; }
+.live-kpi--accent strong { color: var(--live-accent); }
+.live-kpi--good strong { color: var(--live-good); }
+.live-kpi--bad strong { color: var(--live-bad); }
+.live-cols { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.live-card { padding: 12px; }
+.live-list, .live-feed { list-style: none; margin: 0; padding: 0; }
+.live-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 0; border-top: 1px solid var(--live-line);
+}
+.live-row:first-of-type { border-top: none; }
+.live-row__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.live-row__end { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.live-name { display: inline-flex; align-items: center; font-weight: 600; }
+.live-money { font-variant-numeric: tabular-nums; font-weight: 600; }
+.live-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem;
+  border: 1px solid var(--live-line); color: var(--live-muted); margin-left: 6px;
+}
+.live-tag--on { color: var(--live-good); border-color: var(--live-good); }
+.live-tag--warn { color: #fbbf24; border-color: #fbbf24; }
+.live-feed__item {
+  display: grid; grid-template-columns: 52px 1fr; gap: 8px; padding: 10px 0; border-top: 1px solid var(--live-line);
+}
+.live-feed__item:first-child { border-top: none; }
+.live-feed__time { color: var(--live-muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.live-feed__body { min-width: 0; overflow-wrap: anywhere; }
+.live-feed__meta { margin-top: 2px; font-size: 0.9rem; }
+@media (min-width: 600px) {
+  .live-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .live-cols { grid-template-columns: 1fr 1fr; }
+  .live-card--wide { grid-column: 1 / -1; }
+}
+@media (min-width: 900px) {
+  .live-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-pill__dot, .live-dot { animation: none; }
+}

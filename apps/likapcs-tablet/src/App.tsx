@@ -5,6 +5,7 @@ import { api, clearToken, getToken, SESSION_LOST } from '@phone/api';
 import { can, useMe } from '@phone/me';
 import { useOnline } from '@phone/useOnline';
 import { NotifyProvider } from '@phone/notify';
+import { LiveSalesListener } from '@phone/liveSales';
 import { Login } from '@phone/screens/Login';
 import { Home } from '@phone/screens/Home';
 import { PcAlerts } from '@phone/Alerts';
@@ -21,8 +22,9 @@ const Expenses = lazy(() => import('@phone/screens/Expenses').then((m) => ({ def
 const Stock = lazy(() => import('@phone/screens/Stock').then((m) => ({ default: m.Stock })));
 const Reports = lazy(() => import('@phone/screens/Reports').then((m) => ({ default: m.Reports })));
 const Settings = lazy(() => import('@phone/screens/Settings').then((m) => ({ default: m.Settings })));
+const Live = lazy(() => import('@phone/screens/Live').then((m) => ({ default: m.Live })));
 
-export type Page = 'home' | 'pcs' | 'pos' | 'debts' | 'cash' | 'expenses' | 'stock' | 'reports' | 'settings';
+export type Page = 'home' | 'pcs' | 'pos' | 'debts' | 'cash' | 'expenses' | 'stock' | 'reports' | 'live' | 'settings';
 
 type IconName = Page | 'signout';
 
@@ -66,6 +68,12 @@ function Icon({ name }: { name: IconName }) {
         <svg {...common}>
           <path d="M6 3h9l4 4v14H6z" />
           <path d="M14 3v5h5M9 13h6M9 17h6" />
+        </svg>
+      );
+    case 'live':
+      return (
+        <svg {...common}>
+          <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />
         </svg>
       );
     case 'cash':
@@ -120,6 +128,7 @@ const TITLES: Record<Page, string> = {
   expenses: 'Shpenzimet',
   stock: 'Stoku',
   reports: 'Raportet',
+  live: 'Live tracking',
   settings: 'Cilësimet',
 };
 
@@ -190,6 +199,7 @@ export function App() {
   const canDebts = can(user, PERMISSIONS.CUSTOMERS_VIEW);
   const canCollect = can(user, PERMISSIONS.POS_SELL);
   const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
+  const canLive = can(user, PERMISSIONS.LIVE_VIEW);
   const canStaff = can(user, PERMISSIONS.USERS_VIEW);
   const canCash = can(user, PERMISSIONS.CASH_VIEW);
   const canExpenses = can(user, PERMISSIONS.EXPENSES_VIEW);
@@ -204,10 +214,11 @@ export function App() {
     expenses: canExpenses,
     stock: canStock,
     reports: canReports,
+    live: canLive,
     settings: true,
   };
   const main: Page[] = ['home', 'pcs', 'pos', 'debts'];
-  const more: Page[] = ['cash', 'expenses', 'stock', 'reports'];
+  const more: Page[] = ['live', 'cash', 'expenses', 'stock', 'reports'];
   const current: Page = allowed[page] ? page : 'home';
 
   let body: ReactNode;
@@ -233,6 +244,7 @@ export function App() {
         {current === 'expenses' && <Expenses canManage={can(user, PERMISSIONS.EXPENSES_MANAGE)} />}
         {current === 'stock' && <Stock />}
         {current === 'reports' && <Reports canProfit={canReports} canStaff={canStaff} />}
+        {current === 'live' && <Live />}
         {current === 'settings' && <Settings user={user} onSignOut={() => void signOut()} />}
       </Suspense>
     );
@@ -252,6 +264,7 @@ export function App() {
 
   return (
     <NotifyProvider>
+      <LiveSalesListener enabled={canLive} />
       <div className="tb">
         <aside className="tb-nav" aria-label={tr('Menyja')}>
           <div className="tb-brand">

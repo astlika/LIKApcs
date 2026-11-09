@@ -1,6 +1,6 @@
 {
   "name": "@likapcs/tablet",
-  "version": "0.30.1",
+  "version": "0.31.0",
   "private": true,
   "description": "LIKApcs Tablet: touch-first web app for tablets, served by the server at /tab/. Reuses the phone app's screens and logic.",
   "type": "module",

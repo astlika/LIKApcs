@@ -6,6 +6,35 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-09
+
+### Added
+
+- **Live tracking** (admin, `/phone/`, `/tab/`, desktop): today's turnover (VAT included), gross and net profit,
+  expenses, losses (refunds and stock loss), debt given and collected, drawer expected cash, staff on duty with hours
+  and last sale, top products and a live sales feed (cashier, product, amount, profit).
+- Permission `live.view`: owner and admin by default (migration 0053); the server filters the live sale event by it,
+  so a cashier never receives it.
+- Sale notification while the admin screen is open: grouped per cashier within 2 s (at most 5 s), a toast, a short chime
+  and, on phones, a vibration. Closed apps get no notification (needs HTTPS or the native app).
+- Profit per sale is net of VAT and minus the purchase cost (as in the profit report). A sale with a product that has no
+  cost is marked "no cost" instead of showing a profit that is too high.
+
+### Fixed
+
+- Cash: the payment-method line of a shift (phone and admin «Arka») now takes the change off the cash, the same as the reports and the drawer. A cash sale with change showed the full amount handed over (e.g. 6.50 € for a 1.50 € sale with 5.00 € change); it now shows the cash kept (1.50 €).
+- Phone: the close-shift sheet shows the amount expected in the drawer before you confirm, and the difference as you type. An exact count shows «Saktë» (Exact) with no sign; a difference shows its sign and the colour of the warning threshold.
+
+### Changed
+
+- Staff report: hours come from what each person did in a shift. A shift someone else opened gives the cashier their first-to-last sale or drawer movement there; the opener keeps the whole shift. Overlapping spans on two registers count once. Someone who acted in an open shift in the last 30 minutes is on duty now.
+- The staff report counts shifts a person worked in (opened, or sold / moved cash in), not only the ones they opened.
+
+### Tests
+
+- `test/integration/staff-hours.test.ts` (new): two cashiers sell in a shift the owner opened; both get hours and are on duty; after the close nobody is on duty.
+- `cash-reports.test.ts`: the cash line by method is 450 (net of change), not 650.
+
 ## [0.30.1] - 2026-10-09
 
 ### Added

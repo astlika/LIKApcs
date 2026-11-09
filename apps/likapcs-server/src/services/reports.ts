@@ -380,27 +380,56 @@ export class ReportsService {
   async staff(range: ReportRange): Promise<StaffReport> {
     const timeZone = await this.settings.get('locale.timezone');
     const p: [string, string, string] = [range.from, range.to, timeZone];
-    const [shifts, sales, refunds] = await Promise.all([
+    const [shifts, activity, sales, refunds] = await Promise.all([
+      // Every shift that overlaps the range, with its clipped span. The opener's hours are the
+      // whole shift; the opener is the only one whose span is not taken from their actions.
       this.pool.query<{
+        shift_id: string;
         user_id: string;
         name: string;
         opened_at: Date;
         status: string;
         register_name: string;
         difference_cents: string | null;
-        seconds: string;
+        clip_from: Date;
+        clip_to: Date;
       }>(
-        `SELECT cs.opened_by::text AS user_id, ou.full_name AS name, cs.opened_at, cs.status,
+        `SELECT cs.id::text AS shift_id, cs.opened_by::text AS user_id, ou.full_name AS name, cs.opened_at, cs.status,
                 r.name AS register_name, cs.difference_cents,
-                GREATEST(0, EXTRACT(EPOCH FROM (
-                  LEAST(COALESCE(cs.closed_at, now()), ($2::date + 1)::timestamp AT TIME ZONE $3)
-                  - GREATEST(cs.opened_at, ($1::date)::timestamp AT TIME ZONE $3))))::bigint::text AS seconds
+                GREATEST(cs.opened_at, ($1::date)::timestamp AT TIME ZONE $3) AS clip_from,
+                LEAST(COALESCE(cs.closed_at, now()), ($2::date + 1)::timestamp AT TIME ZONE $3) AS clip_to
            FROM cash_shifts cs
            JOIN cash_registers r ON r.id = cs.register_id
            JOIN users ou ON ou.id = cs.opened_by
           WHERE cs.opened_at < ($2::date + 1)::timestamp AT TIME ZONE $3
             AND COALESCE(cs.closed_at, now()) >= ($1::date)::timestamp AT TIME ZONE $3
           ORDER BY cs.opened_at`,
+        p,
+      ),
+      // What each person did inside a shift: their first and last sale or drawer movement there.
+      // This is how a cashier who works in a shift someone else opened gets their hours.
+      this.pool.query<{
+        shift_id: string;
+        user_id: string;
+        name: string;
+        first_at: Date;
+        last_at: Date;
+      }>(
+        `SELECT a.shift_id::text AS shift_id, a.user_id::text AS user_id, u.full_name AS name,
+                MIN(a.at) AS first_at, MAX(a.at) AS last_at
+           FROM (
+             SELECT p.shift_id, s.cashier_user_id AS user_id, s.completed_at AS at
+               FROM payments p JOIN sales s ON s.id = p.sale_id
+              WHERE p.kind = 'sale' AND p.shift_id IS NOT NULL AND ${COMPLETED} AND s.completed_at IS NOT NULL
+             UNION ALL
+             SELECT cm.shift_id, cm.created_by, cm.created_at
+               FROM cash_movements cm
+              WHERE cm.created_by IS NOT NULL
+           ) a
+           JOIN users u ON u.id = a.user_id
+          WHERE a.at >= ($1::date)::timestamp AT TIME ZONE $3
+            AND a.at < ($2::date + 1)::timestamp AT TIME ZONE $3
+          GROUP BY a.shift_id, a.user_id, u.full_name`,
         p,
       ),
       this.pool.query<{ user_id: string; name: string; n: string; amount: string }>(
@@ -421,6 +450,8 @@ export class ReportsService {
     ]);
 
     const byUser = new Map<string, StaffReport['staff'][number]>();
+    const spans = new Map<string, [number, number][]>();
+    const shiftsOf = new Map<string, Set<string>>();
     const person = (userId: string, name: string) => {
       let row = byUser.get(userId);
       if (!row) {
@@ -439,13 +470,26 @@ export class ReportsService {
       }
       return row;
     };
+    const addSpan = (userId: string, shiftId: string, from: number, to: number) => {
+      const list = spans.get(userId) ?? [];
+      list.push([from, Math.max(from, to)]);
+      spans.set(userId, list);
+      const set = shiftsOf.get(userId) ?? new Set<string>();
+      set.add(shiftId);
+      shiftsOf.set(userId, set);
+    };
+
+    const ACTIVE_WINDOW_MS = 30 * 60 * 1000; // someone who acted this recently is still on duty
+    const now = Date.now();
     const onDuty: StaffReport['onDuty'] = [];
+    const openShifts = new Map<string, { opener: string; registerName: string }>();
     for (const s of shifts.rows) {
-      const row = person(s.user_id, s.name);
-      row.shiftsCount += 1;
-      row.workedMinutes += Math.round(Number(s.seconds) / 60);
+      person(s.user_id, s.name);
+      addSpan(s.user_id, s.shift_id, s.clip_from.getTime(), s.clip_to.getTime());
+      const row = byUser.get(s.user_id)!;
       if (s.status === 'open') {
         row.onDutyNow = true;
+        openShifts.set(s.shift_id, { opener: s.user_id, registerName: s.register_name });
         onDuty.push({
           userId: s.user_id,
           name: s.name,
@@ -455,6 +499,42 @@ export class ReportsService {
       } else if (s.difference_cents !== null) {
         row.cashDifferenceCents += Number(s.difference_cents);
       }
+    }
+    const shiftOpener = new Map(shifts.rows.map((s) => [s.shift_id, s.user_id]));
+    for (const a of activity.rows) {
+      if (shiftOpener.get(a.shift_id) === a.user_id) continue; // the opener's span is the whole shift
+      person(a.user_id, a.name);
+      addSpan(a.user_id, a.shift_id, a.first_at.getTime(), a.last_at.getTime());
+      const open = openShifts.get(a.shift_id);
+      if (open && now - a.last_at.getTime() <= ACTIVE_WINDOW_MS) {
+        const row = byUser.get(a.user_id)!;
+        if (!row.onDutyNow) {
+          row.onDutyNow = true;
+          onDuty.push({
+            userId: a.user_id,
+            name: a.name,
+            since: a.first_at.toISOString(),
+            registerName: open.registerName,
+          });
+        }
+      }
+    }
+    for (const [userId, list] of spans) {
+      // Overlapping spans (the same person on two registers at once) count once.
+      const sorted = [...list].sort((x, y) => x[0] - y[0]);
+      let total = 0;
+      let [curFrom, curTo] = sorted[0]!;
+      for (const [from, to] of sorted.slice(1)) {
+        if (from <= curTo) curTo = Math.max(curTo, to);
+        else {
+          total += curTo - curFrom;
+          [curFrom, curTo] = [from, to];
+        }
+      }
+      total += curTo - curFrom;
+      const row = byUser.get(userId)!;
+      row.workedMinutes = Math.round(total / 60000);
+      row.shiftsCount = shiftsOf.get(userId)?.size ?? 0;
     }
     for (const r of sales.rows) {
       const row = person(r.user_id, r.name);

@@ -2542,13 +2542,17 @@ export interface ReportSummary {
  */
 export interface StaffReport {
   range: ReportRange;
-  /** Shifts open right now, with who opened them and since when. */
+  /** Who is on duty now: whoever opened an open shift, and whoever acted in it in the last 30 minutes. */
   onDuty: { userId: string; name: string; since: string; registerName: string }[];
   staff: {
     userId: string;
     name: string;
+    /** Shifts this person worked in (opened, or sold / moved cash in). */
     shiftsCount: number;
-    /** Minutes inside the range, from the shifts this person opened. */
+    /**
+     * Minutes inside the range. A shift this person opened counts from open to close; in a shift
+     * someone else opened, from their first to their last sale or drawer movement there.
+     */
     workedMinutes: number;
     salesCount: number;
     salesCents: number;
@@ -3832,4 +3836,74 @@ export interface CustomerDisplayFeed {
   businessName: string;
   language: 'en' | 'sq';
   currency: string;
+}
+
+/**
+ * 0.31.0 — live tracking. One sale as the admin sees it: who sold, what, for how much and what
+ * the shop kept. Built on the server from the same lines the reports use.
+ */
+export interface LiveSale {
+  saleId: string;
+  receiptNo: string;
+  cashierName: string;
+  completedAt: string;
+  totalCents: number;
+  /** Price without VAT minus the cost of the goods (as in the profit report). PC time has no cost. */
+  profitCents: number;
+  /** A product line with no purchase cost on the sale: the profit is too high by its price. */
+  missingCost: boolean;
+  onCredit: boolean;
+  customerName: string | null;
+  /** `isTime`: a PC time line (no product). */
+  items: {
+    name: string;
+    quantityMilli: number;
+    lineTotalCents: number;
+    profitCents: number;
+    isTime: boolean;
+  }[];
+}
+
+export interface LiveSnapshot {
+  generatedAt: string;
+  /** Today in the business time zone (YYYY-MM-DD); every "today" figure below uses it. */
+  date: string;
+  drawer: {
+    open: boolean;
+    registerName: string | null;
+    openedBy: string | null;
+    openedAt: string | null;
+    openingCents: number | null;
+    /** What the drawer should hold right now. */
+    expectedCents: number | null;
+  };
+  totals: {
+    turnoverCents: number;
+    salesCount: number;
+    averageSaleCents: number;
+    grossProfitCents: number;
+    netProfitCents: number;
+    expensesCents: number;
+    /** Refunds plus stock losses: what the shop lost today. */
+    lossCents: number;
+    refundedCents: number;
+    stockLossCents: number;
+    /** Sales paid "later" today: money the customers owe. */
+    debtGivenCents: number;
+    /** Debts paid back today. */
+    debtCollectedCents: number;
+    /** A product without a purchase cost: profit may be too high. */
+    incomplete: boolean;
+  };
+  staff: {
+    userId: string;
+    name: string;
+    onDuty: boolean;
+    salesCount: number;
+    salesCents: number;
+    lastSaleAt: string | null;
+    workedMinutes: number;
+  }[];
+  topProducts: { name: string; quantityMilli: number; amountCents: number; profitCents: number }[];
+  feed: LiveSale[];
 }

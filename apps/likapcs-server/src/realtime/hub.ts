@@ -265,6 +265,21 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
     }
   }
 
+  /** Like `broadcastToAdmins`, but only to admins whose role holds `permission` (e.g. live.view). */
+  broadcastToAdminsWith<T>(permission: string, event: AdminEventName, payload: T): void {
+    const message: ServerEvent<T> = {
+      type: 'server.event',
+      event,
+      payload,
+      ts: new Date().toISOString(),
+    };
+    const data = JSON.stringify(message);
+    for (const admin of this.admins) {
+      if (!admin.permissions.has(permission)) continue;
+      if (admin.socket.readyState === admin.socket.OPEN) admin.socket.send(data);
+    }
+  }
+
   // ─── Lifecycle ───────────────────────────────────────────────────────────────
   /** Terminates connections whose heartbeat is older than `offlineAfterMs` (half-open sockets). */
   sweep(offlineAfterMs: number): void {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { PROTOCOL_VERSION, type ServerToAdminMessage } from '@likapcs/shared';
+import { PROTOCOL_VERSION, type LiveSale, type ServerToAdminMessage } from '@likapcs/shared';
 import { getToken, websocketUrl } from './api';
+import { emitLiveSale } from './live';
 
 export type LiveStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
@@ -93,6 +94,12 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
               void queryClient.invalidateQueries({ queryKey: ['reports'] });
               void queryClient.invalidateQueries({ queryKey: ['cash'] });
               void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              void queryClient.invalidateQueries({ queryKey: ['live'] });
+              break;
+            case 'live.sale':
+              // 0.31.0: a sale for the live tracking page. Only admins with live.view get it.
+              void queryClient.invalidateQueries({ queryKey: ['live'] });
+              emitLiveSale(message.payload as LiveSale);
               break;
             case 'ads.changed':
               // A slide / album / promo changed: the ads page and the customer display follow.

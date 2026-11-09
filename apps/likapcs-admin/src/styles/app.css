@@ -350,6 +350,10 @@ textarea {
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
+  /* 0.31.0: a long page title shrinks instead of pushing the topbar wider than the window */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .topbar__spacer {
   flex: 1;

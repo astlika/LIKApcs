@@ -53,6 +53,8 @@ export const PERMISSIONS = {
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_MANAGE: 'customers.manage',
   DEBTS_GIVE: 'debts.give',
+  /** Live tracking: today's sales, drawer, staff and the sale notifications. Owner and admin by default. */
+  LIVE_VIEW: 'live.view',
   /** Watch the live screen of a station PC (read-only). Owner, admin and manager by default. */
   REMOTE_VIEW: 'remote.view',
   /** Send mouse and keyboard to a station PC from the focus view (phase 2). Owner and admin only by default. */

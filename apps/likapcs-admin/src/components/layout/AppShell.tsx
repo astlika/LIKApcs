@@ -36,6 +36,7 @@ import {
   WifiOff,
   HandCoins,
   Megaphone,
+  Activity,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -59,6 +60,7 @@ import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
 import { LIKA_WEBSITE_URL } from '../../lib/desktop';
 import { RequestsBell } from '../requests/requests';
+import { LiveSaleNotifier } from '../live/LiveSaleNotifier';
 import { usePendingOrders } from '../orders/orders';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
@@ -185,6 +187,12 @@ export function AppShell() {
           icon: LayoutDashboard,
           label: t('nav.dashboard'),
           permission: PERMISSIONS.DASHBOARD_VIEW,
+        },
+        {
+          to: '/live',
+          icon: Activity,
+          label: t('nav.live'),
+          permission: PERMISSIONS.LIVE_VIEW,
         },
       ],
     },
@@ -345,6 +353,7 @@ export function AppShell() {
     '/customers': t('nav.customers'),
     '/debts': t('nav.debts'),
     '/reports': t('nav.reports'),
+    '/live': t('nav.live'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),
@@ -450,6 +459,7 @@ export function AppShell() {
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
           <RequestsBell />
+          <LiveSaleNotifier />
 
           {cashStatus.isSuccess && (
             <Link

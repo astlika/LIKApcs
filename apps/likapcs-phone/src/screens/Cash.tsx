@@ -66,7 +66,7 @@ export function Cash({ canOpenClose, canMove }: { canOpenClose: boolean; canMove
       )}
 
       {sheet === 'move' && shift && <MoveSheet onClose={() => setSheet(null)} onDone={() => { setSheet(null); void refetch(); }} />}
-      {sheet === 'close' && shift && <CloseSheet shift={shift} onClose={() => setSheet(null)} onDone={() => { setSheet(null); void refetch(); }} />}
+      {sheet === 'close' && shift && <CloseSheet shift={shift} warnCents={data.differenceWarningCents} onClose={() => setSheet(null)} onDone={() => { setSheet(null); void refetch(); }} />}
     </div>
   );
 }
@@ -175,7 +175,17 @@ function MoveSheet({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   );
 }
 
-function CloseSheet({ shift, onClose, onDone }: { shift: CashShiftDetail; onClose: () => void; onDone: () => void }) {
+function CloseSheet({
+  shift,
+  warnCents,
+  onClose,
+  onDone,
+}: {
+  shift: CashShiftDetail;
+  warnCents: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
   const t: TFunc = useT();
   const notify = useNotify();
   const qc = useQueryClient();
@@ -183,6 +193,9 @@ function CloseSheet({ shift, onClose, onDone }: { shift: CashShiftDetail; onClos
   const [notes, setNotes] = useState('');
   const [confirm, setConfirm] = useState(false);
   const cents = parseEuroToCents(counted) ?? 0;
+  // The amount the drawer should hold and the difference, shown before the shift is closed.
+  const expected = shift.totals.expectedCashCents;
+  const diff = counted === '' ? null : cents - expected;
   const close = useMutation({
     mutationFn: () =>
       api(`/cash/shifts/${shift.id}/close`, {
@@ -214,7 +227,20 @@ function CloseSheet({ shift, onClose, onDone }: { shift: CashShiftDetail; onClos
         </>
       }
     >
+      <div className="close-expected" style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span className="muted">{t('Pritet në arkë')}</span>
+        <strong>{money(expected)}</strong>
+      </div>
       <EuroInput label={t('Para të numëruara në arkë')} value={counted} onChange={(v) => { setCounted(v); setConfirm(false); }} autoFocus />
+      {diff !== null && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span className="muted">{t('Diferenca')}</span>
+          <strong className={Math.abs(diff) > warnCents ? 'text-danger' : undefined}>
+            {diff === 0 ? t('Saktë') : `${diff > 0 ? '+' : '−'}${money(Math.abs(diff))}`}
+          </strong>
+        </div>
+      )}
+      {diff !== null && diff !== 0 && <p className="muted small">{t('Shkruani arsyen te shënimet nëse ka diferencë.')}</p>}
       <Field label={t('Shënime (opsionale)')}>
         <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
       </Field>

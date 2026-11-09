@@ -61,23 +61,35 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
     const body = syncSalesEnvelopeSchema.parse(request.body);
     return { results: await services.sales.syncOffline(body.sales, actorOf(request)) };
   });
-  app.post('/sales', sell, async (request, reply) =>
-    reply
-      .code(201)
-      .send(await services.sales.create(createSaleSchema.parse(request.body), actorOf(request))),
-  );
+  // 0.31.0: a completed sale is announced to the admins who may see live tracking. The sale is
+  // already committed; a failed announcement must never fail the sale.
+  const announce = async (saleId: string) => {
+    try {
+      const live = await services.live.saleEvent(saleId);
+      if (live) app.hub.broadcastToAdminsWith(PERMISSIONS.LIVE_VIEW, 'live.sale', live);
+    } catch (err) {
+      app.log.warn({ err, saleId }, 'live sale announcement failed');
+    }
+  };
+  app.post('/sales', sell, async (request, reply) => {
+    const sale = await services.sales.create(createSaleSchema.parse(request.body), actorOf(request));
+    await announce(sale.id);
+    return reply.code(201).send(sale);
+  });
   app.post('/sales/suspend', sell, async (request, reply) =>
     reply
       .code(201)
       .send(await services.sales.suspend(suspendSaleSchema.parse(request.body), actorOf(request))),
   );
-  app.post('/sales/:id/complete', sell, async (request) =>
-    services.sales.completeSuspended(
+  app.post('/sales/:id/complete', sell, async (request) => {
+    const sale = await services.sales.completeSuspended(
       idParams.parse(request.params).id,
       createSaleSchema.parse(request.body),
       actorOf(request),
-    ),
-  );
+    );
+    await announce(sale.id);
+    return sale;
+  });
   app.post('/sales/:id/void', sell, async (request, reply) => {
     await services.sales.voidSuspended(idParams.parse(request.params).id, actorOf(request));
     return reply.code(204).send();

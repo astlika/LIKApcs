@@ -12,6 +12,8 @@ import { Pos } from './screens/Pos';
 import { Debts } from './screens/Debts';
 import { Loading, QueryError, Sheet } from './components/ui';
 import { Reports } from './screens/Reports';
+import { Live } from './screens/Live';
+import { LiveSalesListener } from './liveSales';
 import { Settings } from './screens/Settings';
 import { Cash } from './screens/Cash';
 import { Expenses } from './screens/Expenses';
@@ -63,7 +65,7 @@ export function App() {
   const tr = useT();
   const [signedIn, setSignedIn] = useState(() => getToken() !== null);
   const [tab, setTab] = useState<Tab>('home');
-  const [page, setPage] = useState<'tab' | 'reports' | 'settings' | 'cash' | 'expenses' | 'stock'>('tab');
+  const [page, setPage] = useState<'tab' | 'reports' | 'live' | 'settings' | 'cash' | 'expenses' | 'stock'>('tab');
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const me = useMe(signedIn);
@@ -130,6 +132,7 @@ export function App() {
   const canPower = can(user, PERMISSIONS.STATIONS_POWER);
 
   const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
+  const canLive = can(user, PERMISSIONS.LIVE_VIEW);
   const canProfit = canReports;
   const canStaff = can(user, PERMISSIONS.USERS_VIEW);
   const canCash = can(user, PERMISSIONS.CASH_VIEW);
@@ -147,6 +150,7 @@ export function App() {
   if (me.isLoading) body = <Loading text={tr('Duke hapur…')} />;
   else if (me.error || !user) body = <QueryError message={tr('Nuk u lexuan llogaria. Provoni përsëri.')} onRetry={() => void me.refetch()} />;
   else if (page === 'reports' && canReports) body = <Reports canProfit={canProfit} canStaff={canStaff} />;
+  else if (page === 'live' && canLive) body = <Live />;
   else if (page === 'settings') body = <Settings user={user} onSignOut={signOut} />;
   else if (page === 'cash' && canCash)
     body = (
@@ -173,6 +177,8 @@ export function App() {
   const title =
     page === 'reports'
       ? 'Raportet'
+      : page === 'live'
+        ? 'Live tracking'
       : page === 'settings'
         ? 'Cilësimet'
         : page === 'cash'
@@ -184,6 +190,7 @@ export function App() {
               : TITLES[active];
   return (
     <NotifyProvider>
+      <LiveSalesListener enabled={canLive} />
       <div className="shell">
         <header className="topbar">
           <div className="brand">
@@ -242,6 +249,21 @@ export function App() {
                   >
                     {tr('Stoku')}
                     <small className="muted">{tr('Stoku i ulët, kontroll barkodi')}</small>
+                  </button>
+                </li>
+              )}
+              {canLive && (
+                <li>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPage('live');
+                    }}
+                  >
+                    {tr('Live tracking')}
+                    <small className="muted">{tr('Shitjet, punonjësit, arka, live')}</small>
                   </button>
                 </li>
               )}

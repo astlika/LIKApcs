@@ -9,6 +9,7 @@ import { useAuth } from './state/auth';
 import { useI18n } from './i18n';
 import { Card, EmptyState, Loading } from './components/ui/primitives';
 import { AppShell } from './components/layout/AppShell';
+import { LivePage } from './pages/LivePage';
 import { ServerGate } from './components/ServerGate';
 import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
@@ -149,6 +150,7 @@ export function App() {
           <Route path="customers" element={<CustomersPage />} />
           <Route path="debts" element={<DebtsPage />} />
           <Route path="reports" element={<ReportsPage />} />
+          <Route path="live" element={<LivePage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />
           <Route path="settings" element={<SettingsPage />} />

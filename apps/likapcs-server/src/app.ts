@@ -42,6 +42,7 @@ import { StatementService } from './services/statement.js';
 import { WalletService } from './services/wallet.js';
 import { debtRoutes } from './routes/debts.js';
 import { ReportsService } from './services/reports.js';
+import { LiveService } from './services/live.js';
 import { PurchasingService } from './services/purchasing.js';
 import { BackupService } from './services/backups.js';
 import { UpdatesService } from './services/updates.js';
@@ -51,6 +52,7 @@ import { expenseRoutes } from './routes/expenses.js';
 import { staffPurchaseRoutes } from './routes/staff-purchases.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
+import { liveRoutes } from './routes/live.js';
 import { purchasingRoutes } from './routes/purchasing.js';
 import { backupRoutes } from './routes/backups.js';
 import { updateRoutes } from './routes/updates.js';
@@ -97,6 +99,7 @@ export interface Services {
   wallet: WalletService;
   statements: StatementService;
   reports: ReportsService;
+  live: LiveService;
   purchasing: PurchasingService;
   backups: BackupService;
   updates: UpdatesService;
@@ -238,6 +241,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const customers = new CustomersService(pool, sales, sessions);
   const statements = new StatementService(pool);
   const reports = new ReportsService(pool, cash, settings);
+  const live = new LiveService(pool, settings, cash, reports);
   const purchasing = new PurchasingService(pool, cash);
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
@@ -301,6 +305,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     wallet,
     statements,
     reports,
+    live,
     purchasing,
     backups,
     updates,
@@ -382,6 +387,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(customerRoutes);
       await api.register(debtRoutes);
       await api.register(reportRoutes);
+      await api.register(liveRoutes);
       await api.register(purchasingRoutes);
       await api.register(backupRoutes);
       await api.register(updateRoutes);

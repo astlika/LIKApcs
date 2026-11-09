@@ -572,6 +572,8 @@ export const ADMIN_EVENTS = [
   'device.changed',
   'session.changed',
   'notification',
+  /** A sale was completed (payload: LiveSale). Sent only to admins with `live.view`. */
+  'live.sale',
   /** A backup was restored: every cached view must be reloaded. */
   'system.restored',
   /** A role's permission set changed: signed-in users must refresh their permissions. */
