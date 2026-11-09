@@ -1,9 +1,18 @@
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useT } from '../i18n';
 
 export const cx = (...parts: (string | false | null | undefined)[]): string => parts.filter(Boolean).join(' ');
 
 /** Bottom sheet: the one place where a money action is confirmed. Closes on the ✕, the backdrop or Esc. */
+/** Light vibration on a tap, where the device supports it (Android). Silent everywhere else. */
+export function haptic(ms = 8): void {
+  try {
+    navigator.vibrate?.(ms);
+  } catch {
+    /* not supported */
+  }
+}
+
 export function Sheet({
   title,
   onClose,
@@ -16,6 +25,8 @@ export function Sheet({
   footer?: ReactNode;
 }) {
   const tClose = useT()('Mbyll');
+  const sheetRef = useRef<HTMLElement>(null);
+  const drag = useRef<{ startY: number; dy: number } | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -24,12 +35,40 @@ export function Sheet({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Swipe down on the grip or the title bar to close (touch). A short pull snaps back.
+  const onDown = (e: ReactPointerEvent<HTMLElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    drag.current = { startY: e.clientY, dy: 0 };
+    const move = (ev: PointerEvent) => {
+      if (!drag.current) return;
+      const dy = Math.max(0, ev.clientY - drag.current.startY);
+      drag.current.dy = dy;
+      if (sheetRef.current) sheetRef.current.style.transform = `translateY(${dy}px)`;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      const dy = drag.current?.dy ?? 0;
+      drag.current = null;
+      if (dy > 110) {
+        haptic(10);
+        onClose();
+      } else if (sheetRef.current) {
+        sheetRef.current.style.transform = '';
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
+
   return (
     <div className="sheet-root">
       <button type="button" className="sheet-backdrop" aria-label={tClose} onClick={onClose} />
-      <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="sheet__grip" aria-hidden="true" />
-        <header className="sheet__head">
+      <section ref={sheetRef} className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="sheet__grip" aria-hidden="true" onPointerDown={onDown} />
+        <header className="sheet__head" onPointerDown={onDown}>
           <h2>{title}</h2>
           <button type="button" className="icon-btn" aria-label={tClose} onClick={onClose}>
             ✕
@@ -48,9 +87,20 @@ export function Btn({
   variant = 'primary',
   block = false,
   className,
+  onClick,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; block?: boolean }) {
-  return <button type="button" className={cx('btn', `btn--${variant}`, block && 'btn--block', className)} {...rest} />;
+  return (
+    <button
+      type="button"
+      className={cx('btn', `btn--${variant}`, block && 'btn--block', className)}
+      onClick={(e) => {
+        if (!rest.disabled) haptic();
+        onClick?.(e);
+      }}
+      {...rest}
+    />
+  );
 }
 
 /** Big choice buttons (payment method, duration…). Works for text and number values. */

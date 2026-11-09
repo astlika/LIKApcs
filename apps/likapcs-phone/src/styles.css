@@ -453,3 +453,26 @@ input, button, select { font-family: inherit; }
   font-size: 15px; line-height: 1; display: grid; place-items: center; cursor: pointer;
 }
 .fav-btn--on { color: #f5b301; border-color: #f5b301; }
+
+/* ---------- Payment panel (phone and tablet) ---------- */
+.pay-panel { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.pay-panel__title { margin: 0; font-size: 1rem; }
+.pay-lines { display: flex; flex-direction: column; gap: 8px; }
+.pay-line { display: flex; align-items: flex-end; gap: 8px; }
+.pay-line__amount { flex: 1; min-width: 0; }
+.pay-line__remove { min-width: 44px; min-height: 44px; }
+.pay-quick { display: flex; flex-wrap: wrap; gap: 8px; }
+.pay-quick .chip { min-height: 44px; min-width: 64px; justify-content: center; }
+.chip--strong { border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.pay-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.pay-summary { display: flex; flex-direction: column; gap: 2px; }
+.pay-change strong { color: var(--ok-text); }
+
+/* ---------- Overdue debts on the start page ---------- */
+.overdue-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.overdue-row__who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.overdue-row__actions { display: flex; gap: 8px; align-items: center; }
+.overdue-row__actions .btn { text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+
+/* ---------- Touch targets ---------- */
+.fav-btn { min-width: 44px; min-height: 44px; }

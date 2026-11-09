@@ -94,3 +94,24 @@ input, select, textarea { font-size: 1.05rem; }
 .sheet { max-width: 680px; border-radius: 22px; }
 .login__card { max-width: 460px; }
 .toast { max-width: 520px; }
+
+/* ---------- Narrow screens (large phones, small tablets): navigation moves to the bottom ---------- */
+@media (max-width: 699px) {
+  .tb { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .tb-nav {
+    order: 2; flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 4px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line);
+    align-items: stretch; scrollbar-width: none;
+  }
+  .tb-brand, .tb-nav__group { display: none; }
+  .tb-nav__item { flex: 0 0 auto; min-width: 76px; min-height: 60px; padding: 6px 8px; }
+  .tb-nav__foot { margin-top: 0; padding-top: 0; border-top: 0; border-left: 1px solid var(--line); padding-left: 6px; flex-direction: row; gap: 4px; }
+  .tb-nav__foot .tb-nav__item span { font-size: 0.72rem; }
+  .tb-top { padding: 10px 14px; min-height: 56px; }
+  .tb-top h1 { font-size: 1.2rem; }
+  .tb-content { padding: 14px 14px 24px; }
+  .shortcut-grid { grid-template-columns: minmax(0, 1fr); }
+  .sheet-root { align-items: flex-end; padding: 0; }
+  .sheet { max-width: none; border-radius: 22px 22px 0 0; }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { PERMISSIONS, type CategorySummary, type CustomerSummary, type Paginated, type ProductAddonSummary, type ProductLookupResponse, type ProductSummary, type SaleDetail, type SalePaymentMethod, type SalesListResponse } from '@likapcs/shared';
 import { api, errorText, money, newRequestId, parseEuroToCents, shortDate } from '../api';
@@ -6,8 +6,10 @@ import { can, useMe } from '../me';
 import { METHOD_LABEL } from '../labels';
 import { useLive } from '../useLive';
 import { useNotify } from '../notify';
+import { useT } from '../i18n';
 import { useOnline } from '../useOnline';
 import { Btn, Choices, Empty, EuroInput, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
+import { PaymentPanel, centsText, newPaymentLine, summarizePayment, type PaymentLine } from '../components/PaymentPanel';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useDebounced } from '../useDebounced';
 
@@ -376,19 +378,23 @@ function CartSheet({
   const notify = useNotify();
   const requestId = useState(newRequestId)[0];
   const [customer, setCustomer] = useState<CustomerSummary | null>(resume?.customer ?? null);
-  const [method, setMethod] = useState<SalePaymentMethod>('cash');
+  const t = useT();
+  const [payLines, setPayLines] = useState<PaymentLine[]>(() => [newPaymentLine('cash')]);
   const [discountText, setDiscountText] = useState(resume && resume.discountCents > 0 ? centsText(resume.discountCents) : '');
   const discount = canDiscount ? (parseEuroToCents(discountText) ?? 0) : 0;
   const discountBad = discount < 0 || discount > subtotal;
   const total = Math.max(0, subtotal - discount);
 
-  const creditNeedsCustomer = method === 'credit' && !customer;
-  const payOptions: { value: SalePaymentMethod; label: string; disabled?: boolean }[] = [
-    { value: 'cash', label: METHOD_LABEL.cash ?? 'Cash' },
-    { value: 'card', label: METHOD_LABEL.card ?? 'Kartelë' },
-    { value: 'bank_transfer', label: METHOD_LABEL.bank_transfer ?? 'Transfer' },
-    { value: 'credit', label: 'Me borxh', disabled: !customer },
-  ];
+  const pay = summarizePayment(payLines, total);
+  const creditNeedsCustomer = payLines.some((l) => l.method === 'credit') && !customer;
+  const canFinish = lines.length > 0 && (total === 0 || pay.remaining === 0) && !pay.nonCashTooHigh;
+
+  // While the only line was never typed by hand, it follows the total (after items and discount).
+  useEffect(() => {
+    setPayLines((prev) =>
+      prev.length === 1 && prev[0]!.method === 'cash' && !prev[0]!.touched ? [{ ...prev[0]!, text: centsText(total) }] : prev,
+    );
+  }, [total]);
 
   const saleBody = () => ({
     items: lines.map((l) => ({
@@ -421,7 +427,7 @@ function CartSheet({
           method: 'POST',
           body: {
             ...saleBody(),
-            payments: [{ method, amountCents: total }],
+            payments: total === 0 ? [] : pay.payments,
             staff: false,
           },
         },
@@ -445,15 +451,15 @@ function CartSheet({
 
   return (
     <Sheet
-      title="Shporta"
+      title={t('Shporta')}
       onClose={onClose}
       footer={
         <>
           {!online && <Notice tone="danger">Pa lidhje me serverin. Shitja nuk mund të regjistrohet tani.</Notice>}
           {sell.isError && <Notice tone="danger">{errorText(sell.error)}</Notice>}
           {suspend.isError && <Notice tone="danger">{errorText(suspend.error)}</Notice>}
-          <Btn block onClick={() => sell.mutate()} disabled={!online || sell.isPending || lines.length === 0 || creditNeedsCustomer || discountBad}>
-            {sell.isPending ? 'Duke regjistruar…' : `Përfundo · ${money(total)}`}
+          <Btn block onClick={() => sell.mutate()} disabled={!online || sell.isPending || creditNeedsCustomer || discountBad || !canFinish}>
+            {sell.isPending ? t('Duke regjistruar…') : t('Përfundo · {amount}', { amount: money(total) })}
           </Btn>
           {resume ? (
             <Btn variant="danger" block onClick={() => voidResume.mutate()} disabled={!online || voidResume.isPending}>
@@ -501,26 +507,26 @@ function CartSheet({
       )}
       {discountBad && <Notice tone="danger">Zbritja nuk mund të jetë më e madhe se shuma e shportës.</Notice>}
 
-      <Choices label="Mënyra e pagesës" value={method} onChange={setMethod} options={payOptions} />
-      {creditNeedsCustomer && <Notice tone="warn">Për pagesë me borxh zgjidhni klientin.</Notice>}
-      {method === 'credit' && customer && (
-        <Notice tone="info">Shuma {money(total)} shtohet te borxhi i {customer.name}.</Notice>
+      <PaymentPanel total={total} lines={payLines} onChange={setPayLines} canCredit={!!customer} />
+      {creditNeedsCustomer && <Notice tone="warn">{t('Për pagesë me borxh zgjidhni klientin.')}</Notice>}
+      {customer && payLines.some((l) => l.method === 'credit') && (
+        <Notice tone="info">{t('Shuma {amount} shtohet te borxhi i {name}.', { amount: money(pay.remaining > 0 ? pay.remaining : total), name: customer.name })}</Notice>
       )}
 
       {discount > 0 && (
         <div className="total-row">
-          <span>Nëntotali</span>
+          <span>{t('Nëntotali')}</span>
           <strong>{money(subtotal)}</strong>
         </div>
       )}
       {discount > 0 && (
         <div className="total-row">
-          <span>Zbritja</span>
+          <span>{t('Zbritja')}</span>
           <strong>−{money(discount)}</strong>
         </div>
       )}
       <div className="total-row total-row--big">
-        <span>Totali</span>
+        <span>{t('Totali')}</span>
         <strong>{money(total)}</strong>
       </div>
     </Sheet>
@@ -534,7 +540,6 @@ interface ResumeState {
   customer: CustomerSummary | null;
 }
 
-const centsText = (cents: number): string => (cents / 100).toFixed(2).replace('.', ',');
 
 /** The sales that were suspended on this till or elsewhere: open one to finish it, or cancel it. */
 function SuspendedSheet({

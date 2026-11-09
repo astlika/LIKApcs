@@ -46,6 +46,35 @@ export function useT(): TFunc {
 }
 
 const EN: Record<string, string> = {
+  // Start page: cash drawer (0.29.8)
+  'Në arkë tani': 'In the drawer now',
+  'Shitje me para': 'Cash sales',
+  'Hapur, {name}': 'Open, {name}',
+  '{count} shitje': '{count} sales',
+
+  // Payment, start page, cart (0.29.8)
+  'Pagesa': 'Payment',
+  'Shuma me para': 'Cash amounts',
+  'Sakto': 'Exact',
+  'Shto pagesë': 'Add payment',
+  'Mbetet': 'Remaining',
+  'Kthimi': 'Change',
+  'Pagesat jo-kesh janë më të mëdha se totali.': 'Non-cash payments are larger than the total.',
+  'Përfundo · {amount}': 'Complete · {amount}',
+  'Shporta': 'Cart',
+  'Për pagesë me borxh zgjidhni klientin.': 'For payment on debt, choose the customer.',
+  'Shuma {amount} shtohet te borxhi i {name}.': 'The amount {amount} is added to the debt of {name}.',
+  'Nëntotali': 'Subtotal',
+  'Zbritja': 'Discount',
+  'Shitjet sot': 'Today\'s sales',
+  'Mesatarja': 'Average',
+  'Borxhe të vonuara': 'Overdue debts',
+  'Afati': 'Due',
+  'Thirr': 'Call',
+  'Pa telefon': 'No phone',
+  'Pagesë': 'Pay',
+  'Duke regjistruar…': 'Saving…',
+
   // Shell and menu
   Kryefaqja: 'Home',
   'PC-të': 'PCs',

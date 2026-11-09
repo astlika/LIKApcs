@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.8] - 2026-10-09
+
+### Added
+
+- Phone and tablet, sale: split payment. A sale can be paid in several lines (cash, card, bank transfer, debt). Quick cash amounts («Sakto», 5, 10, 20, 50 €) and «+» buttons for the other methods. The change is shown and the sale stays locked until the full amount is given.
+- Phone and tablet, start page: today's sales (count, net, average), the cash drawer balance (for users who may see the cash drawer), and the five most overdue debts with a «Thirr» (call) button and a «Pagesë» button.
+- Phone and tablet: swipe down on the grip or title bar to close a sheet. A short vibration on the main actions (Android).
+- Tablet: below 700 px wide, the navigation moves to the bottom of the screen.
+- Tests: `e2e/` with a seed script, a screen-size smoke test and a real-sales test (phone and tablet) for a server with PostgreSQL.
+
+### Changed
+
+- Phone: the favourite stars in POS are at least 44 px.
+
 ## [0.29.7] - 2026-10-09
 
 ### Added (tablet at /tab/)

@@ -221,6 +221,7 @@ export function App() {
             canPcs={canPcs}
             canPos={canPos}
             canDebts={canDebts}
+            canCash={canCash}
             onGo={(next) => setPage(next)}
           />
         )}

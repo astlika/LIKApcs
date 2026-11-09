@@ -1,5 +1,5 @@
-import type { StationSummary } from '@likapcs/shared';
-import { api, money } from '../api';
+import type { CashStatusResponse, DebtSummary, Paginated, SalesReport, StationSummary } from '@likapcs/shared';
+import { api, money, todayIso } from '../api';
 import { useLive } from '../useLive';
 import { Loading, Stat, cx } from '../components/ui';
 import { localeOf, useLang, useT } from '../i18n';
@@ -20,18 +20,27 @@ export function Home({
   canPcs,
   canPos,
   canDebts,
+  canCash = false,
   onGo,
 }: {
   name: string;
   canPcs: boolean;
   canPos: boolean;
   canDebts: boolean;
+  canCash?: boolean;
   onGo: (tab: Tab) => void;
 }) {
   const t = useT();
   const lang = useLang();
   const stations = useLive(['stations'], () => api<StationSummary[]>('/stations'));
   const overview = useLive(['debts', 'overview'], () => api<DebtsOverview>('/debts/overview'));
+  const isoToday = todayIso();
+  const salesToday = useLive(['reports', 'sales-today', isoToday], () =>
+    api<SalesReport>(`/reports/sales?from=${isoToday}&to=${isoToday}`),
+  );
+  const cash = useLive(['cash'], () => api<CashStatusResponse>('/cash/status'));
+  const drawer = canCash ? cash.data?.current : null;
+  const overdue = useLive(['debts', 'overdue-top'], () => api<Paginated<DebtSummary>>('/debts?filter=overdue&pageSize=5'));
 
   const shown = (stations.data ?? []).filter((s) => s.isEnabled);
   const running = shown.filter((s) => s.activeSession && s.activeSession.status === 'active').length;
@@ -59,6 +68,58 @@ export function Home({
               <Stat label={t('Të lira')} value={shown.length - running - paused} />
             </div>
           )}
+        </section>
+      )}
+
+      {canPos && salesToday.data && (
+        <section className="stack-sm">
+          <h2>{t('Shitjet sot')}</h2>
+          <div className="grid-3">
+            <Stat label={t('Shitje')} value={String(salesToday.data.sales.count)} />
+            <Stat label={t('Totali')} tone="ok" value={money(salesToday.data.sales.netCents)} />
+            <Stat label={t('Mesatarja')} value={money(salesToday.data.sales.averageCents)} />
+          </div>
+        </section>
+      )}
+
+      {canCash && drawer && (
+        <section className="stack-sm">
+          <h2>{t('Arka')}</h2>
+          <div className="grid-3">
+            <Stat label={t('Në arkë tani')} tone="ok" value={money(drawer.totals.expectedCashCents)} sub={t('Hapur, {name}', { name: drawer.registerName })} />
+            <Stat label={t('Shitje me para')} value={money(drawer.totals.cashSalesCents)} sub={t('{count} shitje', { count: drawer.totals.salesCount })} />
+            <Stat label={t('Shpenzime')} value={money(drawer.totals.expensesCents)} />
+          </div>
+        </section>
+      )}
+
+      {canDebts && overdue.data && overdue.data.items.length > 0 && (
+        <section className="stack-sm">
+          <h2>{t('Borxhe të vonuara')}</h2>
+          <ul className="list">
+            {overdue.data.items.map((d) => (
+              <li key={d.id} className="card card--flat overdue-row">
+                <span className="overdue-row__who">
+                  <strong>{d.customerName}</strong>
+                  <span className="muted small">
+                    {t('Afati')}: {d.dueDate} · {money(d.remainingCents)}
+                  </span>
+                </span>
+                <span className="overdue-row__actions">
+                  {d.customerPhone ? (
+                    <a className="btn btn--ghost small-btn" href={`tel:${d.customerPhone.replace(/\s+/g, '')}`}>
+                      {t('Thirr')}
+                    </a>
+                  ) : (
+                    <span className="muted small">{t('Pa telefon')}</span>
+                  )}
+                  <button type="button" className="btn btn--primary small-btn" onClick={() => onGo('debts')}>
+                    {t('Pagesë')}
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
