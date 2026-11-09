@@ -1,12 +1,20 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import type { CashBookReport, ProfitReport, ReportBucket, SalesReport } from '@likapcs/shared';
+import type {
+  CashBookReport,
+  ProfitReport,
+  ReportBucket,
+  ReportSummary,
+  SalesReport,
+  StaffReport,
+} from '@likapcs/shared';
 import { api, downloadFile, duration, errorText, money, shortDate } from '../api';
 import { useNotify } from '../notify';
 import { METHOD_LABEL } from '../labels';
-import { Empty, Loading, QueryError, cx } from '../components/ui';
+import { Empty, Loading, Notice, QueryError, Stat, cx } from '../components/ui';
+import { useT, type TFunc } from '../i18n';
 
-type Tab = 'sales' | 'cash' | 'profit';
+type Tab = 'summary' | 'sales' | 'cash' | 'profit' | 'staff';
 type Preset = 'today' | 'week' | 'month';
 
 const isoOf = (d: Date) => d.toLocaleDateString('sv-SE');
@@ -28,8 +36,10 @@ const when = (iso: string) =>
   new Date(iso).toLocaleString('sq-AL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /** Reports for the phone: sales, the cash book and profit. Read only. Needs «Raportet». */
-export function Reports({ canProfit }: { canProfit: boolean }) {
-  const [tab, setTab] = useState<Tab>('sales');
+/** Reports for the phone and the tablet: summary, sales, cash book, profit, and staff. Read only. */
+export function Reports({ canProfit, canStaff = false }: { canProfit: boolean; canStaff?: boolean }) {
+  const t = useT();
+  const [tab, setTab] = useState<Tab>('summary');
   const [preset, setPreset] = useState<Preset | 'custom'>('today');
   const [range, setRange] = useState(() => rangeOf('today'));
   const invalid = range.from > range.to;
@@ -55,11 +65,25 @@ export function Reports({ canProfit }: { canProfit: boolean }) {
     queryFn: () => api<ProfitReport>(`/reports/profit?${query}`),
     enabled: tab === 'profit' && canProfit && !invalid,
   });
+  const summary = useQuery({
+    queryKey: ['phone', 'report', 'summary', range.from, range.to],
+    queryFn: () => api<ReportSummary>(`/reports/summary?${query}`),
+    enabled: tab === 'summary' && !invalid,
+  });
+  // Live: while this tab is open the figures refresh every 15 seconds.
+  const staff = useQuery({
+    queryKey: ['phone', 'report', 'staff', range.from, range.to],
+    queryFn: () => api<StaffReport>(`/reports/staff?${query}`),
+    enabled: tab === 'staff' && canStaff && !invalid,
+    refetchInterval: 15_000,
+  });
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'sales', label: 'Shitjet' },
-    { id: 'cash', label: 'Arka' },
-    ...(canProfit ? [{ id: 'profit' as Tab, label: 'Fitimi' }] : []),
+    { id: 'summary', label: t('Përmbledhja') },
+    { id: 'sales', label: t('Shitjet') },
+    { id: 'cash', label: t('Arka') },
+    ...(canProfit ? [{ id: 'profit' as Tab, label: t('Fitimi') }] : []),
+    ...(canStaff ? [{ id: 'staff' as Tab, label: t('Punonjësit') }] : []),
   ];
 
   return (
@@ -116,9 +140,11 @@ export function Reports({ canProfit }: { canProfit: boolean }) {
         ))}
       </div>
 
+      {tab === 'summary' && <SummaryView q={summary} />}
       {tab === 'sales' && <SalesView q={sales} />}
       {tab === 'cash' && <CashView q={cash} />}
       {tab === 'profit' && canProfit && <ProfitView q={profit} />}
+      {tab === 'staff' && canStaff && <StaffView q={staff} />}
     </div>
   );
 }
@@ -417,5 +443,123 @@ function ExportRow({ from, to, disabled, canProfit }: { from: string; to: string
         </button>
       ))}
     </div>
+  );
+}
+
+const shortDay = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+/** 24-hour clock, as used in Albania and Kosovo. */
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString('sq-AL', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
+/** One page: turnover, profit, expenses and the drawer, then the detail and the day-by-day figures. */
+function SummaryView({ q }: { q: Q<ReportSummary> }) {
+  const t: TFunc = useT();
+  return (
+    <Wait q={q} what={t('Përmbledhja')}>
+      {(r) => {
+        const max = Math.max(1, ...r.daily.map((d) => d.turnoverCents));
+        const gaps = r.checks.productsWithoutCost + r.checks.saleLinesWithoutCost + r.checks.lossesWithoutCost;
+        return (
+          <>
+            <div className="grid-2">
+              <Stat label={t('Qarkullimi (me TVSH)')} value={money(r.turnoverCents)} sub={`${r.salesCount} ${t('shitje')}`} />
+              <Stat
+                label={t('Fitimi neto')}
+                value={money(r.netProfitCents)}
+                sub={pct(r.netMarginBp)}
+                tone={r.netProfitCents < 0 ? 'danger' : 'ok'}
+              />
+              <Stat label={t('Shpenzimet')} value={money(r.expensesCents)} />
+              <Stat
+                label={t('Arka (neto)')}
+                value={money(r.cash.netCents)}
+                sub={`${t('Diferenca e arkës')}: ${money(r.cash.differenceCents)}`}
+                tone={r.cash.differenceCents < 0 ? 'danger' : undefined}
+              />
+            </div>
+            {gaps > 0 && (
+              <Notice tone="warn">{t('Disa të dhëna mungojnë (kosto ose humbje pa çmim). Fitimi mund të jetë i pasaktë.')}</Notice>
+            )}
+            <Section title={t('Detajet')}>
+              <ul className="kv-list">
+                <li className="kv"><span>{t('Vlera pa TVSH')}</span><strong>{money(r.revenueCents)}</strong></li>
+                <li className="kv"><span>{t('TVSH')}</span><strong>{money(r.vatCents)}</strong></li>
+                <li className="kv"><span>{t('Kostoja e mallit')}</span><strong>{money(r.costOfSalesCents)}</strong></li>
+                <li className="kv"><span>{t('Fitimi bruto')}</span><strong>{money(r.grossProfitCents)} · {pct(r.grossMarginBp)}</strong></li>
+                <li className="kv"><span>{t('Humbje stoku')}</span><strong>{money(r.stockLossCents)}</strong></li>
+                <li className="kv"><span>{t('Kthime')}</span><strong>{money(r.refundedCents)}</strong></li>
+                <li className="kv"><span>{t('Mesatarja e shitjes')}</span><strong>{money(r.averageSaleCents)}</strong></li>
+                <li className="kv"><span>{t('Arka: hyrje')}</span><strong>{money(r.cash.inCents)}</strong></li>
+                <li className="kv"><span>{t('Arka: dalje')}</span><strong>{money(r.cash.outCents)}</strong></li>
+              </ul>
+            </Section>
+            <Section title={t('Sipas ditës')}>
+              {r.daily.length === 0 ? (
+                <p className="muted small">{t('Nuk ka shitje në këtë periudhë.')}</p>
+              ) : (
+                <ul className="list">
+                  {r.daily.map((d) => (
+                    <li key={d.date} className="bar-row">
+                      <span>{shortDay(d.date)} · {d.salesCount}</span>
+                      <strong>{money(d.turnoverCents)}</strong>
+                      <span className="bar-row__track" aria-hidden="true">
+                        <span className="bar-row__fill" style={{ width: `${(d.turnoverCents / max) * 100}%` }} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          </>
+        );
+      }}
+    </Wait>
+  );
+}
+
+/** Who is on duty now, and per person: hours, sales, refunds and the shortage or surplus of their shifts. */
+function StaffView({ q }: { q: Q<StaffReport> }) {
+  const t: TFunc = useT();
+  return (
+    <Wait q={q} what={t('Raporti i punonjësve')}>
+      {(r) => (
+        <>
+          {r.onDuty.length > 0 && (
+            <div className="card card--flat stack-sm" role="status">
+              <strong>{t('Në punë tani')}</strong>
+              {r.onDuty.map((o) => (
+                <div key={o.userId} className="row row--between">
+                  <span>{o.name}</span>
+                  <span className="muted small">
+                    {o.registerName} · {t('Që {time}', { time: clock(o.since) })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {r.staff.length === 0 && <Empty>{t('Nuk ka aktivitet të punonjësve në këtë periudhë.')}</Empty>}
+          {r.staff.map((p) => (
+            <div key={p.userId} className="card stack-sm">
+              <div className="row row--between">
+                <strong>{p.name}</strong>
+                <span className={cx('badge', p.onDutyNow ? 'badge--ok' : undefined)}>
+                  {p.onDutyNow ? t('Në punë tani') : t('Jashtë pune')}
+                </span>
+              </div>
+              <div className="grid-2">
+                <Stat label={t('Orët e punës')} value={duration(p.workedMinutes * 60)} sub={`${p.shiftsCount} ${t('turne')}`} />
+                <Stat label={t('Shitje')} value={money(p.salesCents)} sub={`${p.salesCount} ${t('shitje')}`} />
+                <Stat
+                  label={t('Diferenca e arkës')}
+                  value={money(p.cashDifferenceCents)}
+                  tone={p.cashDifferenceCents < 0 ? 'danger' : undefined}
+                />
+                <Stat label={t('Shitje me kthim')} value={String(p.refundsCount)} />
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </Wait>
   );
 }

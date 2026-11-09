@@ -190,6 +190,7 @@ export function App() {
   const canDebts = can(user, PERMISSIONS.CUSTOMERS_VIEW);
   const canCollect = can(user, PERMISSIONS.POS_SELL);
   const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
+  const canStaff = can(user, PERMISSIONS.USERS_VIEW);
   const canCash = can(user, PERMISSIONS.CASH_VIEW);
   const canExpenses = can(user, PERMISSIONS.EXPENSES_VIEW);
   const canStock = can(user, PERMISSIONS.PRODUCTS_VIEW);
@@ -231,7 +232,7 @@ export function App() {
         {current === 'cash' && <Cash canOpenClose={can(user, PERMISSIONS.CASH_OPEN_CLOSE)} canMove={can(user, PERMISSIONS.CASH_MOVE)} />}
         {current === 'expenses' && <Expenses canManage={can(user, PERMISSIONS.EXPENSES_MANAGE)} />}
         {current === 'stock' && <Stock />}
-        {current === 'reports' && <Reports canProfit={canReports} />}
+        {current === 'reports' && <Reports canProfit={canReports} canStaff={canStaff} />}
         {current === 'settings' && <Settings user={user} onSignOut={() => void signOut()} />}
       </Suspense>
     );

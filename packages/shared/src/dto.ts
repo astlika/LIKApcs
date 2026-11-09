@@ -2498,6 +2498,69 @@ export interface SpendingRow {
   reference: string | null;
 }
 
+/**
+ * 0.30.0 — one-page management summary for a date range (business time zone, both ends inclusive).
+ * Every figure is taken from the same source as its detail report, so they always agree:
+ *  • turnover  = sales charged in the range, VAT included, after refunds (the sales report figure)
+ *  • revenue   = turnover − VAT
+ *  • net profit = the profit report's net profit (accrual basis)
+ *  • cash      = the drawer: cash in and out of the range, and the counted difference of closed shifts
+ */
+export interface ReportSummary {
+  range: ReportRange;
+  turnoverCents: number;
+  vatCents: number;
+  revenueCents: number;
+  salesCount: number;
+  averageSaleCents: number;
+  refundedCents: number;
+  costOfSalesCents: number;
+  grossProfitCents: number;
+  grossMarginBp: number | null;
+  expensesCents: number;
+  stockLossCents: number;
+  netProfitCents: number;
+  netMarginBp: number | null;
+  cash: {
+    inCents: number;
+    outCents: number;
+    netCents: number;
+    closedShiftsCount: number;
+    openShiftsCount: number;
+    differenceCents: number;
+  };
+  daily: { date: string; salesCount: number; turnoverCents: number }[];
+  /** Gaps that make the figures incomplete (see the profit report). Each should be zero. */
+  checks: ProfitReport['checks'];
+  generatedAt: string;
+}
+
+/**
+ * 0.30.0 — who worked and what they sold, for a date range. Hours come from the cash shifts a
+ * person opened: a shift counts from when it opened until it closed (or now, while it is open),
+ * clipped to the range. Someone without a shift has no hours here.
+ */
+export interface StaffReport {
+  range: ReportRange;
+  /** Shifts open right now, with who opened them and since when. */
+  onDuty: { userId: string; name: string; since: string; registerName: string }[];
+  staff: {
+    userId: string;
+    name: string;
+    shiftsCount: number;
+    /** Minutes inside the range, from the shifts this person opened. */
+    workedMinutes: number;
+    salesCount: number;
+    salesCents: number;
+    /** Sales with a refund, by the cashier who made the sale. */
+    refundsCount: number;
+    /** Sum of the counted differences of this person's closed shifts (+ over, − short). */
+    cashDifferenceCents: number;
+    onDutyNow: boolean;
+  }[];
+  generatedAt: string;
+}
+
 export interface SpendingReport {
   range: ReportRange;
   totals: { kind: SpendingKind; count: number; amountCents: number }[];

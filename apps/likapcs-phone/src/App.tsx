@@ -131,6 +131,7 @@ export function App() {
 
   const canReports = can(user, PERMISSIONS.REPORTS_VIEW);
   const canProfit = canReports;
+  const canStaff = can(user, PERMISSIONS.USERS_VIEW);
   const canCash = can(user, PERMISSIONS.CASH_VIEW);
   const canExpenses = can(user, PERMISSIONS.EXPENSES_VIEW);
   const canStock = can(user, PERMISSIONS.PRODUCTS_VIEW);
@@ -145,7 +146,7 @@ export function App() {
   let body: ReactNode;
   if (me.isLoading) body = <Loading text={tr('Duke hapur…')} />;
   else if (me.error || !user) body = <QueryError message={tr('Nuk u lexuan llogaria. Provoni përsëri.')} onRetry={() => void me.refetch()} />;
-  else if (page === 'reports' && canReports) body = <Reports canProfit={canProfit} />;
+  else if (page === 'reports' && canReports) body = <Reports canProfit={canProfit} canStaff={canStaff} />;
   else if (page === 'settings') body = <Settings user={user} onSignOut={signOut} />;
   else if (page === 'cash' && canCash)
     body = (

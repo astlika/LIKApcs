@@ -46,6 +46,38 @@ export function useT(): TFunc {
 }
 
 const EN: Record<string, string> = {
+  // Reports: summary and staff (0.30.0)
+  'Arka (neto)': 'Cash drawer (net)',
+  'Arka: dalje': 'Cash drawer: out',
+  'Arka: hyrje': 'Cash drawer: in',
+  'Detajet': 'Details',
+  'Diferenca e arkës': 'Cash difference',
+  'Disa të dhëna mungojnë (kosto ose humbje pa çmim). Fitimi mund të jetë i pasaktë.': 'Some data is missing (cost or loss without a price). Profit may be inaccurate.',
+  'Fitimi': 'Profit',
+  'Fitimi bruto': 'Gross profit',
+  'Fitimi neto': 'Net profit',
+  'Humbje stoku': 'Stock loss',
+  'Jashtë pune': 'Off duty',
+  'Kostoja e mallit': 'Cost of goods',
+  'Kthime': 'Refunds',
+  'Mesatarja e shitjes': 'Average sale',
+  'Nuk ka aktivitet të punonjësve në këtë periudhë.': 'No staff activity in this period.',
+  'Nuk ka shitje në këtë periudhë.': 'No sales in this period.',
+  'Në punë tani': 'On duty now',
+  'Orët e punës': 'Hours worked',
+  'Punonjësit': 'Staff',
+  'Përmbledhja': 'Summary',
+  'Qarkullimi (me TVSH)': 'Turnover (incl. VAT)',
+  'Që {time}': 'Since {time}',
+  'Raporti i punonjësve': 'Staff report',
+  'Shitje me kthim': 'Sales with refund',
+  'Shitjet': 'Sales',
+  'Sipas ditës': 'By day',
+  'TVSH': 'VAT',
+  'Vlera pa TVSH': 'Net of VAT',
+  'shitje': 'sales',
+  'turne': 'shifts',
+
   // Start page: cash drawer (0.29.8)
   'Në arkë tani': 'In the drawer now',
   'Shitje me para': 'Cash sales',

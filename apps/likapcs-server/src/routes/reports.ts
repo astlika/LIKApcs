@@ -32,6 +32,23 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
     checkRange(range.from, range.to);
     return services.reports.spending(range);
   });
+  app.get('/reports/summary', view, async (request) => {
+    const range = reportRangeSchema.parse(request.query);
+    checkRange(range.from, range.to);
+    return services.reports.summary(range);
+  });
+  // Who worked and what they sold: needs the staff permission as well as the reports one.
+  const staffView = {
+    preHandler: [
+      app.requirePermission(PERMISSIONS.REPORTS_VIEW),
+      app.requirePermission(PERMISSIONS.USERS_VIEW),
+    ],
+  };
+  app.get('/reports/staff', staffView, async (request) => {
+    const range = reportRangeSchema.parse(request.query);
+    checkRange(range.from, range.to);
+    return services.reports.staff(range);
+  });
   app.get('/reports/export', exportPerm, async (request, reply) => {
     const query = reportExportQuerySchema.parse(request.query);
     checkRange(query.from, query.to);

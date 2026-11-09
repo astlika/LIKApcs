@@ -19,8 +19,10 @@ import type {
   ReportBucket,
   ReportExportKind,
   ReportRange,
+  ReportSummary,
   SalesReport,
   SpendingReport,
+  StaffReport,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import type { CashService } from './cash.js';
@@ -325,6 +327,150 @@ export class ReportsService {
   async spending(range: ReportRange): Promise<SpendingReport> {
     const timeZone = await this.settings.get('locale.timezone');
     return spendingReport(this.pool, timeZone, range);
+  }
+
+  /**
+   * 0.30.0 — the one-page summary. Every figure is read from the report it is named after, so the
+   * summary can never disagree with the detail pages.
+   */
+  async summary(range: ReportRange): Promise<ReportSummary> {
+    const [sales, profit, cashBook] = await Promise.all([
+      this.sales(range),
+      this.profit(range),
+      this.cashBook(range),
+    ]);
+    const t = cashBook.totals;
+    return {
+      range,
+      turnoverCents: profit.revenue.netSalesCents,
+      vatCents: profit.revenue.vatCents,
+      revenueCents: profit.revenue.revenueCents,
+      salesCount: sales.sales.count,
+      averageSaleCents: sales.sales.averageCents,
+      refundedCents: sales.sales.refundedCents,
+      costOfSalesCents: profit.costOfSalesCents,
+      grossProfitCents: profit.grossProfitCents,
+      grossMarginBp: profit.grossMarginBp,
+      expensesCents: profit.operatingExpensesCents,
+      stockLossCents: profit.stockLossCents,
+      netProfitCents: profit.netProfitCents,
+      netMarginBp: profit.netMarginBp,
+      cash: {
+        inCents: profit.cash.drawerInCents,
+        outCents: profit.cash.drawerOutCents,
+        netCents: profit.cash.drawerInCents - profit.cash.drawerOutCents,
+        closedShiftsCount: t.shiftsCount - t.openShiftsCount,
+        openShiftsCount: t.openShiftsCount,
+        differenceCents: t.differenceCents,
+      },
+      daily: sales.byDay.map((d) => ({
+        date: d.date,
+        salesCount: d.count,
+        turnoverCents: d.amountCents,
+      })),
+      checks: profit.checks,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * 0.30.0 — who worked and what they sold. Hours come from the cash shifts a person opened:
+   * from the opening until the closing (or now, while the shift is open), clipped to the range.
+   */
+  async staff(range: ReportRange): Promise<StaffReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    const p: [string, string, string] = [range.from, range.to, timeZone];
+    const [shifts, sales, refunds] = await Promise.all([
+      this.pool.query<{
+        user_id: string;
+        name: string;
+        opened_at: Date;
+        status: string;
+        register_name: string;
+        difference_cents: string | null;
+        seconds: string;
+      }>(
+        `SELECT cs.opened_by::text AS user_id, ou.full_name AS name, cs.opened_at, cs.status,
+                r.name AS register_name, cs.difference_cents,
+                GREATEST(0, EXTRACT(EPOCH FROM (
+                  LEAST(COALESCE(cs.closed_at, now()), ($2::date + 1)::timestamp AT TIME ZONE $3)
+                  - GREATEST(cs.opened_at, ($1::date)::timestamp AT TIME ZONE $3))))::bigint::text AS seconds
+           FROM cash_shifts cs
+           JOIN cash_registers r ON r.id = cs.register_id
+           JOIN users ou ON ou.id = cs.opened_by
+          WHERE cs.opened_at < ($2::date + 1)::timestamp AT TIME ZONE $3
+            AND COALESCE(cs.closed_at, now()) >= ($1::date)::timestamp AT TIME ZONE $3
+          ORDER BY cs.opened_at`,
+        p,
+      ),
+      this.pool.query<{ user_id: string; name: string; n: string; amount: string }>(
+        `SELECT s.cashier_user_id::text AS user_id, u.full_name AS name, count(*)::text AS n,
+                SUM(s.total_cents - s.refunded_cents)::bigint::text AS amount
+           FROM sales s JOIN users u ON u.id = s.cashier_user_id
+          WHERE ${COMPLETED} AND ${inRange('s.completed_at')}
+          GROUP BY s.cashier_user_id, u.full_name`,
+        p,
+      ),
+      this.pool.query<{ user_id: string; name: string; n: string }>(
+        `SELECT s.cashier_user_id::text AS user_id, u.full_name AS name, count(*)::text AS n
+           FROM sales s JOIN users u ON u.id = s.cashier_user_id
+          WHERE s.refunded_cents > 0 AND ${inRange('s.completed_at')}
+          GROUP BY s.cashier_user_id, u.full_name`,
+        p,
+      ),
+    ]);
+
+    const byUser = new Map<string, StaffReport['staff'][number]>();
+    const person = (userId: string, name: string) => {
+      let row = byUser.get(userId);
+      if (!row) {
+        row = {
+          userId,
+          name,
+          shiftsCount: 0,
+          workedMinutes: 0,
+          salesCount: 0,
+          salesCents: 0,
+          refundsCount: 0,
+          cashDifferenceCents: 0,
+          onDutyNow: false,
+        };
+        byUser.set(userId, row);
+      }
+      return row;
+    };
+    const onDuty: StaffReport['onDuty'] = [];
+    for (const s of shifts.rows) {
+      const row = person(s.user_id, s.name);
+      row.shiftsCount += 1;
+      row.workedMinutes += Math.round(Number(s.seconds) / 60);
+      if (s.status === 'open') {
+        row.onDutyNow = true;
+        onDuty.push({
+          userId: s.user_id,
+          name: s.name,
+          since: s.opened_at.toISOString(),
+          registerName: s.register_name,
+        });
+      } else if (s.difference_cents !== null) {
+        row.cashDifferenceCents += Number(s.difference_cents);
+      }
+    }
+    for (const r of sales.rows) {
+      const row = person(r.user_id, r.name);
+      row.salesCount = Number(r.n);
+      row.salesCents = Number(r.amount);
+    }
+    for (const r of refunds.rows) {
+      person(r.user_id, r.name).refundsCount = Number(r.n);
+    }
+    const staff = [...byUser.values()].sort(
+      (a, b) =>
+        Number(b.onDutyNow) - Number(a.onDutyNow) ||
+        b.salesCents - a.salesCents ||
+        a.name.localeCompare(b.name),
+    );
+    return { range, onDuty, staff, generatedAt: new Date().toISOString() };
   }
 
   /** CSV export (UTF-8 with BOM so Excel opens it correctly; `;` separator for EU locales). */

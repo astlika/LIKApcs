@@ -6,6 +6,19 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Reports (phone and tablet): a «Përmbledhja» (summary) tab for any date range. It shows turnover with VAT, net profit, expenses, the drawer (net and counted difference), the detail lines and a day-by-day list. New endpoint `GET /reports/summary`. Every figure comes from the report it is named after, and the integration test checks they agree.
+- Reports (phone and tablet): a «Punonjësit» (staff) tab, shown to users with the users permission. It shows who is on duty now (live, refreshed every 15 seconds), and per person the hours from the cash shifts they opened, sales, refunds with sales, and the shortage or surplus of their closed shifts. New endpoint `GET /reports/staff`.
+- Tests: `test/integration/report-summary.test.ts` (one real cash shift run through the API, reconciled against the sales, profit and cash-book reports).
+
+### Known gaps (not in this release)
+
+- Admin and desktop (`/desktop/`) do not have the summary or the staff report yet.
+- The staff screen refreshes every 15 seconds. Live push from the server is not wired to these screens yet.
+- The hours of a person count only from the cash shifts they opened. Staff who never open a shift have no hours.
+- Profit is only as complete as the product costs: a product without a purchase cost makes the gross profit too high. The screen shows a warning when this happens.
+
 ## [0.29.8] - 2026-10-09
 
 ### Added
