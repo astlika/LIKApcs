@@ -1,11 +1,11 @@
 {
-  "version": "0.29.6",
-  "notes": "### Added (desktop in the browser)\n\n- Admin desktop UI as a browser app at `/desktop/` on the LIKApcs Server (same origin as the API, like `/phone/`). Build with `pnpm run build:web` in `apps/likapcs-admin` (folder `dist-web`). The server reads it from `LIKAPCS_DESKTOP_DIR`, or from a `desktop/` folder next to the installed server. `stage-runtime.ps1` copies it there.\n- Desktop-only features (embedded server, LAN discovery, Windows firewall, start at login, native updater) are not available in the browser; they show as unavailable there. The customer display works in the browser as `/desktop/display.html` (same origin).",
-  "pub_date": "2026-11-08T22:37:51.339Z",
+  "version": "0.29.7",
+  "notes": "### Added (tablet at /tab/)\n\n- Touch-first tablet app at `/tab/` on the LIKApcs Server (same origin, like `/phone/` and `/desktop/`). Side navigation, large touch targets (52px+), and grids that use the width of the tablet. It reuses the phone's screens and logic, and screens load on demand so the first load stays small. Build with `pnpm run build` in `apps/likapcs-tablet`; the server reads it from `LIKAPCS_TAB_DIR`, or from a `tab/` folder next to the installed server. `stage-runtime.ps1` copies it there.\n- Phone app: new labels in English for the tablet shell (Main, More, Connected, Offline).\n\n### Added (desktop in the browser)\n\n- Admin desktop UI as a browser app at `/desktop/` on the LIKApcs Server (same origin as the API, like `/phone/`). Build with `pnpm run build:web` in `apps/likapcs-admin` (folder `dist-web`). The server reads it from `LIKAPCS_DESKTOP_DIR`, or from a `desktop/` folder next to the installed server. `stage-runtime.ps1` copies it there.\n- Desktop-only features (embedded server, LAN discovery, Windows firewall, start at login, native updater) are not available in the browser; they show as unavailable there. The customer display works in the browser as `/desktop/display.html` (same origin).",
+  "pub_date": "2026-11-09T03:23:32.669Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemJkemIxUngvOFk5Z3k3ZEVrYlB2NFNCTXh0YlhDRlVYSjlCbkdOWkpRa2lGY2NHTGhsVXUwbldod0lSZ3h5YkJVMUVHT3V6aENYNmcrK0ZvUVBhdlFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTc3Mzk0CWZpbGU6TElLQXBjc18wLjI5LjZfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjkuNgpIZm80cDNuMXU1SjZpWEc3ditVeGI5L2pWUTNJa2dKREZQWXRuN05UYlpUVE05dkV1RUFkenczZWlUYnIxUU9VenVOai9XWU1nSlBSZ0lsa3lFelhEdz09Cg==",
-      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.6/LIKApcs-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhelcwRUV1T3BDenBqTCtCZ2g2NjZ2NmJOMWlLZzIwZkQ2NGdJUi9EbThEZXh1TWh6SWFCUEhxUlh0MVF2LzdsdzhWbWF6djA1bFpza3A2NzhBQXFuRGdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTk0NTMzCWZpbGU6TElLQXBjc18wLjI5LjdfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMjkuNwptVnJnQlFUUk9xTzQwbHd4eGc1QXZQK1dHQVBkbklIOFVRSnpJUnZsM1doNXZHaUozSEovbHRGZ2Fuc1J3Y0YvdFhmUzdVNzdRTW0xWDZKSWdvVmhBQT09Cg==",
+      "url": "https://github.com/astlika/LIKApcs/releases/download/v0.29.7/LIKApcs-Setup.exe"
     }
   }
 }
