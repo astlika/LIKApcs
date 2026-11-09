@@ -1158,6 +1158,10 @@ export const en = {
     debtNote: 'Pay later: {amount} due by {date}',
   },
   board: {
+    checkAll: 'Select all in this group',
+    checkOne: 'Select {code}',
+    zoneSelect: 'Select this zone',
+    more: 'More',
     view: 'View',
     viewHint: {
       grid: 'PC icons with the state and the bill line',
@@ -1238,6 +1242,16 @@ export const en = {
     },
   },
   reservations: {
+    stepTime: 'When',
+    stepPcs: 'Which PCs',
+    stepCustomer: 'Who',
+    quickTimes: 'Next hours',
+    otherTime: 'Another date and time',
+    freeAll: 'All free PCs',
+    clearPcs: 'Clear',
+    busyAt: 'Booked',
+    summary: '{pcs} at {time} for {name}',
+    moreFields: 'Phone and notes (optional)',
     button: 'Reservations',
     title: 'PC reservations',
     defaultTolerance: 'Default tolerance (minutes)',

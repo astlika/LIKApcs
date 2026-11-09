@@ -1,52 +1,37 @@
 /**
- * 0.32.0 — PC reservations. The desk books PCs for a time (the customer picks the PCs and the hour),
- * sees how many PCs are booked for each hour, changes a booking's tolerance and cancels it. The
- * default tolerance (minutes a customer may be late) is a house setting.
+ * PC reservations (0.33.0). Left: book in three steps — When (quick hours or a date and time),
+ * Which PCs (a PC already booked in that hour is shown as booked), Who (customer and tolerance).
+ * Right: the coming reservations grouped by hour, each with its PCs, its tolerance and a cancel
+ * button. The house default tolerance sits at the bottom for managers.
  */
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Clock, Trash2 } from 'lucide-react';
+import { Clock, Trash2 } from 'lucide-react';
 import type { CustomerSummary, ReservationSummary, StationSummary } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import { groupByStart } from '../../lib/station-board';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../state/toast';
-import { Button, ConfirmDialog, Dialog, Field, Input, Alert } from '../ui/primitives';
+import { Alert, Button, ConfirmDialog, Dialog } from '../ui/primitives';
 import { CustomerPicker } from '../customers/CustomerPicker';
 
+const TOLERANCE_KEY = 'reservations.tolerance_minutes';
+const HOUR = 60 * 60_000;
+const TOLERANCE_CHOICES = [1, 2, 3, 5, 10, 15, 20, 30];
 
-/** Field wants a render function for the input id; the dialog's inputs do not need it. */
-function Labeled({
-  label,
-  hint,
-  optional,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  optional?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Field label={label} hint={hint} optional={optional}>
-      {() => children}
-    </Field>
-  );
+/** `YYYY-MM-DDTHH:MM` in the browser's zone, as a datetime-local input wants it. */
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const TOLERANCE_KEY = 'reservations.tolerance_minutes';
-
-/** The next five-minute mark, as the form's default: date and time in the browser's local zone. */
-function defaultSlot(): { date: string; time: string } {
-  const d = new Date(Date.now() + 5 * 60_000);
-  d.setSeconds(0, 0);
-  d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
-  };
+/** The next four full hours, as the quick choices of the "When" step. */
+function quickHours(now: number): Date[] {
+  const first = new Date(now);
+  first.setMinutes(0, 0, 0);
+  first.setHours(first.getHours() + 1);
+  return [0, 1, 2, 3].map((i) => new Date(first.getTime() + i * HOUR));
 }
 
 export function ReservationsDialog({
@@ -82,15 +67,13 @@ export function ReservationsDialog({
     enabled: open && canSettings,
   });
   const defaultTolerance = Number(settings.data?.[TOLERANCE_KEY] ?? 5);
-
-  const [tolerance, setTolerance] = useState<string>('');
+  const [tolerance, setTolerance] = useState('');
   useEffect(() => {
     if (settings.data) setTolerance(String(defaultTolerance));
   }, [settings.data, defaultTolerance]);
 
   const saveTolerance = useMutation({
-    mutationFn: (minutes: number) =>
-      api('/settings', { method: 'PATCH', body: { [TOLERANCE_KEY]: minutes } }),
+    mutationFn: (minutes: number) => api('/settings', { method: 'PATCH', body: { [TOLERANCE_KEY]: minutes } }),
     onSuccess: () => {
       toast.success(t('reservations.toleranceSaved'));
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
@@ -98,78 +81,107 @@ export function ReservationsDialog({
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
-  // ─── New booking ─────────────────────────────────────────────
-  const slot = useMemo(defaultSlot, [open]);
-  const [date, setDate] = useState(slot.date);
-  const [time, setTime] = useState(slot.time);
-  const [picked, setPicked] = useState<string[]>(initialStationIds);
+  // ─── Step 1: when ───────────────────────────────────────────
+  const hours = useMemo(() => quickHours(Date.now()), [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [when, setWhen] = useState('');
+  // ─── Step 2: which PCs ──────────────────────────────────────
+  const [picked, setPicked] = useState<string[]>([]);
+  // ─── Step 3: who ────────────────────────────────────────────
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [name, setName] = useState('');
+  const [ownTolerance, setOwnTolerance] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
-  const [ownTolerance, setOwnTolerance] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
   useEffect(() => {
-    if (open) {
-      setPicked(initialStationIds);
-      const fresh = defaultSlot();
-      setDate(fresh.date);
-      setTime(fresh.time);
-      setFormError(null);
-    }
-  }, [open, initialStationIds]);
+    if (!open) return;
+    setWhen(toLocalInput(hours[0]!));
+    setPicked(initialStationIds);
+    setName('');
+    setCustomer(null);
+    setOwnTolerance('');
+    setPhone('');
+    setNotes('');
+    setFormError(null);
+  }, [open, initialStationIds, hours]);
 
   const enabledStations = useMemo(
     () => stations.filter((s) => s.isEnabled && !s.archived).sort((a, b) => a.number - b.number),
     [stations],
   );
+  const items = list.data?.items ?? [];
+  const startsAt = when ? new Date(when) : null;
+  const validStart = !!startsAt && !Number.isNaN(startsAt.getTime());
+  const endsAt = validStart ? new Date(startsAt!.getTime() + HOUR) : null;
+
+  // A PC is booked for this hour when an open reservation's window touches [start, start+1h].
+  const bookedAt = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!validStart) return map;
+    for (const r of items) {
+      if (r.status !== 'scheduled' && r.status !== 'active') continue;
+      const rs = Date.parse(r.startsAt);
+      const re = Date.parse(r.windowEndsAt);
+      if (rs < endsAt!.getTime() && re > startsAt!.getTime()) {
+        for (const s of r.stations) map.set(s.stationId, r.customerName);
+      }
+    }
+    return map;
+  }, [items, validStart, startsAt, endsAt]);
+
+  const customerName = (customer?.name ?? name).trim();
+  const tolerated = ownTolerance.trim() ? Number(ownTolerance) : undefined;
+  const blocker =
+    picked.length === 0
+      ? t('reservations.pickPcs')
+      : !validStart
+        ? t('reservations.pickTime')
+        : startsAt!.getTime() < Date.now() - 60_000
+          ? t('reservations.pickTime')
+          : !customerName
+            ? t('reservations.pickName')
+            : picked.some((id) => bookedAt.has(id))
+              ? t('reservations.overlap')
+              : null;
 
   const create = useMutation({
     mutationFn: async (e: FormEvent) => {
       e.preventDefault();
-      const customerName = customer?.name ?? name.trim();
-      if (picked.length === 0) throw new Error(t('reservations.pickPcs'));
-      if (!customerName) throw new Error(t('reservations.pickName'));
-      const startsAt = new Date(`${date}T${time}:00`);
-      if (Number.isNaN(startsAt.getTime())) throw new Error(t('reservations.pickTime'));
-      const toleranceMinutes = ownTolerance.trim() ? Number(ownTolerance) : undefined;
       return api<ReservationSummary>('/reservations', {
         method: 'POST',
         body: {
           stationIds: picked,
-          startsAt: startsAt.toISOString(),
+          startsAt: startsAt!.toISOString(),
           customerId: customer?.id,
           customerName,
           phone: phone.trim() || undefined,
           notes: notes.trim() || undefined,
-          toleranceMinutes,
+          toleranceMinutes: tolerated,
         },
       });
     },
     onSuccess: (created) => {
-      toast.success(
-        t('reservations.created', {
-          n: created.stations.length,
-          time: fmt.time(created.startsAt),
-        }),
-      );
+      toast.success(t('reservations.created', { n: created.stations.length, time: fmt.time(created.startsAt) }));
       setName('');
       setCustomer(null);
+      setOwnTolerance('');
       setPhone('');
       setNotes('');
-      setOwnTolerance('');
+      setPicked([]);
       setFormError(null);
       void queryClient.invalidateQueries({ queryKey: ['reservations'] });
       void queryClient.invalidateQueries({ queryKey: ['stations'] });
     },
     onError: (err) => {
-      if (err instanceof ApiError && err.code === 'reservation_overlap') {
-        setFormError(t('reservations.overlap'));
-      } else {
-        setFormError(err instanceof Error ? err.message : t('common.errorGeneric'));
-      }
+      if (err instanceof ApiError && err.code === 'reservation_overlap') setFormError(t('reservations.overlap'));
+      else setFormError(err instanceof Error ? err.message : t('common.errorGeneric'));
     },
   });
+
+  const toggle = (id: string) =>
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const freeIds = enabledStations.filter((s) => !bookedAt.has(s.id)).map((s) => s.id);
 
   // ─── Changes to a booking ───────────────────────────────────
   const [cancelling, setCancelling] = useState<ReservationSummary | null>(null);
@@ -194,116 +206,160 @@ export function ReservationsDialog({
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
-  const items = list.data?.items ?? [];
   const groups = useMemo(() => groupByStart(items, fmt.timeZone), [items, fmt.timeZone]);
-  const toggle = (id: string) =>
-    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
   return (
     <>
       <Dialog open={open} onClose={onClose} title={t('reservations.title')} size="lg">
-        <div className="res">
-          {canSettings && (
-            <div className="res__tolerance">
-              <Labeled label={t('reservations.defaultTolerance')} hint={t('reservations.defaultToleranceHint')}>
-                <div className="res__row">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={tolerance}
-                    onChange={(e) => setTolerance(e.target.value)}
-                    aria-label={t('reservations.defaultTolerance')}
-                    style={{ width: 90 }}
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => saveTolerance.mutate(Number(tolerance))}
-                    loading={saveTolerance.isPending}
-                    disabled={!Number.isInteger(Number(tolerance)) || Number(tolerance) < 1 || Number(tolerance) > 60}
-                  >
-                    {t('common.save')}
-                  </Button>
-                </div>
-              </Labeled>
-            </div>
-          )}
-
+        <div className="rz">
           {canControl && (
-            <form className="res__form" onSubmit={(e) => create.mutate(e)}>
-              <h3 className="res__h">{t('reservations.newTitle')}</h3>
-              <div className="res__pcs" role="group" aria-label={t('reservations.pcs')}>
-                {enabledStations.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className="res__pc"
-                    data-picked={picked.includes(s.id) || undefined}
-                    aria-pressed={picked.includes(s.id)}
-                    onClick={() => toggle(s.id)}
-                  >
-                    {picked.includes(s.id) && <Check size={12} />} {s.code}
-                  </button>
-                ))}
-              </div>
-              <div className="res__grid">
-                <Labeled label={t('reservations.date')}>
-                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                </Labeled>
-                <Labeled label={t('reservations.time')}>
-                  <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-                </Labeled>
-                <Labeled label={t('reservations.customer')}>
-                  <CustomerPicker
-                    value={customer}
-                    onChange={(c) => {
-                      setCustomer(c);
-                      if (c) setName(c.name);
-                    }}
-                    text={name}
-                    onTextChange={setName}
-                    allowFreeText
-                    placeholder={t('reservations.customerPlaceholder')}
+            <form className="rz__book" onSubmit={(e) => create.mutate(e)} data-testid="reservation-form">
+              <section className="rz__step">
+                <h3 className="rz__h">
+                  <span className="rz__n">1</span> {t('reservations.stepTime')}
+                </h3>
+                <div className="rz__chips" role="group" aria-label={t('reservations.quickTimes')}>
+                  {hours.map((h) => {
+                    const v = toLocalInput(h);
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        className="rz__chip"
+                        data-on={when === v || undefined}
+                        aria-pressed={when === v}
+                        onClick={() => setWhen(v)}
+                      >
+                        <Clock size={13} aria-hidden /> {fmt.time(h.toISOString())}
+                      </button>
+                    );
+                  })}
+                </div>
+                <label className="rz__field">
+                  <span>{t('reservations.otherTime')}</span>
+                  <input
+                    type="datetime-local"
+                    value={when}
+                    onChange={(e) => setWhen(e.target.value)}
+                    aria-label={t('reservations.otherTime')}
                   />
-                </Labeled>
-                <Labeled label={t('reservations.phone')} optional>
-                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={40} />
-                </Labeled>
-                <Labeled label={t('reservations.ownTolerance')} optional hint={t('reservations.ownToleranceHint')}>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={ownTolerance}
-                    onChange={(e) => setOwnTolerance(e.target.value)}
-                  />
-                </Labeled>
-                <Labeled label={t('reservations.notes')} optional>
-                  <Input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
-                </Labeled>
-              </div>
+                </label>
+              </section>
+
+              <section className="rz__step">
+                <div className="rz__h-row">
+                  <h3 className="rz__h">
+                    <span className="rz__n">2</span> {t('reservations.stepPcs')}
+                    <span className="rz__count num">{picked.length}</span>
+                  </h3>
+                  <div className="rz__tools">
+                    <button type="button" className="rz__link" onClick={() => setPicked(freeIds)} disabled={freeIds.length === 0}>
+                      {t('reservations.freeAll')}
+                    </button>
+                    <button type="button" className="rz__link" onClick={() => setPicked([])} disabled={picked.length === 0}>
+                      {t('reservations.clearPcs')}
+                    </button>
+                  </div>
+                </div>
+                <div className="rz__pcs" role="group" aria-label={t('reservations.pcs')}>
+                  {enabledStations.map((s) => {
+                    const busy = bookedAt.get(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="rz__pc"
+                        data-on={picked.includes(s.id) || undefined}
+                        data-busy={busy ? '' : undefined}
+                        aria-pressed={picked.includes(s.id)}
+                        title={busy ? `${t('reservations.busyAt')}: ${busy}` : s.code}
+                        onClick={() => toggle(s.id)}
+                      >
+                        <span className="rz__pc-code">{s.code}</span>
+                        <span className="rz__pc-sub">{busy ? t('reservations.busyAt') : s.name !== s.code ? s.name : ''}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="rz__step">
+                <h3 className="rz__h">
+                  <span className="rz__n">3</span> {t('reservations.stepCustomer')}
+                </h3>
+                <div className="rz__who">
+                  <div className="rz__field">
+                    <span>{t('reservations.customer')}</span>
+                    <CustomerPicker
+                      value={customer}
+                      onChange={(c) => {
+                        setCustomer(c);
+                        if (c) setName(c.name);
+                      }}
+                      text={name}
+                      onTextChange={setName}
+                      allowFreeText
+                      placeholder={t('reservations.customerPlaceholder')}
+                    />
+                  </div>
+                  <label className="rz__field rz__tol">
+                    <span>{t('reservations.tolerance')}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={ownTolerance}
+                      placeholder={String(defaultTolerance)}
+                      onChange={(e) => setOwnTolerance(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <details className="rz__more">
+                  <summary>{t('reservations.moreFields')}</summary>
+                  <div className="rz__who">
+                    <label className="rz__field">
+                      <span>{t('reservations.phone')}</span>
+                      <input value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={40} />
+                    </label>
+                    <label className="rz__field">
+                      <span>{t('reservations.notes')}</span>
+                      <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
+                    </label>
+                  </div>
+                </details>
+              </section>
+
               {formError && <Alert tone="danger">{formError}</Alert>}
-              <div className="res__actions">
-                <span className="faint">{t('reservations.pickedCount', { n: picked.length })}</span>
-                <Button type="submit" variant="primary" loading={create.isPending}>
+              <div className="rz__submit">
+                <div className="rz__summary">
+                  {blocker ? (
+                    <span className="rz__blocker">{blocker}</span>
+                  ) : (
+                    <span>
+                      {t('reservations.summary', {
+                        pcs: picked.map((id) => stations.find((s) => s.id === id)?.code ?? '').join(', '),
+                        time: fmt.time(startsAt!.toISOString()),
+                        name: customerName,
+                      })}
+                    </span>
+                  )}
+                </div>
+                <Button type="submit" variant="primary" loading={create.isPending} disabled={!!blocker}>
                   {t('reservations.book')}
                 </Button>
               </div>
             </form>
           )}
 
-          <div className="res__list" aria-live="polite">
-            <h3 className="res__h">{t('reservations.upcoming')}</h3>
+          <section className="rz__list" aria-live="polite">
+            <h3 className="rz__h">{t('reservations.upcoming')}</h3>
             {list.isLoading && <p className="muted">{t('common.loading')}</p>}
-            {!list.isLoading && groups.length === 0 && (
-              <p className="muted">{t('reservations.none')}</p>
-            )}
+            {!list.isLoading && groups.length === 0 && <p className="muted">{t('reservations.none')}</p>}
             {groups.map((g) => {
               const pcs = g.items.reduce((n, r) => n + r.stations.length, 0);
               return (
-                <section key={g.key} className="res__group">
-                  <header className="res__group-head">
-                    <Clock size={14} aria-hidden />
+                <div key={g.key} className="rz__group">
+                  <header className="rz__group-head">
                     <strong className="num">{fmt.time(g.startsAt)}</strong>
                     <span className="faint">{t('reservations.pcsForTime', { n: pcs })}</span>
                   </header>
@@ -317,12 +373,40 @@ export function ReservationsDialog({
                       busy={changeTolerance.isPending}
                     />
                   ))}
-                </section>
+                </div>
               );
             })}
-          </div>
+          </section>
         </div>
+
+        {canSettings && (
+          <div className="rz__settings">
+            <label className="rz__field">
+              <span>{t('reservations.defaultTolerance')}</span>
+              <span className="rz__inline">
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={tolerance}
+                  onChange={(e) => setTolerance(e.target.value)}
+                  aria-label={t('reservations.defaultTolerance')}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => saveTolerance.mutate(Number(tolerance))}
+                  loading={saveTolerance.isPending}
+                  disabled={!Number.isInteger(Number(tolerance)) || Number(tolerance) < 1 || Number(tolerance) > 60}
+                >
+                  {t('common.save')}
+                </Button>
+              </span>
+            </label>
+            <p className="faint rz__hint">{t('reservations.defaultToleranceHint')}</p>
+          </div>
+        )}
       </Dialog>
+
       {cancelling && (
         <ConfirmDialog
           open
@@ -358,52 +442,47 @@ function ReservationRow({
   const { t } = useI18n();
   const fmt = useFormat();
   const open = r.status === 'scheduled' || r.status === 'active';
-  const [minutes, setMinutes] = useState(String(r.toleranceMinutes));
-  useEffect(() => setMinutes(String(r.toleranceMinutes)), [r.toleranceMinutes]);
-  const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
+  const choices = TOLERANCE_CHOICES.includes(r.toleranceMinutes)
+    ? TOLERANCE_CHOICES
+    : [...TOLERANCE_CHOICES, r.toleranceMinutes].sort((a, b) => a - b);
   return (
-    <div className="res__row-item" data-status={r.status}>
-      <div className="res__who">
+    <div className="rz__row" data-status={r.status}>
+      <div className="rz__who-line">
         <strong>{r.customerName}</strong>
-        {r.phone && <span className="faint"> · {r.phone}</span>}
-        <span className="res__status">{t(`reservations.status.${r.status}`)}</span>
+        <span className="rz__status">{t(`reservations.status.${r.status}`)}</span>
       </div>
-      <div className="res__pcs-list">
+      <div className="rz__row-pcs">
         {r.stations.map((s) => (
-          <span key={s.stationId} className="res__hold" data-state={s.state}>
+          <span key={s.stationId} className="rz__hold" data-state={s.state}>
             {s.code} · {t(`reservations.hold.${s.state}`)}
           </span>
         ))}
       </div>
-      <div className="res__meta">
-        <span className="faint">
-          {t('reservations.windowUntil', { time: fmt.time(r.windowEndsAt) })}
-        </span>
+      <div className="rz__row-end">
+        <span className="faint num">{t('reservations.windowUntil', { time: fmt.time(r.windowEndsAt) })}</span>
         {open && canControl && (
-          <span className="res__edit">
-            <Input
-              type="number"
-              min={1}
-              max={60}
-              value={minutes}
-              onChange={(e) => setMinutes(e.target.value)}
-              aria-label={t('reservations.tolerance')}
-              style={{ width: 70 }}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!valid || Number(minutes) === r.toleranceMinutes || busy}
-              onClick={() => onTolerance(Number(minutes))}
-            >
-              {t('reservations.setTolerance')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onCancel} aria-label={t('reservations.cancelConfirm')}>
+          <>
+            <label className="rz__tol-pick">
+              <span className="sr-only">{t('reservations.tolerance')}</span>
+              <select
+                value={r.toleranceMinutes}
+                disabled={busy}
+                onChange={(e) => onTolerance(Number(e.target.value))}
+              >
+                {choices.map((m) => (
+                  <option key={m} value={m}>
+                    {m} min
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="rz__icon" onClick={onCancel} aria-label={t('reservations.cancelConfirm')} title={t('reservations.cancelConfirm')}>
               <Trash2 size={14} />
-            </Button>
-          </span>
+            </button>
+          </>
         )}
       </div>
     </div>
   );
 }
+

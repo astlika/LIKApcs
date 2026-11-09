@@ -403,6 +403,28 @@ textarea {
     display: none;
   }
 }
+/* 0.33.0 — phone-width admin: the topbar keeps the page's controls and drops the secondary chips. */
+@media (max-width: 760px) {
+  .topbar {
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .topbar__title {
+    min-width: 0;
+    max-width: 34vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar .quick-switch,
+  .topbar .status-pill,
+  .topbar .update-badge,
+  .topbar .kbd,
+  .topbar .badge {
+    display: none;
+  }
+}
 .content {
   position: relative; /* absolutely positioned descendants scroll with the page, never the window */
   flex: 1;

@@ -1170,6 +1170,10 @@ export const sq: Dictionary = {
     debtNote: 'Borxh: {amount} deri më {date}',
   },
   board: {
+    checkAll: 'Zgjidh të gjitha në këtë grup',
+    checkOne: 'Zgjidh {code}',
+    zoneSelect: 'Zgjidh këtë zonë',
+    more: 'Më shumë',
     view: 'Pamja',
     viewHint: {
       grid: 'Ikonat e PC-ve me gjendjen dhe rreshtin e shkurtër',
@@ -1250,6 +1254,16 @@ export const sq: Dictionary = {
     },
   },
   reservations: {
+    stepTime: 'Kur',
+    stepPcs: 'Cilat PC',
+    stepCustomer: 'Kush',
+    quickTimes: 'Orët e ardhshme',
+    otherTime: 'Një datë dhe orë tjetër',
+    freeAll: 'Të gjitha të lirat',
+    clearPcs: 'Pastro',
+    busyAt: 'E zënë',
+    summary: '{pcs} në orën {time} për {name}',
+    moreFields: 'Telefoni dhe shënime (opsionale)',
     button: 'Rezervimet',
     title: 'Rezervimet e PC-ve',
     defaultTolerance: 'Toleranca e parazgjedhur (minuta)',

@@ -94,6 +94,8 @@ export function AppShell() {
   const { theme, setTheme } = useTheme();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => storage.get('sidebarCollapsed') === '1');
+  // On a phone-width window the sidebar is an icon rail, so the page keeps its width (0.33.0).
+  const narrow = useNarrow(760);
   const [menuOpen, setMenuOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -370,7 +372,7 @@ export function AppShell() {
     .toUpperCase();
 
   return (
-    <div className="shell" data-collapsed={collapsed}>
+    <div className="shell" data-collapsed={collapsed || narrow}>
       <aside className="sidebar">
         <div className="sidebar__brand">
           <div className="brand-mark">LK</div>
@@ -612,4 +614,18 @@ export function AppShell() {
       />
     </div>
   );
+}
+
+/** True while the window is at most `maxWidth` px wide (a phone-sized window). */
+function useNarrow(maxWidth: number): boolean {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const update = () => setNarrow(mql.matches);
+    update();
+    mql.addEventListener('change', update);
+    return () => mql.removeEventListener('change', update);
+  }, [query]);
+  return narrow;
 }

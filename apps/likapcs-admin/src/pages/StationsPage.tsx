@@ -55,6 +55,7 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
 import { StationMap, type SelectModifiers } from '../components/stations/StationMap';
+import { ActionsBar } from '../components/stations/ActionsBar';
 import { LivePreviewCard, useLivePreview } from '../components/stations/LivePreview';
 import {
   intersects,
@@ -359,6 +360,24 @@ export function StationsPage() {
     [anchorId, displayOrder, selectedIds, selectedSet, setSelectedId],
   );
 
+  /** A group of PCs (a zone title, a list checkbox): plain = exactly these; toggle = add them,
+   *  or remove them when they are all selected already. */
+  const selectGroup = useCallback(
+    (ids: string[], mods: SelectModifiers) => {
+      setMenu(null);
+      if (ids.length === 0) return;
+      if (mods.toggle) {
+        const allIn = ids.every((id) => selectedSet.has(id));
+        setSelectedIds(allIn ? selectedIds.filter((id) => !ids.includes(id)) : unionIds(selectedIds, ids));
+        setAnchorId(ids[ids.length - 1] ?? null);
+        return;
+      }
+      setSelectedIds(ids);
+      setAnchorId(ids[0] ?? null);
+    },
+    [selectedIds, selectedSet],
+  );
+
   // Rubber-band selection: drag on the canvas background; tiles touching the box are selected
   // (Ctrl adds them to the current selection). A plain click on the background deselects.
   const hitTest = useCallback((x1: number, y1: number, x2: number, y2: number) => {
@@ -366,14 +385,14 @@ export function StationsPage() {
     if (!canvas) return [];
     const box = normalizeRect(x1, y1, x2, y2);
     const hits: string[] = [];
-    for (const el of canvas.querySelectorAll<HTMLElement>('.pc-tile[data-id]')) {
+    for (const el of canvas.querySelectorAll<HTMLElement>('[data-pc][data-id]')) {
       if (intersects(box, el.getBoundingClientRect())) hits.push(el.dataset.id!);
     }
     return hits;
   }, []);
   const onCanvasPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || e.pointerType === 'touch') return;
-    if ((e.target as HTMLElement).closest('.pc-tile')) return;
+    if ((e.target as HTMLElement).closest('[data-pc], [role="checkbox"], button, input, select, a, label')) return;
     // The start point is kept relative to the canvas so the box stays put if the page scrolls.
     const rc = e.currentTarget.getBoundingClientRect();
     drag.current = {
@@ -459,7 +478,7 @@ export function StationsPage() {
         return;
       if (!visible.length) return;
       // A focused tile handles Enter itself (see StationTile) — avoid running the action twice.
-      if (e.key === 'Enter' && target?.closest('.pc-tile')) return;
+      if (e.key === 'Enter' && target?.closest('[data-pc]')) return;
       const order = displayOrder;
       const idx = order.findIndex((s) => s.id === selectedId);
       const move = (delta: number) => {
@@ -472,13 +491,21 @@ export function StationsPage() {
         setAnchorId(id);
         setMenu(null);
         // Focus follows the selection so Enter / context-menu keys act on the highlighted PC.
-        document.querySelector<HTMLElement>(`.pc-tile[data-id="${CSS.escape(id)}"]`)?.focus();
+        document.querySelector<HTMLElement>(`[data-pc][data-id="${CSS.escape(id)}"]`)?.focus();
       };
       if (e.key === 'ArrowRight') move(1);
       else if (e.key === 'ArrowLeft') move(-1);
       else if (e.key === 'ArrowDown') move(perRow());
       else if (e.key === 'ArrowUp') move(-perRow());
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      else if (e.key === ' ' && target?.closest('[data-pc]')) {
+        // Space toggles the focused PC (the same as Ctrl+click), in every view.
+        e.preventDefault();
+        const id = target.closest<HTMLElement>('[data-pc]')!.dataset.id!;
+        const next = toggleId(selectedIds, id);
+        setSelectedIds(next.ids);
+        setAnchorId(next.anchor);
+        setMenu(null);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         setSelectedIds(order.map((s) => s.id));
         setAnchorId(selectedId ?? order[0]!.id);
@@ -493,13 +520,13 @@ export function StationsPage() {
     };
     const perRow = () => {
       const grid = document.querySelector('.pc-map__grid');
-      const tile = grid?.querySelector<HTMLElement>('.pc-tile');
+      const tile = grid?.querySelector<HTMLElement>('.pcg');
       if (!grid || !tile) return 1;
       return Math.max(1, Math.floor(grid.clientWidth / (tile.offsetWidth + 10)));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [visible, displayOrder, selectedId, selected, primary, run, setSelectedId]);
+  }, [visible, displayOrder, selectedId, selectedIds, selected, primary, run, setSelectedId]);
 
   useEffect(() => {
     if (!menu) return;
@@ -713,37 +740,12 @@ export function StationsPage() {
           {t('map.selectAll')}
         </Button>
         <MapHelp />
-        <div className="map-actions__buttons">
-          {actions
-            .filter((a) => a.bar)
-            .map((a) => {
-              const off = !selected || !a.enabled;
-              // A pressed action says so in words as well as in colour (screen readers, tooltips).
-              const title = off
-                ? (a.hint ?? a.label)
-                : a.pressed
-                  ? `${a.label} — ${t('map.endTasksPressed')}`
-                  : a.label;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  className="map-action"
-                  data-action={a.id}
-                  data-tone={a.tone}
-                  data-pressed={a.pressed ? 'true' : undefined}
-                  aria-pressed={a.pressed === undefined ? undefined : a.pressed}
-                  disabled={off || busy}
-                  title={title}
-                  onClick={() => run(a.id)}
-                >
-                  <a.icon size={20} />
-                  <span>{a.label}</span>
-                  {a.shortcut && selected && primary === a.id && <Kbd>{a.shortcut}</Kbd>}
-                </button>
-              );
-            })}
-        </div>
+        <ActionsBar
+          actions={actions.filter((a) => a.bar && a.enabled)}
+          primary={primary}
+          busy={busy}
+          onRun={run}
+        />
       </div>
 
       {stations.isLoading && <Loading />}
@@ -794,6 +796,7 @@ export function StationsPage() {
             groupByZone={groupByZone}
             view={view}
             onSelect={selectTile}
+            onSelectGroup={selectGroup}
             onPrimary={(id) => {
               // run() must see the newly selected station, so the primary action is
               // executed by the effect below once the selection has re-rendered.

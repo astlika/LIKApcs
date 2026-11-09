@@ -6,6 +6,20 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-09
+
+### Changed
+
+- **Stations (admin)**: every view (Grid, List, Compact, Detailed) selects PCs the same way: click, Ctrl/Cmd+click, Shift+click, a checkbox per PC, Space on the focused PC, Ctrl+A, Esc, rubber-band drag over the map, a click on a zone title, and **Select all PCs** (visible PCs only).
+- **Stations (admin)**: Grid cards are simpler: PC code, state tag, timer, bill line and badges. The timer and bill line appear only when they add information.
+- **Stations (admin)**: the action bar is one row: the selection, the main actions and **More ▾** for the rest. Only the actions that apply to the current selection are shown.
+- **Stations (admin)**: the reservations dialog works in three steps: **When** (quick hours or a date and time), **Which PCs** (PCs already booked for that hour are marked) and **Who** (customer and tolerance; phone and notes are optional). Coming reservations are grouped by hour, and cancelling asks for confirmation.
+- **Admin**: in a phone-width window (760 px or narrower) the sidebar becomes an icon rail and the topbar hides its secondary items (shift and server status, update badge, Live badge, shortcut hints).
+
+### Fixed
+
+- **Stations (admin)**: in List, Compact and Detailed views a click on a PC no longer clears the selection. Before 0.33.0 those views could not select a PC.
+
 ## [0.32.0] - 2026-10-09
 
 ### Added
