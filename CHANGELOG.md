@@ -6,6 +6,8 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-09
+
 ### Added
 
 - Reports (phone and tablet): a «Përmbledhja» (summary) tab for any date range. It shows turnover with VAT, net profit, expenses, the drawer (net and counted difference), the detail lines and a day-by-day list. New endpoint `GET /reports/summary`. Every figure comes from the report it is named after, and the integration test checks they agree.
