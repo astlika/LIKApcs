@@ -80,6 +80,7 @@ import type { DebtsService } from './debts.js';
 import type { WalletService } from './wallet.js';
 import type { TimeCreditsService } from './time-credits.js';
 import type { StationsService } from './stations.js';
+import type { ReservationsService } from './reservations.js';
 import { lockCustomers } from '../db/locks.js';
 
 interface SessionRow {
@@ -262,6 +263,12 @@ export class SessionsService {
   }
 
   /** Customer session requests (0.9.0) — wired after construction (the requests service quotes through us). */
+  private reservations: ReservationsService | null = null;
+  /** 0.32.0: a held PC needs the staff's confirmation (or the booked customer) to start. */
+  useReservations(reservations: ReservationsService): void {
+    this.reservations = reservations;
+  }
+
   private requests: SessionRequestsService | null = null;
   useRequests(requests: SessionRequestsService): void {
     this.requests = requests;
@@ -592,6 +599,19 @@ export class SessionsService {
         [req.stationId, 'active', 'paused'],
       );
       if (live.rowCount) throw conflict('A session is already running on this station');
+      // 0.32.0: a PC a reservation holds asks first (a warning, not a lock). The booked customer
+      // starts it straight away and uses up the hold; anyone else needs ignoreReservation.
+      const hold = (await this.reservations?.holdFor(client, req.stationId, now)) ?? null;
+      const bookedCustomer = Boolean(hold?.customerId && hold.customerId === req.customerId);
+      if (hold && !bookedCustomer && !req.ignoreReservation) {
+        throw new AppError(409, 'reservation_conflict', 'This PC is reserved', {
+          reservationId: hold.reservationId,
+          customerName: hold.customerName,
+          startsAt: hold.startsAt.toISOString(),
+          windowEndsAt: hold.windowEndsAt.toISOString(),
+          toleranceMinutes: hold.toleranceMinutes,
+        });
+      }
       // A customer session supersedes a staff maintenance unlock.
       await client.query(
         'UPDATE stations SET maintenance_until = NULL, maintenance_by = NULL, maintenance_by_name = NULL WHERE id = $1',
@@ -624,6 +644,7 @@ export class SessionsService {
       );
       const id = inserted.rows[0]!.id;
       await this.addEvent(client, id, 'created', actor, { billingMode: req.billingMode, quote });
+      if (hold) await this.reservations!.checkIn(client, req.stationId, hold.reservationId, id);
       if (req.creditId) {
         // 0.19.0: the minutes were paid at the till; this takes them from the credit, all or nothing.
         redeemed = await this.credits.redeem(client, {

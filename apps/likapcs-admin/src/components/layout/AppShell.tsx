@@ -61,6 +61,7 @@ import { CommandPalette } from './CommandPalette';
 import { LIKA_WEBSITE_URL } from '../../lib/desktop';
 import { RequestsBell } from '../requests/requests';
 import { LiveSaleNotifier } from '../live/LiveSaleNotifier';
+import { ReservationAlerts } from '../stations/ReservationAlerts';
 import { usePendingOrders } from '../orders/orders';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
@@ -460,6 +461,7 @@ export function AppShell() {
           </Button>
           <RequestsBell />
           <LiveSaleNotifier />
+          <ReservationAlerts />
 
           {cashStatus.isSuccess && (
             <Link

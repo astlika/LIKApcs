@@ -18,7 +18,9 @@ type Key =
   /** '1' when the desktop app should start in full screen (restored at launch). */
   | 'fullscreen'
   /** Admin version seen at the previous start — used to report a completed self-update. */
-  | 'lastVersion';
+  | 'lastVersion'
+  /** 0.32.0: the Stations layout (grid, list, compact, detailed) for this browser; the account copy is in preferences. */
+  | 'stationsView';
 
 export const storage = {
   get(key: Key): string | null {

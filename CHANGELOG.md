@@ -6,6 +6,15 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-09
+
+### Added
+
+- **Stations (admin)**: redesigned Gaming Stations board for internet cafés. Four views from **View ▼** next to the icon-size slider: Grid, List, Compact and Detailed. Each PC card shows its state (Active, Awaiting payment, Debt, Offline, Reserved), session time, products and total. Header figures: active, free, awaiting payment, debt, revenue today and products sold. Hovering a PC shows the customer, time, products, total and start time. The view is saved to the account.
+- **Stations (admin)**: PC reservations. Staff book one or more PCs for a time, with a tolerance (default 5 min, changeable per reservation). A reserved PC starts only after staff confirm. A reservation that is not checked in is released automatically after its tolerance. Warnings 10 min before and at the start (in-app toast and sound).
+- **Stations (admin)**: manual badges per PC (V.I.P, Tournament, Premium, Birthday).
+- **Server**: `GET/POST /reservations`, `POST /reservations/:id/cancel`, `PATCH /reservations/:id`; `409 reservation_conflict` when a start hits a held PC; `reservation.changed` push event.
+
 ## [0.31.0] - 2026-10-09
 
 ### Added

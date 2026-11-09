@@ -66,6 +66,7 @@ import { importRoutes } from './routes/imports.js';
 import { authRoutes } from './routes/auth.js';
 import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
+import { reservationRoutes } from './routes/reservations.js';
 import { looksRoutes } from './routes/looks.js';
 import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
@@ -78,6 +79,7 @@ import { UserPreferencesService } from './services/user-preferences.js';
 import { DashboardService } from './services/dashboard.js';
 import { DevicesService } from './services/devices.js';
 import { SettingsService } from './services/settings.js';
+import { ReservationsService } from './services/reservations.js';
 import { StationsService } from './services/stations.js';
 import { LooksService } from './services/looks.js';
 import { UsersService } from './services/users.js';
@@ -100,6 +102,7 @@ export interface Services {
   statements: StatementService;
   reports: ReportsService;
   live: LiveService;
+  reservations: ReservationsService;
   purchasing: PurchasingService;
   backups: BackupService;
   updates: UpdatesService;
@@ -179,6 +182,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const userPreferences = new UserPreferencesService(pool);
   const stations = new StationsService(pool, hub);
   const devices = new DevicesService(pool, hub, stations);
+  // 0.32.0: PC reservations (holds on PCs, released by the sweep below).
+  const reservations = new ReservationsService(pool, hub, settings, stations);
   // 0.20.0: per-PC looks, wallpapers and layout presets.
   const looks = new LooksService(
     pool,
@@ -219,6 +224,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     availablePackages: (stationId) => pricing.availablePackages(stationId),
   });
   sessions.useRequests(requests);
+  sessions.useReservations(reservations);
   sessions.useEndTasks((stationId, actor) => commands.endTasks(stationId, 'auto', actor));
   // A revoked PC cannot show an answer any more: its waiting request is cancelled.
   devices.onRevoked(async (stationId, _deviceId, actor) => {
@@ -306,6 +312,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     statements,
     reports,
     live,
+    reservations,
     purchasing,
     backups,
     updates,
@@ -388,6 +395,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(debtRoutes);
       await api.register(reportRoutes);
       await api.register(liveRoutes);
+      await api.register(reservationRoutes);
       await api.register(purchasingRoutes);
       await api.register(backupRoutes);
       await api.register(updateRoutes);
@@ -465,6 +473,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       void maintenance
         .sweep()
         .catch((err: unknown) => app.log.error({ err }, 'maintenance sweep failed'));
+      void reservations
+        .sweep()
+        .catch((err: unknown) => app.log.error({ err }, 'reservation sweep failed'));
     }, 5_000);
     dailyTimer = setInterval(
       () => {

@@ -9,6 +9,8 @@ import {
   type StationDeviceSummary,
   type StationMaintenance,
   type StationPendingRequest,
+  type StationBadge,
+  STATION_BADGES,
   type StationStatus,
   type StationLook,
   type StationSummary,
@@ -77,6 +79,15 @@ interface StationRow {
   orders_open_cents: string | number;
   awaiting_count: string | number;
   awaiting_cents: string | number;
+  badges: string[] | null;
+  hold_reservation_id: string | null;
+  hold_customer_name: string | null;
+  hold_starts_at: Date | null;
+  hold_window_end: Date | null;
+  hold_tolerance_minutes: number | null;
+  debt_cents: string | number | null;
+  debt_customer_name: string | null;
+  open_items: { name: string; quantity_milli: number; amount: number }[] | null;
 }
 
 const STATION_SELECT = `
@@ -105,7 +116,20 @@ const STATION_SELECT = `
            AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
          (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
            WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL
-           AND a.status IN ('expired', 'completed')) AS awaiting_cents
+           AND a.status IN ('expired', 'completed')) AS awaiting_cents,
+         s.badges,
+         hold.reservation_id AS hold_reservation_id, hold.customer_name AS hold_customer_name,
+         hold.starts_at AS hold_starts_at, hold.window_end AS hold_window_end,
+         hold.tolerance_minutes AS hold_tolerance_minutes,
+         CASE WHEN g.id IS NOT NULL THEN COALESCE(c.balance_due_cents, 0)
+              ELSE COALESCE(lc.balance_due_cents, 0) END AS debt_cents,
+         CASE WHEN g.id IS NOT NULL THEN c.name ELSE lc.name END AS debt_customer_name,
+         (SELECT COALESCE(json_agg(x ORDER BY x.amount DESC), '[]'::json) FROM (
+            SELECT oi.name, SUM(oi.quantity_milli)::bigint AS quantity_milli,
+                   SUM(oi.line_total_cents)::bigint AS amount
+              FROM station_orders o JOIN station_order_items oi ON oi.order_id = o.id
+             WHERE o.station_id = s.id AND o.status = 'accepted'
+             GROUP BY oi.name ORDER BY amount DESC LIMIT 12) x) AS open_items
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
@@ -113,7 +137,22 @@ const STATION_SELECT = `
     LEFT JOIN session_requests r ON r.station_id = s.id AND r.status = 'pending'
     LEFT JOIN customers rc ON rc.id = r.customer_id
     LEFT JOIN gaming_packages rp ON rp.id = r.package_id
-    LEFT JOIN users ua ON ua.id = s.archived_by`;
+    LEFT JOIN users ua ON ua.id = s.archived_by
+    -- 0.32.0: the reservation holding this PC now (inside its tolerance window).
+    LEFT JOIN LATERAL (
+      SELECT rv.id AS reservation_id, rv.customer_name, rv.starts_at, rv.tolerance_minutes,
+             rv.starts_at + rv.tolerance_minutes * interval '1 minute' AS window_end
+        FROM reservation_stations rs JOIN reservations rv ON rv.id = rs.reservation_id
+       WHERE rs.station_id = s.id AND rs.state = 'held' AND rv.status IN ('scheduled', 'active')
+         AND now() < rv.starts_at + rv.tolerance_minutes * interval '1 minute'
+       ORDER BY rv.starts_at LIMIT 1
+    ) hold ON TRUE
+    -- 0.32.0: the customer whose debt the PC shows: the running session's, else the last ended one.
+    LEFT JOIN LATERAL (
+      SELECT c2.name, c2.balance_due_cents FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
+       WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
+       ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1
+    ) lc ON TRUE`;
 
 /** Live session summary for the station grid (server clock; the PC only mirrors it). */
 function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
@@ -253,6 +292,28 @@ export class StationsService {
         pending: Number(row.orders_pending ?? 0),
         openCount: Number(row.orders_open_count ?? 0),
         openCents: Number(row.orders_open_cents ?? 0),
+        items: (row.open_items ?? []).map((i) => ({
+          name: i.name,
+          quantityMilli: Number(i.quantity_milli),
+          amountCents: Number(i.amount),
+        })),
+      },
+      badges: (row.badges ?? []).filter((b): b is StationBadge =>
+        (STATION_BADGES as readonly string[]).includes(b),
+      ),
+      reservation:
+        row.hold_reservation_id && row.hold_starts_at && row.hold_window_end
+          ? {
+              reservationId: row.hold_reservation_id,
+              customerName: row.hold_customer_name ?? '',
+              startsAt: row.hold_starts_at.toISOString(),
+              windowEndsAt: row.hold_window_end.toISOString(),
+              toleranceMinutes: row.hold_tolerance_minutes ?? 0,
+            }
+          : null,
+      debt: {
+        cents: Number(row.debt_cents ?? 0),
+        customerName: row.debt_customer_name ?? null,
       },
       awaitingPayment: {
         count: Number(row.awaiting_count ?? 0),
@@ -334,6 +395,30 @@ export class StationsService {
       `${STATION_SELECT}${where} ORDER BY s.sort_order, s.number`,
     );
     return result.rows.map((r) => this.mapRow(r));
+  }
+
+  /** 0.32.0: the staff's manual badges for a PC (V.I.P, tournament, premium, birthday). */
+  async setBadges(
+    id: string,
+    badges: StationBadge[],
+    actor: AuditActor,
+  ): Promise<StationSummary> {
+    const unique = [...new Set(badges)];
+    await withTransaction(this.pool, async (client) => {
+      const updated = await client.query(
+        'UPDATE stations SET badges = $2, updated_at = now() WHERE id = $1',
+        [id, unique],
+      );
+      if (updated.rowCount === 0) throw notFound('Station');
+      await recordAudit(client, actor, {
+        action: 'station.badges',
+        entityType: 'station',
+        entityId: id,
+        details: { badges: unique },
+      });
+    });
+    await this.broadcastStation(id);
+    return this.getById(id);
   }
 
   async getById(id: string, db: Queryable = this.pool): Promise<StationSummary> {

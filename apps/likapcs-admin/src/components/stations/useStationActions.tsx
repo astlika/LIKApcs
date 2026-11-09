@@ -54,6 +54,7 @@ import {
 import { api, ApiError } from '../../lib/api';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
+import { clockLabel } from '../../lib/station-board';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
 import { assignCredits } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
@@ -143,6 +144,12 @@ type Flow =
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
   | null;
+
+/** 0.32.0: a start refused because a reservation holds the PC; `retry` starts it once confirmed. */
+interface ReservationConflict {
+  details: { customerName: string; startsAt: string; toleranceMinutes: number };
+  retry: () => void;
+}
 
 export function useStationActions(
   station: StationSummary | null,
@@ -1019,19 +1026,52 @@ function SessionFlow({
 // ─── Quick start: one click on "open time" or a package ────────────────────────
 const QUICK = [30, 60, 120];
 
-export function QuickStartDialog({
-  station,
-  others = [],
-  onClose,
-  onStarted,
-}: {
+type QuickStartProps = {
   station: StationSummary;
   /** Further PCs that get the same choice (multi-selection); each is billed by its own rule. */
   others?: StationSummary[];
   onClose: () => void;
   /** The single start's result (to show the "paid" dialog); undefined for bulk starts. */
   onStarted: (result?: SessionMutationResponse) => void;
-}) {
+};
+
+/** 0.32.0: a start refused because a reservation holds the PC asks the staff to confirm first. */
+export function QuickStartDialog(props: QuickStartProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const [conflict, setConflict] = useState<ReservationConflict | null>(null);
+  return (
+    <>
+      <QuickStartBody {...props} onReservationConflict={setConflict} />
+      {conflict && (
+        <ConfirmDialog
+          open
+          title={t('reservations.conflictTitle', { code: props.station.code })}
+          body={t('reservations.conflictBody', {
+            name: conflict.details.customerName,
+            time: clockLabel(conflict.details.startsAt, fmt.timeZone),
+            minutes: conflict.details.toleranceMinutes,
+          })}
+          confirmLabel={t('reservations.conflictConfirm')}
+          onClose={() => setConflict(null)}
+          onConfirm={() => {
+            const retry = conflict.retry;
+            setConflict(null);
+            retry();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function QuickStartBody({
+  station,
+  others = [],
+  onClose,
+  onStarted,
+  onReservationConflict,
+}: QuickStartProps & { onReservationConflict: (c: ReservationConflict | null) => void }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
@@ -1187,6 +1227,18 @@ export function QuickStartDialog({
     },
     onError: (err, vars) => {
       setRequestId(crypto.randomUUID());
+      if (err instanceof ApiError && err.code === 'reservation_conflict') {
+        const d = (err.details ?? {}) as Partial<ReservationConflict['details']>;
+        onReservationConflict({
+          details: {
+            customerName: d.customerName ?? '',
+            startsAt: d.startsAt ?? new Date().toISOString(),
+            toleranceMinutes: d.toleranceMinutes ?? 5,
+          },
+          retry: () => start.mutate({ ...vars, body: { ...vars.body, ignoreReservation: true } }),
+        });
+        return;
+      }
       if (shiftGuard.handle(err, () => start.mutate(vars))) return;
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },

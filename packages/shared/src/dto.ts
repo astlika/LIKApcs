@@ -164,12 +164,15 @@ export const userPreferencesSchema = z.object({
   theme: z.enum(USER_THEMES).default('dark'),
   textSize: z.enum(USER_TEXT_SIZES).default('normal'),
   language: z.enum(USER_LANGUAGES).default('sq'),
+  /** 0.32.0: the stations board layout the account last picked (View ▼). */
+  stationsView: z.enum(['grid', 'list', 'compact', 'detailed']).default('grid'),
 });
 export type UserPreferences = z.infer<typeof userPreferencesSchema>;
 export const userPreferencesPatchSchema = z.object({
   theme: z.enum(USER_THEMES).optional(),
   textSize: z.enum(USER_TEXT_SIZES).optional(),
   language: z.enum(USER_LANGUAGES).optional(),
+  stationsView: z.enum(['grid', 'list', 'compact', 'detailed']).optional(),
 });
 export type UserPreferencesPatch = z.infer<typeof userPreferencesPatchSchema>;
 
@@ -319,6 +322,12 @@ export interface StationSummary {
   awaitingPayment: { count: number; amountCents: number };
   /** Archive PC (0.17.0): set once the station left the floor; it keeps its money history. */
   archived: StationArchive | null;
+  /** 0.32.0: manual badges set by staff (V.I.P, tournament, premium, birthday). */
+  badges: StationBadge[];
+  /** 0.32.0: the reservation that holds this PC now (scheduled, or inside its tolerance); null otherwise. */
+  reservation: StationReservationHold | null;
+  /** 0.32.0: money the customer tied to this PC owes: the running session's, else the last session's. */
+  debt: { cents: number; customerName: string | null };
   /** 0.20.0: this PC's own look overrides (null = house setting). */
   look: StationLook;
   /** 0.20.0: this PC's lock-screen wallpaper (a server path under /api/v1), or null. */
@@ -342,7 +351,30 @@ export interface StationOrdersSummary {
   /** Accepted "on the bill" orders not yet settled (count / amount). */
   openCount: number;
   openCents: number;
+  /** 0.32.0: the open products of this PC, merged by name (largest amount first, at most 12). */
+  items: StationOrderLine[];
 }
+
+/** 0.32.0: one product line of a PC's open bill. */
+export interface StationOrderLine {
+  name: string;
+  quantityMilli: number;
+  amountCents: number;
+}
+
+/** 0.32.0: the reservation that holds a PC (see StationSummary.reservation). */
+export interface StationReservationHold {
+  reservationId: string;
+  customerName: string;
+  /** Booked start (ISO). Before it the PC shows "reserved for 20:00"; after it, the tolerance countdown. */
+  startsAt: string;
+  /** startsAt + tolerance: after this moment the hold is released. */
+  windowEndsAt: string;
+  toleranceMinutes: number;
+}
+
+export const STATION_BADGES = ['vip', 'tournament', 'premium', 'birthday'] as const;
+export type StationBadge = (typeof STATION_BADGES)[number];
 
 export interface StationMaintenance {
   until: string;
@@ -466,6 +498,8 @@ export interface DashboardSummary {
     gamingCents: number;
     refundsCents: number;
   };
+  /** 0.32.0: product units sold today (gross, before refunds). */
+  productUnitsSold: number;
   purchasesCents: number;
   expensesCents: number;
   costOfGoodsSoldCents: number;
@@ -712,6 +746,8 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   requestId: z.string().uuid().optional(),
   /** 0.19.0: start with minutes from a time credit sold for this PC (prepaid, minutes only). */
   creditId: z.string().uuid().optional(),
+  /** 0.32.0: the staff confirmed starting on a PC that a reservation holds (see reservation_conflict). */
+  ignoreReservation: z.boolean().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
 
@@ -3907,3 +3943,67 @@ export interface LiveSnapshot {
   topProducts: { name: string; quantityMilli: number; amountCents: number; profitCents: number }[];
   feed: LiveSale[];
 }
+
+// ─── 0.32.0: station reservations ────────────────────────────────────────────
+export const RESERVATION_STATUSES = [
+  'scheduled',
+  'active',
+  'completed',
+  'expired',
+  'cancelled',
+] as const;
+export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
+
+/** held: the PC waits for the customer; checked_in: a session started; released: tolerance passed or cancelled. */
+export const RESERVATION_HOLD_STATES = ['held', 'checked_in', 'released'] as const;
+export type ReservationHoldState = (typeof RESERVATION_HOLD_STATES)[number];
+
+export interface ReservationStationSummary {
+  stationId: string;
+  code: string;
+  number: number;
+  state: ReservationHoldState;
+}
+
+export interface ReservationSummary {
+  id: string;
+  startsAt: string;
+  toleranceMinutes: number;
+  windowEndsAt: string;
+  status: ReservationStatus;
+  customerId: string | null;
+  customerName: string;
+  phone: string | null;
+  notes: string | null;
+  stations: ReservationStationSummary[];
+  createdByName: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  cancelledAt: string | null;
+}
+
+export const createReservationSchema = z.object({
+  stationIds: z.array(uuidSchema).min(1).max(24),
+  startsAt: z.string().datetime({ offset: true }),
+  /** Minutes the customer may be late; defaults to the house setting (reservations.tolerance_minutes). */
+  toleranceMinutes: z.number().int().min(1).max(60).optional(),
+  customerId: uuidSchema.optional(),
+  customerName: z.string().trim().min(1).max(80),
+  phone: z.string().trim().max(40).optional(),
+  notes: z.string().trim().max(500).optional(),
+});
+export type CreateReservationRequest = z.infer<typeof createReservationSchema>;
+
+/** Changes the tolerance of a reservation that has not finished yet. */
+export const updateReservationSchema = z.object({
+  toleranceMinutes: z.number().int().min(1).max(60),
+});
+
+export const reservationListQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+});
+
+export const stationBadgesSchema = z.object({
+  badges: z.array(z.enum(STATION_BADGES)).max(STATION_BADGES.length),
+});

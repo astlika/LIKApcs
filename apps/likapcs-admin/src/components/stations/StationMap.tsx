@@ -1,318 +1,141 @@
 /**
- * PanCafe-style floor map: every station is a PC icon whose screen colour is its live state, with
- * the station number on the screen and the running timer / amount underneath. One click selects,
- * Ctrl+click adds/removes, Shift+click selects a range, double-click (or Enter) runs the primary
- * action, right-click opens the action menu. Rubber-band selection lives in the page (it needs
- * the scrolling canvas).
+ * The stations floor. Four views of the same PCs (0.32.0): Grid (the PC icons, each a card with its
+ * state, timer and bill line), List (one row per PC), Compact (as many PCs as fit) and Detailed
+ * (a full card per PC). One click selects, Ctrl+click adds/removes, Shift+click selects a range,
+ * double-click (or Enter) runs the primary action, right-click opens the action menu. Rubber-band
+ * selection lives in the page (it needs the scrolling canvas).
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { Bell, Hourglass } from 'lucide-react';
-import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
-import { formatHms, projectSession } from '../../lib/session-time';
+import type { StationSummary } from '@likapcs/shared';
+import { formatHms } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useNow } from '../sessions/SessionPanel';
 import { mapOrder } from '../../lib/map-selection';
+import {
+  countdownLabel,
+  describeStation,
+  shortLineParts,
+  type BoardView,
+} from '../../lib/station-board';
+import {
+  BadgePills,
+  PcIcon,
+  StateTag,
+  usePcEvents,
+  type SelectModifiers,
+  type TileHandlers,
+} from './StationBits';
+import { StationCompact, StationDetailed, StationList } from './StationViews';
 
-export type MapStatus = StationStatus | 'expiring';
+export { modifiersOf, PcIcon, type SelectModifiers } from './StationBits';
 
-/** Modifier keys held while clicking a tile (Ctrl/Cmd toggles, Shift selects a range). */
-export interface SelectModifiers {
-  toggle: boolean;
-  range: boolean;
-  /** Right-click: keep an existing multi-selection the tile is part of. */
-  keep?: boolean;
+export interface PcItemProps {
+  station: StationSummary;
+  fetchedAt: number;
+  selected: boolean;
+  handlers: TileHandlers;
 }
 
-export const modifiersOf = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => ({
-  toggle: e.ctrlKey || e.metaKey,
-  range: e.shiftKey,
-});
-
-/** Resolve the colour-state shown on the icon (adds "expiring" for prepaid sessions < 5 min). */
-export function mapStatus(station: StationSummary, remaining: number | null): MapStatus {
-  if (!station.isEnabled) return 'disabled';
-  if (station.activeSession && station.activeSession.status === 'paused') return 'paused';
-  if (station.activeSession && remaining !== null && remaining <= 300) return 'expiring';
-  return station.status;
-}
-
-export function PcIcon({
-  status,
-  number,
-  size,
-}: {
-  status: MapStatus;
-  number: number;
-  size: number;
-}) {
-  const fontSize = number >= 100 ? 15 : 19;
-  return (
-    <svg
-      className="pc-icon"
-      data-status={status}
-      width={size}
-      height={size * 0.88}
-      viewBox="0 0 64 56"
-      aria-hidden
-    >
-      <rect className="pc-icon__screen" x="2" y="2" width="60" height="40" rx="5" />
-      <rect className="pc-icon__glass" x="5" y="5" width="54" height="34" rx="3" />
-      {status === 'offline' || status === 'disabled' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <path d="M-9 -5 L9 5 M-9 5 L9 -5" strokeWidth="2.5" strokeLinecap="round" />
-        </g>
-      ) : status === 'paused' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <rect x="-7" y="-7" width="5" height="14" rx="1" />
-          <rect x="2" y="-7" width="5" height="14" rx="1" />
-        </g>
-      ) : status === 'locked' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <rect x="-7" y="-2" width="14" height="10" rx="2" />
-          <path d="M-4 -2 V-5 a4 4 0 0 1 8 0 V-2" fill="none" strokeWidth="2.2" />
-        </g>
-      ) : status === 'maintenance' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <path
-            d="M-7 7 L1 -1 M1 -1 a4 4 0 1 0 4 -4 l-2 2 -2 -2 2 -2 a4 4 0 0 0 -4 4 z"
-            fill="none"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </g>
-      ) : null}
-      <text
-        className="pc-icon__number"
-        x="32"
-        y={
-          status === 'paused' ||
-          status === 'offline' ||
-          status === 'disabled' ||
-          status === 'locked' ||
-          status === 'maintenance'
-            ? 37
-            : 28
-        }
-        textAnchor="middle"
-        fontSize={
-          status === 'paused' ||
-          status === 'offline' ||
-          status === 'disabled' ||
-          status === 'locked' ||
-          status === 'maintenance'
-            ? 9
-            : fontSize
-        }
-        fontWeight={700}
-      >
-        {String(number).padStart(2, '0')}
-      </text>
-      <rect className="pc-icon__frame" x="27" y="43" width="10" height="6" />
-      <rect className="pc-icon__frame" x="18" y="49" width="28" height="4" rx="2" />
-      {status === 'occupied' || status === 'expiring' ? (
-        <circle className="pc-icon__led" cx="32" cy="41" r="1.2" />
-      ) : null}
-    </svg>
-  );
-}
-
+/** The grid card: the PC icon, its code and name, the state line, badges and the reservation countdown. */
 export function StationTile({
   station,
   fetchedAt,
   selected,
   size,
-  onSelect,
-  onPrimary,
-  onMenu,
-  onHover,
-}: {
-  station: StationSummary;
-  fetchedAt: number;
-  selected: boolean;
-  size: number;
-  onSelect: (mods: SelectModifiers) => void;
-  /** Mouse rests on the tile (after a short delay): the tile's rectangle; null when it leaves. */
-  onHover?: (rect: DOMRect | null) => void;
-  onPrimary: () => void;
-  onMenu: (x: number, y: number) => void;
-}) {
-  const { t, td } = useI18n();
+  handlers,
+}: PcItemProps & { size: number }) {
+  const { t } = useI18n();
   const fmt = useFormat();
   const now = useNow();
-  const hoverTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
-  const live = station.activeSession;
-  const projected = live
-    ? projectSession(
-        {
-          status: live.status,
-          billableSeconds: live.elapsedSeconds,
-          endsAt: live.endsAt,
-          pausedAt: live.pausedAt,
-        },
-        fetchedAt,
-        now,
-      )
-    : null;
-  const status = mapStatus(station, projected?.remaining ?? null);
-  const plannedSeconds =
-    live?.endsAt && live.startedAt
-      ? Math.max(1, (new Date(live.endsAt).getTime() - new Date(live.startedAt).getTime()) / 1000)
-      : null;
-  const fraction =
-    projected && projected.remaining !== null && plannedSeconds
-      ? Math.min(1, Math.max(0, projected.remaining / plannedSeconds))
-      : null;
+  const view = describeStation(station, fetchedAt, now);
+  const events = usePcEvents(handlers);
   const compact = size < 88;
+  const tz = fmt.timeZone;
+  const line = shortLineParts(
+    view,
+    {
+      state: t(`board.state.${view.state}`),
+      hold: t('board.holdLabel'),
+      debt: t('board.state.debt'),
+      awaiting: t('board.state.awaiting'),
+    },
+    fmt.money,
+    tz,
+  );
+  const stateLabel = t(`board.state.${view.state}`);
   return (
     <div
-      className={compact ? 'pc-tile pc-tile--line' : 'pc-tile'}
+      className={compact ? 'pc-tile pc-tile--line' : 'pc-tile pc-card-grid'}
       data-id={station.id}
-      data-status={status}
+      data-status={view.state}
+      data-state={view.state}
       data-archived={station.archived ? 'true' : undefined}
       data-selected={selected || undefined}
-      role="button"
-      tabIndex={0}
       aria-pressed={selected}
-      aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
+      aria-label={`${station.code} — ${stateLabel}`}
       style={compact ? undefined : { width: size + 24 }}
-      onClick={(e) => onSelect(modifiersOf(e))}
-      onMouseEnter={(e) => {
-        if (!onHover) return;
-        const el = e.currentTarget;
-        window.clearTimeout(hoverTimer.current);
-        hoverTimer.current = window.setTimeout(() => onHover(el.getBoundingClientRect()), 300);
-      }}
-      onMouseLeave={() => {
-        window.clearTimeout(hoverTimer.current);
-        onHover?.(null);
-      }}
-      onDoubleClick={(e) => {
-        e.preventDefault();
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-        onPrimary();
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        // Right-click keeps a multi-selection the tile belongs to (the page decides).
-        onSelect({ toggle: false, range: false, keep: true });
-        onMenu(e.clientX, e.clientY);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          onPrimary();
-        } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-          e.preventDefault();
-          const r = e.currentTarget.getBoundingClientRect();
-          onMenu(r.left + r.width / 2, r.top + r.height / 2);
-        }
-      }}
+      {...events}
     >
       {!compact && (
         <>
-          <PcIcon status={status} number={station.number} size={size} />
+          <PcIcon status={view.state} number={station.number} size={size} />
           {station.pendingRequest && (
             <span
               className="pc-tile__request"
-              title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
+              title={`${station.pendingRequest.customerName} · ${station.pendingRequest.durationMinutes} min`}
               data-testid="tile-request"
             >
               <Bell size={10} />
-              {compact ? '' : t('requests.tile')}
+              {t('requests.tile')}
             </span>
           )}
-          {station.awaitingPayment.count > 0 && (
+          {view.awaitingCount > 0 && (
             <span
               className="pc-tile__awaiting"
-              title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
+              title={`${t('sessions.awaiting.title')} · ${fmt.money(view.awaitingCents)}`}
               data-testid="tile-awaiting"
             >
               <Hourglass size={10} />
-              {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
+              {fmt.money(view.awaitingCents)}
             </span>
           )}
           <div className="pc-tile__code">{station.code}</div>
-          {!compact && station.name !== station.code && (
-            <div className="pc-tile__name">{station.name}</div>
+          {station.name !== station.code && <div className="pc-tile__name">{station.name}</div>}
+          <div className="pc-tile__line" data-state={view.state}>
+            {line.join(' • ')}
+          </div>
+          <BadgePills badges={view.badges} reserved={!!view.hold} compact />
+          {view.hold?.phase === 'window' && view.hold.windowSeconds !== null && (
+            <div className="pc-tile__deadline" data-testid="tile-deadline">
+              <Hourglass size={11} aria-hidden /> {t('board.deadline', { time: countdownLabel(view.hold.windowSeconds) })}
+            </div>
           )}
-          {live && projected ? (
-            <>
-              <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
-                {projected.remaining !== null
-                  ? formatHms(projected.remaining)
-                  : formatHms(projected.elapsed)}
-              </div>
-              {!compact && (
-                <div className="pc-tile__meta">
-                  <span className="num">{fmt.money(live.currentPriceCents)}</span>
-                  {live.customerName && (
-                    <span className="pc-tile__customer">{live.customerName}</span>
-                  )}
-                </div>
-              )}
-              {fraction !== null && (
-                <div className="pc-tile__bar" aria-hidden>
-                  <span style={{ width: `${fraction * 100}%` }} />
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="pc-tile__state">
-              {station.archived
-                ? t('stations.archived')
-                : td(
-                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
-                    station.status,
-                  )}
-              {station.isEnabled &&
-                station.status === 'available' &&
-                !station.device &&
-                !compact && <span className="faint"> · {t('stations.noDevice')}</span>}
-              {station.status === 'maintenance' && station.maintenance && !compact && (
-                <span className="faint">
-                  {' '}
-                  · {station.maintenance.byName ?? '—'} ·{' '}
-                  {formatHms(
-                    Math.max(
-                      0,
-                      Math.round(
-                        (new Date(station.maintenance.until).getTime() - Date.now()) / 1000,
-                      ),
-                    ),
-                  )}
-                </span>
-              )}
+          {view.fraction !== null && (
+            <div className="pc-tile__bar" aria-hidden>
+              <span style={{ width: `${view.fraction * 100}%` }} />
             </div>
           )}
         </>
       )}
       {compact && (
         <>
-          {/* 0.19.1 (item 4): at small icon sizes the tile is one line: dot, code, timer or state. */}
-          <span className="pc-tile__pip" data-status={status} aria-hidden />
+          {/* At small icon sizes the PC is one line: dot, code, timer or state. */}
+          <span className="pc-tile__pip" data-status={view.state} aria-hidden />
           <span className="pc-tile__code">{station.code}</span>
-          <span className="pc-tile__line-state num" data-warn={status === 'expiring' || undefined}>
-            {live && projected
-              ? formatHms(projected.remaining !== null ? projected.remaining : projected.elapsed)
-              : station.archived
-                ? t('stations.archived')
-                : td(
-                    `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
-                    station.status,
-                  )}
+          <span className="pc-tile__line-state num" data-warn={view.state === 'expiring' || undefined}>
+            {view.timerSeconds !== null
+              ? formatHms(view.timerSeconds)
+              : view.hold
+                ? t('board.holdLabel')
+                : stateLabel}
           </span>
           {station.pendingRequest && (
             <Bell size={10} aria-label={t('requests.tile')} data-testid="tile-request" />
           )}
-          {station.awaitingPayment.count > 0 && (
-            <Hourglass
-              size={10}
-              aria-label={t('sessions.awaiting.title')}
-              data-testid="tile-awaiting"
-            />
+          {view.awaitingCount > 0 && (
+            <Hourglass size={10} aria-label={t('sessions.awaiting.title')} data-testid="tile-awaiting" />
           )}
         </>
       )}
@@ -326,6 +149,7 @@ export function StationMap({
   selectedIds,
   size,
   groupByZone,
+  view,
   onSelect,
   onPrimary,
   onMenu,
@@ -336,6 +160,7 @@ export function StationMap({
   selectedIds: ReadonlySet<string>;
   size: number;
   groupByZone: boolean;
+  view: BoardView;
   onSelect: (id: string, mods: SelectModifiers) => void;
   onPrimary: (id: string) => void;
   onMenu: (id: string, x: number, y: number) => void;
@@ -351,30 +176,40 @@ export function StationMap({
     [stations, groupByZone],
   );
 
+  const handlersFor = (id: string): TileHandlers => ({
+    onSelect: (mods) => onSelect(id, mods),
+    onPrimary: () => onPrimary(id),
+    onMenu: (x, y) => onMenu(id, x, y),
+    onHover: onHover ? (rect) => onHover(id, rect) : undefined,
+  });
+
   return (
-    <div className="pc-map">
-      {groups.map((g) => (
-        <section key={g.zone ?? '__none'} className="pc-map__zone">
-          {groupByZone && groups.length > 1 && (
-            <h3 className="pc-map__zone-title">{g.zone ?? t('stations.zoneNone')}</h3>
-          )}
-          <div className="pc-map__grid">
-            {g.items.map((s) => (
-              <StationTile
-                key={s.id}
-                station={s}
-                fetchedAt={fetchedAt}
-                selected={selectedIds.has(s.id)}
-                size={size}
-                onSelect={(mods) => onSelect(s.id, mods)}
-                onPrimary={() => onPrimary(s.id)}
-                onMenu={(x, y) => onMenu(s.id, x, y)}
-                onHover={onHover ? (rect) => onHover(s.id, rect) : undefined}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+    <div className="pc-map" data-view={view}>
+      {groups.map((g) => {
+        const items = g.items.map((s) => ({
+          station: s,
+          fetchedAt,
+          selected: selectedIds.has(s.id),
+          handlers: handlersFor(s.id),
+        }));
+        return (
+          <section key={g.zone ?? '__none'} className="pc-map__zone">
+            {groupByZone && groups.length > 1 && (
+              <h3 className="pc-map__zone-title">{g.zone ?? t('stations.zoneNone')}</h3>
+            )}
+            {view === 'grid' && (
+              <div className="pc-map__grid">
+                {items.map((item) => (
+                  <StationTile key={item.station.id} {...item} size={size} />
+                ))}
+              </div>
+            )}
+            {view === 'list' && <StationList items={items} />}
+            {view === 'compact' && <StationCompact items={items} />}
+            {view === 'detailed' && <StationDetailed items={items} />}
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -8,7 +8,12 @@ import { setLanguage } from './i18n';
  * username; this file applies them to the page and keeps a copy on the phone so the login
  * screen uses the same look before anyone has signed in.
  */
-export const DEFAULT_PREFS: UserPreferences = { theme: 'dark', textSize: 'normal', language: 'sq' };
+export const DEFAULT_PREFS: UserPreferences = {
+  theme: 'dark',
+  textSize: 'normal',
+  language: 'sq',
+  stationsView: 'grid',
+};
 const CACHE_KEY = 'likapcs-phone-prefs';
 
 export function cachedPrefs(): UserPreferences {

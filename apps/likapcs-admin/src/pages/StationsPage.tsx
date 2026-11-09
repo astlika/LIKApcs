@@ -12,6 +12,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
+  CalendarClock,
+  Sparkles,
   ArchiveRestore,
   Check,
   ChevronDown,
@@ -67,6 +69,12 @@ import { useStationActions } from '../components/stations/useStationActions';
 import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
 import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
 import { storage } from '../lib/storage';
+import { BoardStatsBar, HoverInfo, ViewMenu } from '../components/stations/BoardHeader';
+import { ReservationsDialog } from '../components/stations/ReservationsDialog';
+import { BadgesDialog } from '../components/stations/BadgesDialog';
+import { useBoardView } from '../components/stations/useBoardView';
+import { toIsoDate, type DashboardSummary, type ReservationSummary } from '@likapcs/shared';
+import '../styles/stations-board.css';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
@@ -149,6 +157,30 @@ export function StationsPage() {
     refetchInterval: 20_000,
   });
   const [connectOpen, setConnectOpen] = useState(false);
+  // 0.32.0: the board: layout (View ▼), the reservations and the badges of a PC.
+  const [view, setView] = useBoardView();
+  const [reservationsOpen, setReservationsOpen] = useState(false);
+  const [badgesFor, setBadgesFor] = useState<string | null>(null);
+  const fmt = useFormat();
+  const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  const canSettings = can(PERMISSIONS.SETTINGS_MANAGE);
+  const reservations = useQuery({
+    queryKey: ['reservations'],
+    queryFn: () => api<{ items: ReservationSummary[] }>('/reservations'),
+    enabled: can(PERMISSIONS.STATIONS_VIEW),
+    refetchInterval: 15_000,
+  });
+  const openReservations = (reservations.data?.items ?? []).filter(
+    (r) => r.status === 'scheduled' || r.status === 'active',
+  ).length;
+  const dashboardDate = toIsoDate(new Date(), { timeZone: fmt.timeZone });
+  const dashboard = useQuery({
+    queryKey: ['dashboard', dashboardDate],
+    queryFn: () =>
+      api<DashboardSummary>('/dashboard/summary', { query: { date: dashboardDate } }),
+    enabled: can(PERMISSIONS.DASHBOARD_VIEW),
+    refetchInterval: 30_000,
+  });
   const pending = useQuery({
     queryKey: ['devices', 'pending'],
     queryFn: () => api<StationDeviceSummary[]>('/devices', { query: { status: 'pending' } }),
@@ -506,6 +538,11 @@ export function StationsPage() {
 
   return (
     <div className="map-page">
+      <BoardStatsBar
+        stations={list}
+        dashboard={dashboard.data}
+        loading={dashboard.isFetching && !dashboard.data}
+      />
       <div className="map-toolbar">
         <div className="map-legend" aria-label={t('stations.subtitle', counts)}>
           {legendPill('available', counts.available, t('map.free'))}
@@ -533,6 +570,7 @@ export function StationsPage() {
         {zones.length > 0 && (
           <Switch checked={groupByZone} onChange={toggleGroup} label={t('map.groupZones')} />
         )}
+        <ViewMenu value={view} onChange={setView} />
         <label className="map-zoom" title={t('map.iconSize')}>
           <Monitor size={13} />
           <input
@@ -546,6 +584,12 @@ export function StationsPage() {
           />
           <Monitor size={18} />
         </label>
+        {can(PERMISSIONS.STATIONS_VIEW) && (
+          <Button onClick={() => setReservationsOpen(true)} data-testid="reservations-open">
+            <CalendarClock size={16} /> {t('reservations.button')}
+            {openReservations > 0 && <Badge tone="info">{openReservations}</Badge>}
+          </Button>
+        )}
         {canDevices && (pending.data?.length ?? 0) > 0 && (
           <Button variant="primary" onClick={() => setPendingOpen(true)}>
             <Cpu size={16} /> {t('stations.pendingTitle')}{' '}
@@ -748,6 +792,7 @@ export function StationsPage() {
             selectedIds={selectedSet}
             size={iconSize}
             groupByZone={groupByZone}
+            view={view}
             onSelect={selectTile}
             onPrimary={(id) => {
               // run() must see the newly selected station, so the primary action is
@@ -768,11 +813,13 @@ export function StationsPage() {
               setHover(rect ? { id, rect } : null);
             }}
           />
-          {hover && canPreview && (
+          {hover && (
             <HoverCard
               hover={hover}
               station={visible.find((s) => s.id === hover.id)}
               feed={preview}
+              canPreview={canPreview}
+              fetchedAt={stations.dataUpdatedAt}
             />
           )}
           {marquee && (
@@ -827,10 +874,40 @@ export function StationsPage() {
               <a.icon size={15} /> {a.label}
             </button>
           ))}
+          {!multi && canControl && (
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-menu__item"
+              data-action="badges"
+              onClick={() => {
+                setMenu(null);
+                setBadgesFor(selected.id);
+              }}
+            >
+              <Sparkles size={15} /> {t('board.badgesTitle')}
+            </button>
+          )}
         </div>
       )}
 
       {dialogs}
+      {reservationsOpen && (
+        <ReservationsDialog
+          open
+          onClose={() => setReservationsOpen(false)}
+          stations={list}
+          initialStationIds={selectedIds}
+          canControl={canControl}
+          canSettings={canSettings}
+        />
+      )}
+      {badgesFor && list.find((s) => s.id === badgesFor) && (
+        <BadgesDialog
+          station={list.find((s) => s.id === badgesFor)!}
+          onClose={() => setBadgesFor(null)}
+        />
+      )}
 
       <StationFormDialog
         open={createOpen}
@@ -2146,11 +2223,20 @@ function HoverCard({
   hover,
   station,
   feed,
+  canPreview,
+  fetchedAt,
 }: {
   hover: { id: string; rect: DOMRect };
   station: StationSummary | undefined;
   feed: ReturnType<typeof useLivePreview>;
+  canPreview: boolean;
+  fetchedAt: number;
 }) {
   if (!station) return null;
-  return <LivePreviewCard station={station} rect={hover.rect} feed={feed} />;
+  return (
+    <>
+      {canPreview && <LivePreviewCard station={station} rect={hover.rect} feed={feed} />}
+      <HoverInfo station={station} rect={hover.rect} fetchedAt={fetchedAt} />
+    </>
+  );
 }

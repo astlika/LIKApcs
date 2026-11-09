@@ -11,31 +11,11 @@ import { itemLabel, LIVE_SALE_EVENT } from '../../lib/live';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { useToast } from '../../state/toast';
+import { chime } from '../../lib/chime';
 
 const QUIET_MS = 2000;
 const MAX_WAIT_MS = 5000;
 
-function chime(): void {
-  try {
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return;
-    const ctx = new Ctor();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.4);
-    window.setTimeout(() => void ctx.close(), 600);
-  } catch {
-    // No sound is not an error: the toast still shows.
-  }
-}
 
 export function LiveSaleNotifier() {
   const { can } = useAuth();

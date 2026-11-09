@@ -586,6 +586,8 @@ export const ADMIN_EVENTS = [
   'ads.changed',
   /** 0.30.0: money or stock moved (sale, refund, cash, expense, debt, purchase, stock). Payload: none. Reports refresh. */
   'reports.changed',
+  /** 0.32.0: a reservation was made, changed, cancelled or finished (no payload). The PC cards refetch. */
+  'reservation.changed',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

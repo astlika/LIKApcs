@@ -45,10 +45,11 @@ export class DashboardService {
               AND completed_at <  ($1::date + 1)::timestamp AT TIME ZONE $2`,
         params,
       ),
-      this.pool.query<{ product: number; gaming: number; cogs: number }>(
+      this.pool.query<{ product: number; gaming: number; cogs: number; units_milli: number }>(
         `SELECT COALESCE(SUM(CASE WHEN si.product_id IS NOT NULL THEN si.line_total_cents END), 0)::bigint AS product,
                   COALESCE(SUM(CASE WHEN si.gaming_session_id IS NOT NULL THEN si.line_total_cents END), 0)::bigint AS gaming,
-                  COALESCE(SUM(si.cost_cents), 0)::bigint AS cogs
+                  COALESCE(SUM(si.cost_cents), 0)::bigint AS cogs,
+                  COALESCE(SUM(CASE WHEN si.product_id IS NOT NULL THEN si.quantity_milli END), 0)::bigint AS units_milli
              FROM sale_items si JOIN sales s ON s.id = si.sale_id
             WHERE s.status IN ('completed', 'partially_refunded', 'refunded')
               AND s.completed_at >= ($1::date)::timestamp AT TIME ZONE $2
@@ -118,6 +119,7 @@ export class DashboardService {
       grossProfitCents: grossProfit,
       operatingProfitCents: grossProfit - expensesTotal,
       cashRegisterBalanceCents: cash.rows[0]?.balance ?? null,
+      productUnitsSold: Math.round(Number(lines.rows[0]?.units_milli ?? 0) / 1000),
       stations: counts,
       pendingDevices: pendingDevices.rows[0]?.count ?? 0,
       lowStockProducts: lowStock.rows[0]?.count ?? 0,
