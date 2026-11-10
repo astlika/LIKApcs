@@ -122,9 +122,15 @@ const STATION_SELECT = `
          hold.reservation_id AS hold_reservation_id, hold.customer_name AS hold_customer_name,
          hold.starts_at AS hold_starts_at, hold.window_end AS hold_window_end,
          hold.tolerance_minutes AS hold_tolerance_minutes,
+         -- 0.33.1: an idle PC shows only the open debt of its own last bill (customer_debts of that sale),
+         -- not the customer's whole balance: a customer who owes nothing for this PC shows no debt here.
          CASE WHEN g.id IS NOT NULL THEN COALESCE(c.balance_due_cents, 0)
-              ELSE COALESCE(lc.balance_due_cents, 0) END AS debt_cents,
-         CASE WHEN g.id IS NOT NULL THEN c.name ELSE lc.name END AS debt_customer_name,
+              ELSE COALESCE(lc.open_cents, 0) END AS debt_cents,
+         -- 0.33.1: a finished customer's name stays on the PC only while the session is unpaid or the
+         -- customer still owes; after the payment (and no debt) the name is removed.
+         CASE WHEN g.id IS NOT NULL THEN c.name
+              WHEN lc.unbilled OR COALESCE(lc.open_cents, 0) > 0 THEN lc.name
+              ELSE NULL END AS debt_customer_name,
          (SELECT COALESCE(json_agg(x ORDER BY x.amount DESC), '[]'::json) FROM (
             SELECT oi.name, SUM(oi.quantity_milli)::bigint AS quantity_milli,
                    SUM(oi.line_total_cents)::bigint AS amount
@@ -149,8 +155,13 @@ const STATION_SELECT = `
        ORDER BY rv.starts_at LIMIT 1
     ) hold ON TRUE
     -- 0.32.0: the customer whose debt the PC shows: the running session's, else the last ended one.
+    -- 0.33.1: unbilled = that ended session is still waiting for its payment.
     LEFT JOIN LATERAL (
-      SELECT c2.name, c2.balance_due_cents FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
+      SELECT c2.name,
+             (g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid')) AS unbilled,
+             COALESCE((SELECT SUM(d.amount_cents - d.paid_cents) FROM customer_debts d
+                        WHERE d.sale_id = g2.sale_id AND d.status IN ('open', 'partial')), 0) AS open_cents
+        FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
        WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
        ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1
     ) lc ON TRUE`;

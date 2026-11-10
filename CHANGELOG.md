@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [0.33.2] - 2026-10-09
+
+### Fixed
+
+- Stations: a finished customer's name stays on the PC only while the bill is unpaid or the customer still owes. After the payment, with no debt left, the name is removed (it used to stay until another session started on that PC).
+- Stations: "Debt" shows on a free PC only when the bill of its last session still has an open debt. It used to show the customer's total balance, so a PC showed debt even with no open bill. A PC with a real debt keeps the customer's name.
+
 ## [0.33.1] - 2026-10-09
 
 ### Added
