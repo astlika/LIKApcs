@@ -1,10 +1,10 @@
 {
   "version": "0.33.2",
   "notes": "### Fixed\n\n- Stations: a finished customer's name stays on the PC only while the bill is unpaid or the customer still owes. After the payment, with no debt left, the name is removed (it used to stay until another session started on that PC).\n- Stations: \"Debt\" shows on a free PC only when the bill of its last session still has an open debt. It used to show the customer's total balance, so a PC showed debt even with no open bill. A PC with a real debt keeps the customer's name.",
-  "pub_date": "2026-11-10T18:01:48.513Z",
+  "pub_date": "2026-11-10T18:02:12.913Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemMyZ0wvcWprUXJSOVQ1SlBPbVJ2aS9lZVBPazUwTE9ELzFDTXM1VHBYWHdQejlVRnlxT2dpQitEVGI0SlB0dHdneVNDYmZHMnh2bG9XT3dpbW04ZWdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MzMzNjYwCWZpbGU6TElLQXBjc18wLjMzLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMzMuMgpPQStZUnp4WVIvd2FJVFpidzNTaGhIVVJlS3ZERk1nNGpaaXdOOFhlZy82QlozQkhHNGNLUjBacHNIeGs0eXdmR282RlllYkduQ2F0SFB3MHdFdENBQT09Cg==",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ0E2enRzRjBhemYvWjlUZ0RBV3VLd01FWVRWRE1TUTJYUmt1SVhhQ0dyMm16NHgrR0pRMlVwdjlEWlUwZ0NaZGJ0RHB4eFdxZWk4WEJHQXhtclZROTRoUmFTNjBveHdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MzMzNjgyCWZpbGU6TElLQXBjc18wLjMzLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMzMuMgpKaGhxOXRsbE9uSE9XWTVBeGNuUGRmTU9DL2NaNlBsWGVNMHJoZG5kWU1mZzdVeVpLZEk4NXJDTEVobWZJZFJMS2FwcklVckFyQmhtbG1NNXNKN0hBQT09Cg==",
       "url": "https://github.com/astlika/LIKApcs/releases/download/v0.33.2/LIKApcs-Setup.exe"
     }
   }
