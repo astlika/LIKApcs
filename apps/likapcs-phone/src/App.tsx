@@ -5,6 +5,8 @@ import { api, clearToken, getToken, SESSION_LOST } from './api';
 import { can, useMe } from './me';
 import { useOnline } from './useOnline';
 import { NotifyProvider } from './notify';
+import { useServerLink } from './serverLink';
+import { PinGate } from './pinLock';
 import { Login } from './screens/Login';
 import { Home, type Tab } from './screens/Home';
 import { Pcs } from './screens/Pcs';
@@ -18,6 +20,7 @@ import { Settings } from './screens/Settings';
 import { Cash } from './screens/Cash';
 import { Expenses } from './screens/Expenses';
 import { Stock } from './screens/Stock';
+import { isStockSnoozed } from './stockData';
 import { PcAlerts } from './Alerts';
 import { applyPrefs, DEFAULT_PREFS, usePrefsQuery } from './prefs';
 import { translate, useT } from './i18n';
@@ -71,6 +74,7 @@ export function App() {
   const me = useMe(signedIn);
   const prefs = usePrefsQuery(signedIn);
   const online = useOnline();
+  const link = useServerLink();
 
   // The account's look: applied when it arrives, and again when the phone's theme changes (Sipas telefonit).
   useEffect(() => {
@@ -95,6 +99,18 @@ export function App() {
     window.addEventListener(SESSION_LOST, lost);
     return () => window.removeEventListener(SESSION_LOST, lost);
   }, [queryClient]);
+
+  // "Shit tani" from the stock screen: open the sale tab (the product is handed over on arrival).
+  useEffect(() => {
+    const onGoto = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === 'pos' && can(me.data, PERMISSIONS.POS_SELL) && can(me.data, PERMISSIONS.PRODUCTS_VIEW)) {
+        setPage('tab');
+        setTab('pos');
+      }
+    };
+    window.addEventListener('likapcs:goto', onGoto);
+    return () => window.removeEventListener('likapcs:goto', onGoto);
+  }, [me.data]);
 
   if (!signedIn) {
     return (
@@ -146,6 +162,7 @@ export function App() {
     setTab(next);
   };
 
+
   let body: ReactNode;
   if (me.isLoading) body = <Loading text={tr('Duke hapur…')} />;
   else if (me.error || !user) body = <QueryError message={tr('Nuk u lexuan llogaria. Provoni përsëri.')} onRetry={() => void me.refetch()} />;
@@ -191,12 +208,24 @@ export function App() {
   return (
     <NotifyProvider>
       <LiveSalesListener enabled={canLive} />
+      {signedIn && <PinGate onSignOut={() => void signOut()} />}
       <div className="shell">
         <header className="topbar">
           <div className="brand">
             <span className="brand-mark brand-mark--sm">LK</span>
             <strong>{tr(title)}</strong>
           </div>
+          <span
+            className={`link-state link-state--${link === 'checking' ? 'ok' : link}`}
+            title={tr('Lidhja me serverin')}
+            role="status"
+          >
+            {link === 'ok' || link === 'checking'
+              ? tr('Lidhur')
+              : link === 'no-network'
+                ? tr('Pa internet')
+                : tr('Pa lidhje me serverin')}
+          </span>
           <button type="button" className="ghost small-btn menu-btn" onClick={() => setMenuOpen(true)} aria-label={tr('Menyja')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
               <path d="M4 7h16M4 12h16M4 17h16" />
@@ -248,7 +277,9 @@ export function App() {
                     }}
                   >
                     {tr('Stoku')}
-                    <small className="muted">{tr('Stoku i ulët, kontroll barkodi')}</small>
+                    <small className="muted">
+                      {isStockSnoozed() ? tr('Njoftimet e stokut janë në pauzë') : tr('Stoku i ulët, kontroll barkodi')}
+                    </small>
                   </button>
                 </li>
               )}

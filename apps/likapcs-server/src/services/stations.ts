@@ -49,6 +49,7 @@ interface StationRow {
   device_hardware: HardwareInfo | null;
   session_id: string | null;
   session_customer_name: string | null;
+  session_pc_label: string | null;
   session_billing_mode: BillingMode | null;
   session_status: 'active' | 'paused' | null;
   session_started_at: Date | null;
@@ -97,7 +98,7 @@ const STATION_SELECT = `
          d.os_info AS device_os_info, d.app_version AS device_app_version, d.status AS device_status,
          d.registered_at AS device_registered_at, d.approved_at AS device_approved_at,
          d.last_seen_at AS device_last_seen_at, d.last_ip AS device_last_ip, d.hardware AS device_hardware,
-         g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name,
+         g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name, g.pc_label AS session_pc_label,
          g.billing_mode AS session_billing_mode, g.status AS session_status, g.started_at AS session_started_at,
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at, g.paused_by AS session_paused_by,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
@@ -184,6 +185,7 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
   return {
     id: row.session_id,
     customerName: row.session_customer_name,
+    pcLabel: row.session_pc_label,
     billingMode: row.session_billing_mode,
     status: row.session_status,
     startedAt: row.session_started_at.toISOString(),

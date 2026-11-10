@@ -14,6 +14,7 @@ import {
   clockLabel,
   countdownLabel,
   describeStation,
+  pcNameShown,
   type StationView,
 } from '../../lib/station-board';
 import { BadgePills, StateTag, usePcEvents, type SelectModifiers, type TileHandlers } from './StationBits';
@@ -140,7 +141,7 @@ function StationListRow({ station, fetchedAt, selected, handlers }: Item) {
       <span className="pcl__pc" role="cell">
         <span className="pcl__dot" data-status={view.state} aria-hidden />
         <strong>{station.code}</strong>
-        {station.name !== station.code && <span className="faint">{station.name}</span>}
+        {pcNameShown(station, view) && <span className="faint">{pcNameShown(station, view)}</span>}
       </span>
       <span role="cell">
         <StateTag state={view.state} />
@@ -235,7 +236,7 @@ function StationCard({ station, fetchedAt, selected, handlers }: Item) {
         <PcCheck checked={selected} label={t('board.checkOne', { code: station.code })} handlers={handlers} />
         <div className="pcd__title">
           <strong>{station.code}</strong>
-          {station.name !== station.code && <span className="faint">{station.name}</span>}
+          {pcNameShown(station, view) && <span className="faint">{pcNameShown(station, view)}</span>}
         </div>
         <StateTag state={view.state} />
       </header>

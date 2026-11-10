@@ -4,7 +4,7 @@
  * Every money figure comes from the same reports the admin already trusts (summary, staff,
  * cash status); this file only adds the feed, the top products and the debt movements.
  */
-import type { LiveSale, LiveSnapshot, ReportRange } from '@likapcs/shared';
+import type { LiveSale, LiveSnapshot, ReportRange, StockLowEvent } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import type { CashService } from './cash.js';
 import type { ReportsService } from './reports.js';
@@ -139,6 +139,37 @@ export class LiveService {
   }
 
   /** One completed sale, as the notification shows it. Null when the sale is not completed. */
+  /** 0.34.0: the products this sale pushed from above their minimum stock to at or below it. */
+  async stockAlerts(saleId: string): Promise<StockLowEvent[]> {
+    const r = await this.pool.query<{
+      id: string;
+      name: string;
+      stock: string;
+      min: string;
+      sold: string;
+    }>(
+      `SELECT p.id, p.name, p.stock_milli::text AS stock, p.min_stock_milli::text AS min,
+              SUM(si.quantity_milli)::text AS sold
+         FROM sale_items si
+         JOIN products p ON p.id = si.product_id
+        WHERE si.sale_id = $1 AND p.track_stock AND p.min_stock_milli > 0
+        GROUP BY p.id, p.name, p.stock_milli, p.min_stock_milli`,
+      [saleId],
+    );
+    const at = new Date().toISOString();
+    return r.rows
+      .filter(
+        (x) => Number(x.stock) <= Number(x.min) && Number(x.stock) + Number(x.sold) > Number(x.min),
+      )
+      .map((x) => ({
+        productId: x.id,
+        name: x.name,
+        stockMilli: Number(x.stock),
+        minStockMilli: Number(x.min),
+        at,
+      }));
+  }
+
   async saleEvent(saleId: string): Promise<LiveSale | null> {
     const r = await this.pool.query<SaleRow>(
       `${this.saleSelect()} WHERE s.id = $1 AND ${COMPLETED}`,

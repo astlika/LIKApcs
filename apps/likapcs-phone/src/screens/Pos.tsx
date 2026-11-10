@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { takeHandoff } from '../stockData';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { PERMISSIONS, type CategorySummary, type CustomerSummary, type Paginated, type ProductAddonSummary, type ProductLookupResponse, type ProductSummary, type SaleDetail, type SalePaymentMethod, type SalesListResponse } from '@likapcs/shared';
+import { PERMISSIONS, type CategorySummary, type CustomerSummary, type Paginated, type ProductAddonSummary, type ProductLookupResponse, type ProductSummary, type SaleDetail, type SalesListResponse } from '@likapcs/shared';
 import { api, errorText, money, newRequestId, parseEuroToCents, shortDate } from '../api';
 import { can, useMe } from '../me';
-import { METHOD_LABEL } from '../labels';
 import { useLive } from '../useLive';
 import { useNotify } from '../notify';
 import { useT } from '../i18n';
 import { useOnline } from '../useOnline';
-import { Btn, Choices, Empty, EuroInput, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
+import { Btn, Empty, EuroInput, Loading, Notice, QueryError, Sheet, cx } from '../components/ui';
 import { PaymentPanel, centsText, newPaymentLine, summarizePayment, type PaymentLine } from '../components/PaymentPanel';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useDebounced } from '../useDebounced';
+import { buzz } from '../sound';
 
 /** One line of the cart: a product with the extras chosen for it. The same product with other extras is another line. */
 interface CartLine {
@@ -31,6 +32,46 @@ const lineKey = (p: ProductSummary, addons: ProductAddonSummary[]): string =>
 function inStock(p: ProductSummary): boolean {
   return !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0);
 }
+
+/** The basket is kept for 10 minutes after the last change, so a closed or broken page does not lose it. */
+const CART_KEY = 'likapcs-phone-cart';
+const CART_TTL_MS = 10 * 60 * 1000;
+function loadCart(): Record<string, CartLine> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CART_KEY) ?? 'null') as { savedAt: number; lines: Record<string, CartLine> } | null;
+    if (!raw || Date.now() - raw.savedAt > CART_TTL_MS) return {};
+    return raw.lines ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** How often each product was sold from this phone (for the \"most used\" order). */
+const USAGE_KEY = 'likapcs-phone-usage';
+function useUsage(): [Record<string, number>, (id: string, qty: number) => void] {
+  const [usage, setUsage] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(USAGE_KEY) ?? '{}') as Record<string, number>;
+    } catch {
+      return {};
+    }
+  });
+  const bump = (id: string, qty: number) =>
+    setUsage((cur) => {
+      const next = { ...cur, [id]: (cur[id] ?? 0) + qty };
+      try {
+        localStorage.setItem(USAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Private mode: the order is for this visit only.
+      }
+      return next;
+    });
+  return [usage, bump];
+}
+
+/** Whole pieces left in stock (tracked products only). */
+const piecesLeft = (p: ProductSummary): number => Math.max(0, Math.floor(p.stockMilli / 1000));
+const LOW_STOCK_PIECES = 5;
 
 const FAV_KEY = 'likapcs-phone-favs';
 function useFavs(): [Set<string>, (id: string) => void] {
@@ -62,7 +103,13 @@ export function Pos() {
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim(), 250);
   const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [cart, setCart] = useState<Record<string, CartLine>>({});
+  const [cart, setCart] = useState<Record<string, CartLine>>(loadCart);
+  const [byUse, setByUse] = useState(false);
+  const [usage, bumpUsage] = useUsage();
+  const searchRef = useRef<HTMLInputElement>(null);
+  const pressTimer = useRef<number | null>(null);
+  const pressedLong = useRef(false);
+  const restoredOnce = useRef(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [extrasFor, setExtrasFor] = useState<ProductSummary | null>(null);
   const [favOnly, setFavOnly] = useState(false);
@@ -82,16 +129,62 @@ export function Pos() {
     return api<Paginated<ProductSummary>>(`/products?${params.toString()}`);
   });
 
+  // "Shit tani" from the stock screen: the product goes into the basket (or its options open).
+  useEffect(() => {
+    const p = takeHandoff();
+    if (!p) return;
+    if (p.addons.length > 0) setExtrasFor(p);
+    else
+      setCart((c) => {
+        const key = lineKey(p, []);
+        const cur = c[key];
+        return { ...c, [key]: { key, product: p, addons: [], qty: (cur?.qty ?? 0) + 1 } };
+      });
+  }, []);
+
+  // The basket survives a reload for 10 minutes. A resumed (suspended) sale is never kept here.
+  useEffect(() => {
+    if (!restoredOnce.current) {
+      restoredOnce.current = true;
+      if (Object.keys(cart).length > 0) notify('Shporta e fundit u rikthye.');
+    }
+    try {
+      if (resume || Object.keys(cart).length === 0) localStorage.removeItem(CART_KEY);
+      else localStorage.setItem(CART_KEY, JSON.stringify({ savedAt: Date.now(), lines: cart }));
+    } catch {
+      // Private mode: no memory across reloads.
+    }
+    // The notice is for the restored basket only, so the effect reads the basket once on mount.
+  }, [cart, resume]);
+
   const lines = Object.values(cart);
   const count = lines.reduce((sum, l) => sum + l.qty, 0);
   const total = lines.reduce((sum, l) => sum + unitPrice(l.product, l.addons) * l.qty, 0);
 
-  const addLine = (p: ProductSummary, addons: ProductAddonSummary[]) => {
+  const addLine = (p: ProductSummary, addons: ProductAddonSummary[], qty = 1) => {
     const key = lineKey(p, addons);
     setCart((c) => {
       const cur = c[key];
-      return { ...c, [key]: { key, product: p, addons, qty: (cur?.qty ?? 0) + 1 } };
+      return { ...c, [key]: { key, product: p, addons, qty: (cur?.qty ?? 0) + qty } };
     });
+    bumpUsage(p.id, qty);
+  };
+
+  /** Holding a product for half a second adds five pieces (only for products without options). */
+  const startPress = (p: ProductSummary) => {
+    pressedLong.current = false;
+    if (p.addons.length > 0) return;
+    cancelPress();
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      pressedLong.current = true;
+      addLine(p, [], 5);
+      buzz(30);
+    }, 500);
+  };
+  const cancelPress = () => {
+    if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+    pressTimer.current = null;
   };
   const setQty = (key: string, qty: number) => {
     setCart((c) => {
@@ -134,7 +227,12 @@ export function Pos() {
 
   const cats = categories.data?.filter((c) => c.isActive) ?? [];
   // Products with no stock left are not shown at all (the till only offers what can be sold).
-  const sellable = (products.data?.items ?? []).filter(inStock).filter((p) => !favOnly || favs.has(p.id));
+  const sellable = (products.data?.items ?? [])
+    .filter(inStock)
+    .filter((p) => !favOnly || favs.has(p.id))
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (byUse ? (usage[b.p.id] ?? 0) - (usage[a.p.id] ?? 0) || a.i - b.i : a.i - b.i))
+    .map((x) => x.p);
 
   // A barcode typed or scanned into the search box (Enter) adds the product straight to the cart.
   const scanCode = async () => {
@@ -149,6 +247,7 @@ export function Pos() {
       if (res.product.addons.length > 0) setExtrasFor(res.product);
       else addLine(res.product, []);
       setSearch('');
+      searchRef.current?.focus(); // the next barcode can be scanned at once
     } catch {
       // Not a barcode: the text stays in the search box and filters the list.
     }
@@ -170,6 +269,7 @@ export function Pos() {
         className="search"
         type="search"
         placeholder="Kërko produkt…"
+        ref={searchRef}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         onKeyDown={(e) => {
@@ -181,13 +281,16 @@ export function Pos() {
         aria-label="Kërko produkt ose skano barkodin"
       />
 
-      {cats.length > 0 && (
+      {(
         <div className="chips" role="group" aria-label="Kategoritë">
           <button type="button" className={cx('chip', categoryId === null && 'chip--on')} onClick={() => setCategoryId(null)}>
             Të gjitha
           </button>
           <button type="button" className={cx('chip', favOnly && 'chip--on')} aria-pressed={favOnly} onClick={() => setFavOnly((v) => !v)}>
             ★ Të preferuarat
+          </button>
+          <button type="button" className={cx('chip', byUse && 'chip--on')} aria-pressed={byUse} onClick={() => setByUse((v) => !v)}>
+            ↑ Më të shiturat
           </button>
           {cats.map((c) => (
             <button
@@ -217,13 +320,28 @@ export function Pos() {
                 <button
                   type="button"
                   className={cx('tile', inCart > 0 && 'tile--in')}
-                  onClick={() => (hasExtras ? setExtrasFor(p) : addLine(p, []))}
+                  onClick={() => {
+                    if (pressedLong.current) {
+                      pressedLong.current = false;
+                      return;
+                    }
+                    if (hasExtras) setExtrasFor(p);
+                    else addLine(p, []);
+                  }}
+                  onPointerDown={() => startPress(p)}
+                  onPointerUp={cancelPress}
+                  onPointerLeave={cancelPress}
+                  onPointerCancel={cancelPress}
+                  onContextMenu={(e) => e.preventDefault()}
                   aria-label={`${p.name}, ${money(unitPrice(p))}`}
                 >
                   {inCart > 0 && <span className="tile__count">{inCart}</span>}
                   <span className="tile__name">{p.name}</span>
                   <span className="tile__price">{money(unitPrice(p))}</span>
                   {hasExtras && <span className="tile__note">Me opsione</span>}
+                  {p.trackStock && piecesLeft(p) <= LOW_STOCK_PIECES && (
+                    <span className="tile__note tile__note--low">Mbetur {piecesLeft(p)}</span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -273,6 +391,11 @@ export function Pos() {
       {cartOpen && (
         <CartSheet
           resume={resume}
+          onClear={() => {
+            setCart({});
+            setCartOpen(false);
+            notify('Shporta u zbraz.');
+          }}
           onVoidResume={() => {
             setCart({});
             setResume(null);
@@ -358,6 +481,7 @@ function CartSheet({
   onQty,
   canDiscount,
   resume,
+  onClear,
   onVoidResume,
   onClose,
   onSold,
@@ -368,6 +492,7 @@ function CartSheet({
   onQty: (key: string, qty: number) => void;
   canDiscount: boolean;
   resume: ResumeState | null;
+  onClear: () => void;
   onVoidResume: () => void;
   onClose: () => void;
   onSold: (receipt: string | null) => void;
@@ -440,6 +565,13 @@ function CartSheet({
     },
   });
 
+  // Saving on the discount: the difference from the list price of the promotions in the basket.
+  const savings = lines.reduce((sum, l) => {
+    const promo = l.product.promoPriceCents;
+    return promo != null && promo < l.product.sellingPriceCents ? sum + (l.product.sellingPriceCents - promo) * l.qty : sum;
+  }, 0);
+  const [clearArmed, setClearArmed] = useState(false);
+
   const voidResume = useMutation({
     mutationFn: () => api(`/sales/${resume!.id}/void`, { method: 'POST' }),
     onSuccess: () => {
@@ -458,6 +590,22 @@ function CartSheet({
           {!online && <Notice tone="danger">Pa lidhje me serverin. Shitja nuk mund të regjistrohet tani.</Notice>}
           {sell.isError && <Notice tone="danger">{errorText(sell.error)}</Notice>}
           {suspend.isError && <Notice tone="danger">{errorText(suspend.error)}</Notice>}
+          {lines.length > 0 && !resume && (
+            <Btn
+              variant="ghost"
+              block
+              onClick={() => {
+                if (!clearArmed) {
+                  setClearArmed(true);
+                  return;
+                }
+                setClearArmed(false);
+                onClear();
+              }}
+            >
+              {clearArmed ? 'Prek përsëri për të zbrazur' : 'Zbraze shportën'}
+            </Btn>
+          )}
           <Btn block onClick={() => sell.mutate()} disabled={!online || sell.isPending || creditNeedsCustomer || discountBad || !canFinish}>
             {sell.isPending ? t('Duke regjistruar…') : t('Përfundo · {amount}', { amount: money(total) })}
           </Btn>
@@ -499,6 +647,14 @@ function CartSheet({
           </li>
         ))}
       </ul>
+      {lines.some((l) => l.product.trackStock && l.qty > piecesLeft(l.product)) && (
+        <Notice tone="warn">
+          {lines
+            .filter((l) => l.product.trackStock && l.qty > piecesLeft(l.product))
+            .map((l) => `${l.product.name}: stoku ${piecesLeft(l.product)}`)
+            .join(' · ')}
+        </Notice>
+      )}
 
       <CustomerPicker selected={customer} onSelect={setCustomer} />
 
@@ -523,6 +679,12 @@ function CartSheet({
         <div className="total-row">
           <span>{t('Zbritja')}</span>
           <strong>−{money(discount)}</strong>
+        </div>
+      )}
+      {savings > 0 && (
+        <div className="total-row total-row--save">
+          <span>Kursimi nga promocioni</span>
+          <strong>−{money(savings)}</strong>
         </div>
       )}
       <div className="total-row total-row--big">

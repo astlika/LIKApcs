@@ -51,6 +51,7 @@ const session = (over: Record<string, unknown> = {}) => ({
   elapsedSeconds: 3600 + 34 * 60,
   currentPriceCents: 300,
   customerName: 'Besa',
+  pcLabel: null,
   ...over,
 });
 
@@ -87,6 +88,14 @@ describe('boardStateOf: the priority of the states', () => {
 });
 
 describe('describeStation', () => {
+  it('names the PC after the session: the typed name first, then the customer, and nothing when idle', () => {
+    const typed = describeStation(pc({ status: 'occupied', activeSession: session({ pcLabel: 'Turneu 1' }) }), 0, 0);
+    expect(typed.pcName).toBe('Turneu 1');
+    const customer = describeStation(pc({ status: 'occupied', activeSession: session() }), 0, 0);
+    expect(customer.pcName).toBe('Besa');
+    expect(describeStation(pc(), 0, 0).pcName).toBeNull();
+  });
+
   it('adds the products and the total of the bill (gaming + products)', () => {
     const view = describeStation(
       pc({

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { CashShiftDetail, CashStatusResponse } from '@likapcs/shared';
 import { api, errorText, money, parseEuroToCents, shortDate } from '../api';
@@ -7,6 +7,7 @@ import { useNotify } from '../notify';
 import { useOnline } from '../useOnline';
 import { Btn, Choices, EuroInput, Field, Loading, Notice, QueryError, Sheet, Stat } from '../components/ui';
 import { useT, type TFunc } from '../i18n';
+import { centsText } from '../components/PaymentPanel';
 
 /** The drawer: open and close the shift, add or take out cash. Money actions need the phone to be online. */
 export function Cash({ canOpenClose, canMove }: { canOpenClose: boolean; canMove: boolean }) {
@@ -189,7 +190,10 @@ function CloseSheet({
   const t: TFunc = useT();
   const notify = useNotify();
   const qc = useQueryClient();
-  const [counted, setCounted] = useState('');
+  const [counted, setCounted] = useState(() => {
+    const saved = savedDenomTotal(shift.id);
+    return saved > 0 ? centsText(saved) : '';
+  });
   const [notes, setNotes] = useState('');
   const [confirm, setConfirm] = useState(false);
   const cents = parseEuroToCents(counted) ?? 0;
@@ -203,6 +207,7 @@ function CloseSheet({
         body: { countedCashCents: cents, notes: notes.trim() || undefined },
       }),
     onSuccess: () => {
+      clearDenomDraft(shift.id);
       notify(t('Turni u mbyll.'));
       void qc.invalidateQueries({ queryKey: ['phone', 'cash'] });
       onDone();
@@ -232,6 +237,13 @@ function CloseSheet({
         <strong>{money(expected)}</strong>
       </div>
       <EuroInput label={t('Para të numëruara në arkë')} value={counted} onChange={(v) => { setCounted(v); setConfirm(false); }} autoFocus />
+      <DenominationCount
+        shiftId={shift.id}
+        onTotal={(cents) => {
+          setCounted(cents === null ? '' : centsText(cents));
+          setConfirm(false);
+        }}
+      />
       {diff !== null && (
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
           <span className="muted">{t('Diferenca')}</span>
@@ -248,5 +260,167 @@ function CloseSheet({
         <Notice tone="warn">{t('Pasi të mbyllet, turni nuk hapet më. Kontrolloni shumën para se të vazhdoni.')}</Notice>
       )}
     </Sheet>
+  );
+}
+
+/** Denominations in cents, largest first. Notes are 500 € and up; the rest are coins. */
+export const DENOMINATIONS = [50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+const NOTE_MIN_CENTS = 500;
+const MAX_PER_DENOMINATION = 9999;
+const denomLabel = (cents: number): string => (cents >= 100 ? `${cents / 100} €` : `${cents} c`);
+const denomKey = (shiftId: string): string => `likapcs-denom-${shiftId}`;
+
+type Counts = Record<number, number>;
+
+/** Sums the counted pieces: each denomination value times its count. */
+function denomTotal(counts: Counts): number {
+  return DENOMINATIONS.reduce((sum, v) => sum + v * (counts[v] ?? 0), 0);
+}
+
+/** The draft of this shift's count, kept on this phone so a closed sheet does not lose it. */
+function readDraft(shiftId: string): Counts {
+  try {
+    const raw = sessionStorage.getItem(denomKey(shiftId));
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Counts = {};
+    for (const v of DENOMINATIONS) {
+      const n = (parsed as Record<string, unknown>)[v];
+      if (typeof n === 'number' && Number.isInteger(n) && n > 0 && n <= MAX_PER_DENOMINATION) out[v] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The total of a saved draft, used to pre-fill the amount when the sheet opens again. */
+export function savedDenomTotal(shiftId: string): number {
+  return denomTotal(readDraft(shiftId));
+}
+
+/** Clears the saved draft once the shift is closed. */
+export function clearDenomDraft(shiftId: string): void {
+  try {
+    sessionStorage.removeItem(denomKey(shiftId));
+  } catch {
+    /* storage unavailable: nothing to clear */
+  }
+}
+
+/**
+ * Counts the cash piece by piece. Each row has large − and + buttons, the count and its subtotal.
+ * Enter moves to the next row. The total is passed up as cents (null when empty) and the draft is saved.
+ */
+function DenominationCount({
+  shiftId,
+  onTotal,
+}: {
+  shiftId: string;
+  onTotal: (cents: number | null) => void;
+}) {
+  const t: TFunc = useT();
+  const [counts, setCounts] = useState<Counts>(() => readDraft(shiftId));
+  const [open, setOpen] = useState(() => denomTotal(readDraft(shiftId)) > 0);
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+  const total = denomTotal(counts);
+
+  const commit = (next: Counts) => {
+    setCounts(next);
+    const sum = denomTotal(next);
+    try {
+      if (sum > 0) sessionStorage.setItem(denomKey(shiftId), JSON.stringify(next));
+      else sessionStorage.removeItem(denomKey(shiftId));
+    } catch {
+      /* storage unavailable: the count still works, it just is not kept */
+    }
+    onTotal(sum > 0 ? sum : null);
+  };
+  const setCount = (value: number, n: number) => {
+    const clamped = Math.min(MAX_PER_DENOMINATION, Math.max(0, Math.trunc(n) || 0));
+    const next = { ...counts };
+    if (clamped > 0) next[value] = clamped;
+    else delete next[value];
+    commit(next);
+  };
+  const reset = () => commit({});
+
+  const rowFor = (value: number, index: number) => {
+    const n = counts[value] ?? 0;
+    return (
+      <div className="denom-row" key={value}>
+        <span className="denom-row__value">{denomLabel(value)}</span>
+        <div className="denom-stepper">
+          <button
+            type="button"
+            aria-label={`${t('Hiq')} ${denomLabel(value)}`}
+            disabled={n === 0}
+            onClick={() => setCount(value, n - 1)}
+          >
+            −
+          </button>
+          <input
+            ref={(el) => {
+              inputs.current[index] = el;
+            }}
+            inputMode="numeric"
+            aria-label={`${t('Numëro')} ${denomLabel(value)}`}
+            placeholder="0"
+            value={n || ''}
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setCount(value, Number(e.target.value.replace(/\D/g, '').slice(0, 4)))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                inputs.current[index + 1]?.focus();
+              }
+            }}
+          />
+          <button
+            type="button"
+            aria-label={`${t('Shto')} ${denomLabel(value)}`}
+            disabled={n >= MAX_PER_DENOMINATION}
+            onClick={() => setCount(value, n + 1)}
+          >
+            +
+          </button>
+        </div>
+        <span className="denom-row__sub">{n > 0 ? money(value * n) : '—'}</span>
+      </div>
+    );
+  };
+
+  const notes = DENOMINATIONS.filter((v) => v >= NOTE_MIN_CENTS);
+  const coins = DENOMINATIONS.filter((v) => v < NOTE_MIN_CENTS);
+
+  return (
+    <div className="stack-sm">
+      <button type="button" className="ghost small-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {open ? t('Mbyll numërimin') : t('Numëro sipas monedhave')}
+      </button>
+      {open && (
+        <div className="denom-panel">
+          <div className="denom-total">
+            <span>{t('Totali i numëruar')}</span>
+            <strong>{money(total)}</strong>
+          </div>
+          <div className="denom-group">
+            <h4>{t('Banknota')}</h4>
+            {notes.map((v) => rowFor(v, DENOMINATIONS.indexOf(v)))}
+          </div>
+          <div className="denom-group">
+            <h4>{t('Monedha')}</h4>
+            {coins.map((v) => rowFor(v, DENOMINATIONS.indexOf(v)))}
+          </div>
+          <div className="denom-foot">
+            <span className="muted small">{t('Numërimi ruhet në këtë pajisje derisa të mbyllet turni.')}</span>
+            <button type="button" className="ghost small-btn" onClick={reset} disabled={total === 0}>
+              {t('Pastro')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

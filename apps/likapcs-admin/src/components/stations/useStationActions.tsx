@@ -20,6 +20,7 @@ import {
   LockOpen,
   MessageSquare,
   MonitorPlay,
+  Tag,
   OctagonX,
   Pause,
   Play,
@@ -92,6 +93,7 @@ export type StationActionId =
   | 'settle'
   | 'wallpaper'
   | 'gift'
+  | 'pc-name'
   | 'cancel'
   | 'lock'
   | 'unlock'
@@ -135,6 +137,7 @@ type Flow =
   | { kind: 'remove-time'; sessionId: string }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'message' }
+  | { kind: 'pc-name'; sessionId: string }
   | { kind: 'bulk-minutes' }
   | { kind: 'bulk-end' }
   | { kind: 'bulk-remove-time' }
@@ -190,6 +193,17 @@ export function useStationActions(
     void queryClient.invalidateQueries({ queryKey: ['sessions'] });
     onChanged();
   }, [queryClient, onChanged]);
+
+  const pcNameAct = useMutation({
+    mutationFn: ({ sessionId, pcLabel }: { sessionId: string; pcLabel: string | null }) =>
+      api(`/sessions/${sessionId}/pc-label`, { method: 'PATCH', body: { pcLabel } }),
+    onSuccess: () => {
+      toast.success(t('map.pcNameSaved'));
+      setFlow(null);
+      refresh();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
 
   const sessionAct = useMutation({
     mutationFn: ({
@@ -579,6 +593,14 @@ export function useStationActions(
         hint: online ? undefined : offlineHint,
       },
       {
+        // 0.33.0: the name this PC shows during the running session (ends with it).
+        id: 'pc-name',
+        label: t('map.pcName'),
+        icon: Tag,
+        bar: false,
+        enabled: canControl && !!live,
+      },
+      {
         // End Task: always visible, pressed / not pressed shows whether the games are closed.
         id: 'tasks',
         label: t('map.endTasks'),
@@ -724,6 +746,9 @@ export function useStationActions(
           break;
         case 'message':
           setFlow({ kind: 'message' });
+          break;
+        case 'pc-name':
+          if (live) setFlow({ kind: 'pc-name', sessionId: live.id });
           break;
         case 'tasks':
           // No dialog: the list of programs is the owner's (Settings › Stations), the desk only
@@ -943,6 +968,16 @@ export function useStationActions(
           }
         />
       )}
+      {flow.kind === 'pc-name' && (
+        <PcNameDialog
+          busy={pcNameAct.isPending}
+          initial={station.activeSession?.pcLabel ?? station.activeSession?.customerName ?? ''}
+          onClose={close}
+          onSave={(value) =>
+            pcNameAct.mutate({ sessionId: flow.sessionId, pcLabel: value.trim() || null })
+          }
+        />
+      )}
       {flow.kind === 'message' && (
         <MessageDialog
           busy={command.isPending || commandMany.isPending}
@@ -1077,6 +1112,8 @@ function QuickStartBody({
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const [customerName, setCustomerName] = useState('');
+  // 0.33.0: the name this PC shows for the session; blank = the customer's name.
+  const [pcLabel, setPcLabel] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const [custom, setCustom] = useState('');
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
@@ -1158,6 +1195,7 @@ function QuickStartBody({
         stationId: target.id,
         ...body,
         customerId: customer?.id,
+        pcLabel: bulk ? undefined : pcLabel.trim() || undefined,
         customerName: customer ? undefined : customerName.trim() || undefined,
         // One idempotency key per PC so a retry never double-starts any of them.
         clientRequestId: bulk ? `${requestId}:${target.number}` : requestId,
@@ -1374,6 +1412,19 @@ function QuickStartBody({
             style={{ maxWidth: 260 }}
           />
         </div>
+        {!bulk && (
+          <Field label={t('map.pcNameLabel')} hint={t('map.pcNameHint')}>
+            {(id) => (
+              <Input
+                id={id}
+                maxLength={60}
+                value={pcLabel}
+                onChange={(e) => setPcLabel(e.target.value)}
+                placeholder={t('map.pcNamePlaceholder')}
+              />
+            )}
+          </Field>
+        )}
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
         {bulk && bulkCredits.length > 0 && (
           <section className="bulk-credits" data-testid="bulk-credits">
@@ -1591,6 +1642,59 @@ function QuickStartTender({
         </Button>
       </div>
     </div>
+  );
+}
+
+function PcNameDialog({
+  busy,
+  initial,
+  onClose,
+  onSave,
+}: {
+  busy: boolean;
+  /** The name the PC shows now (the typed name, else the customer's). */
+  initial: string;
+  onClose: () => void;
+  onSave: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const [value, setValue] = useState(initial);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="sm"
+      title={t('map.pcName')}
+      footer={
+        <>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="primary" loading={busy} onClick={() => onSave(value)}>
+            {t('common.save')}
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+          {t('map.pcNameHint')}
+        </p>
+        <Field label={t('map.pcNameLabel')}>
+          {(id) => (
+            <Input
+              id={id}
+              autoFocus
+              maxLength={60}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={t('map.pcNamePlaceholder')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onSave(value.trim());
+              }}
+            />
+          )}
+        </Field>
+      </div>
+    </Dialog>
   );
 }
 

@@ -638,3 +638,34 @@
   .rz__who { grid-template-columns: minmax(0, 1fr); }
   .rz__more .rz__who { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ─── 0.33.1: online and offline read apart at a glance ──────────────
+   Free (online, no session) is a clear green with the power icon.
+   Offline is grey with a dashed edge, a dimmed card and the wifi-off icon. */
+:root {
+  --st-free: #4ade80;
+}
+.pc-state[data-state='free'] {
+  background: color-mix(in srgb, var(--st-free) 22%, transparent);
+  color: #16a34a;
+  font-weight: 600;
+}
+.pc-state[data-state='offline'] {
+  background: transparent;
+  color: var(--st-offline);
+  border: 1px dashed var(--st-offline);
+  font-weight: 600;
+}
+.pcg[data-state='free'],
+.pcd__card[data-state='free'],
+.pcl__row[data-state='free'],
+.pcc__chip[data-state='free'] {
+  border-left-color: var(--st-free);
+}
+.pcg[data-state='offline'],
+.pcd__card[data-state='offline'],
+.pcl__row[data-state='offline'],
+.pcc__chip[data-state='offline'] {
+  border-left-style: dashed;
+  opacity: 0.78;
+}

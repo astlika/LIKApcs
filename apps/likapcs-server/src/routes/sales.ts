@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { forbidden } from '../errors.js';
+import { announceSale } from './announce.js';
 import {
   PERMISSIONS,
   createSaleSchema,
@@ -63,16 +64,12 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   });
   // 0.31.0: a completed sale is announced to the admins who may see live tracking. The sale is
   // already committed; a failed announcement must never fail the sale.
-  const announce = async (saleId: string) => {
-    try {
-      const live = await services.live.saleEvent(saleId);
-      if (live) app.hub.broadcastToAdminsWith(PERMISSIONS.LIVE_VIEW, 'live.sale', live);
-    } catch (err) {
-      app.log.warn({ err, saleId }, 'live sale announcement failed');
-    }
-  };
+  const announce = (saleId: string) => announceSale(app, saleId);
   app.post('/sales', sell, async (request, reply) => {
-    const sale = await services.sales.create(createSaleSchema.parse(request.body), actorOf(request));
+    const sale = await services.sales.create(
+      createSaleSchema.parse(request.body),
+      actorOf(request),
+    );
     await announce(sale.id);
     return reply.code(201).send(sale);
   });

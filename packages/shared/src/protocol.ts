@@ -588,6 +588,12 @@ export const ADMIN_EVENTS = [
   'reports.changed',
   /** 0.32.0: a reservation was made, changed, cancelled or finished (no payload). The PC cards refetch. */
   'reservation.changed',
+  /** 0.34.0: a staff member signed in (payload: StaffLoginEvent). Sent only to admins with `live.view`. */
+  'staff.login',
+  /** 0.34.0: a debt was paid, rescheduled or written off (payload: DebtChangedEvent). `live.view` only. */
+  'debt.changed',
+  /** 0.34.0: a sale took a product under its minimum stock (payload: StockLowEvent). `live.view` only. */
+  'stock.low',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 

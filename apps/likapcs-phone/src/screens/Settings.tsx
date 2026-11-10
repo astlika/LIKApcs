@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AuthenticatedUser, UserPreferences, UserPreferencesPatch } from '@likapcs/shared';
 import { api, errorText } from '../api';
@@ -6,6 +7,8 @@ import { useNotify } from '../notify';
 import { useOnline } from '../useOnline';
 import { Btn, Choices, Loading, Notice, QueryError } from '../components/ui';
 import { useT } from '../i18n';
+import { isQuiet, setQuietHours } from '../quiet';
+import { PinSettings } from '../pinLock';
 
 /**
  * Settings: how the phone looks. The choices are saved on the account, so the same username
@@ -17,6 +20,7 @@ export function Settings({ user, onSignOut }: { user: AuthenticatedUser; onSignO
   const online = useOnline();
   const qc = useQueryClient();
   const prefs = usePrefsQuery(true);
+  const [, setQuietTick] = useState(0);
   const current: UserPreferences = prefs.data ?? cachedPrefs();
 
   const save = useMutation({
@@ -88,6 +92,31 @@ export function Settings({ user, onSignOut }: { user: AuthenticatedUser; onSignO
           />
           {!online && <Notice tone="warn">{t('Pa lidhje me serverin. Ndryshimet ruhen kur të lidheni.')}</Notice>}
         </div>
+      </section>
+
+      <section className="stack-sm">
+        <h2>{t('Njoftimet')}</h2>
+        <div className="card stack">
+          <Choices<'on' | 'quiet'>
+            label={t('Tingujt e njoftimeve')}
+            value={isQuiet() ? 'quiet' : 'on'}
+            onChange={(v) => {
+              setQuietHours(v === 'quiet' ? 1 : 0);
+              setQuietTick((n) => n + 1);
+              notify(v === 'quiet' ? t('Tingujt fiken për 1 orë në këtë telefon.') : t('Tingujt u ndezën.'));
+            }}
+            options={[
+              { value: 'on', label: t('Aktive') },
+              { value: 'quiet', label: t('Hesht 1 orë') },
+            ]}
+          />
+          <span className="muted small">{t('Njoftimet e sistemit shfaqen gjithmonë; tingulli varet nga kanali i telefonit.')}</span>
+        </div>
+      </section>
+
+      <section className="stack-sm">
+        <h2>{t('Siguria')}</h2>
+        <PinSettings />
       </section>
 
       <section className="stack-sm">

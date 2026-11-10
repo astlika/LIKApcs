@@ -16,6 +16,7 @@ import { mapOrder } from '../../lib/map-selection';
 import {
   countdownLabel,
   describeStation,
+  pcNameShown,
   shortLineParts,
   type BoardView,
 } from '../../lib/station-board';
@@ -112,7 +113,7 @@ export function StationTile({
       <div className="pcg__head">
         <div className="pcg__title">
           <span className="pcg__code">{station.code}</span>
-          {station.name !== station.code && <span className="pcg__name">{station.name}</span>}
+          {pcNameShown(station, view) && <span className="pcg__name">{pcNameShown(station, view)}</span>}
         </div>
         <PcCheck checked={selected} label={t('board.checkOne', { code: station.code })} handlers={handlers} />
       </div>

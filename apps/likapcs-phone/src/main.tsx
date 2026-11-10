@@ -5,9 +5,13 @@ import { App } from './App';
 import './styles.css';
 import { isNative } from './native';
 import { applyPrefs, cachedPrefs } from './prefs';
+import { unlockSound } from './sound';
 
 // Use the last look of this phone right away (before the account's settings arrive).
 applyPrefs(cachedPrefs());
+
+// Browsers play sound only after a tap: the first tap unlocks the app's sounds.
+window.addEventListener('pointerdown', unlockSound, { passive: true });
 
 const queryClient = new QueryClient();
 

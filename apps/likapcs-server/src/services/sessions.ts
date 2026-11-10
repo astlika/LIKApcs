@@ -61,6 +61,7 @@ import {
   SESSION_STOP_CLOCK_GRACE_SECONDS,
   type SessionPaymentSummary,
   type StartSessionRequest,
+  type RenameSessionPcRequest,
   SaleMathError,
   settlePayments,
 } from '@likapcs/shared';
@@ -91,6 +92,7 @@ interface SessionRow {
   device_id: string | null;
   customer_id: string | null;
   customer_name: string | null;
+  pc_label: string | null;
   billing_mode: BillingMode;
   status: SessionSummary['status'];
   rule_name: string | null;
@@ -121,7 +123,7 @@ interface SessionRow {
 
 const SESSION_SELECT = `
   SELECT g.id, g.station_id, s.code AS station_code, s.name AS station_name, g.device_id, g.customer_id,
-         COALESCE(g.customer_name, c.name) AS customer_name, g.billing_mode, g.status,
+         COALESCE(g.customer_name, c.name) AS customer_name, g.pc_label, g.billing_mode, g.status,
          r.name AS rule_name, p.name AS package_name, g.rate_cents_per_hour, g.billing_terms,
          g.planned_seconds, g.started_at, g.ends_at, g.paused_at, g.paused_by, g.total_paused_seconds, g.ended_at,
          g.end_reason, g.billable_seconds, g.quoted_price_cents, g.discount_cents, g.final_price_cents,
@@ -391,6 +393,7 @@ export class SessionsService {
       stationName: row.station_name,
       customerId: row.customer_id,
       customerName: row.customer_name,
+      pcLabel: row.pc_label,
       billingMode: row.billing_mode,
       status: row.status,
       ruleName: row.rule_name,
@@ -618,15 +621,16 @@ export class SessionsService {
         [req.stationId],
       );
       const inserted = await client.query<{ id: string }>(
-        `INSERT INTO gaming_sessions (station_id, device_id, customer_id, customer_name, billing_mode, status,
+        `INSERT INTO gaming_sessions (station_id, device_id, customer_id, customer_name, pc_label, billing_mode, status,
            pricing_rule_id, package_id, rate_cents_per_hour, billing_terms, planned_seconds, started_at, ends_at,
            quoted_price_cents, created_by, notes, client_request_id)
-         VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+         VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
         [
           req.stationId,
           station.device?.id ?? null,
           req.customerId ?? null,
           req.customerName || null,
+          req.pcLabel || null,
           req.billingMode,
           quote.rule?.id ?? null,
           quote.package?.id ?? null,
@@ -1597,6 +1601,28 @@ export class SessionsService {
    * Refused when there is no open shift for a cash change, when the sale cannot take it, or when
    * more would be given back than was paid. Recorded as a session correction and an audit row.
    */
+  /** 0.33.0: the name a running session shows on its PC. Session-scoped: it ends with the session. */
+  async setPcLabel(
+    id: string,
+    req: RenameSessionPcRequest,
+    actor: SessionActorContext,
+  ): Promise<SessionSummary> {
+    const session = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      if (row.status !== 'active' && row.status !== 'paused') throw conflict('Session is not running');
+      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [id, req.pcLabel]);
+      await recordAudit(client, actor, {
+        action: 'session.pc_label',
+        entityType: 'gaming_session',
+        entityId: id,
+        details: { pcLabel: req.pcLabel },
+      });
+      return this.getById(id, client);
+    });
+    await this.broadcast(session);
+    return session;
+  }
+
   async adjustPrice(
     id: string,
     req: AdjustPriceRequest,

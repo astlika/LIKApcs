@@ -32,7 +32,6 @@ export interface PcPerms {
  * "Zgjidh" to pick several PCs and start or power them on together.
  */
 export function Pcs(perms: PcPerms) {
-  const notify = useNotify();
   const online = useOnline();
   const qc = useQueryClient();
   const { data, error, isLoading, refetch } = useLive(['stations'], () => api<StationSummary[]>('/stations'));

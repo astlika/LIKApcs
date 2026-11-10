@@ -1,10 +1,22 @@
-# Changelog
-
-All notable changes to LIKApcs are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
-
 ## [Unreleased]
+
+## [0.33.1] - 2026-10-09
+
+### Added
+
+- Gaming Stations: a PC can show a name for the running session only. It is taken from the customer's name when a session starts, or set by hand from the PC menu ("Emri në këtë PC"). When the session ends, the PC goes back to its own name (`stations.name`). Stored in `gaming_sessions.pc_label` (migration `0055`) and sent as `pcLabel`; changed with `PATCH /sessions/:id/pc-label`.
+- Phone APK: server connection state in the header (online, offline, no internet).
+- Phone APK: PIN lock. It locks after one minute in the background or five minutes without a touch. Five wrong PINs sign the account out. The PIN is stored on the phone only, as a salted hash.
+- Phone APK: the cash count can be entered by note and coin; the total fills the counted amount.
+- Phone: the stock screen shows every product with its stock, status and a bar against the minimum. Filters: all, out, low, plenty, OK, to order, with or without barcode, active or inactive, by category. Sort by name, stock, stock against minimum, value, category or last change. Cards or a compact list. Search with a barcode scanner or by voice where the phone supports them, and recent searches. Details sheet with the 30-day sales chart, days of stock left and recent movements. Add stock, count physically and record damage or expiry (with undo for one minute; large amounts need a second tap and the phone PIN if one is set). Copy the order list and export the list as CSV. Settings for what counts as plenty of stock and whether prices show.
+- Phone: a stock change on the phone asks for `inventory.adjust`; the server still checks it.
+- Phone APK: native system notifications for prepaid PC time (5 minutes left, time up) and for PCs that go offline, also while the app is in the background.
+- Phone: the stock screen searches the whole list on the phone (accents and typos are ignored, barcodes too), filters by supplier, and sorts by best sellers and days left. The product sheet shows minimum, note, variants, supplier, 30-day sales chart and the last movements; "Shit tani" puts the product in the sale basket; the count sheet has "Tjetra" to go on to the next product; "Faturë hyrje" saves several products on one invoice. Stock alarms can be paused for 1 or 4 hours; a swipe left or a long press adds stock. The last list stays visible offline.
+- Phone: the barcode scanner falls back to a built-in decoder where the browser has no barcode detector.
+- Phone APK: a different sound for each kind of alert (sale, PC, call, reservation, staff login, debt, low stock, time, error), also for the system notifications.
+- Phone: the barcode scanner beeps and vibrates when a code is read. The scan button is always shown. A typed or scanned barcode in the search box (Enter) opens the product with a beep.
+- Phone: POS. Holding a product for half a second adds five pieces. "Most sold" sorts the products by use on this phone. A low stock note shows on the tile (5 or fewer). The basket is kept for 10 minutes after the last change (also after a reload). "Clear basket" asks for a second tap. The savings from promotions show in the total.
+- Phone: Settings → Notifications: "Quiet for 1 hour" stops the in-app sounds and vibration on this phone. System notifications still appear.
 
 ## [0.33.0] - 2026-10-09
 

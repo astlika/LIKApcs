@@ -68,6 +68,8 @@ export function boardStateOf(station: StationSummary, remaining: number | null):
 /** What a card needs, computed once per station and clock tick. */
 export interface StationView {
   state: BoardState;
+  /** 0.33.0: the name the PC shows for this session: the name typed for it, else the customer's name; null when idle. */
+  pcName: string | null;
   /** Seconds on the clock: what is left (prepaid) or what has run (open time); null when idle. */
   timerSeconds: number | null;
   timerKind: 'remaining' | 'elapsed' | null;
@@ -154,6 +156,7 @@ export function describeStation(
     timerSeconds: projected ? (remaining ?? projected.elapsed) : null,
     timerKind: projected ? (remaining !== null ? 'remaining' : 'elapsed') : null,
     fraction,
+    pcName: live ? (live.pcLabel ?? live.customerName ?? null) : null,
     customerName: live?.customerName ?? null,
     gamingCents,
     productsCents,
@@ -167,6 +170,14 @@ export function describeStation(
     awaitingCents: station.awaitingPayment.amountCents,
     badges: station.badges,
   };
+}
+
+/** 0.33.0: the name a PC card shows: the session's name, else the PC's own name when it differs from its code. */
+export function pcNameShown(
+  station: { name: string; code: string },
+  view: { pcName: string | null },
+): string | null {
+  return view.pcName ?? (station.name !== station.code ? station.name : null);
 }
 
 /** "1h34m", "45m", "30s": the short form used on the card's line. */

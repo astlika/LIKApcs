@@ -426,6 +426,8 @@ export type BillingMode = (typeof BILLING_MODES)[number];
 export interface ActiveSessionSummary {
   id: string;
   customerName: string | null;
+  /** 0.33.0: the name shown for the PC during this session only (null: the PC's own name). */
+  pcLabel: string | null;
   billingMode: BillingMode;
   status: 'active' | 'paused';
   startedAt: string;
@@ -737,6 +739,8 @@ const sessionTenders = {
 export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   customerId: z.string().uuid().optional(),
   customerName: z.string().trim().max(80).optional(),
+  /** 0.33.0: the name the PC shows for this session (default: the customer's name). */
+  pcLabel: z.string().trim().max(60).optional(),
   /** Prepaid only: how the customer pays now. */
   ...sessionTenders,
   notes: z.string().trim().max(500).optional(),
@@ -750,6 +754,12 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   ignoreReservation: z.boolean().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
+
+/** 0.33.0: change or clear the name a running session shows on its PC (null: back to the customer or the PC's own name). */
+export const renameSessionPcSchema = z.object({
+  pcLabel: z.string().trim().min(1).max(60).nullable(),
+});
+export type RenameSessionPcRequest = z.infer<typeof renameSessionPcSchema>;
 
 export const extendSessionSchema = z
   .object({
@@ -1009,6 +1019,8 @@ export interface SessionSummary {
   stationName: string;
   customerId: string | null;
   customerName: string | null;
+  /** 0.33.0: the name shown for the PC during this session only (null: the PC's own name). */
+  pcLabel: string | null;
   billingMode: BillingMode;
   status: SessionStatus;
   ruleName: string | null;
@@ -1089,6 +1101,30 @@ export interface ClientAckSummary {
 }
 
 /** Money side of a session transition that produced a bill (prepaid start/extend, postpaid end). */
+/** 0.34.0: notification payloads (admin socket). Times are ISO strings. */
+export interface StaffLoginEvent {
+  userId: string;
+  username: string;
+  fullName: string;
+  via: 'phone' | 'web';
+  at: string;
+}
+
+export interface DebtChangedEvent {
+  action: 'paid' | 'rescheduled' | 'written_off';
+  customerName: string | null;
+  amountCents: number | null;
+  at: string;
+}
+
+export interface StockLowEvent {
+  productId: string;
+  name: string;
+  stockMilli: number;
+  minStockMilli: number;
+  at: string;
+}
+
 export interface SessionPaymentSummary {
   saleId: string;
   receiptNo: string;

@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { announcePayments } from './announce.js';
 import { z } from 'zod';
 import {
   PERMISSIONS,
@@ -15,6 +16,7 @@ import {
   sessionGiftSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
+  renameSessionPcSchema,
   startSessionSchema,
   uuidSchema,
 } from '@likapcs/shared';
@@ -26,6 +28,12 @@ import { notFound } from '../errors.js';
  */
 export const sessionRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
+  // 0.34.0: money taken through a PC session is a sale: it is announced like any other.
+  const sold = <T>(p: Promise<T>): Promise<T> =>
+    p.then((r) => {
+      announcePayments(app, r);
+      return r;
+    });
   const idParams = z.object({ id: uuidSchema });
   const actorOf = (request: FastifyRequest) => ({
     userId: request.auth!.user.id,
@@ -68,7 +76,7 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.resume(idParams.parse(request.params).id, actorOf(request)),
   );
   app.post('/sessions/bulk-settle', control, async (request) =>
-    services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request)),
+    sold(services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request))),
   );
   // 0.27.0: change the price of a bill that is already paid (pos.adjust_paid, checked in the service).
   app.post(
@@ -92,6 +100,14 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     services.sessions.removeTime(
       idParams.parse(request.params).id,
       removeSessionTimeSchema.parse(request.body),
+      actorOf(request),
+    ),
+  );
+  /** 0.33.0: the name the PC shows for this session (null clears it). */
+  app.patch('/sessions/:id/pc-label', control, async (request) =>
+    services.sessions.setPcLabel(
+      idParams.parse(request.params).id,
+      renameSessionPcSchema.parse(request.body),
       actorOf(request),
     ),
   );
@@ -124,22 +140,26 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   /** 0.19.4: "Ndalo" for several PCs at once — nothing is charged now; bills wait at the desk. */
   app.post('/sessions/bulk-end', control, async (request) =>
-    services.sessions.bulkEnd(bulkEndSessionsSchema.parse(request.body), actorOf(request)),
+    sold(services.sessions.bulkEnd(bulkEndSessionsSchema.parse(request.body), actorOf(request))),
   );
   app.post('/sessions/:id/end', control, async (request) =>
-    services.sessions.end(
-      idParams.parse(request.params).id,
-      endSessionSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.end(
+        idParams.parse(request.params).id,
+        endSessionSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /** End pay (0.14.0): "Collect" in the awaiting-payment strip — takes the money for an ended
    * pay-at-the-end session (time + open orders on the bill), exactly once. */
   app.post('/sessions/:id/collect', control, async (request) =>
-    services.sessions.collect(
-      idParams.parse(request.params).id,
-      collectSessionSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.collect(
+        idParams.parse(request.params).id,
+        collectSessionSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /**
@@ -147,10 +167,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
    * bill keeps its own receipt). Same permission as collecting a single bill.
    */
   app.post('/stations/:stationId/collect-all', control, async (request) =>
-    services.sessions.collectStation(
-      z.object({ stationId: uuidSchema }).parse(request.params).stationId,
-      collectStationSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.collectStation(
+        z.object({ stationId: uuidSchema }).parse(request.params).stationId,
+        collectStationSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /**
@@ -158,9 +180,11 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
    * Same permission as collecting a single bill; a tender that does not cover them refuses all.
    */
   app.post('/sessions/collect-all', control, async (request) =>
-    services.sessions.collectAllPcs(
-      collectStationSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.collectAllPcs(
+        collectStationSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /** Receipt of the session's bill — for the "paid" dialog after a prepaid start / extension or a
