@@ -69,6 +69,124 @@ export function removeLine(cart: Cart, productId: string): Cart {
   return { ...cart, lines: cart.lines.filter((l) => l.product.id !== productId) };
 }
 
+// ─── Stock ceiling ─────────────────────────────────────────────────────────────
+type StockFacts = Pick<ProductSummary, 'trackStock' | 'allowNegativeStock' | 'stockMilli'>;
+
+/**
+ * The most of a product one sale may hold. `null` = no ceiling: its stock is not tracked, or the
+ * owner ticked "allow selling without stock" on that very product (Products › edit). Every other
+ * product stops at what is on the shelf — the rule the server enforces when the sale completes
+ * (`INSUFFICIENT_STOCK`), applied here already so the cashier is told while adding, not at payment.
+ */
+export function stockLimitMilli(product: StockFacts): number | null {
+  if (!product.trackStock || product.allowNegativeStock) return null;
+  return Math.max(0, product.stockMilli);
+}
+
+export function quantityInCart(cart: Cart, productId: string): number {
+  return cart.lines.find((l) => l.product.id === productId)?.quantityMilli ?? 0;
+}
+
+export interface AddResult {
+  cart: Cart;
+  /** False when the product did not fit: the cart is returned unchanged. */
+  added: boolean;
+  /** The ceiling that applied (null = none). */
+  limitMilli: number | null;
+}
+
+/**
+ * `addToCart` that respects the shelf: when the line would hold more than the stock, nothing is
+ * added. The line keeps the newest product facts it was given (stock moves while a sale is open).
+ */
+export function addWithinStock(
+  cart: Cart,
+  product: ProductSummary,
+  quantityMilli = 1000,
+): AddResult {
+  const limitMilli = stockLimitMilli(product);
+  if (limitMilli !== null && quantityInCart(cart, product.id) + quantityMilli > limitMilli)
+    return { cart, added: false, limitMilli };
+  const next = addToCart(cart, product, quantityMilli);
+  return {
+    cart: {
+      ...next,
+      lines: next.lines.map((l) => (l.product.id === product.id ? { ...l, product } : l)),
+    },
+    added: true,
+    limitMilli,
+  };
+}
+
+/**
+ * `setQuantity` that respects the shelf: a quantity above the stock is cut down to it
+ * (`clampedToMilli` says so; 0 removes the line, exactly like `setQuantity`).
+ */
+export function setQuantityWithinStock(
+  cart: Cart,
+  productId: string,
+  quantityMilli: number,
+): { cart: Cart; clampedToMilli: number | null } {
+  const line = cart.lines.find((l) => l.product.id === productId);
+  const limitMilli = line ? stockLimitMilli(line.product) : null;
+  if (limitMilli !== null && quantityMilli > limitMilli)
+    return { cart: setQuantity(cart, productId, limitMilli), clampedToMilli: limitMilli };
+  return { cart: setQuantity(cart, productId, quantityMilli), clampedToMilli: null };
+}
+
+/**
+ * Lines holding more than the shelf has — a parked sale resumed after the stock was sold, or a
+ * product another cashier sold meanwhile. The sale cannot complete until they are lowered.
+ */
+export function overStockLines(cart: Cart): CartLine[] {
+  return cart.lines.filter((l) => {
+    const limit = stockLimitMilli(l.product);
+    return limit !== null && l.quantityMilli > limit;
+  });
+}
+
+/**
+ * Replaces the product facts of the cart lines with newer ones (the POS list refreshes after every
+ * sale). Returns the same cart object when nothing relevant changed, so it is safe in an effect.
+ */
+export function refreshCartProducts(cart: Cart, fresh: readonly ProductSummary[]): Cart {
+  if (!cart.lines.length || !fresh.length) return cart;
+  const byId = new Map(fresh.map((p) => [p.id, p]));
+  let changed = false;
+  const lines = cart.lines.map((l) => {
+    const p = byId.get(l.product.id);
+    if (
+      !p ||
+      (p.stockMilli === l.product.stockMilli &&
+        p.trackStock === l.product.trackStock &&
+        p.allowNegativeStock === l.product.allowNegativeStock)
+    )
+      return l;
+    changed = true;
+    return {
+      ...l,
+      product: {
+        ...l.product,
+        stockMilli: p.stockMilli,
+        trackStock: p.trackStock,
+        allowNegativeStock: p.allowNegativeStock,
+        lowStock: p.lowStock,
+      },
+    };
+  });
+  return changed ? { ...cart, lines } : cart;
+}
+
+/** The server said how much is really left (409 `INSUFFICIENT_STOCK`): remember it on the line. */
+export function withKnownStock(cart: Cart, productId: string, stockMilli: number): Cart {
+  return {
+    ...cart,
+    lines: cart.lines.map((l) =>
+      l.product.id === productId ? { ...l, product: { ...l.product, stockMilli } } : l,
+    ),
+  };
+}
+
 /**
  * Preview totals; invalid discounts are clamped so the preview never throws. `memberDiscountBp`
  * mirrors the server rule: a customer's default discount applies only when no explicit sale

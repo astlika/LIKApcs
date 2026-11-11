@@ -719,6 +719,10 @@ export const en = {
     outOfStock: 'Out of stock',
     promo: 'promo',
     stockLeft: '{n} in stock',
+    stockNone: '{name} is out of stock — it cannot be sold.',
+    stockOnly: '{name}: only {n} in stock.',
+    stockLineOnly: 'Only {n} in stock',
+    stockBlocked: 'Lower the quantities marked in red — there is not enough stock.',
     cart: 'Current sale',
     emptyCart: 'Scan or tap products to add them.',
     qty: 'Qty',
@@ -827,7 +831,7 @@ export const en = {
     stock: 'Stock',
     minStock: 'Minimum stock',
     trackStock: 'Track stock',
-    allowNegative: 'Allow negative stock',
+    allowNegative: 'Allow selling without stock (negative stock)',
     initialStock: 'Opening stock',
     description: 'Description',
     location: 'Storage location',
@@ -1310,7 +1314,7 @@ export const en = {
       autoPrint: 'Print receipt automatically',
       hideOutOfStock: 'Hide sold-out products in the POS grid',
       hideOutOfStockHint:
-        'Products with no stock disappear from the grid. A barcode scan still adds one — the payment decides what is allowed.',
+        'Products with no stock disappear from the grid. Only products with "Allow selling without stock" are sold at zero — a barcode scan does not add the others either.',
       autoPrintHint:
         'Opens the print dialog as soon as a sale is completed. Off: the cashier presses Print (or P) only when a receipt is wanted.',
       autoFinish: 'Seconds before the next sale starts by itself',

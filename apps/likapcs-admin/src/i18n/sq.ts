@@ -729,6 +729,10 @@ export const sq: Dictionary = {
     outOfStock: 'Pa stok',
     promo: 'promo',
     stockLeft: '{n} në stok',
+    stockNone: '{name} nuk ka stok — nuk mund të shitet.',
+    stockOnly: '{name}: vetëm {n} në stok.',
+    stockLineOnly: 'Vetëm {n} në stok',
+    stockBlocked: 'Ulni sasitë e shënuara me të kuqe — nuk ka stok të mjaftueshëm.',
     cart: 'Shitja aktuale',
     emptyCart: 'Skano ose prek produktet për t’i shtuar.',
     qty: 'Sasia',
@@ -836,7 +840,7 @@ export const sq: Dictionary = {
     stock: 'Stoku',
     minStock: 'Stoku minimal',
     trackStock: 'Ndiq stokun',
-    allowNegative: 'Lejo stok negativ',
+    allowNegative: 'Lejo shitjen pa stok (stok negativ)',
     initialStock: 'Stoku fillestar',
     description: 'Përshkrimi',
     location: 'Vendndodhja në depo',
@@ -1317,7 +1321,7 @@ export const sq: Dictionary = {
       autoPrint: 'Printo faturën automatikisht',
       hideOutOfStock: 'Fshih produktet e mbaruara nga rrjeta e POS-it',
       hideOutOfStockHint:
-        'Produktet pa stok nuk shfaqen në rrjetë. Skanimi me barkod prapë e shton — pagesa vendos çfarë lejohet.',
+        'Produktet pa stok nuk shfaqen në rrjetë. Pa stok shiten vetëm produktet me opsionin "Lejo shitjen pa stok" — as skanimi nuk i shton të tjerat.',
       autoPrintHint:
         'Hap dialogun e printimit sapo të përfundojë shitja. Çaktivizuar: kasieri shtyp Printo (ose P) vetëm kur duhet faturë.',
       autoFinish: 'Sekonda para se shitja e re të fillojë vetë',

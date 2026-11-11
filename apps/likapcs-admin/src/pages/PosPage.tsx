@@ -12,6 +12,11 @@
  * `pos.auto_print_receipt` is on. Tenders come from the shared `TenderPanel`: cash only unless
  * `pos.card_payments` is on; "pay later" (a customer debt with a due date) when the cashier's role
  * has `debts.give` and a customer is attached to the sale (a new customer can be added inline by name).
+ *
+ * Stock: a product goes into the sale beyond what is on the shelf only when the owner allows it
+ * on that product ("allow selling without stock") or its stock is not tracked. Everything else is
+ * refused while adding — tile, scan, "+" and a typed quantity alike — with the reason on screen;
+ * the server applies the same rule again when the sale completes.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -42,15 +47,22 @@ import {
 import { api, ApiError, fileUrl } from '../lib/api';
 import {
   addToCart,
+  addWithinStock,
   cartItemCount,
   cartToRequest,
   cartTotals,
   emptyCart,
+  overStockLines,
+  refreshCartProducts,
   removeLine,
   setLineDiscount,
   setQuantity,
+  setQuantityWithinStock,
+  stockLimitMilli,
   type Cart,
+  type CartLine,
   unitPriceOf,
+  withKnownStock,
 } from '../lib/cart';
 import { useFormat } from '../lib/format';
 import { isEditableElement, useBarcodeScanner } from '../lib/scanner';
@@ -153,14 +165,53 @@ export function PosPage() {
     focusSearch();
   }, [focusSearch, setCart, setCustomer, setResumedId]);
 
+  // The newest cart, readable from callbacks that fire between renders (a scanner burst).
+  const cartRef = useRef(cart);
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+  const stockNotice = useCallback(
+    (name: string, limitMilli: number) =>
+      toast.error(
+        limitMilli <= 0
+          ? t('pos.stockNone', { name })
+          : t('pos.stockOnly', { name, n: limitMilli / 1000 }),
+      ),
+    [t, toast],
+  );
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
-      setCart((c) => addToCart(c, product, quantityMilli));
+      const result = addWithinStock(cartRef.current, product, quantityMilli);
+      if (result.added) {
+        cartRef.current = result.cart;
+        setCart(result.cart);
+      } else stockNotice(product.name, result.limitMilli ?? 0);
       focusSearch();
     },
-    [focusSearch, setCart],
+    [focusSearch, setCart, stockNotice],
   );
+  const changeQuantity = useCallback(
+    (line: CartLine, quantityMilli: number) => {
+      const result = setQuantityWithinStock(cartRef.current, line.product.id, quantityMilli);
+      cartRef.current = result.cart;
+      setCart(result.cart);
+      if (result.clampedToMilli !== null) stockNotice(line.product.name, result.clampedToMilli);
+    },
+    [setCart, stockNotice],
+  );
+  // Stock moves while a sale is open (another cashier, a delivery booked in): the lines follow
+  // the list, so the ceiling works on real numbers. Same object back when nothing changed.
+  useEffect(() => {
+    const items = products.data?.items;
+    if (items?.length) setCart((c) => refreshCartProducts(c, items));
+  }, [products.data, setCart]);
+  // Lines that hold more than the shelf (a parked sale resumed later, stock sold meanwhile).
+  const overStock = useMemo(() => overStockLines(cart), [cart]);
+  const openPayment = useCallback(() => {
+    if (overStock.length) toast.error(t('pos.stockBlocked'));
+    else setDialog('payment');
+  }, [overStock.length, t, toast]);
 
   // Leaving the "sale completed" screen: refresh what the sale changed (stock on the tiles, the
   // sales list, dashboard and cash figures) only now, so the screen itself appears instantly.
@@ -270,13 +321,13 @@ export function PosPage() {
           // The payment dialog mounts synchronously (discrete event): stop the same Enter from
           // reaching its own listener and completing the sale in one go.
           e.stopPropagation();
-          setDialog('payment');
+          openPayment();
         }
       }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [cart.lines.length, receipt, dialog, resetCart]);
+  }, [cart.lines.length, receipt, dialog, resetCart, openPayment]);
 
   // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
   // them first): a code is looked up exactly, otherwise the single visible match is added.
@@ -312,8 +363,8 @@ export function PosPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
 
-  // 0.18.0: the grid can hide sold-out products (Settings → POS); a barcode scan still adds one
-  // (the server decides at payment time), the grid is only the browsing surface.
+  // 0.18.0: the grid can hide sold-out products (Settings → POS). Hidden or not, a sold-out
+  // product is only sold when the owner allows it below zero — a scan is refused like a tap.
   const hideOut = settings.data?.['pos.hide_out_of_stock'] ?? true;
   const list = useMemo(() => {
     const items = products.data?.items ?? [];
@@ -448,6 +499,8 @@ export function PosPage() {
           {cart.lines.length === 0 && <div className="pos__empty">{t('pos.emptyCart')}</div>}
           {cart.lines.map((line, i) => {
             const computed = totals.lines[i]!;
+            const limit = stockLimitMilli(line.product);
+            const over = limit !== null && line.quantityMilli > limit;
             return (
               <div key={line.product.id} className="pos-line">
                 <div className="pos-line__main">
@@ -458,6 +511,13 @@ export function PosPage() {
                       <span className="text-success"> · {t('pos.promo')}</span>
                     )}
                   </div>
+                  {over && (
+                    <div className="pos-line__stock" data-testid="pos-line-overstock">
+                      {limit <= 0
+                        ? t('pos.outOfStock')
+                        : t('pos.stockLineOnly', { n: limit / 1000 })}
+                    </div>
+                  )}
                 </div>
                 <div className="pos-line__qty">
                   <button
@@ -474,16 +534,14 @@ export function PosPage() {
                     quantityMilli={line.quantityMilli}
                     label={t('pos.qty')}
                     onCommit={(milli) => {
-                      setCart((c) => setQuantity(c, line.product.id, milli));
+                      changeQuantity(line, milli);
                       focusSearch();
                     }}
                   />
                   <button
                     type="button"
                     className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      setCart(setQuantity(cart, line.product.id, line.quantityMilli + 1000))
-                    }
+                    onClick={() => changeQuantity(line, line.quantityMilli + 1000)}
                     aria-label="+"
                   >
                     <Plus size={14} />
@@ -582,12 +640,17 @@ export function PosPage() {
               </>
             )}
           </div>
+          {overStock.length > 0 && (
+            <div className="pos__stock-warning" role="alert" data-testid="pos-overstock">
+              {t('pos.stockBlocked')}
+            </div>
+          )}
           <Button
             variant="primary"
             size="lg"
             className="pos__pay"
-            disabled={cart.lines.length === 0}
-            onClick={() => setDialog('payment')}
+            disabled={cart.lines.length === 0 || overStock.length > 0}
+            onClick={openPayment}
           >
             <Banknote size={16} /> {t('pos.pay')} <Kbd>Enter</Kbd>
           </Button>
@@ -607,6 +670,14 @@ export function PosPage() {
           }}
           onClose={() => {
             setDialog(null);
+            focusSearch();
+          }}
+          onStockShort={(productId, availableMilli) => {
+            // The server knows the shelf best: remember its figure on the line (it turns red and
+            // the payment stays closed until the quantity is lowered) and refresh the list.
+            setCart((c) => withKnownStock(c, productId, availableMilli));
+            setDialog(null);
+            void queryClient.invalidateQueries({ queryKey: ['products'] });
             focusSearch();
           }}
           onCompleted={(sale, receiptData) => {
@@ -756,6 +827,15 @@ function QtyInput({
 }
 
 // ─── Payment dialog ────────────────────────────────────────────────────────────
+/** The server refused the sale because a product ran short (409 `INSUFFICIENT_STOCK`). */
+function insufficientStock(err: unknown): { productId: string; availableMilli: number } | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const d = err.details as { code?: string; productId?: string; availableMilli?: number } | null;
+  return d?.code === 'INSUFFICIENT_STOCK' && typeof d.productId === 'string'
+    ? { productId: d.productId, availableMilli: Math.max(0, Number(d.availableMilli ?? 0)) }
+    : null;
+}
+
 function PaymentDialog({
   cart,
   resumedId,
@@ -763,6 +843,7 @@ function PaymentDialog({
   customer,
   onCustomerChange,
   onClose,
+  onStockShort,
   onCompleted,
 }: {
   cart: Cart;
@@ -772,18 +853,23 @@ function PaymentDialog({
   /** "Pay later" needs a customer; picking one here attaches it to the sale as well. */
   onCustomerChange: (customer: CustomerSummary | null) => void;
   onClose: () => void;
+  /** The sale was refused for lack of stock: nothing was sold, `availableMilli` is what is left. */
+  onStockShort: (productId: string, availableMilli: number) => void;
   onCompleted: (sale: SaleDetail, receipt: ReceiptData) => void;
 }) {
   const { t } = useI18n();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
   const tender = useTender({ totalCents, customer });
-  const display = useCustomerDisplay();
+  // Only the setter (stable): depending on the whole display value re-ran the effects below on
+  // every state the display published — which they cause themselves. That was an endless render
+  // loop for as long as the payment dialog stayed open.
+  const { setTender: showTender } = useCustomerDisplay();
 
   // Customer display: what is being counted, live (cleared when the dialog closes).
   const { mode, paidCents, cashCents, walletCents, creditCents, changeCents, covered } = tender;
   useEffect(() => {
-    display.setTender({
+    showTender({
       mode,
       paidCents,
       cashCents: cashCents ?? 0,
@@ -793,7 +879,7 @@ function PaymentDialog({
       covered,
     });
   }, [
-    display,
+    showTender,
     mode,
     paidCents,
     cashCents,
@@ -803,7 +889,7 @@ function PaymentDialog({
     covered,
     totalCents,
   ]);
-  useEffect(() => () => display.setTender(null), [display]);
+  useEffect(() => () => showTender(null), [showTender]);
 
   const complete = useMutation({
     mutationFn: async () => {
@@ -817,6 +903,17 @@ function PaymentDialog({
     onSuccess: ({ sale, receipt }) => onCompleted(sale, receipt),
     onError: (err) => {
       if (shiftGuard.handle(err, () => complete.mutate())) return;
+      const short = insufficientStock(err);
+      if (short) {
+        const name = cart.lines.find((l) => l.product.id === short.productId)?.product.name ?? '';
+        toast.error(
+          short.availableMilli <= 0
+            ? t('pos.stockNone', { name })
+            : t('pos.stockOnly', { name, n: short.availableMilli / 1000 }),
+        );
+        onStockShort(short.productId, short.availableMilli);
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });

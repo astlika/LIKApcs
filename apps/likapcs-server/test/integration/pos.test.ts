@@ -503,4 +503,46 @@ describe('catalogue & POS', () => {
     });
     expect(sellArchived.status).toBe(409);
   });
+
+  it('sells below zero only the products the owner allows it for', async () => {
+    const make = async (body: Record<string, unknown>) =>
+      (await call<ProductSummary>(owner.token, 'POST', '/products', body)).body;
+    const water = await make({
+      name: 'Water',
+      sellingPriceCents: 50,
+      purchaseCostCents: 20,
+      allowNegativeStock: true,
+    });
+    const gum = await make({
+      name: 'Gum',
+      sellingPriceCents: 50,
+      purchaseCostCents: 20,
+      initialStockMilli: 1000,
+    });
+    const sell = (productId: string) =>
+      call<{ error: { details: Record<string, unknown> } }>(cashier.token, 'POST', '/sales', {
+        items: [{ productId, quantityMilli: 2000 }],
+        payments: [{ method: 'cash', amountCents: 100 }],
+      });
+    // Allowed on this product: the sale completes and the stock goes below zero.
+    expect((await sell(water.id)).status).toBe(201);
+    expect(await stockOf(water.id)).toBe(-2000);
+    // Not allowed: one more than the shelf holds is refused whole, with the real figure.
+    const refused = await sell(gum.id);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.details).toMatchObject({
+      code: 'INSUFFICIENT_STOCK',
+      productId: gum.id,
+      availableMilli: 1000,
+      requestedMilli: 2000,
+    });
+    expect(await stockOf(gum.id)).toBe(1000);
+    // The owner flips the switch on that one product → the very same sale goes through.
+    const allowed = await call(owner.token, 'PATCH', `/products/${gum.id}`, {
+      allowNegativeStock: true,
+    });
+    expect(allowed.status).toBe(200);
+    expect((await sell(gum.id)).status).toBe(201);
+    expect(await stockOf(gum.id)).toBe(-1000);
+  });
 });

@@ -6,9 +6,25 @@ All notable changes to LIKApcs are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-_(nothing yet)_
+- **The POS no longer lets a product go into a sale beyond its stock — unless the owner allows it
+  on that product.** Tapping a tile, scanning a barcode, the "+" button and a typed quantity all
+  stop at what is on the shelf and say why ("Cola: only 3 in stock" / "Chips is out of stock").
+  Products with **Allow selling without stock** ticked (Products › edit) and products whose stock
+  is not tracked are unaffected. A scan no longer adds a sold-out product "with a warning": the
+  cashier used to find out only at payment, with an English server message. The server rule is
+  unchanged (it always refused such a sale); it now has its own test for the per-product switch.
+- A sale that holds more than the shelf anyway (a parked sale resumed after the stock was sold, or
+  another cashier sold it meanwhile) marks the line in red, keeps the payment closed until the
+  quantity is lowered, and a refusal by the server is shown in the cashier's language with the
+  real quantity left.
+
+### Fixed
+
+- **POS payment dialog: endless re-render while it was open.** The dialog's customer-display
+  effects depended on the display state they themselves publish, so React looped ("Maximum update
+  depth exceeded") for as long as the dialog stayed open. They now depend on the setter only.
 
 ## [0.18.1] - 2026-10-14
 

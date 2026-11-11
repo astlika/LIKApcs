@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest';
 import type { ProductSummary } from '@likapcs/shared';
 import {
   addToCart,
+  addWithinStock,
   cartToRequest,
   cartTotals,
   emptyCart,
+  overStockLines,
+  quantityInCart,
+  refreshCartProducts,
   removeLine,
   ScanBuffer,
   setLineDiscount,
   setQuantity,
+  setQuantityWithinStock,
+  stockLimitMilli,
+  withKnownStock,
 } from './cart';
 
 const product = (over: Partial<ProductSummary>): ProductSummary => ({
@@ -100,5 +107,71 @@ describe('ScanBuffer', () => {
     buf.push('1', 5000);
     buf.push('2', 5005);
     expect(buf.flush(5010)).toBeNull();
+  });
+});
+
+describe('stock ceiling in the cart', () => {
+  const cola = product({ stockMilli: 3000 });
+
+  it('has no ceiling for untracked products and for products the owner allows below zero', () => {
+    expect(stockLimitMilli(cola)).toBe(3000);
+    expect(stockLimitMilli(product({ stockMilli: 0 }))).toBe(0);
+    expect(stockLimitMilli(product({ stockMilli: -2000 }))).toBe(0);
+    expect(stockLimitMilli(product({ stockMilli: 0, allowNegativeStock: true }))).toBeNull();
+    expect(stockLimitMilli(product({ stockMilli: 0, trackStock: false }))).toBeNull();
+  });
+
+  it('adds up to the stock and refuses the unit that would go beyond it', () => {
+    let cart = emptyCart();
+    for (let i = 0; i < 3; i++) {
+      const r = addWithinStock(cart, cola);
+      expect(r.added).toBe(true);
+      cart = r.cart;
+    }
+    expect(quantityInCart(cart, 'p1')).toBe(3000);
+    const refused = addWithinStock(cart, cola);
+    expect(refused).toMatchObject({ added: false, limitMilli: 3000 });
+    expect(refused.cart).toBe(cart); // untouched
+    // A pack barcode (6 pieces) does not fit either: nothing is added, not a part of it.
+    expect(addWithinStock(emptyCart(), cola, 6000).added).toBe(false);
+  });
+
+  it('refuses a sold-out product, but not one that may be sold without stock', () => {
+    const soldOut = product({ id: 'p2', stockMilli: 0 });
+    expect(addWithinStock(emptyCart(), soldOut)).toMatchObject({ added: false, limitMilli: 0 });
+    const allowed = product({ id: 'p3', stockMilli: 0, allowNegativeStock: true });
+    let cart = emptyCart();
+    for (let i = 0; i < 5; i++) cart = addWithinStock(cart, allowed).cart;
+    expect(quantityInCart(cart, 'p3')).toBe(5000);
+    const service = product({ id: 'p4', stockMilli: 0, trackStock: false });
+    expect(addWithinStock(emptyCart(), service, 9000).added).toBe(true);
+  });
+
+  it('cuts a typed quantity down to the stock and keeps smaller ones', () => {
+    const cart = addWithinStock(emptyCart(), cola).cart;
+    const over = setQuantityWithinStock(cart, 'p1', 10_000);
+    expect(over.clampedToMilli).toBe(3000);
+    expect(quantityInCart(over.cart, 'p1')).toBe(3000);
+    const fine = setQuantityWithinStock(cart, 'p1', 2000);
+    expect(fine.clampedToMilli).toBeNull();
+    expect(quantityInCart(fine.cart, 'p1')).toBe(2000);
+    expect(setQuantityWithinStock(cart, 'p1', 0).cart.lines).toHaveLength(0);
+  });
+
+  it('flags lines that hold more than the shelf once fresher stock is known', () => {
+    // A parked sale restored as it was (plain addToCart), then the list says only 1 is left.
+    let cart = addToCart(emptyCart(), cola, 3000);
+    expect(overStockLines(cart)).toHaveLength(0);
+    const same = refreshCartProducts(cart, [cola]);
+    expect(same).toBe(cart); // nothing changed → same object
+    cart = refreshCartProducts(cart, [product({ stockMilli: 1000 })]);
+    expect(overStockLines(cart).map((l) => l.product.id)).toEqual(['p1']);
+    // The owner then allows this product below zero → no longer flagged.
+    cart = refreshCartProducts(cart, [product({ stockMilli: 1000, allowNegativeStock: true })]);
+    expect(overStockLines(cart)).toHaveLength(0);
+    // The server's own figure (409 INSUFFICIENT_STOCK) is remembered on the line.
+    cart = withKnownStock(addToCart(emptyCart(), cola, 3000), 'p1', 2000);
+    expect(overStockLines(cart)).toHaveLength(1);
+    expect(cart.lines[0]!.product.stockMilli).toBe(2000);
   });
 });
