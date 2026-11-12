@@ -68,17 +68,18 @@ describe('boardStateOf: the priority of the states', () => {
     expect(boardStateOf(pc({ activeSession: session() }), 301)).toBe('active');
   });
 
-  it('puts a waiting payment before debt, and debt before a reservation', () => {
+  it('shows a waiting payment; an idle PC is never "debt" (0.33.4)', () => {
     const awaiting = pc({ awaitingPayment: { count: 1, amountCents: 450 }, debt: { cents: 900, customerName: 'X' } });
     expect(boardStateOf(awaiting, null)).toBe('awaiting');
-    const debt = pc({ debt: { cents: 350, customerName: 'Besnik' }, reservation: { reservationId: 'r' } });
-    expect(boardStateOf(debt, null)).toBe('debt');
+    // Even if an older server still sent a debt for an idle PC, the card stays free.
+    expect(boardStateOf(pc({ debt: { cents: 350, customerName: 'Besnik' } }), null)).toBe('free');
   });
 
-  it('shows a reserved PC as reserved, but an offline one as offline', () => {
-    const reserved = pc({ reservation: { reservationId: 'r', customerName: 'Ardit' } });
-    expect(boardStateOf(reserved, null)).toBe('reserved');
-    expect(boardStateOf(pc({ status: 'offline', reservation: { reservationId: 'r' } }), null)).toBe('offline');
+  it('a reservation never changes what the PC card shows (0.33.4)', () => {
+    const reservation = { reservationId: 'r', customerName: 'Ardit' };
+    expect(boardStateOf(pc({ reservation }), null)).toBe('free');
+    expect(boardStateOf(pc({ status: 'offline', reservation }), null)).toBe('offline');
+    expect(boardStateOf(pc({ status: 'occupied', activeSession: session(), reservation }), null)).toBe('active');
   });
 
   it('reads a disabled PC as disabled, and a free one as free', () => {
@@ -118,7 +119,7 @@ describe('describeStation', () => {
     expect(view.customerName).toBe('Besa');
   });
 
-  it('tells a scheduled hold from a hold inside its tolerance window', () => {
+  it('takes nothing from a reservation: the session of a walk-in does not get the booked name (0.33.4)', () => {
     const reservation = {
       reservationId: 'r1',
       customerName: 'Ardit',
@@ -126,13 +127,17 @@ describe('describeStation', () => {
       windowEndsAt: '2026-10-09T18:05:00.000Z',
       toleranceMinutes: 5,
     };
-    const before = describeStation(pc({ reservation }), 0, Date.parse('2026-10-09T17:50:00.000Z'));
-    expect(before.hold?.phase).toBe('scheduled');
-    expect(before.hold?.windowSeconds).toBeNull();
-
-    const inside = describeStation(pc({ reservation }), 0, Date.parse('2026-10-09T18:00:01.000Z'));
-    expect(inside.hold?.phase).toBe('window');
-    expect(inside.hold?.windowSeconds).toBe(299);
+    const idle = describeStation(pc({ reservation }), 0, Date.parse('2026-10-09T18:00:01.000Z'));
+    expect(idle).not.toHaveProperty('hold');
+    expect(idle.customerName).toBeNull();
+    expect(idle.debtCustomerName).toBeNull();
+    const walkIn = describeStation(
+      pc({ status: 'occupied', activeSession: { ...session(), customerName: null, pcLabel: null }, reservation }),
+      0,
+      Date.parse('2026-10-09T18:00:01.000Z'),
+    );
+    expect(walkIn.customerName).toBeNull();
+    expect(walkIn.pcName).toBeNull();
   });
 });
 
@@ -159,17 +164,18 @@ describe('boardStats', () => {
       pc({ id: 'd', debt: { cents: 100, customerName: 'X' } }),
       pc({ id: 'e', reservation: { reservationId: 'r' } }),
       pc({ id: 'f', status: 'offline' }),
+      pc({ id: 'g', status: 'occupied', activeSession: session(), debt: { cents: 250, customerName: 'Besa' } }),
     ];
     const stats = boardStats(stations, {
       revenue: { totalCents: 4200, productSalesCents: 0, gamingCents: 0, refundsCents: 0 },
       productUnitsSold: 7,
     });
+    // d (an idle PC with a debt) and e (a booked PC) are simply free; g plays and owes.
     expect(stats).toEqual({
-      active: 1,
-      free: 1,
+      active: 2,
+      free: 3,
       awaiting: 1,
       debt: 1,
-      reserved: 1,
       revenueCents: 4200,
       productUnits: 7,
     });
@@ -189,8 +195,8 @@ describe('groupByStart and the short line', () => {
     expect(groups.map((g) => g.items.length)).toEqual([2, 1]);
   });
 
-  it('builds the short line of a running PC, and the debt line of an idle one', () => {
-    const labels = { state: 'Active', hold: 'Reserved', debt: 'Debt', awaiting: 'Awaiting' };
+  it('builds the short line of a running PC, and of one that waits for its payment', () => {
+    const labels = { state: 'Active', awaiting: 'Awaiting' };
     const money = (c: number) => `${(c / 100).toFixed(2)}€`;
     const running = describeStation(
       pc({
@@ -208,8 +214,8 @@ describe('groupByStart and the short line', () => {
     );
     expect(shortLineParts(running, labels, money)).toEqual(['Active', '1h34m', 'Coca Cola', '4.50€']);
 
-    const indebted = describeStation(pc({ debt: { cents: 350, customerName: 'Besnik' } }), 0, 0);
-    expect(shortLineParts(indebted, labels, money)).toEqual(['Debt', '3.50€']);
+    const awaiting = describeStation(pc({ awaitingPayment: { count: 1, amountCents: 350 } }), 0, 0);
+    expect(shortLineParts(awaiting, labels, money)).toEqual(['Awaiting', '3.50€']);
   });
 
   it('accepts only the four board views', () => {

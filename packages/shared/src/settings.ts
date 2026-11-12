@@ -134,6 +134,8 @@ export const SETTING_SCHEMAS = {
   'stations.offline_after_seconds': z.number().int().min(5).max(600),
   /** 0.32.0: minutes a reserved PC waits for its customer before the hold is released. */
   'reservations.tolerance_minutes': z.number().int().min(1).max(60),
+  /** 0.33.4: minutes before the booked time the desk is reminded and the PC is kept for the booking. */
+  'reservations.reminder_minutes': z.number().int().min(0).max(240),
   'stations.session_grace_seconds': z.number().int().min(0).max(3600),
   'stations.expiry_warning_minutes': z.array(z.number().int().min(1).max(120)).max(5),
   'stations.client_welcome_message': z.string().max(300),
@@ -327,6 +329,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'stations.heartbeat_interval_seconds': 10,
   'stations.offline_after_seconds': 35,
   'reservations.tolerance_minutes': 5,
+  'reservations.reminder_minutes': 10,
   'stations.session_grace_seconds': 120,
   'stations.expiry_warning_minutes': [5, 1],
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',

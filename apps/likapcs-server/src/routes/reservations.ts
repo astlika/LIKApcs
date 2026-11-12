@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import {
   PERMISSIONS,
+  checkInReservationSchema,
   createReservationSchema,
   reservationListQuerySchema,
   updateReservationSchema,
@@ -8,7 +9,10 @@ import {
 } from '@likapcs/shared';
 import { z } from 'zod';
 
-/** PC reservations (0.32.0): book PCs for a time, see them, cancel or change the tolerance. */
+/**
+ * PC reservations (0.32.0): book PCs for a time, see them, cancel. 0.33.4: change a booking (time,
+ * PCs, name, tolerance, reminder) and mark the PCs whose booked customer already sits there.
+ */
 export const reservationRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
   const view = { preHandler: app.requirePermission(PERMISSIONS.STATIONS_VIEW) };
@@ -37,6 +41,12 @@ export const reservationRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/reservations/:id', control, async (request) => {
     const { id } = idParams.parse(request.params);
     const body = updateReservationSchema.parse(request.body);
-    return services.reservations.setTolerance(id, body.toleranceMinutes, actorOf(request));
+    return services.reservations.update(id, body, actorOf(request));
+  });
+
+  app.post('/reservations/:id/check-in', control, async (request) => {
+    const { id } = idParams.parse(request.params);
+    const body = checkInReservationSchema.parse(request.body ?? {});
+    return services.reservations.markArrived(id, body.stationIds, actorOf(request));
   });
 };

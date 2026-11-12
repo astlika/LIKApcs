@@ -8,11 +8,12 @@
  * outcome is summarised in one toast. Session actions that need a bill (end, extend, cancel,
  * pause/resume) stay single-PC: each one has its own amount and payment.
  */
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
+  CalendarClock,
   Clock,
   Gift,
   Info,
@@ -57,7 +58,7 @@ import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { clockLabel } from '../../lib/station-board';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
-import { assignCredits } from '../../lib/time-credit-assign';
+import { planEach, planSplit } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -1061,6 +1062,14 @@ function SessionFlow({
 // ─── Quick start: one click on "open time" or a package ────────────────────────
 const QUICK = [30, 60, 120];
 
+/** 0.33.4: the PCs are started as the arrival of this reservation (see ReservationAlerts / the dialog). */
+export interface ReservationArrival {
+  reservationId: string;
+  customerId: string | null;
+  customerName: string;
+  startsAt: string;
+}
+
 type QuickStartProps = {
   station: StationSummary;
   /** Further PCs that get the same choice (multi-selection); each is billed by its own rule. */
@@ -1068,6 +1077,8 @@ type QuickStartProps = {
   onClose: () => void;
   /** The single start's result (to show the "paid" dialog); undefined for bulk starts. */
   onStarted: (result?: SessionMutationResponse) => void;
+  /** 0.33.4: the booked customer arrived: the name is pre-filled and each start uses up its hold. */
+  arrival?: ReservationArrival | null;
 };
 
 /** 0.32.0: a start refused because a reservation holds the PC asks the staff to confirm first. */
@@ -1105,13 +1116,21 @@ function QuickStartBody({
   others = [],
   onClose,
   onStarted,
+  arrival = null,
   onReservationConflict,
 }: QuickStartProps & { onReservationConflict: (c: ReservationConflict | null) => void }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
   const shiftGuard = useShiftGuard();
-  const [customerName, setCustomerName] = useState('');
+  const [customerName, setCustomerName] = useState(
+    arrival && !arrival.customerId ? arrival.customerName : '',
+  );
+  // 0.33.4: a PC kept by a reservation right now (inside its window). Ticked: the booked customer
+  // sits down (the hold is used up). Unticked: someone else — the booking keeps its PC.
+  const [bookedCame, setBookedCame] = useState(true);
+  // 0.33.4: how the minutes paid at the till are used by a multi-selection.
+  const [creditMode, setCreditMode] = useState<'each' | 'split' | 'none'>('each');
   // 0.33.0: the name this PC shows for the session; blank = the customer's name.
   const [pcLabel, setPcLabel] = useState('');
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
@@ -1126,9 +1145,20 @@ function QuickStartBody({
     body: Record<string, unknown>;
     label: string;
     totalCents: number;
-    /** One bill per start target (same order as `startTargets`). */
+    /** One bill per start target (same order as `startTargets`); 0 for a PC with paid minutes. */
     bills: number[];
   } | null>(null);
+  // The booked customer of an arrival, as a full summary (so the session lands on that account).
+  const bookedCustomer = useQuery({
+    queryKey: ['customers', arrival?.customerId ?? null],
+    queryFn: () => api<CustomerSummary>(`/customers/${arrival!.customerId}`),
+    enabled: !!arrival?.customerId,
+    staleTime: 15_000,
+  });
+  useEffect(() => {
+    if (bookedCustomer.data && !customer) setCustomer(bookedCustomer.data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the booked customer arrives
+  }, [bookedCustomer.data]);
   // Only PCs that can actually take a session; the server is still the judge.
   const startTargets = useMemo(
     () => [station, ...others].filter((s) => s.isEnabled && !s.activeSession),
@@ -1147,21 +1177,42 @@ function QuickStartBody({
       ),
     staleTime: 0,
   });
-  const bulkCredits = useMemo(
-    () => (bulk ? assignCredits(startTargets, credits.data?.credits ?? []) : []),
-    [bulk, startTargets, credits.data],
+  // 0.33.4: one plan for the whole selection — which PC starts with which paid minutes. `each`:
+  // one credit per PC, used whole. `split`: one payment shared equally over every PC. `none`: the
+  // paid minutes are left alone. PCs without paid minutes start with the time chosen below.
+  const openCredits = useMemo(() => credits.data?.credits ?? [], [credits.data]);
+  const eachPlan = useMemo(
+    () => (bulk ? planEach(startTargets, openCredits) : []),
+    [bulk, startTargets, openCredits],
   );
+  const splitPlan = useMemo(
+    () => (bulk ? planSplit(startTargets, openCredits) : null),
+    [bulk, startTargets, openCredits],
+  );
+  const eachCovered = eachPlan.filter((a) => a.credit).length;
+  // Sharing is offered only when it helps: not every PC has its own credit.
+  const canSplit = !!splitPlan && eachCovered < startTargets.length;
+  const hasCredits = bulk && (eachCovered > 0 || canSplit);
+  const mode = creditMode === 'split' && !canSplit ? 'each' : creditMode;
+  const creditRows =
+    !hasCredits || mode === 'none' ? [] : mode === 'split' ? splitPlan!.rows : eachPlan;
+  const covered = creditRows.filter((a) => a.credit);
+  const coveredIds = new Set(covered.map((a) => a.target.id));
+  const uncovered = startTargets.filter((s) => !coveredIds.has(s.id));
+  // Prices are shown for a PC that actually starts (the first one), not for a busy one in the selection.
+  const priceRef = startTargets[0] ?? station;
+  const heldTargets = arrival ? [] : startTargets.filter((s) => s.reservation);
   const packages = useQuery({
-    queryKey: ['pricing', 'packages', 'available', station.id],
+    queryKey: ['pricing', 'packages', 'available', priceRef.id],
     queryFn: () =>
-      api<GamingPackageSummary[]>('/pricing/packages', { query: { stationId: station.id } }),
+      api<GamingPackageSummary[]>('/pricing/packages', { query: { stationId: priceRef.id } }),
     staleTime: 30_000,
   });
   const quotes = useQueries({
     queries: [
-      { stationId: station.id, billingMode: 'postpaid' as const },
+      { stationId: priceRef.id, billingMode: 'postpaid' as const },
       ...QUICK.map((minutes) => ({
-        stationId: station.id,
+        stationId: priceRef.id,
         billingMode: 'prepaid' as const,
         minutes,
       })),
@@ -1178,25 +1229,41 @@ function QuickStartBody({
     queryKey: [
       'sessions',
       'quote',
-      { stationId: station.id, billingMode: 'prepaid', minutes: customMinutes },
+      { stationId: priceRef.id, billingMode: 'prepaid', minutes: customMinutes },
     ],
     queryFn: () =>
       api<SessionQuoteResponse>('/sessions/quote', {
         method: 'POST',
-        body: { stationId: station.id, billingMode: 'prepaid', minutes: customMinutes },
+        body: { stationId: priceRef.id, billingMode: 'prepaid', minutes: customMinutes },
       }),
     enabled: customValid,
   });
 
+  // 0.33.4: what a start says about the reservation that keeps the PC. An arrival, or the ticked
+  // notice: the booked customer sits down (`reservationId`). Unticked: someone else
+  // (`ignoreReservation`; the booking keeps its PC). A PC no reservation keeps says nothing.
+  const reservationOf = (target: StationSummary): Record<string, unknown> => {
+    if (arrival) return { reservationId: arrival.reservationId };
+    if (!target.reservation) return {};
+    return bookedCame
+      ? { reservationId: target.reservation.reservationId }
+      : { ignoreReservation: true };
+  };
   const startOne = (target: StationSummary, body: Record<string, unknown>) =>
     api<SessionMutationResponse>('/sessions', {
       method: 'POST',
       body: {
         stationId: target.id,
         ...body,
+        ...reservationOf(target),
         customerId: customer?.id,
         pcLabel: bulk ? undefined : pcLabel.trim() || undefined,
-        customerName: customer ? undefined : customerName.trim() || undefined,
+        // The booked customer's session carries the booking's name unless another one is typed.
+        customerName: customer
+          ? undefined
+          : customerName.trim() ||
+            (!arrival && bookedCame ? target.reservation?.customerName : undefined) ||
+            undefined,
         // One idempotency key per PC so a retry never double-starts any of them.
         clientRequestId: bulk ? `${requestId}:${target.number}` : requestId,
       },
@@ -1223,7 +1290,11 @@ function QuickStartBody({
           .map(async ({ s, i, own }): Promise<BulkOutcome> => {
             try {
               const b = own ?? body;
-              await startOne(s, perTarget ? { ...b, payments: perTarget[i] ?? [] } : b);
+              // Minutes paid at the till take no payment here.
+              await startOne(
+                s,
+                perTarget && !b.creditId ? { ...b, payments: perTarget[i] ?? [] } : b,
+              );
               return { station: s, ok: true };
             } catch (err) {
               // A missing cash shift stops the whole batch: onError offers to open one and retries.
@@ -1259,6 +1330,12 @@ function QuickStartBody({
             failed: sum.failed,
             codes: sum.failedCodes.join(', '),
           }),
+          // 0.33.4: say why, PC by PC (the first reasons), instead of the codes alone.
+          outcomes
+            .filter((o) => !o.ok)
+            .slice(0, 4)
+            .map((o) => `${o.station.code}: ${o.error ?? ''}`)
+            .join(' · '),
         );
       setRequestId(crypto.randomUUID());
       if (sum.ok > 0) onStarted();
@@ -1281,19 +1358,29 @@ function QuickStartBody({
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });
-  // Several PCs with PC time from the till (0.20.9): each assigned PC starts with its own credit.
-  // The minutes were paid at the till, so there is no bill and no tender here.
-  const creditTargets = bulkCredits.filter((a) => a.credit);
-  const startWithCredits = () => {
-    const targetBodies: Record<string, Record<string, unknown>> = {};
-    for (const a of creditTargets) {
-      targetBodies[a.target.id] = {
-        billingMode: 'prepaid',
-        minutes: a.credit!.minutesRemaining,
-        creditId: a.credit!.id,
-      };
+  // Several PCs with PC time from the till (0.20.9). 0.33.4: the plan above says which PC takes
+  // which paid minutes; those were paid at the till, so they take no bill and no tender here.
+  const creditBodies = (): Record<string, Record<string, unknown>> => {
+    const bodies: Record<string, Record<string, unknown>> = {};
+    for (const a of covered) {
+      bodies[a.target.id] = { billingMode: 'prepaid', minutes: a.minutes, creditId: a.credit!.id };
     }
-    start.mutate({ body: {}, targetBodies });
+    return bodies;
+  };
+  /** Only the PCs with paid minutes start; the others stay as they are. */
+  const startWithCredits = () => start.mutate({ body: {}, targetBodies: creditBodies() });
+  /**
+   * Every selected PC starts at once: the PCs with paid minutes use them, the others take `body`
+   * (0.33.4). Without paid minutes in play this is the plain bulk start.
+   */
+  const startAll = (body: Record<string, unknown>, extra: Partial<StartVars> = {}) => {
+    if (covered.length === 0) {
+      start.mutate({ body, ...extra });
+      return;
+    }
+    const targetBodies = creditBodies();
+    for (const s of uncovered) targetBodies[s.id] = body;
+    start.mutate({ body, targetBodies, ...extra });
   };
   const noPricing = openQuote && !openQuote.rule;
   /**
@@ -1309,16 +1396,19 @@ function QuickStartBody({
     }
     setQuoting(true);
     try {
+      // A PC that starts with minutes paid at the till has nothing to pay here.
       const bills = await Promise.all(
         startTargets.map((s) =>
-          api<SessionQuoteResponse>('/sessions/quote', {
-            method: 'POST',
-            body: { stationId: s.id, ...body },
-          }).then((q) => q.priceCents),
+          coveredIds.has(s.id)
+            ? Promise.resolve(0)
+            : api<SessionQuoteResponse>('/sessions/quote', {
+                method: 'POST',
+                body: { stationId: s.id, ...body },
+              }).then((q) => q.priceCents),
         ),
       );
       const sum = bills.reduce((a, b) => a + b, 0);
-      if (sum <= 0) start.mutate({ body });
+      if (sum <= 0) startAll(body);
       else setPending({ body, label, totalCents: sum, bills });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
@@ -1347,7 +1437,11 @@ function QuickStartBody({
             {startTargets.map((s, i) => (
               <li key={s.id}>
                 <span>{s.code}</span>
-                <strong>{fmt.money(pending.bills[i] ?? 0)}</strong>
+                <strong>
+                  {coveredIds.has(s.id)
+                    ? t('map.bulkPaidAtTill')
+                    : fmt.money(pending.bills[i] ?? 0)}
+                </strong>
               </li>
             ))}
           </ul>
@@ -1360,7 +1454,8 @@ function QuickStartBody({
           onBack={() => setPending(null)}
           onStart={(payments, endPay, changeCents) => {
             if (endPay) {
-              start.mutate({ body: { ...pending.body, billingMode: 'endpay' } });
+              if (bulk) startAll({ ...pending.body, billingMode: 'endpay' });
+              else start.mutate({ body: { ...pending.body, billingMode: 'endpay' } });
               return;
             }
             if (!bulk) {
@@ -1368,8 +1463,7 @@ function QuickStartBody({
               return;
             }
             try {
-              start.mutate({
-                body: pending.body,
+              startAll(pending.body, {
                 perTarget: allocatePayments(payments, pending.bills),
                 changeCents,
               });
@@ -1398,8 +1492,45 @@ function QuickStartBody({
           <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
             <strong>{startTargets.map((s) => s.code).join(', ')}</strong>
             {' · '}
-            {t('map.startManyHint', { code: station.code })}
+            {t('map.startManyHint', { code: priceRef.code })}
           </p>
+        )}
+        {arrival && (
+          <div className="rz-notice rz-notice--arrival" data-testid="start-arrival">
+            <CalendarClock size={16} aria-hidden />
+            <span>
+              <strong>
+                {t('reservations.arrivalTitle', {
+                  name: arrival.customerName,
+                  time: clockLabel(arrival.startsAt, fmt.timeZone),
+                })}
+              </strong>
+              <span className="faint">{t('reservations.arrivalHint')}</span>
+            </span>
+          </div>
+        )}
+        {heldTargets.length > 0 && (
+          <label className="rz-notice" data-testid="start-reservation-notice">
+            <input
+              type="checkbox"
+              checked={bookedCame}
+              onChange={(e) => setBookedCame(e.target.checked)}
+            />
+            <span>
+              <strong>
+                {t('reservations.noticeTitle', {
+                  name: [...new Set(heldTargets.map((s) => s.reservation!.customerName))].join(
+                    ', ',
+                  ),
+                  time: clockLabel(heldTargets[0]!.reservation!.startsAt, fmt.timeZone),
+                })}
+                {bulk ? ` · ${heldTargets.map((s) => s.code).join(', ')}` : ''}
+              </strong>
+              <span className="faint">
+                {bookedCame ? t('reservations.noticeCame') : t('reservations.noticeOther')}
+              </span>
+            </span>
+          </label>
         )}
         <div className="row row--between row--wrap" style={{ gap: 10 }}>
           <CustomerPicker
@@ -1426,157 +1557,221 @@ function QuickStartBody({
           </Field>
         )}
         {noPricing && <p className="text-danger">{t('sessions.noRule')}</p>}
-        {bulk && bulkCredits.length > 0 && (
-          <section className="bulk-credits" data-testid="bulk-credits">
+        {hasCredits && (
+          <section className="bulk-credits" data-testid="bulk-credits" data-mode={mode}>
             <p className="bulk-credits__title">{t('map.bulkCreditsTitle')}</p>
-            <ul className="bulk-bills">
-              {bulkCredits.map((a) => (
-                <li key={a.target.id} data-testid="bulk-credit-row">
-                  <span>{a.target.code}</span>
-                  <strong>
-                    {a.credit
-                      ? [
-                          a.credit.holderName,
-                          t('map.useCreditSub', { n: a.credit.minutesRemaining }),
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')
-                      : t('map.bulkCreditNone')}
-                  </strong>
-                </li>
-              ))}
-            </ul>
-            <Button
-              variant="primary"
-              disabled={start.isPending || quoting || creditTargets.length === 0}
-              onClick={startWithCredits}
-              data-testid="bulk-start-credits"
-            >
-              <Timer size={16} /> {t('map.bulkCreditStart', { n: creditTargets.length })}
-            </Button>
+            <div className="chips" role="group" aria-label={t('map.bulkCreditsTitle')}>
+              {eachCovered > 0 && (
+                <button
+                  type="button"
+                  className="chip"
+                  aria-pressed={mode === 'each'}
+                  onClick={() => setCreditMode('each')}
+                  data-testid="bulk-credit-mode-each"
+                >
+                  {t('map.bulkCreditEach')}
+                </button>
+              )}
+              {canSplit && (
+                <button
+                  type="button"
+                  className="chip"
+                  aria-pressed={mode === 'split'}
+                  onClick={() => setCreditMode('split')}
+                  data-testid="bulk-credit-mode-split"
+                >
+                  {t('map.bulkCreditSplit', {
+                    n: startTargets.length,
+                    minutes: splitPlan!.minutesEach,
+                  })}
+                </button>
+              )}
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={mode === 'none'}
+                onClick={() => setCreditMode('none')}
+                data-testid="bulk-credit-mode-none"
+              >
+                {t('map.bulkCreditNoneMode')}
+              </button>
+            </div>
+            {covered.length > 0 && (
+              <ul className="bulk-bills">
+                {covered.map((a) => (
+                  <li key={a.target.id} data-testid="bulk-credit-row">
+                    <span>{a.target.code}</span>
+                    <strong>
+                      {[a.credit!.holderName, t('map.useCreditSub', { n: a.minutes })]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {covered.length > 0 && uncovered.length > 0 && (
+              <p className="muted bulk-credits__rest" data-testid="bulk-credit-rest">
+                {t('map.bulkCreditRest', {
+                  n: uncovered.length,
+                  codes: uncovered.map((s) => s.code).join(', '),
+                })}
+              </p>
+            )}
+            {covered.length > 0 && (
+              <Button
+                variant={uncovered.length === 0 ? 'primary' : 'default'}
+                disabled={start.isPending || quoting}
+                onClick={startWithCredits}
+                data-testid="bulk-start-credits"
+              >
+                <Timer size={16} />{' '}
+                {uncovered.length === 0
+                  ? t('map.bulkCreditStart', { n: covered.length })
+                  : t('map.bulkCreditStartOnly', { n: covered.length })}
+              </Button>
+            )}
           </section>
         )}
-        <div className="start-grid">
-          {!bulk &&
-            (credits.data?.credits ?? []).map((cr) => (
+        {bulk && covered.length > 0 && uncovered.length === 0 ? null : (
+          <>
+            <div className="start-grid">
+              {!bulk &&
+                (credits.data?.credits ?? []).map((cr) => (
+                  <button
+                    key={cr.id}
+                    type="button"
+                    className="start-tile"
+                    disabled={start.isPending || quoting}
+                    onClick={() =>
+                      start.mutate({
+                        body: {
+                          billingMode: 'prepaid',
+                          minutes: cr.minutesRemaining,
+                          creditId: cr.id,
+                        },
+                      })
+                    }
+                    data-testid="start-use-credit"
+                  >
+                    <Timer size={22} />
+                    <span className="start-tile__title">{t('map.useCredit')}</span>
+                    <span className="start-tile__sub">
+                      {t('map.useCreditSub', { n: cr.minutesRemaining })}
+                    </span>
+                  </button>
+                ))}
               <button
-                key={cr.id}
                 type="button"
-                className="start-tile"
-                disabled={start.isPending || quoting}
+                className="start-tile start-tile--open"
+                disabled={start.isPending || quoting || !openQuote?.rule}
                 onClick={() =>
-                  start.mutate({
-                    body: { billingMode: 'prepaid', minutes: cr.minutesRemaining, creditId: cr.id },
-                  })
+                  bulk
+                    ? startAll({ billingMode: 'postpaid' })
+                    : start.mutate({ body: { billingMode: 'postpaid' } })
                 }
-                data-testid="start-use-credit"
+                data-testid="quick-start-open"
               >
-                <Timer size={22} />
-                <span className="start-tile__title">{t('map.useCredit')}</span>
+                <Clock size={22} />
+                <span className="start-tile__title">{t('map.openTime')}</span>
                 <span className="start-tile__sub">
-                  {t('map.useCreditSub', { n: cr.minutesRemaining })}
+                  {openQuote?.rule
+                    ? `${fmt.money(openQuote.rule.rateCentsPerHour)}${t('sessions.perHour')}`
+                    : '—'}
                 </span>
               </button>
-            ))}
-          <button
-            type="button"
-            className="start-tile start-tile--open"
-            disabled={start.isPending || quoting || !openQuote?.rule}
-            onClick={() => start.mutate({ body: { billingMode: 'postpaid' } })}
-            data-testid="quick-start-open"
-          >
-            <Clock size={22} />
-            <span className="start-tile__title">{t('map.openTime')}</span>
-            <span className="start-tile__sub">
-              {openQuote?.rule
-                ? `${fmt.money(openQuote.rule.rateCentsPerHour)}${t('sessions.perHour')}`
-                : '—'}
-            </span>
-          </button>
-          {(packages.data ?? []).map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="start-tile"
-              disabled={start.isPending || quoting}
-              onClick={() =>
-                choose(
-                  { billingMode: 'prepaid', packageId: p.id },
-                  `${p.name} · ${p.durationMinutes} min`,
-                  p.priceCents,
-                )
-              }
-              data-testid="quick-start-package"
-            >
-              <Timer size={22} />
-              <span className="start-tile__title">{p.name}</span>
-              <span className="start-tile__sub">
-                {p.durationMinutes} min · <strong>{fmt.money(p.priceCents)}</strong>
-              </span>
-            </button>
-          ))}
-          {QUICK.map((minutes, i) => {
-            const q = quotes[i + 1]?.data;
-            return (
-              <button
-                key={minutes}
-                type="button"
-                className="start-tile"
-                disabled={start.isPending || quoting || !q?.rule}
-                onClick={() =>
-                  choose({ billingMode: 'prepaid', minutes }, `${minutes} min`, q?.priceCents ?? 0)
-                }
-                data-testid="quick-start-minutes"
-              >
-                <Timer size={22} />
-                <span className="start-tile__title">
-                  {minutes >= 60 ? `${minutes / 60} h` : `${minutes} min`}
-                </span>
-                <span className="start-tile__sub">
-                  {q ? <strong>{fmt.money(q.priceCents)}</strong> : '…'}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
-          <Field label={t('sessions.customMinutes')} className="grow">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={1}
-                max={1440}
-                value={custom}
-                onChange={(e) => setCustom(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && customValid && customQuote.data?.rule)
+              {(packages.data ?? []).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="start-tile"
+                  disabled={start.isPending || quoting}
+                  onClick={() =>
                     choose(
-                      { billingMode: 'prepaid', minutes: customMinutes },
-                      `${customMinutes} min`,
-                      customQuote.data.priceCents,
-                    );
-                }}
-              />
-            )}
-          </Field>
-          <Button
-            variant="primary"
-            disabled={!customValid || !customQuote.data?.rule}
-            loading={start.isPending || quoting}
-            onClick={() =>
-              customQuote.data &&
-              choose(
-                { billingMode: 'prepaid', minutes: customMinutes },
-                `${customMinutes} min`,
-                customQuote.data.priceCents,
-              )
-            }
-          >
-            <Play size={14} /> {t('map.start')}
-            {customValid && customQuote.data ? ` · ${fmt.money(customQuote.data.priceCents)}` : ''}
-          </Button>
-        </div>
+                      { billingMode: 'prepaid', packageId: p.id },
+                      `${p.name} · ${p.durationMinutes} min`,
+                      p.priceCents,
+                    )
+                  }
+                  data-testid="quick-start-package"
+                >
+                  <Timer size={22} />
+                  <span className="start-tile__title">{p.name}</span>
+                  <span className="start-tile__sub">
+                    {p.durationMinutes} min · <strong>{fmt.money(p.priceCents)}</strong>
+                  </span>
+                </button>
+              ))}
+              {QUICK.map((minutes, i) => {
+                const q = quotes[i + 1]?.data;
+                return (
+                  <button
+                    key={minutes}
+                    type="button"
+                    className="start-tile"
+                    disabled={start.isPending || quoting || !q?.rule}
+                    onClick={() =>
+                      choose(
+                        { billingMode: 'prepaid', minutes },
+                        `${minutes} min`,
+                        q?.priceCents ?? 0,
+                      )
+                    }
+                    data-testid="quick-start-minutes"
+                  >
+                    <Timer size={22} />
+                    <span className="start-tile__title">
+                      {minutes >= 60 ? `${minutes / 60} h` : `${minutes} min`}
+                    </span>
+                    <span className="start-tile__sub">
+                      {q ? <strong>{fmt.money(q.priceCents)}</strong> : '…'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
+              <Field label={t('sessions.customMinutes')} className="grow">
+                {(id) => (
+                  <Input
+                    id={id}
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={custom}
+                    onChange={(e) => setCustom(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customValid && customQuote.data?.rule)
+                        choose(
+                          { billingMode: 'prepaid', minutes: customMinutes },
+                          `${customMinutes} min`,
+                          customQuote.data.priceCents,
+                        );
+                    }}
+                  />
+                )}
+              </Field>
+              <Button
+                variant="primary"
+                disabled={!customValid || !customQuote.data?.rule}
+                loading={start.isPending || quoting}
+                onClick={() =>
+                  customQuote.data &&
+                  choose(
+                    { billingMode: 'prepaid', minutes: customMinutes },
+                    `${customMinutes} min`,
+                    customQuote.data.priceCents,
+                  )
+                }
+              >
+                <Play size={14} /> {t('map.start')}
+                {customValid && customQuote.data
+                  ? ` · ${fmt.money(customQuote.data.priceCents)}`
+                  : ''}
+              </Button>
+            </div>
+          </>
+        )}
         {!station.device?.online && (
           <p className="muted" style={{ fontSize: 12.5 }}>
             {t('sessions.pcOffline')}

@@ -50,6 +50,7 @@ import {
 import { api, ApiError, fileUrl } from '../lib/api';
 import { usePosFlags } from '../lib/pos-flags';
 import { getLiveStatus } from '../lib/live-status';
+import { stockShortageOf, stockShortageText } from '../lib/stock-error';
 import {
   getOfflineSnapshot,
   OfflineRefusedError,
@@ -63,6 +64,9 @@ import {
   addFreeItem,
   addTimeItem,
   addToCart,
+  addToCartChecked,
+  setQuantityChecked,
+  type StockRefusal,
   cartItemCount,
   cartToRequest,
   cartTotals,
@@ -74,7 +78,6 @@ import {
   lineName,
   removeLine,
   setLineDiscount,
-  setQuantity,
   type Cart,
   type CartLine,
   unitPriceOf,
@@ -262,17 +265,55 @@ export function PosPage() {
     focusSearch();
   }, [cart, focusSearch, setCart, setCustomer, t, toast]);
 
+  // 0.33.4: a product that may not go below zero is not put in the sale beyond its stock — by a
+  // click, a search, a barcode or a typed quantity. Products allowed below zero are not limited.
+  const stockRefused = useCallback(
+    (refusal: StockRefusal) => {
+      toast.error(
+        refusal.stockMilli > 0
+          ? t('pos.stockOnly', { n: refusal.stockMilli / 1000, name: refusal.productName })
+          : t('pos.stockNone', { name: refusal.productName }),
+        t('pos.stockHint'),
+      );
+    },
+    [t, toast],
+  );
+  /** A server answer "not enough stock" (the stock changed meanwhile): say it and refresh the tiles. */
+  const stockError = useCallback(
+    (err: unknown): boolean => {
+      const shortage = stockShortageOf(err);
+      if (!shortage) return false;
+      toast.error(stockShortageText(shortage, t), t('pos.stockHint'));
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      return true;
+    },
+    [queryClient, t, toast],
+  );
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      const checked = addToCartChecked(cart, product, quantityMilli);
+      if (checked.refused) {
+        stockRefused(checked.refused);
+        focusSearch();
+        return;
+      }
       if (product.addons?.length) {
         setAddonPick({ product, quantityMilli });
         return;
       }
-      setCart((c) => addToCart(c, product, quantityMilli));
+      setCart(checked.cart);
       focusSearch();
     },
-    [focusSearch, setCart],
+    [cart, focusSearch, setCart, stockRefused],
+  );
+  const changeQuantity = useCallback(
+    (key: string, quantityMilli: number) => {
+      const checked = setQuantityChecked(cart, key, quantityMilli);
+      if (checked.refused) stockRefused(checked.refused);
+      setCart(checked.cart);
+    },
+    [cart, setCart, stockRefused],
   );
 
   // Leaving the "sale completed" screen: refresh what the sale changed (stock on the tiles, the
@@ -465,7 +506,10 @@ export function PosPage() {
       }
       resetCart();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+    onError: (err) => {
+      if (stockError(err)) return;
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
   });
   const voidSale = useMutation({
     mutationFn: (id: string) => api<void>(`/sales/${id}/void`, { method: 'POST' }),
@@ -737,7 +781,7 @@ export function PosPage() {
                       <button
                         type="button"
                         className="btn btn--ghost btn--sm"
-                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli - 1000))}
+                        onClick={() => changeQuantity(key, line.quantityMilli - 1000)}
                         aria-label="−"
                       >
                         <Minus size={14} />
@@ -746,14 +790,14 @@ export function PosPage() {
                         quantityMilli={line.quantityMilli}
                         label={t('pos.qty')}
                         onCommit={(milli) => {
-                          setCart((c) => setQuantity(c, key, milli));
+                          changeQuantity(key, milli);
                           focusSearch();
                         }}
                       />
                       <button
                         type="button"
                         className="btn btn--ghost btn--sm"
-                        onClick={() => setCart(setQuantity(cart, key, line.quantityMilli + 1000))}
+                        onClick={() => changeQuantity(key, line.quantityMilli + 1000)}
                         aria-label="+"
                       >
                         <Plus size={14} />
@@ -1009,7 +1053,9 @@ export function PosPage() {
           }}
           onAdd={(addonIds) => {
             const { product, quantityMilli } = addonPick;
-            setCart((c) => addToCart(c, product, quantityMilli, addonIds));
+            const checked = addToCartChecked(cart, product, quantityMilli, addonIds);
+            if (checked.refused) stockRefused(checked.refused);
+            else setCart(checked.cart);
             setAddonPick(null);
             focusSearch();
           }}
@@ -1309,6 +1355,7 @@ function PaymentDialog({
 }) {
   const { t } = useI18n();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const shiftGuard = useShiftGuard();
   const tender = useTender({ totalCents, customer, initialMode: startMode });
   const display = useCustomerDisplay();
@@ -1416,6 +1463,13 @@ function PaymentDialog({
         return;
       }
       if (shiftGuard.handle(err, () => complete.mutate())) return;
+      const shortage = stockShortageOf(err);
+      if (shortage) {
+        // 0.33.4: the stock changed since the product was added: say it in the till's language.
+        toast.error(stockShortageText(shortage, t), t('pos.stockHint'));
+        void queryClient.invalidateQueries({ queryKey: ['products'] });
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
     },
   });

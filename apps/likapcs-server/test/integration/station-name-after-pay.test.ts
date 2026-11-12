@@ -1,6 +1,7 @@
 /**
  * 0.33.1 — a finished customer's name stays on the PC only while the bill is unpaid.
- * After the payment (and with no debt left) the PC shows no customer name.
+ * 0.33.4 — "paid" includes "put on the customer's tab": a bill taken on credit is settled for the
+ * PC, so the PC shows no name and no debt (the debt lives with the customer, under Debts).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type {
@@ -74,7 +75,7 @@ describe('station name after payment', () => {
     expect(board.debt.customerName).toBeNull();
   });
 
-  it('shows the debt of its own bill, and removes it once that debt is paid', async () => {
+  it('shows no name and no debt once the bill went on the customer tab (0.33.4)', async () => {
     const started = await call<SessionMutationResponse>('POST', '/sessions', {
       stationId: pc.id,
       billingMode: 'endpay',
@@ -96,8 +97,12 @@ describe('station name after payment', () => {
     expect(credit.status).toBe(200);
 
     let board = (await call<StationSummary>('GET', `/stations/${pc.id}`)).body;
-    expect(board.debt.cents).toBe(due);
-    expect(board.debt.customerName).toBe('Ardit Pagues');
+    expect(board.awaitingPayment.count).toBe(0);
+    expect(board.debt.cents).toBe(0);
+    expect(board.debt.customerName).toBeNull();
+    // The debt itself is not lost: it is the customer's.
+    const owes = (await call<CustomerSummary>('GET', `/customers/${customer.id}`)).body;
+    expect(owes.balanceDueCents).toBe(due);
 
     const debt = (
       await ctx.pool.query<{ id: string }>(
@@ -108,6 +113,27 @@ describe('station name after payment', () => {
     expect((await call('POST', `/debts/${debt.id}/pay`, { amountCents: due, method: 'cash' })).status).toBe(200);
 
     board = (await call<StationSummary>('GET', `/stations/${pc.id}`)).body;
+    expect(board.debt.cents).toBe(0);
+    expect(board.debt.customerName).toBeNull();
+  });
+
+  it('a PC started on the customer tab shows the name while it runs and nothing after it ends (0.33.4)', async () => {
+    const started = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: pc.id,
+      billingMode: 'prepaid',
+      minutes: 30,
+      customerId: customer.id,
+      payments: [{ method: 'credit', amountCents: 75 }],
+    });
+    expect(started.status).toBe(201);
+    let board = (await call<StationSummary>('GET', `/stations/${pc.id}`)).body;
+    expect(board.activeSession?.customerName).toBe('Ardit Pagues');
+    expect(board.debt.cents).toBeGreaterThan(0);
+
+    expect((await call('POST', `/sessions/${started.body.session.id}/end`, {})).status).toBe(200);
+    board = (await call<StationSummary>('GET', `/stations/${pc.id}`)).body;
+    expect(board.activeSession).toBeNull();
+    expect(board.awaitingPayment.count).toBe(0);
     expect(board.debt.cents).toBe(0);
     expect(board.debt.customerName).toBeNull();
   });

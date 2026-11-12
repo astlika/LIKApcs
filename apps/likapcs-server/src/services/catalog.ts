@@ -1012,6 +1012,7 @@ export async function applyMovement(
     throw conflict(`Insufficient stock for ${r.rows[0].name}`, {
       code: 'INSUFFICIENT_STOCK',
       productId: input.productId,
+      productName: r.rows[0].name,
       availableMilli: Number(r.rows[0].stock_milli),
       requestedMilli: -input.delta,
     });

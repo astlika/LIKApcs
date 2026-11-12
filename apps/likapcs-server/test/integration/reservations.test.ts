@@ -1,8 +1,12 @@
 /**
- * 0.32.0 — PC reservations. A held PC asks before a session starts (reservation_conflict), the
- * booked customer starts it straight away, a confirmed start uses the hold, overlapping bookings
- * are refused, the sweep releases a hold once its tolerance has passed, cancel frees the PC, and
- * the badges are saved per PC.
+ * 0.32.0 — PC reservations: overlapping bookings are refused, the sweep releases a hold once its
+ * tolerance has passed, cancel frees the PC, and the badges are saved per PC.
+ *
+ * 0.33.4 — a booking for later does not touch its PCs: no mark on the PC and no question before
+ * its reminder time, and a session started there does not use up the booking. Inside the window
+ * (reminder time → end of the tolerance) the PC asks (reservation_conflict); the booked customer
+ * (`reservationId`, or the same customer record) uses up the hold; anyone else starts with
+ * `ignoreReservation` and the booking keeps its PC. A booking can be changed (time, PCs, name).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
@@ -51,7 +55,19 @@ describe('PC reservations', () => {
     await ctx.close();
   });
 
-  it('holds the booked PCs, shows the hold on each PC, and refuses a start without confirmation', async () => {
+  const reservationOf = async (id: string) =>
+    (
+      await call<{ items: ReservationSummary[] }>(
+        'GET',
+        `/reservations?from=${encodeURIComponent(inHour(-180))}&to=${encodeURIComponent(inHour(600))}`,
+      )
+    ).body.items.find((r) => r.id === id)!;
+  const pcOf = async (key: string) =>
+    (await call<StationSummary>('GET', `/stations/${stations[key]!.id}`)).body;
+  const endSession = async (id: string) =>
+    expect((await call('POST', `/sessions/${id}/end`, { payments: [] })).status).toBe(200);
+
+  it('a booking for later leaves the PC alone: no mark, no question, and a walk-in does not use it up', async () => {
     const created = await call<ReservationSummary>('POST', '/reservations', {
       stationIds: [stations.PC1!.id, stations.PC2!.id],
       startsAt: inHour(60),
@@ -60,38 +76,96 @@ describe('PC reservations', () => {
     expect(created.status).toBe(201);
     expect(created.body.status).toBe('scheduled');
     expect(created.body.toleranceMinutes).toBe(5);
+    expect(created.body.remindMinutes).toBe(10);
+    expect(Date.parse(created.body.startsAt) - Date.parse(created.body.remindAt)).toBe(10 * MINUTE);
     expect(created.body.stations.map((s) => s.state)).toEqual(['held', 'held']);
 
-    const pc1 = (await call<StationSummary>('GET', `/stations/${stations.PC1!.id}`)).body;
-    expect(pc1.reservation?.reservationId).toBe(created.body.id);
-    expect(pc1.reservation?.customerName).toBe('Besa');
+    // One hour before: the PC shows nothing of the booking.
+    expect((await pcOf('PC1')).reservation).toBeNull();
+
+    // A walk-in sits down without any confirmation…
+    const walkIn = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: stations.PC1!.id,
+      billingMode: 'postpaid',
+    });
+    expect(walkIn.status).toBe(201);
+    // …and the booking still has both PCs.
+    const after = await reservationOf(created.body.id);
+    expect(after.status).toBe('scheduled');
+    expect(after.stations.map((s) => s.state)).toEqual(['held', 'held']);
+    await endSession(walkIn.body.session.id);
+  });
+
+  it('inside its window the PC asks; someone else starts with ignoreReservation and the booking keeps the PC', async () => {
+    // Ten minutes ahead with the default reminder of 10 minutes: the window is open now.
+    const created = await call<ReservationSummary>('POST', '/reservations', {
+      stationIds: [stations.PC3!.id],
+      startsAt: inHour(8),
+      customerName: 'Dritan',
+    });
+    expect(created.status).toBe(201);
+    const pc3 = await pcOf('PC3');
+    expect(pc3.reservation?.reservationId).toBe(created.body.id);
+    expect(pc3.reservation?.customerName).toBe('Dritan');
 
     const blocked = await call<unknown>('POST', '/sessions', {
-      stationId: stations.PC1!.id,
+      stationId: stations.PC3!.id,
       billingMode: 'postpaid',
     });
     expect(blocked.status).toBe(409);
     expect(blocked.raw).toContain('reservation_conflict');
-  });
 
-  it('starts the session when the staff confirms, and uses up that PC hold only', async () => {
-    const started = await call<SessionMutationResponse>('POST', '/sessions', {
-      stationId: stations.PC1!.id,
+    const other = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: stations.PC3!.id,
       billingMode: 'postpaid',
       ignoreReservation: true,
     });
-    expect(started.status).toBe(201);
+    expect(other.status).toBe(201);
+    const kept = await reservationOf(created.body.id);
+    expect(kept.stations[0]?.state).toBe('held');
+    expect(['scheduled', 'active']).toContain(kept.status);
 
-    const reservations = await call<{ items: ReservationSummary[] }>('GET', '/reservations');
-    const mine = reservations.body.items.find(
+    // The booked customer turns out to be the one sitting there: the desk marks the PC as arrived.
+    const arrived = await call<{ reservation: ReservationSummary; checkedIn: string[] }>(
+      'POST',
+      `/reservations/${created.body.id}/check-in`,
+      {},
+    );
+    expect(arrived.status).toBe(200);
+    expect(arrived.body.checkedIn).toEqual([stations.PC3!.id]);
+    expect(arrived.body.reservation.status).toBe('completed');
+    expect(arrived.body.reservation.stations[0]?.state).toBe('checked_in');
+    expect((await pcOf('PC3')).reservation).toBeNull();
+    await endSession(other.body.session.id);
+  });
+
+  it('the arrival of the booking (reservationId) uses up that PC only — early arrivals too', async () => {
+    const booking = (await call<{ items: ReservationSummary[] }>('GET', '/reservations')).body.items.find(
       (r) => r.customerName === 'Besa',
     )!;
+    // 50+ minutes early, no question asked: the desk says who it is.
+    const started = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: stations.PC1!.id,
+      billingMode: 'postpaid',
+      customerName: 'Besa',
+      reservationId: booking.id,
+    });
+    expect(started.status).toBe(201);
+    const mine = await reservationOf(booking.id);
     expect(mine.stations.find((s) => s.stationId === stations.PC1!.id)?.state).toBe('checked_in');
     expect(mine.stations.find((s) => s.stationId === stations.PC2!.id)?.state).toBe('held');
     expect(mine.status).toBe('scheduled');
 
-    const pc1 = (await call<StationSummary>('GET', `/stations/${stations.PC1!.id}`)).body;
-    expect(pc1.reservation).toBeNull();
+    // A reservation that does not keep the PC is refused, and nothing starts.
+    const wrong = await call<unknown>('POST', '/sessions', {
+      stationId: stations.PC4!.id,
+      billingMode: 'postpaid',
+      reservationId: booking.id,
+    });
+    expect(wrong.status).toBe(409);
+    expect(wrong.raw).toContain('reservation_mismatch');
+    expect((await pcOf('PC4')).activeSession).toBeNull();
+    await endSession(started.body.session.id);
   });
 
   it('refuses a second booking that overlaps a PC still held', async () => {
@@ -104,7 +178,7 @@ describe('PC reservations', () => {
     expect(overlap.raw).toContain('reservation_overlap');
   });
 
-  it('lets the booked customer start without confirmation', async () => {
+  it('the booked customer record: untouched hours before, used up inside the window', async () => {
     const booked = await call<ReservationSummary>('POST', '/reservations', {
       stationIds: [stations.PC3!.id],
       startsAt: inHour(120),
@@ -112,16 +186,67 @@ describe('PC reservations', () => {
       customerName: customer.name,
     });
     expect(booked.status).toBe(201);
+    // Two hours early the same customer plays on that PC: an ordinary visit, the booking stays.
+    const early = await call<SessionMutationResponse>('POST', '/sessions', {
+      stationId: stations.PC3!.id,
+      billingMode: 'postpaid',
+      customerId: customer.id,
+    });
+    expect(early.status).toBe(201);
+    expect((await reservationOf(booked.body.id)).stations[0]?.state).toBe('held');
+    await endSession(early.body.session.id);
+
+    // Moved to five minutes from now: inside the window the customer starts with no question.
+    const moved = await call<ReservationSummary>('PATCH', `/reservations/${booked.body.id}`, {
+      startsAt: inHour(5),
+    });
+    expect(moved.status).toBe(200);
     const started = await call<SessionMutationResponse>('POST', '/sessions', {
       stationId: stations.PC3!.id,
       billingMode: 'postpaid',
       customerId: customer.id,
     });
     expect(started.status).toBe(201);
-    const list = await call<{ items: ReservationSummary[] }>('GET', '/reservations');
-    const row = list.body.items.find((r) => r.id === booked.body.id)!;
+    const row = await reservationOf(booked.body.id);
     expect(row.status).toBe('completed');
     expect(row.stations[0]?.state).toBe('checked_in');
+    await endSession(started.body.session.id);
+  });
+
+  it('changes a booking: time, PCs, name and reminder; an overlap is refused', async () => {
+    const booked = await call<ReservationSummary>('POST', '/reservations', {
+      stationIds: [stations.PC4!.id],
+      startsAt: inHour(200),
+      customerName: 'Grupi',
+    });
+    expect(booked.status).toBe(201);
+    const changed = await call<ReservationSummary>('PATCH', `/reservations/${booked.body.id}`, {
+      startsAt: inHour(240),
+      stationIds: [stations.PC4!.id, stations.PC5!.id],
+      customerName: 'Grupi i Artanit',
+      phone: '044 123 456',
+      remindMinutes: 30,
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.body.customerName).toBe('Grupi i Artanit');
+    expect(changed.body.phone).toBe('044 123 456');
+    expect(changed.body.remindMinutes).toBe(30);
+    expect(changed.body.stations.map((s) => `${s.number}:${s.state}`)).toEqual(['4:held', '5:held']);
+    // PC 2 is kept by "Besa" at +60 min: moving this booking onto it at that time is refused.
+    const clash = await call<unknown>('PATCH', `/reservations/${booked.body.id}`, {
+      startsAt: inHour(62),
+      stationIds: [stations.PC2!.id],
+    });
+    expect(clash.status).toBe(409);
+    expect(clash.raw).toContain('reservation_overlap');
+    // Dropping a PC frees it; the other stays.
+    const fewer = await call<ReservationSummary>('PATCH', `/reservations/${booked.body.id}`, {
+      stationIds: [stations.PC5!.id],
+    });
+    expect(fewer.body.stations.map((s) => s.number)).toEqual([5]);
+    expect((await call('POST', `/reservations/${booked.body.id}/cancel`)).status).toBe(200);
+    expect((await call('PATCH', `/reservations/${booked.body.id}`, { remindMinutes: 5 })).status).toBe(409);
+    expect((await call('PATCH', `/reservations/${booked.body.id}`, {})).status).toBe(400);
   });
 
   it('releases a hold once its tolerance has passed, and expires the reservation', async () => {

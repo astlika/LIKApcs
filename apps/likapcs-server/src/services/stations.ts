@@ -122,14 +122,13 @@ const STATION_SELECT = `
          hold.reservation_id AS hold_reservation_id, hold.customer_name AS hold_customer_name,
          hold.starts_at AS hold_starts_at, hold.window_end AS hold_window_end,
          hold.tolerance_minutes AS hold_tolerance_minutes,
-         -- 0.33.1: an idle PC shows only the open debt of its own last bill (customer_debts of that sale),
-         -- not the customer's whole balance: a customer who owes nothing for this PC shows no debt here.
-         CASE WHEN g.id IS NOT NULL THEN COALESCE(c.balance_due_cents, 0)
-              ELSE COALESCE(lc.open_cents, 0) END AS debt_cents,
-         -- 0.33.1: a finished customer's name stays on the PC only while the session is unpaid or the
-         -- customer still owes; after the payment (and no debt) the name is removed.
+         -- 0.33.4: the debt belongs to the customer, not to the PC. A running session shows what its
+         -- customer owes; an idle PC shows no debt (0.32.0–0.33.2 kept the debt of its last bill there).
+         CASE WHEN g.id IS NOT NULL THEN COALESCE(c.balance_due_cents, 0) ELSE 0 END AS debt_cents,
+         -- 0.33.4: once the session's bill is settled — paid, or put on the customer's tab — the PC
+         -- shows no name. The name stays only while that bill still waits for its payment.
          CASE WHEN g.id IS NOT NULL THEN c.name
-              WHEN lc.unbilled OR COALESCE(lc.open_cents, 0) > 0 THEN lc.name
+              WHEN lc.unbilled THEN lc.name
               ELSE NULL END AS debt_customer_name,
          (SELECT COALESCE(json_agg(x ORDER BY x.amount DESC), '[]'::json) FROM (
             SELECT oi.name, SUM(oi.quantity_milli)::bigint AS quantity_milli,
@@ -145,22 +144,22 @@ const STATION_SELECT = `
     LEFT JOIN customers rc ON rc.id = r.customer_id
     LEFT JOIN gaming_packages rp ON rp.id = r.package_id
     LEFT JOIN users ua ON ua.id = s.archived_by
-    -- 0.32.0: the reservation holding this PC now (inside its tolerance window).
+    -- 0.32.0: the reservation keeping this PC now. 0.33.4: only inside its window, from the reminder
+    -- time (starts_at - remind_minutes) until the tolerance ends; a booking for later marks nothing.
     LEFT JOIN LATERAL (
       SELECT rv.id AS reservation_id, rv.customer_name, rv.starts_at, rv.tolerance_minutes,
              rv.starts_at + rv.tolerance_minutes * interval '1 minute' AS window_end
         FROM reservation_stations rs JOIN reservations rv ON rv.id = rs.reservation_id
        WHERE rs.station_id = s.id AND rs.state = 'held' AND rv.status IN ('scheduled', 'active')
+         AND now() >= rv.starts_at - rv.remind_minutes * interval '1 minute'
          AND now() < rv.starts_at + rv.tolerance_minutes * interval '1 minute'
        ORDER BY rv.starts_at LIMIT 1
     ) hold ON TRUE
-    -- 0.32.0: the customer whose debt the PC shows: the running session's, else the last ended one.
+    -- The customer of the PC's last ended session.
     -- 0.33.1: unbilled = that ended session is still waiting for its payment.
     LEFT JOIN LATERAL (
       SELECT c2.name,
-             (g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid')) AS unbilled,
-             COALESCE((SELECT SUM(d.amount_cents - d.paid_cents) FROM customer_debts d
-                        WHERE d.sale_id = g2.sale_id AND d.status IN ('open', 'partial')), 0) AS open_cents
+             (g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid')) AS unbilled
         FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
        WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
        ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1

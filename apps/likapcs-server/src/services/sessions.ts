@@ -602,18 +602,37 @@ export class SessionsService {
         [req.stationId, 'active', 'paused'],
       );
       if (live.rowCount) throw conflict('A session is already running on this station');
-      // 0.32.0: a PC a reservation holds asks first (a warning, not a lock). The booked customer
-      // starts it straight away and uses up the hold; anyone else needs ignoreReservation.
+      // 0.32.0: a PC a reservation keeps asks first (a warning, not a lock).
+      // 0.33.4: only inside the booking's window (reminder time → end of the tolerance); a booking
+      // for later does not touch the PC. The booked customer (the same customer record, or
+      // `reservationId` sent by the desk — early arrivals too) uses up the hold. Anyone else needs
+      // ignoreReservation, and then the booking KEEPS its PC.
       const hold = (await this.reservations?.holdFor(client, req.stationId, now)) ?? null;
-      const bookedCustomer = Boolean(hold?.customerId && hold.customerId === req.customerId);
-      if (hold && !bookedCustomer && !req.ignoreReservation) {
-        throw new AppError(409, 'reservation_conflict', 'This PC is reserved', {
-          reservationId: hold.reservationId,
-          customerName: hold.customerName,
-          startsAt: hold.startsAt.toISOString(),
-          windowEndsAt: hold.windowEndsAt.toISOString(),
-          toleranceMinutes: hold.toleranceMinutes,
-        });
+      let checkInReservationId: string | null = null;
+      if (req.reservationId) {
+        const own =
+          hold?.reservationId === req.reservationId
+            ? hold
+            : ((await this.reservations?.holdOf(client, req.stationId, req.reservationId, now)) ??
+              null);
+        if (!own) {
+          throw new AppError(409, 'reservation_mismatch', 'This reservation does not keep this PC', {
+            reservationId: req.reservationId,
+          });
+        }
+        checkInReservationId = own.reservationId;
+      } else if (hold) {
+        if (hold.customerId && hold.customerId === req.customerId) {
+          checkInReservationId = hold.reservationId;
+        } else if (!req.ignoreReservation) {
+          throw new AppError(409, 'reservation_conflict', 'This PC is reserved', {
+            reservationId: hold.reservationId,
+            customerName: hold.customerName,
+            startsAt: hold.startsAt.toISOString(),
+            windowEndsAt: hold.windowEndsAt.toISOString(),
+            toleranceMinutes: hold.toleranceMinutes,
+          });
+        }
       }
       // A customer session supersedes a staff maintenance unlock.
       await client.query(
@@ -648,7 +667,9 @@ export class SessionsService {
       );
       const id = inserted.rows[0]!.id;
       await this.addEvent(client, id, 'created', actor, { billingMode: req.billingMode, quote });
-      if (hold) await this.reservations!.checkIn(client, req.stationId, hold.reservationId, id);
+      if (checkInReservationId) {
+        await this.reservations!.checkIn(client, req.stationId, checkInReservationId, id);
+      }
       if (req.creditId) {
         // 0.19.0: the minutes were paid at the till; this takes them from the credit, all or nothing.
         redeemed = await this.credits.redeem(client, {
@@ -2538,7 +2559,10 @@ export class SessionsService {
         referenceType: 'sale',
         referenceId: saleId,
         actorUserId: input.actor.userId ?? null,
-        allowNegative: line.allowNegative,
+        // 0.33.4: these products were handed over when the order was accepted (the quantity was
+        // checked against the stock then). The bill must always close: if the stock was sold
+        // elsewhere in the meantime it goes below zero until it is counted, as an offline sale does.
+        allowNegative: true,
       });
     }
     let creditCents = 0;
