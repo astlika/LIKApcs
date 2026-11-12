@@ -1,19 +1,61 @@
 /**
  * POS cart state (pure functions; the server recomputes everything on submission).
  * Quantities are milli-units, money is integer cents — identical to the server model.
+ *
+ * 0.19.0: a line is a catalogue product (stock, tax and price from the product row), an
+ * off-inventory "free" line (a name and a price typed at the till, default tax, no stock), or a
+ * "time" line (prepaid PC minutes sold now — the server prices it and creates a credit for the PC).
  */
 import {
   computeSale,
   customerDiscountCents,
+  type ProductAddonSummary,
   type ProductSummary,
   type SaleTotals,
 } from '@likapcs/shared';
 
-export interface CartLine {
+export interface ProductLine {
+  kind: 'product';
   product: ProductSummary;
   quantityMilli: number;
   discountCents: number;
+  /** 0.19.1: the product's extras chosen for this line (sorted ids; empty when none). */
+  addonIds: string[];
 }
+
+export interface FreeLine {
+  kind: 'free';
+  /** Stable key of this line (free lines have no product id). */
+  key: string;
+  name: string;
+  /** Gross unit price as typed (includes tax, like the catalogue). */
+  unitPriceCents: number;
+  /** The default tax rate at the moment the line was added (shown the same as the server). */
+  taxRateBp: number;
+  quantityMilli: number;
+  discountCents: number;
+}
+
+/** Prepaid PC time (0.19.0). One unit per line; the server re-quotes the price on submission. */
+export interface TimeLine {
+  kind: 'time';
+  /** Stable key of this line: each addition is its own line (two PCs, or two bookings). */
+  key: string;
+  /** Null: sold without a PC (0.20.8) — the name holds the minutes, a PIN starts them at any PC. */
+  stationId: string | null;
+  stationCode: string | null;
+  /** The name the minutes belong to (sold without a PC). */
+  holderName: string | null;
+  minutes: number;
+  /** Gross price as quoted for the PC right now (includes tax, like the catalogue). */
+  unitPriceCents: number;
+  taxRateBp: number;
+  /** Always one unit: PC time is sold per booking, its quantity is not editable. */
+  quantityMilli: 1000;
+  discountCents: number;
+}
+
+export type CartLine = ProductLine | FreeLine | TimeLine;
 
 export interface Cart {
   lines: CartLine[];
@@ -22,6 +64,40 @@ export interface Cart {
   notes: string;
   /** Idempotency key sent with the sale; regenerated when the cart is cleared. */
   clientRequestId: string;
+  /**
+   * Staff purchase (0.20.7): products at purchase cost, PC time free, no discounts or customer,
+   * recorded as a stock outflow with no money taken. Undefined / false on a normal sale.
+   */
+  staff?: boolean;
+  /**
+   * 0.27.4: the products go to this PC's bill instead of a sale. Only product lines, whole units,
+   * no extras and no discounts (see `pcBlocker`).
+   */
+  pc?: PcTarget | null;
+}
+
+export interface PcTarget {
+  sessionId: string;
+  label: string;
+  /** Prepaid or already collected: the products are paid at the till, there is no later option. */
+  billed: boolean;
+}
+
+/** Why the cart cannot go to a PC's bill as it is (null: it can). */
+export function pcBlocker(cart: Cart): 'notPc' | 'addons' | 'whole' | 'discount' | null {
+  if (cart.lines.some((l) => l.kind !== 'product')) return 'notPc';
+  if (cart.lines.some((l) => l.kind === 'product' && l.addonIds.length > 0)) return 'addons';
+  if (cart.lines.some((l) => l.kind === 'product' && l.quantityMilli % 1000 !== 0)) return 'whole';
+  if (cart.discountCents > 0 || cart.lines.some((l) => l.kind === 'product' && l.discountCents > 0))
+    return 'discount';
+  return null;
+}
+
+/** The lines as the PC order endpoint takes them (whole units). */
+export function pcItemsFromCart(cart: Cart): { productId: string; quantity: number }[] {
+  return cart.lines.flatMap((l) =>
+    l.kind === 'product' ? [{ productId: l.product.id, quantity: l.quantityMilli / 1000 }] : [],
+  );
 }
 
 export const newRequestId = (): string =>
@@ -37,43 +113,238 @@ export const emptyCart = (): Cart => ({
   clientRequestId: newRequestId(),
 });
 
-/** Adds a product; the same product merges into one line (quantity accumulates). */
-export function addToCart(cart: Cart, product: ProductSummary, quantityMilli = 1000): Cart {
-  const idx = cart.lines.findIndex((l) => l.product.id === product.id);
+/** Sorted, de-duplicated extra ids: the same set of extras always yields the same line key. */
+export const normalizeAddonIds = (ids: readonly string[]): string[] => [...new Set(ids)].sort();
+
+/**
+ * The line's key: the product id, or the free line's own key. A product line with extras gets
+ * its own key, so "Tost" and "Tost + Kackavall" are separate lines and do not merge.
+ */
+export const lineKey = (l: CartLine): string => {
+  if (l.kind !== 'product') return l.key;
+  return l.addonIds.length > 0 ? `${l.product.id}|${l.addonIds.join(',')}` : l.product.id;
+};
+
+/** The extras of a product that are chosen (ids unknown to the product are ignored). */
+export function chosenAddons(
+  product: Pick<ProductSummary, 'addons'>,
+  addonIds: readonly string[],
+): ProductAddonSummary[] {
+  const wanted = new Set(addonIds);
+  return (product.addons ?? []).filter((a) => wanted.has(a.id));
+}
+
+/** Total price of the chosen extras for one unit. */
+export function addonsCents(
+  product: Pick<ProductSummary, 'addons'>,
+  addonIds: readonly string[],
+): number {
+  return chosenAddons(product, addonIds).reduce((n, a) => n + a.priceCents, 0);
+}
+
+export const lineName = (l: CartLine): string => {
+  if (l.kind === 'product') {
+    const extras = chosenAddons(l.product, l.addonIds);
+    return extras.length > 0
+      ? [l.product.name, ...extras.map((a) => a.name)].join(' + ')
+      : l.product.name;
+  }
+  if (l.kind === 'time')
+    return l.stationCode
+      ? `${l.stationCode} · ${l.minutes} min`
+      : `PC time · ${l.minutes} min${l.holderName ? ` · ${l.holderName}` : ''}`;
+  return l.name;
+};
+
+/**
+ * Adds a product; the same product with the same extras merges into one line (quantity
+ * accumulates). Different extras make a separate line.
+ */
+export function addToCart(
+  cart: Cart,
+  product: ProductSummary,
+  quantityMilli = 1000,
+  addonIds: readonly string[] = [],
+): Cart {
+  // Only the product's own extras can be chosen; an id it no longer has is dropped.
+  const known = new Set((product.addons ?? []).map((a) => a.id));
+  const ids = normalizeAddonIds(addonIds.filter((id) => known.has(id)));
+  const key = ids.length > 0 ? `${product.id}|${ids.join(',')}` : product.id;
+  const idx = cart.lines.findIndex((l) => l.kind === 'product' && lineKey(l) === key);
   if (idx < 0) {
-    return { ...cart, lines: [...cart.lines, { product, quantityMilli, discountCents: 0 }] };
+    return {
+      ...cart,
+      lines: [
+        ...cart.lines,
+        { kind: 'product', product, quantityMilli, discountCents: 0, addonIds: ids },
+      ],
+    };
   }
   const lines = cart.lines.slice();
-  lines[idx] = { ...lines[idx]!, quantityMilli: lines[idx]!.quantityMilli + quantityMilli };
+  const line = lines[idx]!;
+  if (line.kind !== 'product') return cart;
+  lines[idx] = { ...line, quantityMilli: line.quantityMilli + quantityMilli };
   return { ...cart, lines };
 }
 
-export function setQuantity(cart: Cart, productId: string, quantityMilli: number): Cart {
-  if (quantityMilli <= 0) return removeLine(cart, productId);
+// ─── 0.33.4: stock at the till ────────────────────────────────────────────────
+// A product that is tracked and may not go below zero cannot be put in the sale beyond its stock.
+// Products that are not tracked, or are allowed below zero, are never limited. The server still
+// decides at payment time (another till may have sold the last one meanwhile).
+
+type StockFields = Pick<ProductSummary, 'trackStock' | 'allowNegativeStock' | 'stockMilli'>;
+
+/** The most of this product a sale may hold (milli-units); null when it is not limited. */
+export function stockLimitMilli(product: StockFields): number | null {
+  if (!product.trackStock || product.allowNegativeStock) return null;
+  return Math.max(0, product.stockMilli);
+}
+
+/** Units of a product already in the cart: every line of it, with or without extras. */
+export function cartQuantityOf(cart: Cart, productId: string, exceptKey?: string): number {
+  return cart.lines.reduce(
+    (sum, l) =>
+      l.kind === 'product' && l.product.id === productId && lineKey(l) !== exceptKey
+        ? sum + l.quantityMilli
+        : sum,
+    0,
+  );
+}
+
+/** Why an addition was refused or cut: the product and what the stock still allows in total. */
+export interface StockRefusal {
+  productName: string;
+  /** The product's stock (never below zero). */
+  stockMilli: number;
+  /** What this line may hold at most (the stock minus the other lines of the same product). */
+  allowedMilli: number;
+}
+
+/**
+ * `addToCart` with the stock rule: an addition that would pass the stock is refused whole (the cart
+ * is returned unchanged) and `refused` says what is left.
+ */
+export function addToCartChecked(
+  cart: Cart,
+  product: ProductSummary,
+  quantityMilli = 1000,
+  addonIds: readonly string[] = [],
+): { cart: Cart; refused: StockRefusal | null } {
+  const limit = stockLimitMilli(product);
+  if (limit !== null) {
+    const inCart = cartQuantityOf(cart, product.id);
+    if (inCart + quantityMilli > limit) {
+      return {
+        cart,
+        refused: {
+          productName: product.name,
+          stockMilli: limit,
+          allowedMilli: Math.max(0, limit - inCart),
+        },
+      };
+    }
+  }
+  return { cart: addToCart(cart, product, quantityMilli, addonIds), refused: null };
+}
+
+/**
+ * `setQuantity` with the stock rule: a quantity above the stock is cut to what the stock allows
+ * (never below what the line already holds is NOT guaranteed: a stock that shrank cuts it too).
+ */
+export function setQuantityChecked(
+  cart: Cart,
+  key: string,
+  quantityMilli: number,
+): { cart: Cart; refused: StockRefusal | null } {
+  const line = cart.lines.find((l) => lineKey(l) === key);
+  if (!line || line.kind !== 'product' || quantityMilli <= line.quantityMilli) {
+    return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  }
+  const limit = stockLimitMilli(line.product);
+  if (limit === null) return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  const allowed = Math.max(0, limit - cartQuantityOf(cart, line.product.id, key));
+  if (quantityMilli <= allowed)
+    return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  // Never raise above the stock; keep what the line has when even that is more than allowed.
+  const next = Math.max(
+    Math.min(quantityMilli, allowed),
+    Math.min(line.quantityMilli, quantityMilli),
+  );
   return {
-    ...cart,
-    lines: cart.lines.map((l) => (l.product.id === productId ? { ...l, quantityMilli } : l)),
+    cart: next === line.quantityMilli ? cart : setQuantity(cart, key, next),
+    refused: { productName: line.product.name, stockMilli: limit, allowedMilli: allowed },
   };
 }
 
-export function setLineDiscount(cart: Cart, productId: string, discountCents: number): Cart {
+/** Adds an off-inventory line (0.19.0). Every call is its own line — two lines may share a name. */
+export function addFreeItem(
+  cart: Cart,
+  input: { name: string; unitPriceCents: number; taxRateBp: number; quantityMilli?: number },
+  newKey: () => string = newRequestId,
+): Cart {
+  const line: FreeLine = {
+    kind: 'free',
+    key: `free:${newKey()}`,
+    name: input.name.trim(),
+    unitPriceCents: input.unitPriceCents,
+    taxRateBp: input.taxRateBp,
+    quantityMilli: input.quantityMilli ?? 1000,
+    discountCents: 0,
+  };
+  return { ...cart, lines: [...cart.lines, line] };
+}
+
+/** Adds PC time (0.19.0): its own line, priced by the caller's quote for that PC. */
+export function addTimeItem(
+  cart: Cart,
+  input: {
+    stationId?: string | null;
+    stationCode?: string | null;
+    holderName?: string | null;
+    minutes: number;
+    unitPriceCents: number;
+    taxRateBp: number;
+  },
+  newKey: () => string = newRequestId,
+): Cart {
+  const line: TimeLine = {
+    kind: 'time',
+    key: `time:${newKey()}`,
+    stationId: input.stationId ?? null,
+    stationCode: input.stationCode ?? null,
+    holderName: input.holderName ?? null,
+    minutes: input.minutes,
+    unitPriceCents: input.unitPriceCents,
+    taxRateBp: input.taxRateBp,
+    quantityMilli: 1000,
+    discountCents: 0,
+  };
+  return { ...cart, lines: [...cart.lines, line] };
+}
+
+export function setQuantity(cart: Cart, key: string, quantityMilli: number): Cart {
+  if (quantityMilli <= 0) return removeLine(cart, key);
   return {
     ...cart,
     lines: cart.lines.map((l) =>
-      l.product.id === productId ? { ...l, discountCents: Math.max(0, discountCents) } : l,
+      lineKey(l) === key && l.kind !== 'time' ? { ...l, quantityMilli } : l,
     ),
   };
 }
 
-export function removeLine(cart: Cart, productId: string): Cart {
-  return { ...cart, lines: cart.lines.filter((l) => l.product.id !== productId) };
+export function setLineDiscount(cart: Cart, key: string, discountCents: number): Cart {
+  return {
+    ...cart,
+    lines: cart.lines.map((l) =>
+      lineKey(l) === key ? { ...l, discountCents: Math.max(0, discountCents) } : l,
+    ),
+  };
 }
 
-/**
- * Preview totals; invalid discounts are clamped so the preview never throws. `memberDiscountBp`
- * mirrors the server rule: a customer's default discount applies only when no explicit sale
- * discount was entered (see `customerDiscountCents` in the shared package).
- */
+export function removeLine(cart: Cart, key: string): Cart {
+  return { ...cart, lines: cart.lines.filter((l) => lineKey(l) !== key) };
+}
+
 /** What one unit costs right now: a live promo (Admin › Ads) or the regular price. */
 export function unitPriceOf(
   product: Pick<ProductSummary, 'sellingPriceCents' | 'promoPriceCents'>,
@@ -84,12 +355,41 @@ export function unitPriceOf(
     : product.sellingPriceCents;
 }
 
+/**
+ * Preview totals; invalid discounts are clamped so the preview never throws. `memberDiscountBp`
+ * mirrors the server rule: a customer's default discount applies only when no explicit sale
+ * discount was entered (see `customerDiscountCents` in the shared package).
+ */
 export function cartTotals(
   cart: Cart,
   memberDiscountBp = 0,
 ): SaleTotals & { memberDiscount: boolean } {
+  const staff = cart.staff === true;
   const lines = cart.lines.map((l) => {
-    const unit = unitPriceOf(l.product);
+    if (l.kind === 'free' || l.kind === 'time') {
+      // Staff: PC time is free; a free item cannot be on a staff purchase (the toggle refuses it).
+      const unit = staff && l.kind === 'time' ? 0 : l.unitPriceCents;
+      const gross = Math.round((unit * l.quantityMilli) / 1000);
+      return {
+        unitPriceCents: unit,
+        quantityMilli: l.quantityMilli,
+        discountCents: staff ? 0 : Math.min(l.discountCents, gross),
+        taxRateBp: l.taxRateBp,
+        priceIncludesTax: true,
+      };
+    }
+    if (staff) {
+      // Staff pay the purchase cost: no promo, no add-ons, no discount.
+      const unit = l.product.purchaseCostCents;
+      return {
+        unitPriceCents: unit,
+        quantityMilli: l.quantityMilli,
+        discountCents: 0,
+        taxRateBp: l.product.taxRateBp,
+        priceIncludesTax: l.product.priceIncludesTax,
+      };
+    }
+    const unit = unitPriceOf(l.product) + addonsCents(l.product, l.addonIds);
     const gross = Math.round((unit * l.quantityMilli) / 1000);
     return {
       unitPriceCents: unit,
@@ -100,8 +400,8 @@ export function cartTotals(
     };
   });
   const subtotal = computeSale(lines, 0).subtotalCents;
-  const explicit = Math.min(cart.discountCents, subtotal);
-  const member = customerDiscountCents(subtotal, memberDiscountBp, explicit);
+  const explicit = staff ? 0 : Math.min(cart.discountCents, subtotal);
+  const member = staff ? 0 : customerDiscountCents(subtotal, memberDiscountBp, explicit);
   return { ...computeSale(lines, member > 0 ? member : explicit), memberDiscount: member > 0 };
 }
 
@@ -112,11 +412,30 @@ export function cartItemCount(cart: Cart): number {
 /** Request body for POST /sales or /sales/suspend (payments added by the caller). */
 export function cartToRequest(cart: Cart) {
   return {
-    items: cart.lines.map((l) => ({
-      productId: l.product.id,
-      quantityMilli: l.quantityMilli,
-      discountCents: l.discountCents,
-    })),
+    items: cart.lines.map((l) => {
+      if (l.kind === 'product') {
+        return {
+          productId: l.product.id,
+          quantityMilli: l.quantityMilli,
+          discountCents: l.discountCents,
+          ...(l.addonIds.length > 0 ? { addonIds: l.addonIds } : {}),
+        };
+      }
+      if (l.kind === 'time') {
+        return {
+          ...(l.stationId ? { stationId: l.stationId } : {}),
+          ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
+          minutes: l.minutes,
+          discountCents: l.discountCents,
+        };
+      }
+      return {
+        description: l.name,
+        unitPriceCents: l.unitPriceCents,
+        quantityMilli: l.quantityMilli,
+        discountCents: l.discountCents,
+      };
+    }),
     discountCents: cart.discountCents,
     customerId: cart.customerId,
     notes: cart.notes.trim() || undefined,

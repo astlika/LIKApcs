@@ -9,9 +9,13 @@ import {
   type StationDeviceSummary,
   type StationMaintenance,
   type StationPendingRequest,
+  type StationBadge,
+  STATION_BADGES,
   type StationStatus,
+  type StationLook,
   type StationSummary,
   type UpdateStationRequest,
+  wallpaperPath,
 } from '@likapcs/shared';
 import type { DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -21,6 +25,9 @@ import { recordAudit, type AuditActor } from './audit.js';
 
 interface StationRow {
   id: string;
+  look: StationLook | null;
+  wallpaper_file: string | null;
+  desktop_wallpaper_file: string | null;
   number: number;
   code: string;
   name: string;
@@ -42,6 +49,7 @@ interface StationRow {
   device_hardware: HardwareInfo | null;
   session_id: string | null;
   session_customer_name: string | null;
+  session_pc_label: string | null;
   session_billing_mode: BillingMode | null;
   session_status: 'active' | 'paused' | null;
   session_started_at: Date | null;
@@ -72,15 +80,25 @@ interface StationRow {
   orders_open_cents: string | number;
   awaiting_count: string | number;
   awaiting_cents: string | number;
+  badges: string[] | null;
+  hold_reservation_id: string | null;
+  hold_customer_name: string | null;
+  hold_starts_at: Date | null;
+  hold_window_end: Date | null;
+  hold_tolerance_minutes: number | null;
+  debt_cents: string | number | null;
+  debt_customer_name: string | null;
+  open_items: { name: string; quantity_milli: number; amount: number }[] | null;
 }
 
 const STATION_SELECT = `
   SELECT s.id, s.number, s.code, s.name, s.zone, s.notes, s.is_enabled, s.created_at, s.updated_at,
+         s.look, s.wallpaper_file, s.desktop_wallpaper_file,
          d.id AS device_id, d.machine_id AS device_machine_id, d.hostname AS device_hostname,
          d.os_info AS device_os_info, d.app_version AS device_app_version, d.status AS device_status,
          d.registered_at AS device_registered_at, d.approved_at AS device_approved_at,
          d.last_seen_at AS device_last_seen_at, d.last_ip AS device_last_ip, d.hardware AS device_hardware,
-         g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name,
+         g.id AS session_id, COALESCE(g.customer_name, c.name) AS session_customer_name, g.pc_label AS session_pc_label,
          g.billing_mode AS session_billing_mode, g.status AS session_status, g.started_at AS session_started_at,
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at, g.paused_by AS session_paused_by,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
@@ -95,11 +113,29 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
-         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode = 'endpay'
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid')
            AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
          (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
-           WHERE a.station_id = s.id AND a.billing_mode = 'endpay' AND a.billed_at IS NULL
-           AND a.status IN ('expired', 'completed')) AS awaiting_cents
+           WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL
+           AND a.status IN ('expired', 'completed')) AS awaiting_cents,
+         s.badges,
+         hold.reservation_id AS hold_reservation_id, hold.customer_name AS hold_customer_name,
+         hold.starts_at AS hold_starts_at, hold.window_end AS hold_window_end,
+         hold.tolerance_minutes AS hold_tolerance_minutes,
+         -- 0.33.4: the debt belongs to the customer, not to the PC. A running session shows what its
+         -- customer owes; an idle PC shows no debt (0.32.0–0.33.2 kept the debt of its last bill there).
+         CASE WHEN g.id IS NOT NULL THEN COALESCE(c.balance_due_cents, 0) ELSE 0 END AS debt_cents,
+         -- 0.33.4: once the session's bill is settled — paid, or put on the customer's tab — the PC
+         -- shows no name. The name stays only while that bill still waits for its payment.
+         CASE WHEN g.id IS NOT NULL THEN c.name
+              WHEN lc.unbilled THEN lc.name
+              ELSE NULL END AS debt_customer_name,
+         (SELECT COALESCE(json_agg(x ORDER BY x.amount DESC), '[]'::json) FROM (
+            SELECT oi.name, SUM(oi.quantity_milli)::bigint AS quantity_milli,
+                   SUM(oi.line_total_cents)::bigint AS amount
+              FROM station_orders o JOIN station_order_items oi ON oi.order_id = o.id
+             WHERE o.station_id = s.id AND o.status = 'accepted'
+             GROUP BY oi.name ORDER BY amount DESC LIMIT 12) x) AS open_items
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')
@@ -107,7 +143,27 @@ const STATION_SELECT = `
     LEFT JOIN session_requests r ON r.station_id = s.id AND r.status = 'pending'
     LEFT JOIN customers rc ON rc.id = r.customer_id
     LEFT JOIN gaming_packages rp ON rp.id = r.package_id
-    LEFT JOIN users ua ON ua.id = s.archived_by`;
+    LEFT JOIN users ua ON ua.id = s.archived_by
+    -- 0.32.0: the reservation keeping this PC now. 0.33.4: only inside its window, from the reminder
+    -- time (starts_at - remind_minutes) until the tolerance ends; a booking for later marks nothing.
+    LEFT JOIN LATERAL (
+      SELECT rv.id AS reservation_id, rv.customer_name, rv.starts_at, rv.tolerance_minutes,
+             rv.starts_at + rv.tolerance_minutes * interval '1 minute' AS window_end
+        FROM reservation_stations rs JOIN reservations rv ON rv.id = rs.reservation_id
+       WHERE rs.station_id = s.id AND rs.state = 'held' AND rv.status IN ('scheduled', 'active')
+         AND now() >= rv.starts_at - rv.remind_minutes * interval '1 minute'
+         AND now() < rv.starts_at + rv.tolerance_minutes * interval '1 minute'
+       ORDER BY rv.starts_at LIMIT 1
+    ) hold ON TRUE
+    -- The customer of the PC's last ended session.
+    -- 0.33.1: unbilled = that ended session is still waiting for its payment.
+    LEFT JOIN LATERAL (
+      SELECT c2.name,
+             (g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid')) AS unbilled
+        FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
+       WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
+       ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1
+    ) lc ON TRUE`;
 
 /** Live session summary for the station grid (server clock; the PC only mirrors it). */
 function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
@@ -139,6 +195,7 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
   return {
     id: row.session_id,
     customerName: row.session_customer_name,
+    pcLabel: row.session_pc_label,
     billingMode: row.session_billing_mode,
     status: row.session_status,
     startedAt: row.session_started_at.toISOString(),
@@ -247,6 +304,28 @@ export class StationsService {
         pending: Number(row.orders_pending ?? 0),
         openCount: Number(row.orders_open_count ?? 0),
         openCents: Number(row.orders_open_cents ?? 0),
+        items: (row.open_items ?? []).map((i) => ({
+          name: i.name,
+          quantityMilli: Number(i.quantity_milli),
+          amountCents: Number(i.amount),
+        })),
+      },
+      badges: (row.badges ?? []).filter((b): b is StationBadge =>
+        (STATION_BADGES as readonly string[]).includes(b),
+      ),
+      reservation:
+        row.hold_reservation_id && row.hold_starts_at && row.hold_window_end
+          ? {
+              reservationId: row.hold_reservation_id,
+              customerName: row.hold_customer_name ?? '',
+              startsAt: row.hold_starts_at.toISOString(),
+              windowEndsAt: row.hold_window_end.toISOString(),
+              toleranceMinutes: row.hold_tolerance_minutes ?? 0,
+            }
+          : null,
+      debt: {
+        cents: Number(row.debt_cents ?? 0),
+        customerName: row.debt_customer_name ?? null,
       },
       awaitingPayment: {
         count: Number(row.awaiting_count ?? 0),
@@ -258,6 +337,11 @@ export class StationsService {
             reason: row.archived_reason,
             byName: row.archived_by_name,
           }
+        : null,
+      look: row.look ?? {},
+      wallpaperUrl: row.wallpaper_file ? wallpaperPath(row.wallpaper_file) : null,
+      desktopWallpaperUrl: row.desktop_wallpaper_file
+        ? wallpaperPath(row.desktop_wallpaper_file)
         : null,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
@@ -323,6 +407,30 @@ export class StationsService {
       `${STATION_SELECT}${where} ORDER BY s.sort_order, s.number`,
     );
     return result.rows.map((r) => this.mapRow(r));
+  }
+
+  /** 0.32.0: the staff's manual badges for a PC (V.I.P, tournament, premium, birthday). */
+  async setBadges(
+    id: string,
+    badges: StationBadge[],
+    actor: AuditActor,
+  ): Promise<StationSummary> {
+    const unique = [...new Set(badges)];
+    await withTransaction(this.pool, async (client) => {
+      const updated = await client.query(
+        'UPDATE stations SET badges = $2, updated_at = now() WHERE id = $1',
+        [id, unique],
+      );
+      if (updated.rowCount === 0) throw notFound('Station');
+      await recordAudit(client, actor, {
+        action: 'station.badges',
+        entityType: 'station',
+        entityId: id,
+        details: { badges: unique },
+      });
+    });
+    await this.broadcastStation(id);
+    return this.getById(id);
   }
 
   async getById(id: string, db: Queryable = this.pool): Promise<StationSummary> {

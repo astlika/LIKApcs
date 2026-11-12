@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+captures/
+*.apk
+*.aab
+*.iml
+.idea/
+# The signing key never goes into the repository (CI gets it from the repository secrets).
+*.jks
+*.keystore
+keystore.properties

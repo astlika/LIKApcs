@@ -8,6 +8,7 @@ import {
   PRODUCT_IMAGE_TYPES,
   categorySchema,
   inventoryMovementsQuerySchema,
+  productAddonsSchema,
   productBarcodeSchema,
   productImageFromUrlSchema,
   productListQuerySchema,
@@ -106,6 +107,13 @@ export const catalogRoutes: FastifyPluginAsync = async (app) => {
           actorOf(request),
         ),
       ),
+  );
+  app.put('/products/:id/addons', manage, async (request) =>
+    services.catalog.setAddons(
+      idParams.parse(request.params).id,
+      productAddonsSchema.parse(request.body),
+      actorOf(request),
+    ),
   );
   app.delete('/products/:id/barcodes/:barcodeId', manage, async (request) => {
     const { id, barcodeId } = z

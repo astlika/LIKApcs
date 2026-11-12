@@ -22,6 +22,11 @@ export interface AuthContext {
 interface LoginInput {
   username: string;
   password: string;
+  /**
+   * Phone login (0.28.0, PWA): the account's e-mail must match too. Only checked when provided;
+   * the normal login is unchanged.
+   */
+  email?: string;
   ip: string | null;
   userAgent: string | null;
   clientApp?: string;
@@ -95,6 +100,17 @@ export class AuthService {
 
   async login(input: LoginInput): Promise<LoginResponse> {
     const user = await this.verifyCredentials(input);
+    if (input.email !== undefined) {
+      const { rows } = await this.pool.query<{ email: string | null }>(
+        'SELECT email FROM users WHERE id = $1',
+        [user.userId],
+      );
+      const stored = (rows[0]?.email ?? '').trim().toLowerCase();
+      if (!stored || stored !== input.email.trim().toLowerCase()) {
+        await this.auditFailure(user.userId, input, 'email_mismatch');
+        throw unauthorized('Invalid username or password');
+      }
+    }
     const token = generateToken();
     const lifetimeMs = input.rememberMe
       ? this.rememberDays * 24 * 3600 * 1000

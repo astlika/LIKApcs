@@ -1,4 +1,5 @@
 import {
+  PERMISSIONS,
   ROLES,
   ROLE_RANK,
   type CreateUserRequest,
@@ -187,6 +188,10 @@ export class UsersService {
         throw forbidden('The owner role always has every permission');
       }
       assertCanManageRoles(actor.roles, [role.code]);
+      // 0.27.0: the administrator always keeps the right to change the price of a paid bill.
+      if (role.code === ROLES.ADMIN && !codes.includes(PERMISSIONS.POS_ADJUST_PAID)) {
+        throw badRequest('The administrator role always keeps "pos.adjust_paid"');
+      }
       const known = await client.query<{ code: string }>(
         'SELECT code FROM permissions WHERE code = ANY($1::text[])',
         [wanted],

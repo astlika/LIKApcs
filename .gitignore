@@ -42,3 +42,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .arena/
+
+# Admin browser build (served at /desktop)
+apps/likapcs-admin/dist-web/

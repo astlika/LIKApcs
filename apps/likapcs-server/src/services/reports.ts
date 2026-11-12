@@ -11,15 +11,23 @@
  *  • gaming  = sessions billed in the range (billed_at), minutes = billable_seconds / 60
  */
 import type {
+  CashBookReport,
+  CashBookRow,
+  CashBookTotals,
   CashShiftSummary,
+  ProfitReport,
   ReportBucket,
   ReportExportKind,
   ReportRange,
+  ReportSummary,
   SalesReport,
+  SpendingReport,
+  StaffReport,
 } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import type { CashService } from './cash.js';
 import type { SettingsService } from './settings.js';
+import { profitReport, spendingReport, spendingRowsAll } from './reports-profit.js';
 
 interface RangeParams {
   from: string;
@@ -46,6 +54,20 @@ function bucket(
     count: Number(r.n),
     amountCents: Number(r.amount),
   }));
+}
+
+/** A timestamp as `YYYY-MM-DD HH:MM:SS` in the business time zone (the CSV's local time). */
+function localTimestamp(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(iso));
 }
 
 function csvEscape(v: unknown): string {
@@ -252,6 +274,285 @@ export class ReportsService {
     };
   }
 
+  /**
+   * 0.21.0 — the cash book: one row per cash shift that overlaps the range, each with its drawer
+   * movements. Cash in and cash out are magnitudes; the opening float is not counted in either.
+   */
+  async cashBook(range: RangeParams): Promise<CashBookReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    const shifts = await this.cash.shiftsBetween(range.from, range.to, timeZone);
+    const movements = await this.cash.movementsForShifts(shifts.map((s) => s.id));
+    const rows: CashBookRow[] = shifts.map((shift) => {
+      const list = movements.get(shift.id) ?? [];
+      const flows = list.filter((m) => m.type !== 'opening');
+      const cashInCents = flows.reduce(
+        (acc, m) => (m.amountCents > 0 ? acc + m.amountCents : acc),
+        0,
+      );
+      const cashOutCents = flows.reduce(
+        (acc, m) => (m.amountCents < 0 ? acc - m.amountCents : acc),
+        0,
+      );
+      return {
+        shift,
+        cashInCents,
+        cashOutCents,
+        expectedCashCents: shift.openingCents + cashInCents - cashOutCents,
+        movements: list,
+      };
+    });
+    const closed = rows.filter((r) => r.shift.status === 'closed');
+    const sum = (list: CashBookRow[], pick: (r: CashBookRow) => number) =>
+      list.reduce((acc, r) => acc + pick(r), 0);
+    const totals: CashBookTotals = {
+      shiftsCount: rows.length,
+      openShiftsCount: rows.length - closed.length,
+      openingCents: sum(rows, (r) => r.shift.openingCents),
+      cashInCents: sum(rows, (r) => r.cashInCents),
+      cashOutCents: sum(rows, (r) => r.cashOutCents),
+      expectedCashCents: sum(rows, (r) => r.expectedCashCents),
+      countedCashCents: sum(closed, (r) => r.shift.countedCashCents ?? 0),
+      differenceCents: sum(closed, (r) => r.shift.differenceCents ?? 0),
+    };
+    return { from: range.from, to: range.to, rows, totals, generatedAt: new Date().toISOString() };
+  }
+
+  /** Profit & loss on the accrual basis, with the cash view and data-quality checks alongside. */
+  async profit(range: ReportRange): Promise<ProfitReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return profitReport(this.pool, timeZone, range);
+  }
+
+  /** Every money-out and stock-in/out row in the range, newest first, capped for the screen. */
+  async spending(range: ReportRange): Promise<SpendingReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    return spendingReport(this.pool, timeZone, range);
+  }
+
+  /**
+   * 0.30.0 — the one-page summary. Every figure is read from the report it is named after, so the
+   * summary can never disagree with the detail pages.
+   */
+  async summary(range: ReportRange): Promise<ReportSummary> {
+    const [sales, profit, cashBook] = await Promise.all([
+      this.sales(range),
+      this.profit(range),
+      this.cashBook(range),
+    ]);
+    const t = cashBook.totals;
+    return {
+      range,
+      turnoverCents: profit.revenue.netSalesCents,
+      vatCents: profit.revenue.vatCents,
+      revenueCents: profit.revenue.revenueCents,
+      salesCount: sales.sales.count,
+      averageSaleCents: sales.sales.averageCents,
+      refundedCents: sales.sales.refundedCents,
+      costOfSalesCents: profit.costOfSalesCents,
+      grossProfitCents: profit.grossProfitCents,
+      grossMarginBp: profit.grossMarginBp,
+      expensesCents: profit.operatingExpensesCents,
+      stockLossCents: profit.stockLossCents,
+      netProfitCents: profit.netProfitCents,
+      netMarginBp: profit.netMarginBp,
+      cash: {
+        inCents: profit.cash.drawerInCents,
+        outCents: profit.cash.drawerOutCents,
+        netCents: profit.cash.drawerInCents - profit.cash.drawerOutCents,
+        closedShiftsCount: t.shiftsCount - t.openShiftsCount,
+        openShiftsCount: t.openShiftsCount,
+        differenceCents: t.differenceCents,
+      },
+      daily: sales.byDay.map((d) => ({
+        date: d.date,
+        salesCount: d.count,
+        turnoverCents: d.amountCents,
+      })),
+      checks: profit.checks,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * 0.30.0 — who worked and what they sold. Hours come from the cash shifts a person opened:
+   * from the opening until the closing (or now, while the shift is open), clipped to the range.
+   */
+  async staff(range: ReportRange): Promise<StaffReport> {
+    const timeZone = await this.settings.get('locale.timezone');
+    const p: [string, string, string] = [range.from, range.to, timeZone];
+    const [shifts, activity, sales, refunds] = await Promise.all([
+      // Every shift that overlaps the range, with its clipped span. The opener's hours are the
+      // whole shift; the opener is the only one whose span is not taken from their actions.
+      this.pool.query<{
+        shift_id: string;
+        user_id: string;
+        name: string;
+        opened_at: Date;
+        status: string;
+        register_name: string;
+        difference_cents: string | null;
+        clip_from: Date;
+        clip_to: Date;
+      }>(
+        `SELECT cs.id::text AS shift_id, cs.opened_by::text AS user_id, ou.full_name AS name, cs.opened_at, cs.status,
+                r.name AS register_name, cs.difference_cents,
+                GREATEST(cs.opened_at, ($1::date)::timestamp AT TIME ZONE $3) AS clip_from,
+                LEAST(COALESCE(cs.closed_at, now()), ($2::date + 1)::timestamp AT TIME ZONE $3) AS clip_to
+           FROM cash_shifts cs
+           JOIN cash_registers r ON r.id = cs.register_id
+           JOIN users ou ON ou.id = cs.opened_by
+          WHERE cs.opened_at < ($2::date + 1)::timestamp AT TIME ZONE $3
+            AND COALESCE(cs.closed_at, now()) >= ($1::date)::timestamp AT TIME ZONE $3
+          ORDER BY cs.opened_at`,
+        p,
+      ),
+      // What each person did inside a shift: their first and last sale or drawer movement there.
+      // This is how a cashier who works in a shift someone else opened gets their hours.
+      this.pool.query<{
+        shift_id: string;
+        user_id: string;
+        name: string;
+        first_at: Date;
+        last_at: Date;
+      }>(
+        `SELECT a.shift_id::text AS shift_id, a.user_id::text AS user_id, u.full_name AS name,
+                MIN(a.at) AS first_at, MAX(a.at) AS last_at
+           FROM (
+             SELECT p.shift_id, s.cashier_user_id AS user_id, s.completed_at AS at
+               FROM payments p JOIN sales s ON s.id = p.sale_id
+              WHERE p.kind = 'sale' AND p.shift_id IS NOT NULL AND ${COMPLETED} AND s.completed_at IS NOT NULL
+             UNION ALL
+             SELECT cm.shift_id, cm.created_by, cm.created_at
+               FROM cash_movements cm
+              WHERE cm.created_by IS NOT NULL
+           ) a
+           JOIN users u ON u.id = a.user_id
+          WHERE a.at >= ($1::date)::timestamp AT TIME ZONE $3
+            AND a.at < ($2::date + 1)::timestamp AT TIME ZONE $3
+          GROUP BY a.shift_id, a.user_id, u.full_name`,
+        p,
+      ),
+      this.pool.query<{ user_id: string; name: string; n: string; amount: string }>(
+        `SELECT s.cashier_user_id::text AS user_id, u.full_name AS name, count(*)::text AS n,
+                SUM(s.total_cents - s.refunded_cents)::bigint::text AS amount
+           FROM sales s JOIN users u ON u.id = s.cashier_user_id
+          WHERE ${COMPLETED} AND ${inRange('s.completed_at')}
+          GROUP BY s.cashier_user_id, u.full_name`,
+        p,
+      ),
+      this.pool.query<{ user_id: string; name: string; n: string }>(
+        `SELECT s.cashier_user_id::text AS user_id, u.full_name AS name, count(*)::text AS n
+           FROM sales s JOIN users u ON u.id = s.cashier_user_id
+          WHERE s.refunded_cents > 0 AND ${inRange('s.completed_at')}
+          GROUP BY s.cashier_user_id, u.full_name`,
+        p,
+      ),
+    ]);
+
+    const byUser = new Map<string, StaffReport['staff'][number]>();
+    const spans = new Map<string, [number, number][]>();
+    const shiftsOf = new Map<string, Set<string>>();
+    const person = (userId: string, name: string) => {
+      let row = byUser.get(userId);
+      if (!row) {
+        row = {
+          userId,
+          name,
+          shiftsCount: 0,
+          workedMinutes: 0,
+          salesCount: 0,
+          salesCents: 0,
+          refundsCount: 0,
+          cashDifferenceCents: 0,
+          onDutyNow: false,
+        };
+        byUser.set(userId, row);
+      }
+      return row;
+    };
+    const addSpan = (userId: string, shiftId: string, from: number, to: number) => {
+      const list = spans.get(userId) ?? [];
+      list.push([from, Math.max(from, to)]);
+      spans.set(userId, list);
+      const set = shiftsOf.get(userId) ?? new Set<string>();
+      set.add(shiftId);
+      shiftsOf.set(userId, set);
+    };
+
+    const ACTIVE_WINDOW_MS = 30 * 60 * 1000; // someone who acted this recently is still on duty
+    const now = Date.now();
+    const onDuty: StaffReport['onDuty'] = [];
+    const openShifts = new Map<string, { opener: string; registerName: string }>();
+    for (const s of shifts.rows) {
+      person(s.user_id, s.name);
+      addSpan(s.user_id, s.shift_id, s.clip_from.getTime(), s.clip_to.getTime());
+      const row = byUser.get(s.user_id)!;
+      if (s.status === 'open') {
+        row.onDutyNow = true;
+        openShifts.set(s.shift_id, { opener: s.user_id, registerName: s.register_name });
+        onDuty.push({
+          userId: s.user_id,
+          name: s.name,
+          since: s.opened_at.toISOString(),
+          registerName: s.register_name,
+        });
+      } else if (s.difference_cents !== null) {
+        row.cashDifferenceCents += Number(s.difference_cents);
+      }
+    }
+    const shiftOpener = new Map(shifts.rows.map((s) => [s.shift_id, s.user_id]));
+    for (const a of activity.rows) {
+      if (shiftOpener.get(a.shift_id) === a.user_id) continue; // the opener's span is the whole shift
+      person(a.user_id, a.name);
+      addSpan(a.user_id, a.shift_id, a.first_at.getTime(), a.last_at.getTime());
+      const open = openShifts.get(a.shift_id);
+      if (open && now - a.last_at.getTime() <= ACTIVE_WINDOW_MS) {
+        const row = byUser.get(a.user_id)!;
+        if (!row.onDutyNow) {
+          row.onDutyNow = true;
+          onDuty.push({
+            userId: a.user_id,
+            name: a.name,
+            since: a.first_at.toISOString(),
+            registerName: open.registerName,
+          });
+        }
+      }
+    }
+    for (const [userId, list] of spans) {
+      // Overlapping spans (the same person on two registers at once) count once.
+      const sorted = [...list].sort((x, y) => x[0] - y[0]);
+      let total = 0;
+      let [curFrom, curTo] = sorted[0]!;
+      for (const [from, to] of sorted.slice(1)) {
+        if (from <= curTo) curTo = Math.max(curTo, to);
+        else {
+          total += curTo - curFrom;
+          [curFrom, curTo] = [from, to];
+        }
+      }
+      total += curTo - curFrom;
+      const row = byUser.get(userId)!;
+      row.workedMinutes = Math.round(total / 60000);
+      row.shiftsCount = shiftsOf.get(userId)?.size ?? 0;
+    }
+    for (const r of sales.rows) {
+      const row = person(r.user_id, r.name);
+      row.salesCount = Number(r.n);
+      row.salesCents = Number(r.amount);
+    }
+    for (const r of refunds.rows) {
+      person(r.user_id, r.name).refundsCount = Number(r.n);
+    }
+    const staff = [...byUser.values()].sort(
+      (a, b) =>
+        Number(b.onDutyNow) - Number(a.onDutyNow) ||
+        b.salesCents - a.salesCents ||
+        a.name.localeCompare(b.name),
+    );
+    return { range, onDuty, staff, generatedAt: new Date().toISOString() };
+  }
+
   /** CSV export (UTF-8 with BOM so Excel opens it correctly; `;` separator for EU locales). */
   async exportCsv(
     kind: ReportExportKind,
@@ -355,6 +656,65 @@ export class ReportsService {
         'receipt_no',
       ];
       rows = r.rows.map((x) => header.map((h) => x[h]));
+    } else if (kind === 'cash_book') {
+      const book = await this.cashBook(range);
+      header = [
+        'register',
+        'status',
+        'opened_by',
+        'opened_at',
+        'closed_by',
+        'closed_at',
+        'opening_cents',
+        'cash_in_cents',
+        'cash_out_cents',
+        'expected_cash_cents',
+        'counted_cash_cents',
+        'difference_cents',
+        'movements',
+        'notes',
+      ];
+      rows = book.rows.map((row) => {
+        const s = row.shift;
+        return [
+          s.registerName,
+          s.status,
+          s.openedBy.name,
+          localTimestamp(s.openedAt, timeZone),
+          s.closedBy?.name ?? null,
+          s.closedAt ? localTimestamp(s.closedAt, timeZone) : null,
+          s.openingCents,
+          row.cashInCents,
+          row.cashOutCents,
+          row.expectedCashCents,
+          s.countedCashCents,
+          s.differenceCents,
+          row.movements.length,
+          s.notes,
+        ];
+      });
+    } else if (kind === 'spending') {
+      const all = await spendingRowsAll(this.pool, timeZone, range);
+      header = [
+        'date',
+        'kind',
+        'effect',
+        'description',
+        'category',
+        'method',
+        'amount_cents',
+        'reference',
+      ];
+      rows = all.map((x) => [
+        x.date,
+        x.kind,
+        x.effect,
+        x.description,
+        x.category,
+        x.method,
+        x.amountCents,
+        x.reference,
+      ]);
     } else {
       const r = await this.pool.query(
         `SELECT r.name AS register, cs.status, ou.full_name AS opened_by, ${ts('cs.opened_at')} AS opened_at, cu.full_name AS closed_by, ${ts('cs.closed_at')} AS closed_at,

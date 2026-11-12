@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The LIKApcs phone app's navy; the same values as in assets/www/app.css. -->
+    <color name="bg">#0B1020</color>
+    <color name="panel">#151B2E</color>
+    <color name="accent">#2563EB</color>
+</resources>

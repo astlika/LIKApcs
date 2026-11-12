@@ -2,7 +2,8 @@
  * Ads (Admin › Ads → customer screens + promo prices): CRUD and permissions, the device feed
  * (live ads only, in order, promo = price + crossed-out regular), promo pricing enforced by the
  * server at the POS, schedule windows, "add all products with photos", custom-slide pictures,
- * albums (0.12.0) and the `server.display` push on every change.
+ * albums (0.12.0) and the `server.display` push on every change. 0.19.3: only slides inside an
+ * enabled album show, and a product with stock tracked at zero never shows.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -50,21 +51,32 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
   let cola: ProductSummary;
   let chips: ProductSummary;
   let noPhoto: ProductSummary;
+  /** 0.19.3: a loose slide never shows, so the tests put new slides in this album by default. */
+  let baseAlbumId = '';
 
   const call = <T>(
     token: string | null,
     method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
     url: string,
     payload?: unknown,
-  ) =>
-    ctx.app
+  ) => {
+    // New slides land in the base album unless a test names one (or `albumId: null`).
+    const body = (payload ?? {}) as Record<string, unknown>;
+    const withAlbum =
+      method === 'POST' &&
+      (url === '/ads' || url === '/ads/products/bulk' || url === '/ads/products/all') &&
+      !('albumId' in body)
+        ? { albumId: baseAlbumId, ...body }
+        : payload;
+    return ctx.app
       .inject({
         method,
         url: `/api/v1${url}`,
         headers: token ? authHeader(token) : {},
-        payload: payload === undefined ? undefined : (payload as Record<string, unknown>),
+        payload: withAlbum === undefined ? undefined : (withAlbum as Record<string, unknown>),
       })
       .then((r) => ({ status: r.statusCode, body: r.body ? (r.json<T>() as T) : (null as T) }));
+  };
   const feed = async () =>
     (await call<{ items: ClientAdItem[] }>(deviceToken, 'GET', '/client/ads')).body.items;
   const upload = (url: string, token: string, payload: Buffer) =>
@@ -88,6 +100,8 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'likapcs-ads-'));
     ctx = await createTestContext({ uploadDir });
     owner = await runSetup(ctx.app);
+    baseAlbumId = (await call<AdAlbumSummary>(owner.token, 'POST', '/ads/albums', { name: 'Baza' }))
+      .body.id;
     await call(owner.token, 'POST', '/users', {
       username: 'kasa',
       fullName: 'Kasa Cashier',
@@ -308,7 +322,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect((await feed()).map((i) => i.priceCents)).toEqual([100, 90]);
   });
 
-  it('out of stock stays on the screens (only flagged); an archived product is unavailable', async () => {
+  it('out of stock leaves the screens (state out_of_stock); an archived product is unavailable', async () => {
     const ad = (await call<{ items: AdSummary[] }>(owner.token, 'GET', '/ads')).body.items.find(
       (a) => a.productId === chips.id,
     )!;
@@ -320,9 +334,10 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect(sale.status).toBe(201);
     expect(sale.body.totalCents).toBe(9_000); // promo price 0.90 × 100
     const soldOut = (await call<AdSummary>(owner.token, 'GET', `/ads/${ad.id}`)).body;
-    expect(soldOut.state).toBe('live');
+    expect(soldOut.state).toBe('out_of_stock');
     expect(soldOut.productInStock).toBe(false);
-    expect((await feed()).map((i) => i.name)).toEqual(['Coca-Cola 0.5L', 'Chips Paprika']);
+    // 0.19.3: sold out → gone from every screen (the owner still sees it in Admin › Ads).
+    expect((await feed()).map((i) => i.name)).toEqual(['Coca-Cola 0.5L']);
     // Archive the product → off the screens by itself; back when it is reactivated.
     expect(
       (await call(owner.token, 'PATCH', `/products/${chips.id}`, { isActive: false })).status,
@@ -334,8 +349,12 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect(
       (await call(owner.token, 'PATCH', `/products/${chips.id}`, { isActive: true })).status,
     ).toBe(200);
-    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${ad.id}`)).body.state).toBe('live');
-    // Restock so the later sales in this file keep working.
+    // Still sold out, so the state stays out_of_stock.
+    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${ad.id}`)).body.state).toBe(
+      'out_of_stock',
+    );
+    expect((await feed()).map((i) => i.name)).toEqual(['Coca-Cola 0.5L']);
+    // Restock → back on the screens at once (the feed is read live).
     expect(
       (
         await call(owner.token, 'POST', `/products/${chips.id}/stock`, {
@@ -344,6 +363,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
         })
       ).status,
     ).toBeLessThan(300);
+    expect((await feed()).map((i) => i.name)).toEqual(['Coca-Cola 0.5L', 'Chips Paprika']);
   });
 
   it('options (0017): theme, own duration and a text line on a product ad reach the feed', async () => {
@@ -388,7 +408,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     });
     // Validation happens on the server, field by field.
     const bad = await call<{ error: { code: string } }>(owner.token, 'PATCH', '/settings', {
-      'client.ads_grid': '5x5',
+      'client.ads_grid': '5x4',
     });
     expect(bad.status).toBe(400);
     expect(bad.body.error.code).toBe('validation_error');
@@ -554,6 +574,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
         name: 'Gum',
         sellingPriceCents: 50,
         purchaseCostCents: 20,
+        initialStockMilli: 10_000,
       })
     ).body;
     const all = await call<AdBulkResult>(owner.token, 'POST', '/ads/products/all');
@@ -823,9 +844,8 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     const before = await fullFeed();
     const looseBefore = before.items.map((i) => i.id);
     expect(looseBefore.length).toBeGreaterThan(0);
-    // Nothing grouped yet: one implicit group (no album) with every live slide.
-    expect(before.albums).toHaveLength(1);
-    expect(before.albums[0]!.id).toBeNull();
+    // 0.19.3: the only group is the base album (no implicit "no album" group any more).
+    expect(before.albums.map((a) => a.id)).toEqual([baseAlbumId]);
     expect(before.albums[0]!.items.map((i) => i.id)).toEqual(looseBefore);
 
     // Permissions + validation.
@@ -833,7 +853,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     expect((await call(cashier.token, 'POST', '/ads/albums', { name: 'X' })).status).toBe(403);
     expect((await call(owner.token, 'POST', '/ads/albums', { name: '' })).status).toBe(400);
     expect(
-      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', grid: '5x5' })).status,
+      (await call(owner.token, 'POST', '/ads/albums', { name: 'X', grid: '5x4' })).status,
     ).toBe(400);
     expect(
       (await call(owner.token, 'POST', '/ads/albums', { name: 'X', intervalSeconds: 1 })).status,
@@ -910,24 +930,26 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     const snackAd = bulk.body.items.find((a) => a.productId === snack.id)!;
     expect(snackAd.albumId).toBe(photos.id);
 
-    // Admin list = playback order: no album first, then album by album.
+    // Admin list = playback order: the base album first, then album by album.
     const list = (await call<{ items: AdSummary[] }>(owner.token, 'GET', '/ads')).body.items;
     const albumOf = list.map((a) => a.albumId);
     const firstGrid = albumOf.indexOf(grid.body.id);
     const firstPhotos = albumOf.indexOf(photos.id);
-    expect(albumOf.slice(0, firstGrid).every((id) => id === null)).toBe(true);
+    expect(albumOf.slice(0, firstGrid).every((id) => id === baseAlbumId)).toBe(true);
     expect(firstGrid).toBeLessThan(firstPhotos);
     expect(albumOf.slice(firstGrid, firstPhotos).every((id) => id === grid.body.id)).toBe(true);
     const albums = (await call<{ items: AdAlbumSummary[] }>(owner.token, 'GET', '/ads/albums')).body
       .items;
+    const inBase = list.filter((a) => a.albumId === baseAlbumId);
     expect(albums.map((a) => [a.id, a.adCount, a.liveCount])).toEqual([
+      [baseAlbumId, inBase.length, inBase.filter((a) => a.state === 'live').length],
       [grid.body.id, 2, 2],
       [photos.id, 2, 2],
     ]);
 
     // The PC receives the groups in order, each with its own look (null = owner's default).
     const grouped = await fullFeed();
-    expect(grouped.albums.map((a) => a.id)).toEqual([null, grid.body.id, photos.id]);
+    expect(grouped.albums.map((a) => a.id)).toEqual([baseAlbumId, grid.body.id, photos.id]);
     expect(grouped.albums[0]!.items.map((i) => i.id)).toEqual(looseBefore);
     expect(grouped.albums[1]).toMatchObject({
       name: 'Produktet',
@@ -963,8 +985,12 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
         ids: [photos.id],
       },
     );
-    expect(reordered.body.items.map((a) => a.id)).toEqual([photos.id, grid.body.id]);
-    expect((await fullFeed()).albums.map((a) => a.id)).toEqual([null, photos.id, grid.body.id]);
+    expect(reordered.body.items.map((a) => a.id)).toEqual([photos.id, baseAlbumId, grid.body.id]);
+    expect((await fullFeed()).albums.map((a) => a.id)).toEqual([
+      photos.id,
+      baseAlbumId,
+      grid.body.id,
+    ]);
     expect(
       (await call(owner.token, 'PUT', '/ads/albums/order', { ids: [randomUUID()] })).status,
     ).toBe(404);
@@ -978,7 +1004,7 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
       'album_off',
     );
     const dimmed = await fullFeed();
-    expect(dimmed.albums.map((a) => a.id)).toEqual([null, grid.body.id]);
+    expect(dimmed.albums.map((a) => a.id)).toEqual([baseAlbumId, grid.body.id]);
     expect(dimmed.items.map((i) => i.id)).not.toContain(f1.id);
     expect(dimmed.items.map((i) => i.id)).not.toContain(snackAd.id);
     // The album's look can be changed; patches are validated like the create body.
@@ -1006,20 +1032,24 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     ).toBe(404);
     const loose = await call<AdSummary>(owner.token, 'PATCH', `/ads/${g2.id}`, { albumId: null });
     expect(loose.body.albumId).toBeNull();
+    // 0.19.3: a slide with no album is kept in the list but never shown on a screen.
     const afterMove = await fullFeed();
-    expect(afterMove.albums.map((a) => a.id)).toEqual([null, grid.body.id]);
-    expect(afterMove.albums[0]!.items.map((i) => i.id)).toEqual([...looseBefore, g2.id]);
+    expect(afterMove.albums.map((a) => a.id)).toEqual([baseAlbumId, grid.body.id]);
+    expect(afterMove.albums[0]!.items.map((i) => i.id)).toEqual(looseBefore);
+    expect(afterMove.items.map((i) => i.id)).not.toContain(g2.id);
     expect(afterMove.albums[1]!.items.map((i) => i.id)).toEqual([g1.id, f1.id, snackAd.id]);
 
-    // Deleting an album only ungroups its slides — they keep playing.
+    // Deleting an album only ungroups its slides — they stay in the list, but a slide with no
+    // album never shows (0.19.3), so the screens go back to the base album alone.
     expect((await call(cashier.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(403);
     expect((await call(owner.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(204);
     expect((await call(owner.token, 'DELETE', `/ads/albums/${grid.body.id}`)).status).toBe(404);
     expect((await call<AdSummary>(owner.token, 'GET', `/ads/${g1.id}`)).body.albumId).toBeNull();
     const ungrouped = await fullFeed();
     expect(ungrouped.albums).toHaveLength(1);
-    expect(ungrouped.items.map((i) => i.id)).toEqual(
-      expect.arrayContaining([g1.id, f1.id, snackAd.id]),
+    expect(ungrouped.items.map((i) => i.id)).toEqual(looseBefore);
+    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${g1.id}`)).body.state).toBe(
+      'no_album',
     );
 
     // Clean up what this test added.
@@ -1027,5 +1057,55 @@ describe('ads: curated customer-screen slideshow and promo prices', () => {
     for (const id of [g1.id, g2.id, f1.id, snackAd.id])
       await call(owner.token, 'DELETE', `/ads/${id}`);
     expect((await fullFeed()).items.map((i) => i.id)).toEqual(looseBefore);
+  });
+
+  it('0.19.3: only slides inside an enabled album show; a product with stock not tracked always shows', async () => {
+    // A product that does not track stock (a service) has no stock to run out of.
+    const service = (
+      await call<ProductSummary>(owner.token, 'POST', '/products', {
+        name: 'Shërbim pa stok',
+        sellingPriceCents: 300,
+        purchaseCostCents: 0,
+        trackStock: false,
+      })
+    ).body;
+    const serviceAd = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'product',
+      productId: service.id,
+    });
+    expect(serviceAd.status).toBe(201);
+    expect(serviceAd.body.productInStock).toBe(true);
+    expect((await feed()).map((i) => i.id)).toContain(serviceAd.body.id);
+
+    // A slide in no album (explicit null) never shows, and says so in its state.
+    const loose = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'custom',
+      title: 'Pa album',
+      albumId: null,
+    });
+    expect(loose.body.state).toBe('no_album');
+    expect((await feed()).map((i) => i.id)).not.toContain(loose.body.id);
+
+    // A slide in an album that is switched off never shows; back on → it does.
+    const album = (
+      await call<AdAlbumSummary>(owner.token, 'POST', '/ads/albums', { name: 'Fikur' })
+    ).body;
+    const inAlbum = await call<AdSummary>(owner.token, 'POST', '/ads', {
+      kind: 'custom',
+      title: 'Në album',
+      albumId: album.id,
+    });
+    expect(inAlbum.body.state).toBe('live');
+    expect((await feed()).map((i) => i.id)).toContain(inAlbum.body.id);
+    await call(owner.token, 'PATCH', `/ads/albums/${album.id}`, { enabled: false });
+    expect((await feed()).map((i) => i.id)).not.toContain(inAlbum.body.id);
+    expect((await call<AdSummary>(owner.token, 'GET', `/ads/${inAlbum.body.id}`)).body.state).toBe(
+      'album_off',
+    );
+    await call(owner.token, 'PATCH', `/ads/albums/${album.id}`, { enabled: true });
+    expect((await feed()).map((i) => i.id)).toContain(inAlbum.body.id);
+
+    // Nothing else changed: the loose slide is still kept in the admin list, just never fed.
+    expect((await feed()).map((i) => i.id)).not.toContain(loose.body.id);
   });
 });

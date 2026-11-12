@@ -15,6 +15,7 @@
 import type {
   DebtCustomerGroup,
   DebtDetail,
+  DebtInstallment,
   DebtListQuery,
   DebtPaymentRequest,
   DebtPaymentResult,
@@ -28,7 +29,7 @@ import type {
   Paginated,
   PaymentMethod,
 } from '@likapcs/shared';
-import { PERMISSIONS } from '@likapcs/shared';
+import { installmentDueDate, PERMISSIONS, splitInstallments } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -56,6 +57,12 @@ interface DebtRow {
   created_at: Date;
   settled_at: Date | null;
   written_off_reason: string | null;
+  installment_count: number | null;
+  payments_count: string;
+  items_text: string | null;
+  sched_count: number;
+  sched_paid: number;
+  next_part_cents: string | null;
 }
 
 const SELECT = `
@@ -64,15 +71,35 @@ const SELECT = `
          to_char(d.due_date, 'YYYY-MM-DD') AS due_date,
          CASE WHEN d.status IN ('open', 'partial') AND d.due_date < CURRENT_DATE
               THEN (CURRENT_DATE - d.due_date)::int ELSE 0 END AS overdue_days,
-         d.notes, u.full_name AS created_by_name, d.created_at, d.settled_at, d.written_off_reason
+         d.notes, u.full_name AS created_by_name, d.created_at, d.settled_at, d.written_off_reason,
+         d.installment_count, (SELECT count(*) FROM debt_payments dp WHERE dp.debt_id = d.id)::text AS payments_count,
+         (SELECT string_agg(si.description, ', ' ORDER BY si.line_no) FROM sale_items si WHERE si.sale_id = d.sale_id) AS items_text,
+         (SELECT count(*)::int FROM debt_installments i WHERE i.debt_id = d.id) AS sched_count,
+         (SELECT count(*)::int FROM debt_installments i WHERE i.debt_id = d.id AND i.paid_cents >= i.amount_cents) AS sched_paid,
+         (SELECT (i.amount_cents - i.paid_cents)::text FROM debt_installments i
+            WHERE i.debt_id = d.id AND i.paid_cents < i.amount_cents ORDER BY i.seq LIMIT 1) AS next_part_cents
     FROM customer_debts d
     JOIN customers c ON c.id = d.customer_id
     LEFT JOIN sales s ON s.id = d.sale_id
     LEFT JOIN users u ON u.id = d.created_by`;
 
+/**
+ * The next part of an installment plan: what is left, split over the parts not yet paid (at
+ * least one), rounded up to the cent. Null for a plain debt or a settled one.
+ */
+export function installmentPart(
+  count: number | null,
+  remainingCents: number,
+  paidParts: number,
+): number | null {
+  if (!count || remainingCents <= 0) return null;
+  return Math.ceil(remainingCents / Math.max(1, count - paidParts));
+}
+
 function toSummary(r: DebtRow): DebtSummary {
   const amount = Number(r.amount_cents);
   const paid = Number(r.paid_cents);
+  const remaining = r.status === 'open' || r.status === 'partial' ? amount - paid : 0;
   return {
     id: r.id,
     customerId: r.customer_id,
@@ -83,10 +110,20 @@ function toSummary(r: DebtRow): DebtSummary {
     receiptNo: r.receipt_no,
     amountCents: amount,
     paidCents: paid,
-    remainingCents: r.status === 'open' || r.status === 'partial' ? amount - paid : 0,
+    remainingCents: remaining,
     status: r.status,
     dueDate: r.due_date,
     overdueDays: Number(r.overdue_days),
+    itemsText: r.items_text,
+    installmentCount: r.installment_count,
+    // 0.19.8: with a schedule, the parts are counted from the schedule; older plans keep the rule below.
+    installmentsPaid: r.sched_count > 0 ? r.sched_paid : Number(r.payments_count),
+    installmentCents:
+      r.sched_count > 0
+        ? r.next_part_cents === null
+          ? null
+          : Number(r.next_part_cents)
+        : installmentPart(r.installment_count, remaining, Number(r.payments_count)),
     notes: r.notes,
     createdByName: r.created_by_name,
     createdAt: r.created_at.toISOString(),
@@ -125,6 +162,8 @@ export class DebtsService {
       amountCents: number;
       dueDate?: string | null;
       notes?: string | null;
+      /** 0.19.0: planned parts (2–24) or null for a plain debt. */
+      installmentCount?: number | null;
       /** Whoever sells; `permissions` decides whether credit may be given at all. */
       actor: AuditActor & { permissions?: ReadonlySet<string> };
     },
@@ -171,8 +210,8 @@ export class DebtsService {
     const dueDate =
       input.dueDate ?? dueDateFromToday(await this.settings.get('pos.credit_default_days'));
     const r = await client.query<{ id: string }>(
-      `INSERT INTO customer_debts (customer_id, sale_id, amount_cents, due_date, notes, created_by)
-       VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
+      `INSERT INTO customer_debts (customer_id, sale_id, amount_cents, due_date, notes, created_by, installment_count)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7) RETURNING id`,
       [
         input.customerId,
         input.saleId,
@@ -180,8 +219,20 @@ export class DebtsService {
         dueDate,
         input.notes ?? null,
         input.actor.userId ?? null,
+        input.installmentCount ?? null,
       ],
     );
+    const debtId = r.rows[0]!.id;
+    if (input.installmentCount) {
+      // 0.19.8: the parts are scheduled now: amount split in cents, due monthly from the debt's date.
+      const parts = splitInstallments(input.amountCents, input.installmentCount);
+      for (const [i, part] of parts.entries()) {
+        await client.query(
+          `INSERT INTO debt_installments (debt_id, seq, amount_cents, due_date) VALUES ($1, $2, $3, $4::date)`,
+          [debtId, i + 1, part, installmentDueDate(dueDate, i)],
+        );
+      }
+    }
     await client.query(
       'UPDATE customers SET balance_due_cents = balance_due_cents + $2, updated_at = now() WHERE id = $1',
       [input.customerId, input.amountCents],
@@ -195,6 +246,7 @@ export class DebtsService {
         saleId: input.saleId,
         amountCents: input.amountCents,
         dueDate,
+        installmentCount: input.installmentCount ?? null,
       },
     });
     this.wallet.announce(client, input.customerId);
@@ -333,7 +385,7 @@ export class DebtsService {
     const r = await db.query<DebtRow>(`${SELECT} WHERE d.id = $1`, [id]);
     const row = r.rows[0];
     if (!row) return null;
-    const [payments, items] = await Promise.all([
+    const [payments, items, parts] = await Promise.all([
       db.query<{
         id: string;
         amount_cents: string;
@@ -357,6 +409,19 @@ export class DebtsService {
         : Promise.resolve({
             rows: [] as { description: string; quantity_milli: string; line_total_cents: string }[],
           }),
+      db.query<{
+        seq: number;
+        amount_cents: string;
+        paid_cents: string;
+        due_date: string;
+        overdue_days: number;
+      }>(
+        `SELECT seq, amount_cents::text, paid_cents::text, to_char(due_date, 'YYYY-MM-DD') AS due_date,
+                CASE WHEN paid_cents < amount_cents AND due_date < CURRENT_DATE
+                     THEN (CURRENT_DATE - due_date)::int ELSE 0 END AS overdue_days
+           FROM debt_installments WHERE debt_id = $1 ORDER BY seq`,
+        [id],
+      ),
     ]);
     return {
       ...toSummary(row),
@@ -373,6 +438,20 @@ export class DebtsService {
         description: i.description,
         quantityMilli: Number(i.quantity_milli),
         lineTotalCents: Number(i.line_total_cents),
+      })),
+      installments: parts.rows.map((p): DebtInstallment => ({
+        seq: p.seq,
+        amountCents: Number(p.amount_cents),
+        paidCents: Number(p.paid_cents),
+        remainingCents: Number(p.amount_cents) - Number(p.paid_cents),
+        dueDate: p.due_date,
+        status:
+          Number(p.paid_cents) >= Number(p.amount_cents)
+            ? 'paid'
+            : Number(p.paid_cents) > 0
+              ? 'partial'
+              : 'open',
+        overdueDays: Number(p.overdue_days),
       })),
     };
   }
@@ -401,7 +480,15 @@ export class DebtsService {
         reason: `${debt.customer_name} · ${debt.receipt_no ?? 'debt'}`,
         actor,
       });
-      await this.applyToDebt(client, debt, paymentId, input.amountCents, input.notes, actor);
+      await this.applyToDebt(
+        client,
+        debt,
+        paymentId,
+        input.amountCents,
+        input.notes,
+        actor,
+        input.installmentSeq ?? null,
+      );
       const customer = await this.customerBalance(client, debt.customer_id);
       return {
         debts: [(await this.get(id, client))!],
@@ -423,6 +510,11 @@ export class DebtsService {
     actor: AuditActor,
   ): Promise<DebtPaymentResult> {
     return withTransaction(this.pool, async (client) => {
+      if (input.installmentSeq !== undefined)
+        throw badRequest('Pick one debt to pay a specific installment', {
+          field: 'installmentSeq',
+          code: 'INSTALLMENT_NEEDS_DEBT',
+        });
       await lockCustomers(client, customerId);
       const open = await client.query<DebtRow>(
         `${SELECT} WHERE d.customer_id = $1 AND d.status IN ('open', 'partial')
@@ -476,6 +568,7 @@ export class DebtsService {
       const debt = await this.lock(client, id);
       if (debt.status !== 'open' && debt.status !== 'partial')
         throw conflict(`This debt is already ${debt.status.replace('_', ' ')}`);
+      await this.shiftSchedule(client, id, input.dueDate);
       await client.query(
         `UPDATE customer_debts SET due_date = $2::date, notes = COALESCE($3, notes) WHERE id = $1`,
         [id, input.dueDate, input.notes ?? null],
@@ -504,6 +597,7 @@ export class DebtsService {
         [customerId],
       );
       if (!open.rows.length) throw conflict('This customer has no open debt');
+      for (const debt of open.rows) await this.shiftSchedule(client, debt.id, input.dueDate);
       await client.query(
         `UPDATE customer_debts SET due_date = $2::date, notes = COALESCE($3, notes)
          WHERE customer_id = $1 AND status IN ('open', 'partial')`,
@@ -619,6 +713,28 @@ export class DebtsService {
     return r.rows[0]!.id;
   }
 
+  /**
+   * A new due date for a plan: the unpaid parts are dated again from `newDue`, monthly, in order
+   * (paid parts keep their dates). A plain debt has no parts: nothing happens.
+   */
+  private async shiftSchedule(client: DbClient, debtId: string, newDue: string): Promise<void> {
+    const unpaid = await client.query<{ id: string }>(
+      `SELECT id FROM debt_installments WHERE debt_id = $1 AND paid_cents < amount_cents ORDER BY seq`,
+      [debtId],
+    );
+    for (const [k, part] of unpaid.rows.entries()) {
+      await client.query('UPDATE debt_installments SET due_date = $2::date WHERE id = $1', [
+        part.id,
+        installmentDueDate(newDue, k),
+      ]);
+    }
+  }
+
+  /**
+   * Books `amountCents` of a payment against one debt. With a schedule, the money goes to the
+   * part `installmentSeq` (it must not exceed what that part still owes), or else to the oldest
+   * unpaid parts first. Each part touched gets its own repayment row.
+   */
   private async applyToDebt(
     client: DbClient,
     debt: DebtRow,
@@ -626,11 +742,69 @@ export class DebtsService {
     amountCents: number,
     notes: string | undefined,
     actor: AuditActor,
+    installmentSeq: number | null = null,
   ): Promise<void> {
-    await client.query(
-      `INSERT INTO debt_payments (debt_id, payment_id, amount_cents) VALUES ($1, $2, $3)`,
-      [debt.id, paymentId, amountCents],
+    const parts = await client.query<{
+      id: string;
+      seq: number;
+      amount_cents: string;
+      paid_cents: string;
+    }>(
+      `SELECT id, seq, amount_cents::text, paid_cents::text FROM debt_installments
+        WHERE debt_id = $1 ORDER BY seq FOR UPDATE`,
+      [debt.id],
     );
+    const slices: { installmentId: string | null; amount: number }[] = [];
+    if (!parts.rows.length) {
+      if (installmentSeq !== null)
+        throw badRequest('This debt has no installment plan', {
+          field: 'installmentSeq',
+          code: 'NO_INSTALLMENTS',
+        });
+      slices.push({ installmentId: null, amount: amountCents });
+    } else if (installmentSeq !== null) {
+      const part = parts.rows.find((p) => p.seq === installmentSeq);
+      if (!part) throw notFound('Installment');
+      const left = Number(part.amount_cents) - Number(part.paid_cents);
+      if (left <= 0) throw conflict(`Installment ${installmentSeq} is already paid`);
+      if (amountCents > left)
+        throw badRequest(
+          `Payment exceeds installment ${installmentSeq}, which owes ${(left / 100).toFixed(2)}`,
+          { field: 'amountCents', code: 'OVERPAY_INSTALLMENT', remainingCents: left },
+        );
+      slices.push({ installmentId: part.id, amount: amountCents });
+    } else {
+      let left = amountCents;
+      for (const part of parts.rows) {
+        if (left <= 0) break;
+        const owed = Number(part.amount_cents) - Number(part.paid_cents);
+        if (owed <= 0) continue;
+        const take = Math.min(left, owed);
+        slices.push({ installmentId: part.id, amount: take });
+        left -= take;
+      }
+    }
+    for (const slice of slices) {
+      await client.query(
+        `INSERT INTO debt_payments (debt_id, payment_id, amount_cents, installment_id) VALUES ($1, $2, $3, $4)`,
+        [debt.id, paymentId, slice.amount, slice.installmentId],
+      );
+      if (slice.installmentId)
+        await client.query(
+          'UPDATE debt_installments SET paid_cents = paid_cents + $2 WHERE id = $1',
+          [slice.installmentId, slice.amount],
+        );
+    }
+    if (parts.rows.length) {
+      // The debt's due date follows its next unpaid part (unchanged once everything is paid).
+      await client.query(
+        `UPDATE customer_debts SET due_date = COALESCE(
+           (SELECT min(due_date) FROM debt_installments WHERE debt_id = $1 AND paid_cents < amount_cents),
+           due_date)
+         WHERE id = $1`,
+        [debt.id],
+      );
+    }
     const paid = Number(debt.paid_cents) + amountCents;
     const settled = paid >= Number(debt.amount_cents);
     await client.query(
