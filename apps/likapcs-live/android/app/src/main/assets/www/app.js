@@ -207,6 +207,12 @@
     'Regjistri nuk u lexua. Provoni përsëri.': 'The log could not be read. Try again.',
 
     Gjendja: 'Status',
+    'Serveri është përditësuar dhe kërkon një version më të ri të këtij aplikacioni.':
+      'The server was updated and needs a newer version of this app.',
+    'Llogaria nuk ka më të drejtë të shohë Live tracking.':
+      'The account may no longer see Live tracking.',
+    'Serveri nuk përgjigjet. Kontrolloni Wi-Fi-n ose Tailscale dhe nëse kompjuteri kryesor është i ndezur. Aplikacioni provon vetë përsëri.':
+      'The server does not answer. Check the Wi-Fi or Tailscale, and whether the main computer is on. The app keeps trying by itself.',
     'I lidhur': 'Connected',
     Serveri: 'Server',
     'Versioni i serverit': 'Server version',
@@ -1537,6 +1543,15 @@
     return bits.join(' · ');
   }
 
+  /** Why the link is down, in the owner's words (`detail` is the engine's short code). */
+  function whyOffline(detail) {
+    if (detail === 'incompatible') {
+      return 'Serveri është përditësuar dhe kërkon një version më të ri të këtij aplikacioni.';
+    }
+    if (detail === 'forbidden') return 'Llogaria nuk ka më të drejtë të shohë Live tracking.';
+    return 'Serveri nuk përgjigjet. Kontrolloni Wi-Fi-n ose Tailscale dhe nëse kompjuteri kryesor është i ndezur. Aplikacioni provon vetë përsëri.';
+  }
+
   function renderSettings() {
     const view = ui.views && ui.views.settings;
     if (!view) return;
@@ -1580,6 +1595,9 @@
           user.fullName ? user.fullName + ' (' + user.username + ')' : user.username,
         ),
         kv(t('Kyçja vlen deri më'), state.expiresAt ? dateTime(state.expiresAt) : '—'),
+        c === 'offline'
+          ? h('p', { class: 'hint', id: 'settings-why' }, t(whyOffline(state.detail)))
+          : null,
         h(
           'div',
           { class: 'btn-row' },

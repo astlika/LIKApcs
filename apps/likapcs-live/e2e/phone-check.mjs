@@ -15,6 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { commands, call, as, sleep } from './shop.mjs';
 
 const APK = process.argv[2];
@@ -337,6 +338,84 @@ function pageTop() {
   );
   return bar ? Number(bar[1]) : 48;
 }
+/** The colour [r, g, b] of one pixel of a PNG screenshot (8-bit RGB or RGBA, not interlaced). */
+function pixel(png, x, y) {
+  let pos = 8;
+  let width = 0;
+  let channels = 4;
+  const parts = [];
+  while (pos < png.length) {
+    const length = png.readUInt32BE(pos);
+    const type = png.toString('latin1', pos + 4, pos + 8);
+    const body = png.subarray(pos + 8, pos + 8 + length);
+    if (type === 'IHDR') {
+      width = body.readUInt32BE(0);
+      if (body[8] !== 8 || body[12] !== 0 || (body[9] !== 6 && body[9] !== 2))
+        throw new Error('unsupported PNG');
+      channels = body[9] === 6 ? 4 : 3;
+    }
+    if (type === 'IDAT') parts.push(body);
+    pos += 12 + length;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(parts));
+  const stride = width * channels;
+  let previous = Buffer.alloc(stride);
+  let row = previous;
+  for (let r = 0; r <= y; r++) {
+    const start = r * (stride + 1);
+    const filter = raw[start];
+    row = Buffer.from(raw.subarray(start + 1, start + 1 + stride));
+    for (let i = 0; i < stride; i++) {
+      const left = i >= channels ? row[i - channels] : 0;
+      const up = previous[i];
+      const upLeft = i >= channels ? previous[i - channels] : 0;
+      let add = 0;
+      if (filter === 1) add = left;
+      else if (filter === 2) add = up;
+      else if (filter === 3) add = (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - upLeft);
+        add = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+      }
+      row[i] = (row[i] + add) & 255;
+    }
+    previous = row;
+  }
+  return [row[x * channels], row[x * channels + 1], row[x * channels + 2]];
+}
+
+/**
+ * Is this tab drawn as the open one — on the screen itself, not in the page's own book-keeping?
+ * The open tab has a blue bar along its top edge; a screenshot tells.
+ */
+async function tabDrawnOpen(page, selector) {
+  const r = JSON.parse(
+    await page.eval(
+      `JSON.stringify(document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect())`,
+    ),
+  );
+  const dpr = await page.eval('devicePixelRatio');
+  const png = adb(['exec-out', 'screencap', '-p'], { binary: true });
+  const [red, green, blue] = pixel(
+    png,
+    Math.round((r.x + r.width / 2) * dpr),
+    Math.round(pageTop() + r.y * dpr + 3),
+  );
+  return blue > 200 && red < 110 && green > 90 && green < 170;
+}
+
+/** Taps a tab with a finger and waits until the screen shows it open; returns how long that took (ms). */
+async function tapTab(page, selector, name) {
+  check(`before the tap, "${name}" is not the open tab`, !(await tabDrawnOpen(page, selector)));
+  const at = Date.now();
+  await tapElement(page, selector);
+  await waitFor(`"${name}" drawn as the open tab`, () => tabDrawnOpen(page, selector), 8000, 50);
+  return Date.now() - at;
+}
+
 /** A finger tap in the middle of an element of the page. */
 async function tapElement(page, selector) {
   const r = JSON.parse(
@@ -541,24 +620,22 @@ try {
   });
 
   await step('the activity screen', async () => {
-    // Real touches on the screen, where the tabs are drawn.
-    await tapElement(page, '#tab-activity');
+    // Real touches, and what the screen itself then shows (screenshots, not the page's word).
+    const opened = await tapTab(page, '#tab-activity', 'Aktiviteti');
+    ok(
+      `a finger tap on "Aktiviteti" opens it on the screen (${opened} ms, including the screenshot)`,
+    );
     await page.waitFor(
-      'the Activity tab',
-      `document.getElementById('tab-activity').className.includes('tab--on') && document.querySelectorAll('#view-activity .act').length > 3`,
+      'the list',
+      `document.querySelectorAll('#view-activity .act').length > 3`,
       10_000,
     );
     const first = await page.text('#view-activity .acts');
     check(
-      'a finger tap on "Aktiviteti" opens the list of changes',
+      'the list of changes has the refund and the expense',
       first.includes('Rimbursim') && first.includes('Shpenzim 12.50 €'),
       first.slice(0, 300),
     );
-    const painted = await page.eval(
-      `new Promise((done) => { const t = setTimeout(() => done(false), 3000); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); done(true); })); })`,
-    );
-    check('the screen is redrawn after the tap', painted === true);
-    await sleep(600);
     screenshot('activity');
     // A finger swipe scrolls the list.
     const before = await page.eval(`document.getElementById('view-activity').scrollTop`);
@@ -567,13 +644,17 @@ try {
     const after = await page.eval(`document.getElementById('view-activity').scrollTop`);
     check('a finger swipe scrolls the list', after > before + 100, `${before} → ${after}`);
     screenshot('activity-scrolled');
-    await tapElement(page, '#tab-live');
+    const back = await tapTab(page, '#tab-live', 'Live');
+    ok(`a finger tap on "Live" goes back (${back} ms)`);
+    // What a tap on a notification does while the app is open: the same window, another tab.
+    launch('-a com.likapcs.live.OPEN --es tab settings');
     await page.waitFor(
-      'the Live tab',
-      `document.getElementById('tab-live').className.includes('tab--on')`,
+      'the Settings tab',
+      `document.getElementById('tab-settings').className.includes('tab--on')`,
       10_000,
     );
-    ok('a finger tap on "Live" goes back');
+    ok('a notification tapped while the app is open switches the tab');
+    await page.click('#tab-live');
   });
 
   await step('the notification shade', async () => {
