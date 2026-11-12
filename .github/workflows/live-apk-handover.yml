@@ -1,0 +1,28 @@
+# TEMPORARY (removed again right away): hands the release APK of a finished run to a place that
+# can be read through the GitHub API.
+name: Live app hand-over (temporary)
+
+on:
+  push:
+    branches: ['arena/5771f5db-likapcs']
+    paths: ['.github/workflows/live-apk-handover.yml']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  handover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release APK of run 43292272452 as a git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: '43292272452'
+        run: |
+          gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --dir evidence
+          f=$(find evidence -name app-release.apk | head -1)
+          test -f "$f"
+          base64 -w0 "$f" | jq -Rs '{encoding:"base64",content:.}' > body.json
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input body.json --jq .sha)
+          echo "::notice title=handover::app-release.apk size=$(stat -c %s "$f") sha256=$(sha256sum "$f" | cut -d' ' -f1) blob=$sha"
