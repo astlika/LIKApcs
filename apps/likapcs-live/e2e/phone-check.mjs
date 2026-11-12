@@ -11,7 +11,7 @@
 //
 // Environment: LIKAPCS_URL (the server as this machine sees it), PHONE_SERVER (the address typed
 // into the app, default 10.0.2.2:4700), OUT (folder for the screenshots), STEPS (comma list to
-// run only some of: reboot, kill, doze).
+// run only some of: doze, kill, reboot, update).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +26,7 @@ if (!APK || !fs.existsSync(APK)) {
 const PKG = 'com.likapcs.live';
 const PHONE_SERVER = process.env.PHONE_SERVER ?? '10.0.2.2:4700';
 const OUT = process.env.OUT ?? 'phone-check-out';
-const STEPS = new Set((process.env.STEPS ?? 'doze,kill,reboot').split(',').filter(Boolean));
+const STEPS = new Set((process.env.STEPS ?? 'doze,kill,reboot,update').split(',').filter(Boolean));
 const DEVTOOLS_PORT = 9222;
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -621,6 +621,8 @@ try {
 
   await step('the activity screen', async () => {
     // Real touches, and what the screen itself then shows (screenshots, not the page's word).
+    // First let the refund's pop-up leave the screen: the delay measured below is the app's own.
+    await sleep(6500);
     const opened = await tapTab(page, '#tab-activity', 'Aktiviteti');
     ok(
       `a finger tap on "Aktiviteti" opens it on the screen (${opened} ms, including the screenshot)`,
@@ -736,6 +738,27 @@ try {
       );
       await saleArrives('and new sales arrive again');
     });
+
+    await step('stopped', async () => {
+      // Some phones stop a background service without killing the app. The app sets an alarm
+      // every few minutes for that: here the service is stopped and the alarm is sent by hand.
+      const alarms = shell('dumpsys alarm', { timeout: 30_000 });
+      check(
+        'a wake-up alarm is waiting',
+        /com\.likapcs\.live\.WAKE/.test(alarms),
+        'no com.likapcs.live.WAKE in dumpsys alarm',
+      );
+      shell(`am stopservice -n ${PKG}/.LiveService`, { allowFail: true });
+      await waitFor('the service to be stopped', () => !serviceRunning(), 15_000);
+      shell(`am broadcast -n ${PKG}/.WakeReceiver -a com.likapcs.live.WAKE`, { allowFail: true });
+      await waitFor(
+        'the service after the alarm',
+        () => serviceRunning() && serviceForeground(),
+        20_000,
+      );
+      ok('the alarm finds the service stopped and starts it again');
+      await saleArrives('and sales arrive');
+    });
   }
 
   if (STEPS.has('reboot')) {
@@ -767,6 +790,30 @@ try {
         90_000,
       );
       await saleArrives('a sale after the restart, app still not opened', 30_000);
+    });
+  }
+
+  if (STEPS.has('update')) {
+    section('The app is updated');
+    await step('update', async () => {
+      // Installing a new version over the old one ends the running app. It must come back by
+      // itself, still signed in, without being opened.
+      const before = pid();
+      const again = adb(['install', '-r', APK], { timeout: 180_000 });
+      check('the new version installs over the old one', /Success/.test(again), again);
+      await waitFor(
+        'the service after the update',
+        () => serviceRunning() && pid() !== before,
+        90_000,
+        1000,
+      );
+      ok('the service starts by itself after the update: the app was not opened');
+      await expectNotification(
+        'the link is live again',
+        (n) => n.channel === 'status' && n.sub === 'live',
+        60_000,
+      );
+      await saleArrives('a sale after the update', 30_000);
     });
   }
 

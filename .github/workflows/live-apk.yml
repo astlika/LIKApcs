@@ -78,6 +78,7 @@ jobs:
           mkdir -p "$EVIDENCE"
 
       - name: Build the APK and run the unit tests
+        id: build
         working-directory: ${{ env.APP }}/android
         env:
           LIKALIVE_SIGNING_SEED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -91,6 +92,8 @@ jobs:
                 exit 1
               fi
               echo "::warning::A new signing certificate was made for this run. Commit it as $APP/android/signing/release-certificate.crt (it is in the run's evidence)."
+            else
+              echo "signed=yes" >> "$GITHUB_OUTPUT"
             fi
           elif [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "::error::The secret TAURI_SIGNING_PRIVATE_KEY is not available: a release cannot be signed."
@@ -108,20 +111,31 @@ jobs:
       - name: Inspect the APKs
         id: apk
         working-directory: ${{ env.APP }}/android/app/build/outputs/apk
+        env:
+          SIGNED: ${{ steps.build.outputs.signed }}
         run: |
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           {
             for apk in debug/app-debug.apk release/app-release.apk; do
               echo "== $apk: $(stat -c %s "$apk") bytes, sha256 $(sha256sum "$apk" | cut -d' ' -f1)"
               "$BT/aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label:|launchable-activity|uses-permission)" || true
-              "$BT/apksigner" verify --verbose --print-certs "$apk" | grep -E "^Verified using|Signer #1 certificate (DN|SHA-256)" || true
+              "$BT/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+              grep -E "^Verified using v[1-3] |Number of signers|certificate (DN|SHA-256)" "$RUNNER_TEMP/signature.txt" || true
             done
             echo "== tests"
             grep -hoE 'tests="[0-9]+" skipped="[0-9]+" failures="[0-9]+" errors="[0-9]+"' ../../test-results/testDebugUnitTest/*.xml \
               | awk -F'"' '{t+=$2; s+=$4; f+=$6; e+=$8} END {printf "unit tests: %d run, %d skipped, %d failures, %d errors\n", t, s, f, e}'
           } | tee "$EVIDENCE/apk.txt"
-          "$BT/apksigner" verify debug/app-debug.apk
-          "$BT/apksigner" verify release/app-release.apk
+          cp "$RUNNER_TEMP/signature.txt" "$EVIDENCE/release-signature.txt"
+          # The release APK must carry the signature of the certificate in the repository.
+          if [ "$SIGNED" = yes ]; then
+            WANT=$(openssl x509 -in "$GITHUB_WORKSPACE/$APP/android/signing/release-certificate.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')
+            if ! grep -qi "$WANT" "$RUNNER_TEMP/signature.txt"; then
+              echo "::error::The release APK is not signed with signing/release-certificate.crt ($WANT)."
+              exit 1
+            fi
+            echo "release signature: signing/release-certificate.crt, SHA-256 $WANT" | tee -a "$EVIDENCE/apk.txt"
+          fi
           VERSION=$("$BT/aapt2" dump badging release/app-release.apk | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")
           test -n "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -187,29 +201,29 @@ jobs:
           path: ${{ env.EVIDENCE }}
           retention-days: 14
 
-      # TEMPORARY, while this workflow is being developed: the evidence as git blobs and the
-      # results as notices, readable through the API.
-      - name: Report
+      # What was built and what the checks found: on the run's page and as annotations.
+      - name: Summary
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           cd "$EVIDENCE"
-          note() { echo "::notice title=$1::$(head -c 7000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; }
-          list=""
-          for f in signing.txt apk.txt release-certificate.crt gradle.log engine-check.log server.log phone/phone-check.log phone/logcat.txt phone/logcat-before-restart.txt phone/notifications.txt phone/*.png; do
-            [ -f "$f" ] || continue
-            base64 -w0 "$f" | jq -Rs '{encoding:"base64",content:.}' > /tmp/body.json
-            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input /tmp/body.json --jq .sha 2>/dev/null || echo failed)
-            list="$list$f $sha $(stat -c %s "$f")"$'\n'
-          done
-          printf '%s' "$list" | note evidence
-          for f in signing.txt apk.txt release-certificate.crt; do [ -f "$f" ] && note "$f" < "$f"; done
           set +e +o pipefail
-          if [ -f gradle.log ]; then grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|BUILD " -A 8 gradle.log | head -90 | note gradle; fi
+          {
+            [ -f apk.txt ] && grep -E "^== |^release signature|^unit tests" apk.txt
+            [ -f release-signature.txt ] && grep -iE "signer|certificate" release-signature.txt | head -8
+            for f in engine-check.log phone/phone-check.log; do
+              [ -f "$f" ] && echo "$f: $(grep -c '  ok  ' "$f") passed, $(grep -c 'FAIL' "$f") failed"
+            done
+            [ -f phone/phone-check.log ] && grep -E "notification on the phone|on the screen \(" phone/phone-check.log | sed -E 's/^ *[0-9]+s +ok +/measured: /'
+          } > summary.txt
+          { echo '### likalivepcs'; echo '```'; cat summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          note() { echo "::$1 title=$2::$(head -c 6000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; }
+          note notice likalivepcs < summary.txt
           for f in engine-check.log phone/phone-check.log; do
-            [ -f "$f" ] && { echo "ok: $(grep -c '  ok  ' "$f")"; grep -A 6 "FAIL" "$f" | head -60; tail -n 2 "$f"; } | note "$f"
+            if [ -f "$f" ] && grep -q "FAIL" "$f"; then grep -A 8 "FAIL" "$f" | note error "$f"; fi
           done
+          if [ -f gradle.log ] && ! grep -q "BUILD SUCCESSFUL" gradle.log; then
+            grep -nE "^e: |error:|FAILED|What went wrong" -A 8 gradle.log | head -80 | note error build
+          fi
           true
 
       - name: Publish the release
@@ -217,13 +231,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.apk.outputs.version }}
+          SIGNED: ${{ steps.build.outputs.signed }}
         run: |
           TAG="$GITHUB_REF_NAME"
           if [ "$TAG" != "likalivepcs-v$VERSION" ]; then
             echo "::error::The tag $TAG does not match the app's version $VERSION (android/app/build.gradle)."
             exit 1
           fi
-          grep -q "Signer #1 certificate DN: CN=likalivepcs" "$EVIDENCE/apk.txt"
+          if [ "$SIGNED" != yes ]; then
+            echo "::error::This build is not signed with the repository's certificate: nothing is published."
+            exit 1
+          fi
           FILE="likalivepcs-$VERSION.apk"
           cp "$APP/android/app/build/outputs/apk/release/app-release.apk" "$FILE"
           {
