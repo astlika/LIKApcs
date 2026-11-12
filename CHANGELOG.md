@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- **likalivepcs v1 (Android)** — a new app for the owner's phone (`apps/likapcs-live`, package `com.likapcs.live`): every sale as a notification the moment it happens (who sold, what, how much, the profit), who sold how much today, and every change the server records (refunds, cancelled sessions, free minutes, expenses, cash in and out, stock, prices, sign-ins) — also while the app is closed and the screen is off. It only reads, and the server is unchanged: it uses the admin WebSocket, `GET /live/snapshot` and the audit log, with an owner or administrator account. Its APK is built, checked on an emulator and published by its own workflow on a `likalivepcs-v*` tag, as a release that is not marked "Latest". See `apps/likapcs-live/README.md`.
+
 ## [0.33.4] - 2026-11-12
 
 ### Fixed

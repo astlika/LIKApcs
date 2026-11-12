@@ -257,6 +257,9 @@ class Notifier(private val app: Context, private val store: Store) : Host {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
+            // A group of its own: Android bundles an app's other notifications once there are
+            // four of them, and the day's figures must stay visible outside that bundle.
+            .setGroup(STATUS_GROUP)
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(open(if (conn == Conn.UNAUTHORIZED) "settings" else "sales"))
         if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
@@ -333,6 +336,7 @@ class Notifier(private val app: Context, private val store: Store) : Host {
         const val TAG = "likalive"
         const val STATUS_CHANNEL = "status"
         const val STATUS_ID = 1
+        private const val STATUS_GROUP = "likalive.status"
         private const val MAX_SHOWN = 24
         private const val ACCENT = 0xFF2563EB.toInt()
     }

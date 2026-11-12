@@ -197,7 +197,7 @@ jobs:
           cd "$EVIDENCE"
           note() { echo "::notice title=$1::$(head -c 7000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; }
           list=""
-          for f in signing.txt apk.txt release-certificate.crt gradle.log engine-check.log server.log phone/phone-check.log phone/logcat.txt phone/notifications.txt phone/*.png; do
+          for f in signing.txt apk.txt release-certificate.crt gradle.log engine-check.log server.log phone/phone-check.log phone/logcat.txt phone/logcat-before-restart.txt phone/notifications.txt phone/*.png; do
             [ -f "$f" ] || continue
             base64 -w0 "$f" | jq -Rs '{encoding:"base64",content:.}' > /tmp/body.json
             sha=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input /tmp/body.json --jq .sha 2>/dev/null || echo failed)
@@ -205,7 +205,8 @@ jobs:
           done
           printf '%s' "$list" | note evidence
           for f in signing.txt apk.txt release-certificate.crt; do [ -f "$f" ] && note "$f" < "$f"; done
-          if [ -f gradle.log ]; then { grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|BUILD " -A 8 gradle.log | head -90; } | note gradle; fi
+          set +e +o pipefail
+          if [ -f gradle.log ]; then grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|BUILD " -A 8 gradle.log | head -90 | note gradle; fi
           for f in engine-check.log phone/phone-check.log; do
             [ -f "$f" ] && { echo "ok: $(grep -c '  ok  ' "$f")"; grep -A 6 "FAIL" "$f" | head -60; tail -n 2 "$f"; } | note "$f"
           done

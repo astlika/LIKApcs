@@ -319,11 +319,35 @@ function launch(extra = '') {
   shell(`am start -W -n ${PKG}/.MainActivity ${extra}`.trim(), { timeout: 60_000 });
 }
 
+let phoneUserId = null;
 async function setUserActive(active) {
   const owner = await as('owner');
-  const users = await call('GET', '/users', undefined, owner);
-  const phoneUser = (users.items ?? users).find((u) => u.username === 'telefon');
-  await call('PATCH', `/users/${phoneUser.id}`, { isActive: active }, owner);
+  if (!phoneUserId) {
+    // Looked up once: a switched-off account is no longer in the list.
+    const users = await call('GET', '/users', undefined, owner);
+    phoneUserId = (users.items ?? users).find((u) => u.username === 'telefon').id;
+  }
+  await call('PATCH', `/users/${phoneUserId}`, { isActive: active }, owner);
+}
+
+/** Where the app's page starts on the screen (below the status bar), in pixels. */
+function pageTop() {
+  const bar = /type=statusBars frame=\[0,0\]\[\d+,(\d+)\]/.exec(
+    shell('dumpsys window displays', { allowFail: true }),
+  );
+  return bar ? Number(bar[1]) : 48;
+}
+/** A finger tap in the middle of an element of the page. */
+async function tapElement(page, selector) {
+  const r = JSON.parse(
+    await page.eval(
+      `JSON.stringify(document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect())`,
+    ),
+  );
+  const dpr = await page.eval('devicePixelRatio');
+  shell(
+    `input tap ${Math.round((r.x + r.width / 2) * dpr)} ${Math.round(pageTop() + (r.y + r.height / 2) * dpr)}`,
+  );
 }
 
 // ─── The run ─────────────────────────────────────────────────────────────────────────────────
@@ -477,23 +501,29 @@ try {
 
   section('Sales, with the app open');
   await step('a sale', async () => {
+    const dayBefore = notifications().find((n) => n.channel === 'status')?.title ?? '';
+    const turnoverBefore = await page.text('#turnover');
     await saleArrives('a sale made on the server is a notification on the phone');
     await page.waitFor(
       'the sale on the Live screen',
-      `document.querySelectorAll('#feed .sale').length > 0 && document.getElementById('turnover').textContent`,
+      `document.querySelectorAll('#feed .sale').length > 0 && document.getElementById('turnover').textContent !== ${JSON.stringify(turnoverBefore)}`,
       10_000,
     );
     const staff = await page.text('#staff');
     check(
-      'the Live screen shows who sold how much',
+      'the Live screen shows the new total and who sold how much',
       staff.includes('Kasjere Test') && /\d+\.\d\d €/.test(staff),
       staff,
     );
     await sleep(700);
     screenshot('live');
     await expectNotification(
-      'the permanent notification says who sold how much',
-      (n) => n.channel === 'status' && /Kasjere Test \d+\.\d\d €/.test(n.text),
+      `the permanent notification moves on from "${dayBefore}"`,
+      (n) =>
+        n.channel === 'status' &&
+        /^Sot /.test(n.title) &&
+        n.title !== dayBefore &&
+        /Kasjere Test \d+\.\d\d €/.test(n.text),
     );
   });
 
@@ -511,18 +541,8 @@ try {
   });
 
   await step('the activity screen', async () => {
-    // A real touch on the screen, where the tab is drawn.
-    const webView = uiNodes().find((n) => n.cls === 'android.webkit.WebView' && n.pkg === PKG);
-    const r = JSON.parse(
-      await page.eval(
-        `JSON.stringify(document.getElementById('tab-activity').getBoundingClientRect())`,
-      ),
-    );
-    const dpr = await page.eval('devicePixelRatio');
-    const top = webView ? webView.bounds[1] : 48;
-    shell(
-      `input tap ${Math.round((r.x + r.width / 2) * dpr)} ${Math.round(top + (r.y + r.height / 2) * dpr)}`,
-    );
+    // Real touches on the screen, where the tabs are drawn.
+    await tapElement(page, '#tab-activity');
     await page.waitFor(
       'the Activity tab',
       `document.getElementById('tab-activity').className.includes('tab--on') && document.querySelectorAll('#view-activity .act').length > 3`,
@@ -534,8 +554,26 @@ try {
       first.includes('Rimbursim') && first.includes('Shpenzim 12.50 €'),
       first.slice(0, 300),
     );
-    await sleep(500);
+    const painted = await page.eval(
+      `new Promise((done) => { const t = setTimeout(() => done(false), 3000); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); done(true); })); })`,
+    );
+    check('the screen is redrawn after the tap', painted === true);
+    await sleep(600);
     screenshot('activity');
+    // A finger swipe scrolls the list.
+    const before = await page.eval(`document.getElementById('view-activity').scrollTop`);
+    shell('input swipe 360 1200 360 500 300');
+    await sleep(800);
+    const after = await page.eval(`document.getElementById('view-activity').scrollTop`);
+    check('a finger swipe scrolls the list', after > before + 100, `${before} → ${after}`);
+    screenshot('activity-scrolled');
+    await tapElement(page, '#tab-live');
+    await page.waitFor(
+      'the Live tab',
+      `document.getElementById('tab-live').className.includes('tab--on')`,
+      10_000,
+    );
+    ok('a finger tap on "Live" goes back');
   });
 
   await step('the notification shade', async () => {
@@ -572,6 +610,7 @@ try {
   if (STEPS.has('doze')) {
     await step('deep sleep', async () => {
       shell('dumpsys battery unplug');
+      shell('dumpsys deviceidle enable', { allowFail: true });
       const forced = shell('dumpsys deviceidle force-idle', { allowFail: true }).trim();
       await sleep(1500);
       const mode = shell('dumpsys deviceidle get deep', { allowFail: true }).trim();
@@ -623,6 +662,12 @@ try {
     await step('reboot', async () => {
       page?.close();
       page = null;
+      fs.writeFileSync(
+        path.join(OUT, 'logcat-before-restart.txt'),
+        adb(['logcat', '-d', '-v', 'time', 'likalive:V', 'AndroidRuntime:E', 'chromium:W', '*:S'], {
+          allowFail: true,
+        }),
+      );
       adb(['reboot'], { allowFail: true });
       await sleep(5000);
       adb(['wait-for-device'], { timeout: 300_000 });

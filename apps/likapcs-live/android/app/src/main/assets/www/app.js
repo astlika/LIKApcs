@@ -524,7 +524,6 @@
     const password = input('password', {
       id: 'signin-password',
       type: 'password',
-      placeholder: '••••••••',
       enterkeyhint: 'go',
     });
 
@@ -1528,7 +1527,12 @@
     const bits = [
       'likalivepcs v1' + (state && state.appVersion ? ' (' + state.appVersion + ')' : ''),
     ];
-    if (d.brand || d.model) bits.push([d.brand, d.model].filter(Boolean).join(' '));
+    // "realme RMX3933"; the brand is left out when the model already says it.
+    const brand = d.brand || '';
+    const model = d.model || '';
+    const named =
+      model.toLowerCase().indexOf(brand.toLowerCase()) === 0 ? model : (brand + ' ' + model).trim();
+    if (named) bits.push(named);
     if (d.release) bits.push('Android ' + d.release);
     return bits.join(' · ');
   }
