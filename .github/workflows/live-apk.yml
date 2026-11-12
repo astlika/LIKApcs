@@ -1,5 +1,18 @@
-# likalivepcs — the owner's live monitor for Android (apps/likapcs-live).
-# Probe of the build machine (temporary; replaced by the real build).
+# likalivepcs — the owner's live view of the shop, for Android (apps/likapcs-live).
+#
+# On every push that touches the app:
+#   1. the APK is built and the unit tests run;
+#   2. the engine (the part that runs in the phone's background) is checked against a real
+#      LIKApcs server started here: sign-in, sales, every kind of change, lost connections;
+#   3. the app itself runs on an Android 14 emulator with the realme Note 60's screen size:
+#      sign-in on its own screen, real sales, and what Android reports — the notifications, with
+#      the app open, in the background, asleep, killed, and after the phone restarts.
+# On a tag `likalivepcs-v<version>` the same happens, and the signed APK is then published as a
+# GitHub release. Never as "Latest": that link must keep pointing at the Windows installers.
+#
+# Signing: Android installs an update only when it is signed like the installed app. The key is
+# stored nowhere; it is derived at build time from the secret TAURI_SIGNING_PRIVATE_KEY (the one
+# the Windows release already needs). See apps/likapcs-live/android/signing/signing-key.mjs.
 name: Live app (Android)
 
 on:
@@ -11,30 +24,217 @@ on:
       - '.github/workflows/live-apk.yml'
 
 permissions:
-  contents: read
+  contents: write # the release (tags only)
+
+concurrency:
+  group: live-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 9.15.9
+  APP: apps/likapcs-live
+  EVIDENCE: ${{ github.workspace }}/live-evidence
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  probe:
-    name: Probe
+  apk:
+    name: Build, check, publish
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: likapcs
+          POSTGRES_PASSWORD: likapcs_ci
+          POSTGRES_DB: likapcs_live
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U likapcs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
-      - name: Facts
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # The runner image has several JDKs; the Android build wants 17.
+      - name: Use JDK 17
         run: |
+          test -x "$JAVA_HOME_17_X64/bin/java"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          mkdir -p "$EVIDENCE"
+
+      - name: Build the APK and run the unit tests
+        working-directory: ${{ env.APP }}/android
+        env:
+          LIKALIVE_SIGNING_SEED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$LIKALIVE_SIGNING_SEED" ]; then
+            eval "$(node signing/signing-key.mjs "$RUNNER_TEMP/signing" 2> >(tee "$EVIDENCE/signing.txt" >&2))"
+            if [ -f "$RUNNER_TEMP/signing/release-certificate.crt" ]; then
+              cp "$RUNNER_TEMP/signing/release-certificate.crt" "$EVIDENCE/release-certificate.crt"
+              if [ "$GITHUB_REF_TYPE" = tag ]; then
+                echo "::error::No signing certificate in the repository (signing/release-certificate.crt): nothing is published with a signature that the next build could not repeat."
+                exit 1
+              fi
+              echo "::warning::A new signing certificate was made for this run. Commit it as $APP/android/signing/release-certificate.crt (it is in the run's evidence)."
+            fi
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::The secret TAURI_SIGNING_PRIVATE_KEY is not available: a release cannot be signed."
+            exit 1
+          else
+            echo "::warning::No signing secret here: the release APK of this run is signed with a throw-away debug key."
+          fi
+          unset LIKALIVE_SIGNING_SEED
+          chmod +x gradlew
+          ./gradlew --console=plain --stacktrace \
+            :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :devhost:installDist \
+            2>&1 | tee "$EVIDENCE/gradle.log"
+          rm -rf "$RUNNER_TEMP/signing"
+
+      - name: Inspect the APKs
+        id: apk
+        working-directory: ${{ env.APP }}/android/app/build/outputs/apk
+        run: |
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           {
-            echo "ANDROID_HOME=$ANDROID_HOME"
-            echo "platforms: $(ls "$ANDROID_HOME/platforms" | tr '\n' ' ')"
-            echo "build-tools: $(ls "$ANDROID_HOME/build-tools" | tr '\n' ' ')"
-            echo "sdk dirs: $(ls "$ANDROID_HOME" | tr '\n' ' ')"
-            echo "cmdline-tools: $(ls "$ANDROID_HOME/cmdline-tools" 2>&1 | tr '\n' ' ')"
-            echo "JAVA_HOME=$JAVA_HOME"
-            env | grep '^JAVA_HOME_' | sort
-            echo "kvm: $(ls -l /dev/kvm 2>&1)"
-            echo "groups: $(id)"
-            echo "cpu: $(nproc) mem: $(free -m | awk '/Mem:/{print $2}') MB disk: $(df -h / | awk 'NR==2{print $4}')"
-            echo "psql: $(psql --version 2>&1) ; pg service: $(systemctl is-enabled postgresql 2>&1)"
-            echo "node: $(node -v) ; gradle: $(gradle --version 2>/dev/null | awk '/^Gradle/{print $2}')"
-            echo "image: $ImageOS $ImageVersion"
-          } > probe.txt 2>&1
-          cat probe.txt
-          msg=$(sed -e 's/%/%25/g' probe.txt | awk '{printf "%s%%0A", $0}')
-          echo "::notice title=probe::$msg"
+            for apk in debug/app-debug.apk release/app-release.apk; do
+              echo "== $apk: $(stat -c %s "$apk") bytes, sha256 $(sha256sum "$apk" | cut -d' ' -f1)"
+              "$BT/aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label:|launchable-activity|uses-permission)" || true
+              "$BT/apksigner" verify --verbose --print-certs "$apk" | grep -E "^Verified using|Signer #1 certificate (DN|SHA-256)" || true
+            done
+            echo "== tests"
+            grep -hoE 'tests="[0-9]+" skipped="[0-9]+" failures="[0-9]+" errors="[0-9]+"' ../../test-results/testDebugUnitTest/*.xml \
+              | awk -F'"' '{t+=$2; s+=$4; f+=$6; e+=$8} END {printf "unit tests: %d run, %d skipped, %d failures, %d errors\n", t, s, f, e}'
+          } | tee "$EVIDENCE/apk.txt"
+          "$BT/apksigner" verify debug/app-debug.apk
+          "$BT/apksigner" verify release/app-release.apk
+          VERSION=$("$BT/aapt2" dump badging release/app-release.apk | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Start a LIKApcs test server
+        env:
+          LIKAPCS_DATABASE_URL: postgres://likapcs:likapcs_ci@127.0.0.1:5432/likapcs_live
+          LIKAPCS_HOST: 127.0.0.1
+          LIKAPCS_PORT: 4700
+          LIKAPCS_LOG_LEVEL: warn
+          LIKAPCS_DISCOVERY: 'false'
+          LIKAPCS_DATA_DIR: ${{ runner.temp }}/likapcs-data
+          LIKAPCS_BACKUP_DIR: ${{ runner.temp }}/likapcs-data/backups
+        run: |
+          pnpm install --frozen-lockfile
+          nohup pnpm --filter @likapcs/server exec tsx src/index.ts > "$EVIDENCE/server.log" 2>&1 &
+          for i in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:4700/api/v1/system/health > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4700/api/v1/system/health
+          node e2e/seed.mjs > /dev/null
+          node e2e/users.mjs > /dev/null
+
+      - name: Engine check (real server, the engine on a desktop JVM)
+        env:
+          LIKALIVE_DEVHOST: ${{ github.workspace }}/${{ env.APP }}/android/devhost/build/install/devhost/bin/devhost
+        run: node "$APP/e2e/engine-check.mjs" 2>&1 | tee "$EVIDENCE/engine-check.log"
+
+      - name: Let the emulator use hardware acceleration (KVM)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Phone check (Android 14 emulator, 720 × 1600)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          OUT: ${{ env.EVIDENCE }}/phone
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          cores: 3
+          ram-size: 3072M
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -skin 720x1600
+          script: node apps/likapcs-live/e2e/phone-check.mjs apps/likapcs-live/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Collect what the checks found
+        if: always()
+        run: |
+          cp "$APP/android/app/build/outputs/apk/release/app-release.apk" "$EVIDENCE/" 2>/dev/null || true
+          cp "$APP/android/app/build/outputs/apk/debug/app-debug.apk" "$EVIDENCE/" 2>/dev/null || true
+          cp -r "$APP/android/app/build/reports/tests" "$EVIDENCE/unit-test-report" 2>/dev/null || true
+          ls -la "$EVIDENCE" "$EVIDENCE/phone" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: likalivepcs-${{ github.run_number }}
+          path: ${{ env.EVIDENCE }}
+          retention-days: 14
+
+      # TEMPORARY, while this workflow is being developed: the evidence as git blobs and the
+      # results as notices, readable through the API.
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$EVIDENCE"
+          note() { echo "::notice title=$1::$(head -c 7000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; }
+          list=""
+          for f in signing.txt apk.txt release-certificate.crt gradle.log engine-check.log server.log phone/phone-check.log phone/logcat.txt phone/notifications.txt phone/*.png; do
+            [ -f "$f" ] || continue
+            base64 -w0 "$f" | jq -Rs '{encoding:"base64",content:.}' > /tmp/body.json
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input /tmp/body.json --jq .sha 2>/dev/null || echo failed)
+            list="$list$f $sha $(stat -c %s "$f")"$'\n'
+          done
+          printf '%s' "$list" | note evidence
+          for f in signing.txt apk.txt release-certificate.crt; do [ -f "$f" ] && note "$f" < "$f"; done
+          if [ -f gradle.log ]; then { grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|BUILD " -A 8 gradle.log | head -90; } | note gradle; fi
+          for f in engine-check.log phone/phone-check.log; do
+            [ -f "$f" ] && { echo "ok: $(grep -c '  ok  ' "$f")"; grep -A 6 "FAIL" "$f" | head -60; tail -n 2 "$f"; } | note "$f"
+          done
+          true
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.apk.outputs.version }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [ "$TAG" != "likalivepcs-v$VERSION" ]; then
+            echo "::error::The tag $TAG does not match the app's version $VERSION (android/app/build.gradle)."
+            exit 1
+          fi
+          grep -q "Signer #1 certificate DN: CN=likalivepcs" "$EVIDENCE/apk.txt"
+          FILE="likalivepcs-$VERSION.apk"
+          cp "$APP/android/app/build/outputs/apk/release/app-release.apk" "$FILE"
+          {
+            cat "$APP/RELEASE_NOTES.md"
+            echo
+            echo "SHA-256 (\`$FILE\`): \`$(sha256sum "$FILE" | cut -d' ' -f1)\`"
+          } > notes.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "likalivepcs v1 (Android) $VERSION" --notes-file notes.md --latest=false
+          else
+            gh release create "$TAG" "$FILE" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "likalivepcs v1 (Android) $VERSION" --notes-file notes.md --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets,isPrerelease,url --jq '.url, (.assets[] | "\(.name) \(.size)")'

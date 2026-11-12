@@ -1,0 +1,75 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// The signing key comes from the environment (CI: repository secrets, see ../../README.md).
+// Without it the release build is signed with this machine's debug key: fine for trying out,
+// not for handing out, because an update must carry the same signature as the installed app.
+def keystorePath = System.getenv('LIKALIVE_KEYSTORE')
+def hasReleaseKey = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+
+android {
+    namespace 'com.likapcs.live'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.likapcs.live'
+        // 26: notification channels and java.time without extra libraries.
+        minSdk 26
+        // 34 = Android 14, what the realme Note 60 (RMX3933, realme UI 5.0) runs.
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('LIKALIVE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('LIKALIVE_KEY_ALIAS')
+                keyPassword System.getenv('LIKALIVE_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // The app is small as it is (no UI libraries); unshrunk code keeps crash reports readable.
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    testOptions {
+        unitTests.all {
+            testLogging {
+                events 'failed'
+                exceptionFormat 'full'
+            }
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    // Only its JsonElement tree is used (no generated serializers, so no compiler plugin).
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1'
+    testImplementation 'junit:junit:4.13.2'
+}
