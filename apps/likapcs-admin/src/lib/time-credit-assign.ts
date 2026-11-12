@@ -49,3 +49,65 @@ export function assignCredits<T extends CreditTarget>(
 
   return targets.map((target) => ({ target, credit: byTarget.get(target.id) ?? null }));
 }
+
+// ─── 0.33.4: one plan for the whole selection ────────────────────────────────
+
+/** What one PC of the selection starts with: its paid minutes, or nothing (it takes the chosen time). */
+export interface CreditPlanRow<T extends CreditTarget> {
+  target: T;
+  credit: TimeCreditSummary | null;
+  /** Minutes taken from `credit` for this PC (0 without a credit). */
+  minutes: number;
+}
+
+/** One credit per PC, each used whole (the rule of `assignCredits`). */
+export function planEach<T extends CreditTarget>(
+  targets: T[],
+  credits: TimeCreditSummary[],
+): CreditPlanRow<T>[] {
+  return assignCredits(targets, credits).map((a) => ({
+    target: a.target,
+    credit: a.credit,
+    minutes: a.credit?.minutesRemaining ?? 0,
+  }));
+}
+
+/**
+ * The paid minutes shared equally over every PC of the selection: one payment at the till for a
+ * whole group ("300 min" for five PCs → 60 min each). Only credits usable at any PC are shared.
+ * Every PC gets the same minutes: the largest number the credits can give to all of them (a session
+ * draws from one credit, so a credit serves as many PCs as it has whole shares). What does not
+ * divide stays on the credit. Null when the credits cannot give every PC at least one minute.
+ */
+export function planSplit<T extends CreditTarget>(
+  targets: T[],
+  credits: TimeCreditSummary[],
+): { rows: CreditPlanRow<T>[]; minutesEach: number; leftoverMinutes: number } | null {
+  const shared = credits.filter((c) => c.stationId === null && c.minutesRemaining > 0);
+  const n = targets.length;
+  if (n === 0 || shared.length === 0) return null;
+  const serves = (m: number) =>
+    shared.reduce((sum, c) => sum + Math.floor(c.minutesRemaining / m), 0);
+  // The best share is always "a credit divided by a whole number of PCs".
+  const candidates = new Set<number>();
+  for (const c of shared) {
+    for (let k = 1; k <= n; k += 1) {
+      const m = Math.floor(c.minutesRemaining / k);
+      if (m >= 1) candidates.add(m);
+    }
+  }
+  const minutesEach = [...candidates].sort((a, b) => b - a).find((m) => serves(m) >= n);
+  if (!minutesEach) return null;
+  const rows: CreditPlanRow<T>[] = [];
+  let next = 0;
+  for (const credit of shared) {
+    let shares = Math.floor(credit.minutesRemaining / minutesEach);
+    while (shares > 0 && next < n) {
+      rows.push({ target: targets[next]!, credit, minutes: minutesEach });
+      next += 1;
+      shares -= 1;
+    }
+  }
+  const total = shared.reduce((sum, c) => sum + c.minutesRemaining, 0);
+  return { rows, minutesEach, leftoverMinutes: total - minutesEach * n };
+}

@@ -324,7 +324,11 @@ export interface StationSummary {
   archived: StationArchive | null;
   /** 0.32.0: manual badges set by staff (V.I.P, tournament, premium, birthday). */
   badges: StationBadge[];
-  /** 0.32.0: the reservation that holds this PC now (scheduled, or inside its tolerance); null otherwise. */
+  /**
+   * 0.32.0: the reservation that keeps this PC now; null otherwise. 0.33.4: only from the booking's
+   * reminder time (`startsAt - remindMinutes`) until its tolerance ends — a booking for later does
+   * not mark the PC.
+   */
   reservation: StationReservationHold | null;
   /** 0.32.0: money the customer tied to this PC owes: the running session's, else the last session's. */
   debt: { cents: number; customerName: string | null };
@@ -366,7 +370,7 @@ export interface StationOrderLine {
 export interface StationReservationHold {
   reservationId: string;
   customerName: string;
-  /** Booked start (ISO). Before it the PC shows "reserved for 20:00"; after it, the tolerance countdown. */
+  /** Booked start (ISO). */
   startsAt: string;
   /** startsAt + tolerance: after this moment the hold is released. */
   windowEndsAt: string;
@@ -750,8 +754,17 @@ export const startSessionSchema = sessionQuoteSchema.innerType().extend({
   requestId: z.string().uuid().optional(),
   /** 0.19.0: start with minutes from a time credit sold for this PC (prepaid, minutes only). */
   creditId: z.string().uuid().optional(),
-  /** 0.32.0: the staff confirmed starting on a PC that a reservation holds (see reservation_conflict). */
+  /**
+   * 0.32.0: the staff confirmed starting on a PC that a reservation keeps (see reservation_conflict).
+   * 0.33.4: this starts the session for someone else; the booking keeps its PC (it is not used up).
+   */
   ignoreReservation: z.boolean().optional(),
+  /**
+   * 0.33.4: the booked customer arrived — this start uses up the PC's hold of that reservation, at
+   * any time before the booking's window ends (early arrivals too). `409 reservation_mismatch` when
+   * the reservation does not keep this PC.
+   */
+  reservationId: z.string().uuid().optional(),
 });
 export type StartSessionRequest = z.infer<typeof startSessionSchema>;
 
@@ -4006,6 +4019,10 @@ export interface ReservationSummary {
   startsAt: string;
   toleranceMinutes: number;
   windowEndsAt: string;
+  /** 0.33.4: minutes before `startsAt` the desk is reminded and the PCs are kept for the booking. */
+  remindMinutes: number;
+  /** 0.33.4: `startsAt - remindMinutes` (ISO): the moment the reminder is due. */
+  remindAt: string;
   status: ReservationStatus;
   customerId: string | null;
   customerName: string;
@@ -4023,6 +4040,8 @@ export const createReservationSchema = z.object({
   startsAt: z.string().datetime({ offset: true }),
   /** Minutes the customer may be late; defaults to the house setting (reservations.tolerance_minutes). */
   toleranceMinutes: z.number().int().min(1).max(60).optional(),
+  /** 0.33.4: minutes before the start the desk is reminded; defaults to reservations.reminder_minutes. */
+  remindMinutes: z.number().int().min(0).max(240).optional(),
   customerId: uuidSchema.optional(),
   customerName: z.string().trim().min(1).max(80),
   phone: z.string().trim().max(40).optional(),
@@ -4030,9 +4049,29 @@ export const createReservationSchema = z.object({
 });
 export type CreateReservationRequest = z.infer<typeof createReservationSchema>;
 
-/** Changes the tolerance of a reservation that has not finished yet. */
-export const updateReservationSchema = z.object({
-  toleranceMinutes: z.number().int().min(1).max(60),
+/**
+ * Changes a reservation that has not finished yet. 0.32.0: the tolerance. 0.33.4: also the time, the
+ * PCs (the PCs still waiting are replaced by `stationIds`; a PC whose customer already sat down
+ * stays), the name, the phone, the notes and the reminder. Only the fields given change.
+ */
+export const updateReservationSchema = z
+  .object({
+    toleranceMinutes: z.number().int().min(1).max(60).optional(),
+    remindMinutes: z.number().int().min(0).max(240).optional(),
+    startsAt: z.string().datetime({ offset: true }).optional(),
+    stationIds: z.array(uuidSchema).min(1).max(24).optional(),
+    customerId: uuidSchema.nullable().optional(),
+    customerName: z.string().trim().min(1).max(80).optional(),
+    phone: z.string().trim().max(40).nullable().optional(),
+    notes: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), { message: 'Nothing to change' });
+export type UpdateReservationRequest = z.infer<typeof updateReservationSchema>;
+
+/** 0.33.4: the booked customer sits at PCs that are already running — mark those holds as arrived. */
+export const checkInReservationSchema = z.object({
+  /** Only these PCs of the booking; all its waiting PCs when omitted. */
+  stationIds: z.array(uuidSchema).min(1).max(24).optional(),
 });
 
 export const reservationListQuerySchema = z.object({

@@ -157,23 +157,18 @@ export function StateTag({ state, label }: { state: BoardState; label?: string }
   );
 }
 
-/** The manual badges (V.I.P, tournament, premium, birthday) and, when a reservation holds the PC, "Reserved". */
+/** The manual badges (V.I.P, tournament, premium, birthday). 0.33.4: a reservation adds nothing here. */
 export function BadgePills({
   badges,
-  reserved,
   compact = false,
 }: {
   badges: readonly StationBadge[];
-  reserved?: boolean;
   compact?: boolean;
 }) {
   const { t } = useI18n();
-  if (badges.length === 0 && !reserved) return null;
+  if (badges.length === 0) return null;
   return (
     <span className="pc-badges" data-compact={compact || undefined}>
-      {reserved && (
-        <span className="pc-badge pc-badge--reserved">{t('board.badges.reserved')}</span>
-      )}
       {badges.map((b) => (
         <span key={b} className={`pc-badge pc-badge--${b}`}>
           {t(`board.badges.${b}`)}

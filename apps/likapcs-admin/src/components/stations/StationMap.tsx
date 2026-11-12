@@ -14,7 +14,6 @@ import { useI18n } from '../../i18n';
 import { useNow } from '../sessions/SessionPanel';
 import { mapOrder } from '../../lib/map-selection';
 import {
-  countdownLabel,
   describeStation,
   pcNameShown,
   shortLineParts,
@@ -55,12 +54,11 @@ export function StationTile({
   const now = useNow();
   const view = describeStation(station, fetchedAt, now);
   const events = usePcEvents(handlers);
-  const tz = fmt.timeZone;
   const stateLabel = t(`board.state.${view.state}`);
   const width = Math.round(Math.min(240, Math.max(150, size * 1.6)));
 
   if (size < LINE_BELOW) {
-    const text = view.timerSeconds !== null || view.hold ? timerText(view, t, tz) : stateLabel;
+    const text = view.timerSeconds !== null ? timerText(view) : stateLabel;
     return (
       <div
         className="pcg pcg--line"
@@ -81,19 +79,13 @@ export function StationTile({
 
   const line = shortLineParts(
     view,
-    {
-      state: stateLabel,
-      hold: t('board.holdLabel'),
-      debt: t('board.state.debt'),
-      awaiting: t('board.state.awaiting'),
-    },
+    { state: stateLabel, awaiting: t('board.state.awaiting') },
     fmt.money,
-    tz,
   );
   // The state tag already says Offline / Free: the timer and the line only repeat it, so they show
   // only when there is a time or a bill to show.
-  const hasTime = view.timerSeconds !== null || !!view.hold;
-  const timer = hasTime ? timerText(view, t, tz) : null;
+  const hasTime = view.timerSeconds !== null;
+  const timer = hasTime ? timerText(view) : null;
   const lineText = line.join(' • ');
   const hasFoot = view.badges.length > 0 || !!station.pendingRequest || view.awaitingCount > 0;
 
@@ -126,7 +118,7 @@ export function StationTile({
       {lineText && lineText !== stateLabel && <div className="pcg__line">{lineText}</div>}
       {hasFoot && (
         <div className="pcg__foot">
-          <BadgePills badges={view.badges} reserved={!!view.hold} compact />
+          <BadgePills badges={view.badges} compact />
           {station.pendingRequest && (
             <span className="pcg__flag" data-testid="tile-request" title={station.pendingRequest.customerName}>
               <Bell size={11} />
@@ -139,11 +131,6 @@ export function StationTile({
               {fmt.money(view.awaitingCents)}
             </span>
           )}
-        </div>
-      )}
-      {view.hold?.phase === 'window' && view.hold.windowSeconds !== null && (
-        <div className="pcg__deadline" data-testid="tile-deadline">
-          {t('board.deadline', { time: countdownLabel(view.hold.windowSeconds) })}
         </div>
       )}
       {view.fraction !== null && (

@@ -295,6 +295,7 @@ export class OrdersService implements SessionOrdersHook {
         if (existing) existing.quantityMilli += quantityMilli;
         else lines.push({ product, quantityMilli });
       }
+      await this.assertStockForBill(client, lines);
       const priced = lines.map((l) => {
         const unit =
           l.product.promo_price_cents === null
@@ -460,6 +461,21 @@ export class OrdersService implements SessionOrdersHook {
               : 'No session is running on this PC yet — take the payment now instead',
             { code: 'session_ended' },
           );
+        // 0.33.4: the order joins the bill only when the stock still covers it.
+        const stock = await client.query<MenuProductRow>(
+          `${MENU_SELECT} WHERE p.id = ANY($1::uuid[]) ORDER BY p.id FOR UPDATE OF p`,
+          [[...new Set(row.items.map((i) => i.product_id))]],
+        );
+        const stockById = new Map(stock.rows.map((p) => [p.id, p]));
+        const perProduct = new Map<string, { product: MenuProductRow; quantityMilli: number }>();
+        for (const item of row.items) {
+          const product = stockById.get(item.product_id);
+          if (!product) continue;
+          const line = perProduct.get(product.id) ?? { product, quantityMilli: 0 };
+          line.quantityMilli += Number(item.quantity_milli);
+          perProduct.set(product.id, line);
+        }
+        await this.assertStockForBill(client, [...perProduct.values()], id);
         await client.query(
           `UPDATE station_orders SET status = 'accepted', settlement = 'on_bill', customer_id = $2,
                   session_id = $4, decided_at = now(), decided_by = $3 WHERE id = $1`,
@@ -546,6 +562,9 @@ export class OrdersService implements SessionOrdersHook {
       // 0.27.3: payment given on an unbilled session = paid now at the till (the lines still show
       // on the PC); no payment = the lines join the PC's bill as before.
       const payNow = !onBill || payments.length > 0;
+      // 0.33.4: on the bill the stock moves only when the bill is paid, so the quantity is checked
+      // here (a sale paid now is checked by the sale itself).
+      if (!payNow) await this.assertStockForBill(client, lines);
 
       const inserted = !onBill
         ? await client.query<{ id: string }>(
@@ -776,6 +795,49 @@ export class OrdersService implements SessionOrdersHook {
   }
 
   // ─── Internals ───────────────────────────────────────────────────────────────
+
+  /**
+   * 0.33.4: a product that may not go below zero cannot be put on a PC's bill beyond its stock.
+   * The stock moves only when the bill is paid, so what already waits on the bills (accepted
+   * orders, not sold yet) counts as taken. The product rows must be locked by the caller.
+   * Throws `409 out_of_stock` with what is still free (`availableMilli`).
+   */
+  private async assertStockForBill(
+    client: DbClient,
+    lines: { product: MenuProductRow; quantityMilli: number }[],
+    exceptOrderId: string | null = null,
+  ): Promise<void> {
+    const limited = lines.filter((l) => l.product.track_stock && !l.product.allow_negative_stock);
+    if (limited.length === 0) return;
+    const promised = await client.query<{ product_id: string; promised: string | number }>(
+      `SELECT i.product_id, COALESCE(SUM(i.quantity_milli), 0)::bigint AS promised
+         FROM station_order_items i JOIN station_orders o ON o.id = i.order_id
+        WHERE o.status = 'accepted' AND i.product_id = ANY($1::uuid[])
+          AND ($2::uuid IS NULL OR o.id <> $2)
+        GROUP BY i.product_id`,
+      [limited.map((l) => l.product.id), exceptOrderId],
+    );
+    const taken = new Map(promised.rows.map((r) => [r.product_id, Number(r.promised)]));
+    for (const l of limited) {
+      const free = Math.max(0, Number(l.product.stock_milli) - (taken.get(l.product.id) ?? 0));
+      if (l.quantityMilli > free) {
+        throw new AppError(
+          409,
+          'out_of_stock',
+          free > 0
+            ? `Only ${free / 1000} of ${l.product.name} left in stock`
+            : `${l.product.name} is out of stock`,
+          {
+            code: 'INSUFFICIENT_STOCK',
+            productId: l.product.id,
+            productName: l.product.name,
+            availableMilli: free,
+            requestedMilli: l.quantityMilli,
+          },
+        );
+      }
+    }
+  }
 
   private async lock(client: DbClient, id: string): Promise<OrderRow> {
     const r = await client.query<OrderRow>(`${ORDER_SELECT} WHERE o.id = $1 FOR UPDATE OF o`, [id]);

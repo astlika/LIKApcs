@@ -1,9 +1,14 @@
 /**
  * 0.32.0 — the stations board, as plain functions (no React): what state a PC is in, what its card
- * says, the header figures and the reservation countdown. The components only draw these.
+ * says and the header figures. The components only draw these.
  *
  * Priority of the state (the first that applies wins): disabled → paused → expiring → active →
- * awaiting payment → debt → offline → reserved → the rest (free, maintenance, locked, …).
+ * awaiting payment → offline → the rest (free, maintenance, locked, …).
+ *
+ * 0.33.4 — a PC card shows nothing of a reservation (no state, no pill, no name, no countdown): the
+ * desk is reminded when the booked time comes (ReservationAlerts) and the bookings live in their
+ * own dialog. An idle PC shows no debt either: once a bill is settled the PC is clean. The states
+ * `reserved` and `debt` stay in the type for the styles that name them; nothing produces them.
  */
 import type {
   StationBadge,
@@ -38,8 +43,6 @@ export type BoardState =
 
 /** Five minutes or less left on a prepaid session: the timer blinks (as before 0.32.0). */
 export const EXPIRING_SECONDS = 300;
-/** How long before the booked time the staff gets the first warning. */
-export const REMINDER_LEAD_MINUTES = 10;
 
 export function boardStateOf(station: StationSummary, remaining: number | null): BoardState {
   if (!station.isEnabled) return 'disabled';
@@ -48,9 +51,7 @@ export function boardStateOf(station: StationSummary, remaining: number | null):
   if (live && remaining !== null && remaining <= EXPIRING_SECONDS) return 'expiring';
   if (live) return 'active';
   if (station.awaitingPayment.count > 0) return 'awaiting';
-  if (station.debt.cents > 0) return 'debt';
   if (station.status === 'offline') return 'offline';
-  if (station.reservation) return 'reserved';
   switch (station.status) {
     case 'maintenance':
       return 'maintenance';
@@ -85,15 +86,9 @@ export interface StationView {
   products: StationOrderLine[];
   /** When the running session started (ISO), or null. */
   startedAt: string | null;
-  /** Booked reservation: `scheduled` before its time, `window` inside the tolerance. */
-  hold: {
-    phase: 'scheduled' | 'window';
-    startsAt: string;
-    customerName: string;
-    /** Seconds left in the tolerance window; null while still scheduled. */
-    windowSeconds: number | null;
-  } | null;
+  /** What the running session's customer owes in total (cents); 0 on an idle PC. */
   debtCents: number;
+  /** The customer of a running session, or of an ended one that still waits for its payment. */
   debtCustomerName: string | null;
   awaitingCount: number;
   awaitingCents: number;
@@ -128,27 +123,6 @@ export function describeStation(
       ? Math.min(1, Math.max(0, remaining / plannedSeconds))
       : null;
 
-  const reservation = station.reservation;
-  let hold: StationView['hold'] = null;
-  if (reservation) {
-    const startsAt = new Date(reservation.startsAt).getTime();
-    const windowEnd = new Date(reservation.windowEndsAt).getTime();
-    hold =
-      now < startsAt
-        ? {
-            phase: 'scheduled',
-            startsAt: reservation.startsAt,
-            customerName: reservation.customerName,
-            windowSeconds: null,
-          }
-        : {
-            phase: 'window',
-            startsAt: reservation.startsAt,
-            customerName: reservation.customerName,
-            windowSeconds: Math.max(0, Math.round((windowEnd - now) / 1000)),
-          };
-  }
-
   const gamingCents = live?.currentPriceCents ?? 0;
   const productsCents = station.orders.openCents;
   return {
@@ -163,7 +137,6 @@ export function describeStation(
     totalCents: gamingCents + productsCents,
     products: station.orders.items,
     startedAt: live?.startedAt ?? null,
-    hold,
     debtCents: station.debt.cents,
     debtCustomerName: station.debt.customerName,
     awaitingCount: station.awaitingPayment.count,
@@ -213,8 +186,8 @@ export interface BoardStats {
   active: number;
   free: number;
   awaiting: number;
+  /** PCs in use by a customer who owes money (0.33.4; before: idle PCs with an unpaid debt). */
   debt: number;
-  reserved: number;
   revenueCents: number;
   productUnits: number;
 }
@@ -228,7 +201,6 @@ export function boardStats(
     free: 0,
     awaiting: 0,
     debt: 0,
-    reserved: 0,
     revenueCents: dashboard?.revenue.totalCents ?? 0,
     productUnits: dashboard?.productUnitsSold ?? 0,
   };
@@ -238,8 +210,7 @@ export function boardStats(
     if (state === 'active' || state === 'expiring') stats.active += 1;
     if (state === 'free') stats.free += 1;
     if (state === 'awaiting') stats.awaiting += 1;
-    if (state === 'debt') stats.debt += 1;
-    if (state === 'reserved') stats.reserved += 1;
+    if (s.activeSession && s.debt.cents > 0) stats.debt += 1;
   }
   return stats;
 }
@@ -262,20 +233,11 @@ export function groupByStart<T extends { startsAt: string }>(
 /** The short line under a card: "Aktiv • 1h34m • Coca Cola • 3.00€" (labels and money passed in). */
 export function shortLineParts(
   view: StationView,
-  labels: { state: string; hold: string; debt: string; awaiting: string },
+  labels: { state: string; awaiting: string },
   money: (cents: number) => string,
-  timeZone?: string,
 ): string[] {
   const parts: string[] = [];
   switch (view.state) {
-    case 'reserved':
-      parts.push(labels.hold);
-      if (view.hold) parts.push(clockLabel(view.hold.startsAt, timeZone));
-      break;
-    case 'debt':
-      parts.push(labels.debt);
-      parts.push(money(view.debtCents));
-      return parts;
     case 'awaiting':
       parts.push(labels.awaiting);
       if (view.awaitingCents > 0) parts.push(money(view.awaitingCents));

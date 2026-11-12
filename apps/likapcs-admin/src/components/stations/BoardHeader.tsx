@@ -157,11 +157,11 @@ export function HoverInfo({
         </strong>
         <StateTag state={view.state} />
       </div>
-      <BadgePills badges={view.badges} reserved={!!view.hold} compact />
+      <BadgePills badges={view.badges} compact />
       <dl className="hover-info__rows">
         <div>
           <dt>{t('board.customer')}</dt>
-          <dd>{view.customerName ?? view.hold?.customerName ?? (view.debtCustomerName ?? '—')}</dd>
+          <dd>{view.customerName ?? view.debtCustomerName ?? '—'}</dd>
         </div>
         {view.timerSeconds !== null && (
           <div>
@@ -173,14 +173,6 @@ export function HoverInfo({
           <div>
             <dt>{t('board.startedLabel')}</dt>
             <dd className="num">{clockLabel(live.startedAt, fmt.timeZone)}</dd>
-          </div>
-        )}
-        {view.hold && (
-          <div>
-            <dt>{t('board.holdLabel')}</dt>
-            <dd className="num">
-              {view.hold.customerName} · {clockLabel(view.hold.startsAt, fmt.timeZone)}
-            </dd>
           </div>
         )}
         {view.debtCents > 0 && (

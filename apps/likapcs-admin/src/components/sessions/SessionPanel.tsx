@@ -278,6 +278,10 @@ function StartSessionForm({
   const [notes, setNotes] = useState('');
   // One request id per form instance: a retried click can never start two sessions.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  // 0.33.4: the PC is kept by a reservation right now. Ticked: the booked customer sits down (the
+  // hold is used up). Unticked: someone else — the booking keeps its PC. No second dialog.
+  const hold = station.reservation;
+  const [bookedCame, setBookedCame] = useState(true);
   // The requesting customer, as a full summary (debt / credit limit for "pay later").
   const requester = useQuery({
     queryKey: ['customers', request?.customerId ?? null],
@@ -332,11 +336,20 @@ function StartSessionForm({
           // "End Pay": the same reserved time, nothing paid now, collected when it ends.
           ...(prepaid && tender.endPay ? { billingMode: 'endpay' } : {}),
           customerId: customer?.id,
-          customerName: customer ? undefined : customerName.trim() || undefined,
+          customerName: customer
+            ? undefined
+            : customerName.trim() ||
+              (hold && bookedCame ? hold.customerName : undefined) ||
+              undefined,
           ...(prepaid && !tender.endPay ? { payments: tender.payments } : {}),
           notes: notes.trim() || undefined,
           clientRequestId: requestId,
           ...(request ? { requestId: request.id } : {}),
+          ...(hold
+            ? bookedCame
+              ? { reservationId: hold.reservationId }
+              : { ignoreReservation: true }
+            : {}),
         },
       }),
     onSuccess: (result) => {
@@ -364,6 +377,26 @@ function StartSessionForm({
 
   return (
     <div className="stack">
+      {hold && (
+        <label className="rz-notice" data-testid="start-reservation-notice">
+          <input
+            type="checkbox"
+            checked={bookedCame}
+            onChange={(e) => setBookedCame(e.target.checked)}
+          />
+          <span>
+            <strong>
+              {t('reservations.noticeTitle', {
+                name: hold.customerName,
+                time: fmt.time(hold.startsAt),
+              })}
+            </strong>
+            <span className="faint">
+              {bookedCame ? t('reservations.noticeCame') : t('reservations.noticeOther')}
+            </span>
+          </span>
+        </label>
+      )}
       <Segmented
         value={mode}
         onChange={(v) => {

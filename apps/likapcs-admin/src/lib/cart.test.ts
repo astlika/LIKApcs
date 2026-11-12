@@ -6,6 +6,8 @@ import {
   pcItemsFromCart,
   addTimeItem,
   addToCart,
+  addToCartChecked,
+  cartQuantityOf,
   cartToRequest,
   cartTotals,
   emptyCart,
@@ -15,6 +17,8 @@ import {
   ScanBuffer,
   setLineDiscount,
   setQuantity,
+  setQuantityChecked,
+  stockLimitMilli,
 } from './cart';
 
 const product = (over: Partial<ProductSummary>): ProductSummary => ({
@@ -313,5 +317,86 @@ describe('0.27.4: a cart can go to a PC bill', () => {
     expect(pcBlocker(addToCart(emptyCart(), product({ id: 'cola' }), 500))).toBe('whole');
     expect(pcBlocker(setLineDiscount(base, lineKey(line), 50))).toBe('discount');
     expect(pcBlocker({ ...base, discountCents: 100 })).toBe('discount');
+  });
+});
+
+describe('stock at the till (0.33.4)', () => {
+  const stocked = (over: Record<string, unknown> = {}) =>
+    ({
+      id: 'cola',
+      name: 'Coca-Cola',
+      isActive: true,
+      sellingPriceCents: 150,
+      promoPriceCents: null,
+      taxRateBp: 0,
+      trackStock: true,
+      allowNegativeStock: false,
+      stockMilli: 3000,
+      addons: [],
+      ...over,
+    }) as unknown as Parameters<typeof addToCartChecked>[1];
+
+  it('limits only products that are tracked and may not go below zero', () => {
+    expect(stockLimitMilli(stocked())).toBe(3000);
+    expect(stockLimitMilli(stocked({ stockMilli: -2000 }))).toBe(0);
+    expect(stockLimitMilli(stocked({ allowNegativeStock: true, stockMilli: 0 }))).toBeNull();
+    expect(stockLimitMilli(stocked({ trackStock: false, stockMilli: 0 }))).toBeNull();
+  });
+
+  it('adds up to the stock and refuses the next one whole', () => {
+    let cart = emptyCart();
+    for (let i = 0; i < 3; i += 1) {
+      const res = addToCartChecked(cart, stocked());
+      expect(res.refused).toBeNull();
+      cart = res.cart;
+    }
+    expect(cartQuantityOf(cart, 'cola')).toBe(3000);
+    const fourth = addToCartChecked(cart, stocked());
+    expect(fourth.refused).toEqual({ productName: 'Coca-Cola', stockMilli: 3000, allowedMilli: 0 });
+    expect(fourth.cart).toBe(cart);
+    // A product with no stock cannot be added at all.
+    const empty = addToCartChecked(
+      emptyCart(),
+      stocked({ id: 'chips', name: 'Çips', stockMilli: 0 }),
+    );
+    expect(empty.refused?.allowedMilli).toBe(0);
+    expect(empty.cart.lines).toHaveLength(0);
+  });
+
+  it('never limits a product allowed below zero or not tracked', () => {
+    const water = stocked({ id: 'water', allowNegativeStock: true, stockMilli: -2000 });
+    const coffee = stocked({ id: 'coffee', trackStock: false, stockMilli: 0 });
+    let cart = emptyCart();
+    for (const p of [water, water, water, coffee, coffee]) {
+      const res = addToCartChecked(cart, p);
+      expect(res.refused).toBeNull();
+      cart = res.cart;
+    }
+    expect(cartQuantityOf(cart, 'water')).toBe(3000);
+    expect(cartQuantityOf(cart, 'coffee')).toBe(2000);
+  });
+
+  it('cuts a typed quantity to the stock and lets it go down freely', () => {
+    const cart = addToCartChecked(emptyCart(), stocked()).cart;
+    const typed = setQuantityChecked(cart, 'cola', 10_000);
+    expect(typed.refused).toEqual({
+      productName: 'Coca-Cola',
+      stockMilli: 3000,
+      allowedMilli: 3000,
+    });
+    expect(cartQuantityOf(typed.cart, 'cola')).toBe(3000);
+    const down = setQuantityChecked(typed.cart, 'cola', 1000);
+    expect(down.refused).toBeNull();
+    expect(cartQuantityOf(down.cart, 'cola')).toBe(1000);
+    // The stock shrank under a parked sale: raising is refused and the line keeps what it has.
+    const shrunk = {
+      ...typed.cart,
+      lines: typed.cart.lines.map((l) =>
+        l.kind === 'product' ? { ...l, product: stocked({ stockMilli: 1000 }) } : l,
+      ),
+    };
+    const more = setQuantityChecked(shrunk, 'cola', 4000);
+    expect(more.refused?.allowedMilli).toBe(1000);
+    expect(cartQuantityOf(more.cart, 'cola')).toBe(3000);
   });
 });

@@ -12,7 +12,6 @@ import { useNow } from '../sessions/SessionPanel';
 import { formatHms } from '../../lib/session-time';
 import {
   clockLabel,
-  countdownLabel,
   describeStation,
   pcNameShown,
   type StationView,
@@ -22,16 +21,10 @@ import type { PcItemProps } from './StationMap';
 import type { StationSummary } from '@likapcs/shared';
 
 type Item = PcItemProps;
-type Translate = ReturnType<typeof useI18n>['t'];
 
-/** The timer as the desk reads it: what is left, what has run, or the reservation's time. */
-export function timerText(view: StationView, t: Translate, tz?: string): string {
-  if (view.timerSeconds !== null) return formatHms(view.timerSeconds);
-  if (view.hold?.phase === 'scheduled') return t('board.forTime', { time: clockLabel(view.hold.startsAt, tz) });
-  if (view.hold?.phase === 'window' && view.hold.windowSeconds !== null) {
-    return t('board.deadline', { time: countdownLabel(view.hold.windowSeconds) });
-  }
-  return '—';
+/** The timer as the desk reads it: what is left, or what has run. */
+export function timerText(view: StationView): string {
+  return view.timerSeconds !== null ? formatHms(view.timerSeconds) : '—';
 }
 
 function useItemView(station: StationSummary, fetchedAt: number) {
@@ -122,7 +115,7 @@ function StationListRow({ station, fetchedAt, selected, handlers }: Item) {
   const fmt = useFormat();
   const view = useItemView(station, fetchedAt);
   const events = usePcEvents(handlers);
-  const customer = view.customerName ?? view.hold?.customerName ?? view.debtCustomerName ?? '—';
+  const customer = view.customerName ?? view.debtCustomerName ?? '—';
   const products = view.products.map((p) => p.name).join(', ');
   return (
     <div
@@ -147,7 +140,7 @@ function StationListRow({ station, fetchedAt, selected, handlers }: Item) {
         <StateTag state={view.state} />
       </span>
       <span role="cell" className="num">
-        {timerText(view, t, fmt.timeZone)}
+        {timerText(view)}
       </span>
       <span role="cell" className="pcl__clip">
         {customer}
@@ -159,7 +152,7 @@ function StationListRow({ station, fetchedAt, selected, handlers }: Item) {
         {view.totalCents > 0 ? fmt.money(view.totalCents) : '—'}
       </span>
       <span role="cell">
-        <BadgePills badges={view.badges} reserved={!!view.hold} compact />
+        <BadgePills badges={view.badges} compact />
       </span>
     </div>
   );
@@ -181,7 +174,7 @@ function StationChip({ station, fetchedAt, selected, handlers }: Item) {
   const view = useItemView(station, fetchedAt);
   const events = usePcEvents(handlers);
   const stateLabel = t(`board.state.${view.state}`);
-  const text = view.timerSeconds !== null || view.hold ? timerText(view, t, fmt.timeZone) : stateLabel;
+  const text = view.timerSeconds !== null ? timerText(view) : stateLabel;
   return (
     <div
       className="pcc__chip"
@@ -218,7 +211,7 @@ function StationCard({ station, fetchedAt, selected, handlers }: Item) {
   const fmt = useFormat();
   const view = useItemView(station, fetchedAt);
   const events = usePcEvents(handlers);
-  const customer = view.customerName ?? view.hold?.customerName ?? view.debtCustomerName ?? '—';
+  const customer = view.customerName ?? view.debtCustomerName ?? '—';
   const shown = view.products.slice(0, 3);
   const more = view.products.length - shown.length;
   return (
@@ -240,7 +233,7 @@ function StationCard({ station, fetchedAt, selected, handlers }: Item) {
         </div>
         <StateTag state={view.state} />
       </header>
-      <div className="pcd__timer num">{timerText(view, t, fmt.timeZone)}</div>
+      <div className="pcd__timer num">{timerText(view)}</div>
       <dl className="pcd__rows">
         <div>
           <dt>{t('board.customer')}</dt>
@@ -263,7 +256,7 @@ function StationCard({ station, fetchedAt, selected, handlers }: Item) {
         {more > 0 && <li className="faint">+{more}</li>}
       </ul>
       <footer className="pcd__foot">
-        <BadgePills badges={view.badges} reserved={!!view.hold} compact />
+        <BadgePills badges={view.badges} compact />
         <strong className="num">{fmt.money(view.totalCents)}</strong>
       </footer>
     </article>

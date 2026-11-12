@@ -66,12 +66,13 @@ import {
   unionIds,
 } from '../lib/map-selection';
 import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcDialog';
-import { useStationActions } from '../components/stations/useStationActions';
+import { QuickStartDialog, useStationActions } from '../components/stations/useStationActions';
 import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
 import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
 import { storage } from '../lib/storage';
 import { BoardStatsBar, HoverInfo, ViewMenu } from '../components/stations/BoardHeader';
 import { ReservationsDialog } from '../components/stations/ReservationsDialog';
+import { openReservationCount } from '../lib/reservation-reminders';
 import { BadgesDialog } from '../components/stations/BadgesDialog';
 import { useBoardView } from '../components/stations/useBoardView';
 import { toIsoDate, type DashboardSummary, type ReservationSummary } from '@likapcs/shared';
@@ -171,9 +172,14 @@ export function StationsPage() {
     enabled: can(PERMISSIONS.STATIONS_VIEW),
     refetchInterval: 15_000,
   });
-  const openReservations = (reservations.data?.items ?? []).filter(
-    (r) => r.status === 'scheduled' || r.status === 'active',
-  ).length;
+  const openReservations = openReservationCount(reservations.data?.items ?? []);
+  // 0.33.4: the booked customer arrived (from the reminder card or the reservations dialog). The
+  // PCs of the booking that are free open in the start dialog (their starts use up the holds); the
+  // ones the customer already sits at are marked as arrived straight away.
+  const [arrival, setArrival] = useState<{
+    reservation: ReservationSummary;
+    targets: StationSummary[];
+  } | null>(null);
   const dashboardDate = toIsoDate(new Date(), { timeZone: fmt.timeZone });
   const dashboard = useQuery({
     queryKey: ['dashboard', dashboardDate],
@@ -294,6 +300,49 @@ export function StationsPage() {
   }, [params, setParams, setSelectedId]);
 
   const list = useMemo(() => stations.data ?? [], [stations.data]);
+
+  const arrive = useCallback(
+    async (reservation: ReservationSummary) => {
+      const waiting = reservation.stations.filter((s) => s.state === 'held');
+      const pcs = waiting
+        .map((s) => list.find((x) => x.id === s.stationId))
+        .filter((s): s is StationSummary => !!s);
+      const busy = pcs.filter((s) => s.activeSession);
+      const free = pcs.filter((s) => !s.activeSession && s.isEnabled);
+      try {
+        if (busy.length > 0) {
+          const marked = await api<{ checkedIn: string[] }>(
+            `/reservations/${reservation.id}/check-in`,
+            { method: 'POST', body: { stationIds: busy.map((s) => s.id) } },
+          );
+          if (marked.checkedIn.length > 0) {
+            toast.success(t('reservations.arrivedMarked', { n: marked.checkedIn.length }));
+          }
+          void queryClient.invalidateQueries({ queryKey: ['reservations'] });
+          void queryClient.invalidateQueries({ queryKey: ['stations'] });
+        }
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+      }
+      if (free.length > 0) {
+        setReservationsOpen(false);
+        setArrival({ reservation, targets: free });
+      } else if (busy.length === 0) {
+        toast.toast('info', t('reservations.arrivedNone'));
+      }
+    },
+    [list, queryClient, t, toast],
+  );
+  // Deep link from the reminder card (?reservation=<id>), once the PCs and the bookings are loaded.
+  useEffect(() => {
+    const id = params.get('reservation');
+    if (!id || !stations.data || !reservations.data) return;
+    params.delete('reservation');
+    setParams(params, { replace: true });
+    const reservation = reservations.data.items.find((r) => r.id === id);
+    if (reservation) void arrive(reservation);
+    else toast.toast('info', t('reservations.arrivedNone'));
+  }, [params, setParams, stations.data, reservations.data, arrive, toast, t]);
   const zones = useMemo(
     () => [...new Set(list.map((s) => s.zone?.trim()).filter((z): z is string => !!z))].sort(),
     [list],
@@ -903,6 +952,25 @@ export function StationsPage() {
           initialStationIds={selectedIds}
           canControl={canControl}
           canSettings={canSettings}
+          onArrive={(r) => void arrive(r)}
+        />
+      )}
+      {arrival && arrival.targets[0] && (
+        <QuickStartDialog
+          station={arrival.targets[0]}
+          others={arrival.targets.slice(1)}
+          arrival={{
+            reservationId: arrival.reservation.id,
+            customerId: arrival.reservation.customerId,
+            customerName: arrival.reservation.customerName,
+            startsAt: arrival.reservation.startsAt,
+          }}
+          onClose={() => setArrival(null)}
+          onStarted={() => {
+            setArrival(null);
+            invalidate();
+            void queryClient.invalidateQueries({ queryKey: ['reservations'] });
+          }}
         />
       )}
       {badgesFor && list.find((s) => s.id === badgesFor) && (

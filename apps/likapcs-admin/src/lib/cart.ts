@@ -187,6 +187,95 @@ export function addToCart(
   return { ...cart, lines };
 }
 
+// ─── 0.33.4: stock at the till ────────────────────────────────────────────────
+// A product that is tracked and may not go below zero cannot be put in the sale beyond its stock.
+// Products that are not tracked, or are allowed below zero, are never limited. The server still
+// decides at payment time (another till may have sold the last one meanwhile).
+
+type StockFields = Pick<ProductSummary, 'trackStock' | 'allowNegativeStock' | 'stockMilli'>;
+
+/** The most of this product a sale may hold (milli-units); null when it is not limited. */
+export function stockLimitMilli(product: StockFields): number | null {
+  if (!product.trackStock || product.allowNegativeStock) return null;
+  return Math.max(0, product.stockMilli);
+}
+
+/** Units of a product already in the cart: every line of it, with or without extras. */
+export function cartQuantityOf(cart: Cart, productId: string, exceptKey?: string): number {
+  return cart.lines.reduce(
+    (sum, l) =>
+      l.kind === 'product' && l.product.id === productId && lineKey(l) !== exceptKey
+        ? sum + l.quantityMilli
+        : sum,
+    0,
+  );
+}
+
+/** Why an addition was refused or cut: the product and what the stock still allows in total. */
+export interface StockRefusal {
+  productName: string;
+  /** The product's stock (never below zero). */
+  stockMilli: number;
+  /** What this line may hold at most (the stock minus the other lines of the same product). */
+  allowedMilli: number;
+}
+
+/**
+ * `addToCart` with the stock rule: an addition that would pass the stock is refused whole (the cart
+ * is returned unchanged) and `refused` says what is left.
+ */
+export function addToCartChecked(
+  cart: Cart,
+  product: ProductSummary,
+  quantityMilli = 1000,
+  addonIds: readonly string[] = [],
+): { cart: Cart; refused: StockRefusal | null } {
+  const limit = stockLimitMilli(product);
+  if (limit !== null) {
+    const inCart = cartQuantityOf(cart, product.id);
+    if (inCart + quantityMilli > limit) {
+      return {
+        cart,
+        refused: {
+          productName: product.name,
+          stockMilli: limit,
+          allowedMilli: Math.max(0, limit - inCart),
+        },
+      };
+    }
+  }
+  return { cart: addToCart(cart, product, quantityMilli, addonIds), refused: null };
+}
+
+/**
+ * `setQuantity` with the stock rule: a quantity above the stock is cut to what the stock allows
+ * (never below what the line already holds is NOT guaranteed: a stock that shrank cuts it too).
+ */
+export function setQuantityChecked(
+  cart: Cart,
+  key: string,
+  quantityMilli: number,
+): { cart: Cart; refused: StockRefusal | null } {
+  const line = cart.lines.find((l) => lineKey(l) === key);
+  if (!line || line.kind !== 'product' || quantityMilli <= line.quantityMilli) {
+    return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  }
+  const limit = stockLimitMilli(line.product);
+  if (limit === null) return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  const allowed = Math.max(0, limit - cartQuantityOf(cart, line.product.id, key));
+  if (quantityMilli <= allowed)
+    return { cart: setQuantity(cart, key, quantityMilli), refused: null };
+  // Never raise above the stock; keep what the line has when even that is more than allowed.
+  const next = Math.max(
+    Math.min(quantityMilli, allowed),
+    Math.min(line.quantityMilli, quantityMilli),
+  );
+  return {
+    cart: next === line.quantityMilli ? cart : setQuantity(cart, key, next),
+    refused: { productName: line.product.name, stockMilli: limit, allowedMilli: allowed },
+  };
+}
+
 /** Adds an off-inventory line (0.19.0). Every call is its own line — two lines may share a name. */
 export function addFreeItem(
   cart: Cart,
