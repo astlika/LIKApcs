@@ -22,6 +22,7 @@ import {
   type ClientMenuItem,
   type OrderAccept,
   type OrderCreate,
+  type OrderStaffAdd,
   type OrderListQuery,
   type OrderPay,
   type OrderPrepare,
@@ -30,6 +31,7 @@ import {
   ORDER_MAX_QUANTITY,
 } from '@likapcs/shared';
 import type { ServerOrderUpdate } from '@likapcs/shared';
+import { millsToCents } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -165,6 +167,8 @@ interface MenuProductRow {
   allow_negative_stock: boolean;
   average_cost_cents: string | number;
   purchase_cost_cents: string | number;
+  average_cost_mills: string | number;
+  purchase_cost_mills: string | number;
   is_active: boolean;
   client_menu: boolean;
 }
@@ -172,7 +176,8 @@ interface MenuProductRow {
 const MENU_SELECT = `
   SELECT p.id, p.name, p.category_id, c.name AS category_name, c.color AS category_color, p.selling_price_cents,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents, p.image_path, p.stock_milli, p.track_stock,
-         p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents, p.is_active, p.client_menu
+         p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents, p.average_cost_mills, p.purchase_cost_mills,
+                p.is_active, p.client_menu
     FROM products p LEFT JOIN categories c ON c.id = p.category_id`;
 
 const available = (p: MenuProductRow) =>
@@ -290,6 +295,7 @@ export class OrdersService implements SessionOrdersHook {
         if (existing) existing.quantityMilli += quantityMilli;
         else lines.push({ product, quantityMilli });
       }
+      await this.assertStockForBill(client, lines);
       const priced = lines.map((l) => {
         const unit =
           l.product.promo_price_cents === null
@@ -455,6 +461,21 @@ export class OrdersService implements SessionOrdersHook {
               : 'No session is running on this PC yet — take the payment now instead',
             { code: 'session_ended' },
           );
+        // 0.33.4: the order joins the bill only when the stock still covers it.
+        const stock = await client.query<MenuProductRow>(
+          `${MENU_SELECT} WHERE p.id = ANY($1::uuid[]) ORDER BY p.id FOR UPDATE OF p`,
+          [[...new Set(row.items.map((i) => i.product_id))]],
+        );
+        const stockById = new Map(stock.rows.map((p) => [p.id, p]));
+        const perProduct = new Map<string, { product: MenuProductRow; quantityMilli: number }>();
+        for (const item of row.items) {
+          const product = stockById.get(item.product_id);
+          if (!product) continue;
+          const line = perProduct.get(product.id) ?? { product, quantityMilli: 0 };
+          line.quantityMilli += Number(item.quantity_milli);
+          perProduct.set(product.id, line);
+        }
+        await this.assertStockForBill(client, [...perProduct.values()], id);
         await client.query(
           `UPDATE station_orders SET status = 'accepted', settlement = 'on_bill', customer_id = $2,
                   session_id = $4, decided_at = now(), decided_by = $3 WHERE id = $1`,
@@ -469,6 +490,126 @@ export class OrdersService implements SessionOrdersHook {
         return;
       }
       await this.sellInTransaction(client, row, input.payments ?? [], customerId, actor, 'accept');
+    });
+    const order = await this.getById(id);
+    await this.announceOne(order);
+    return order;
+  }
+
+  /**
+   * 0.27.1 — the desk adds products to a PC's bill (any active product, not only the PC menu).
+   * Unbilled session (running, or ended but not yet collected): the lines are accepted "on the bill"
+   * and join the session's receipt when it is paid. Billed session (prepaid, or already collected):
+   * the products are sold at once with `payments`, as a POS sale, and do not touch the session.
+   */
+  async addToSession(
+    sessionId: string,
+    input: OrderStaffAdd,
+    actor: SaleActor,
+  ): Promise<StationOrder> {
+    if (!actor.permissions.has('pos.sell')) throw forbidden('Missing permission: pos.sell');
+    const id = await withTransaction(this.pool, async (client) => {
+      const sess = await client.query<{
+        station_id: string;
+        status: string;
+        billed_at: Date | null;
+        customer_id: string | null;
+        billing_mode: string;
+      }>(
+        'SELECT station_id, status, billed_at, customer_id, billing_mode FROM gaming_sessions WHERE id = $1 FOR UPDATE',
+        [sessionId],
+      );
+      const s = sess.rows[0];
+      if (!s) throw notFound('Session');
+      if (s.status === 'cancelled') throw conflict('Session was cancelled');
+      // 0.28.0: a prepaid PC's time is paid at the start; while it runs, the products added to it
+      // go on its bill (paid later, the time stays paid). Everything else as before: a billed
+      // session is sold at once, an unbilled one takes the products on its bill.
+      const live = s.status === 'active' || s.status === 'paused';
+      const onBill = s.billing_mode === 'prepaid' ? live : s.billed_at === null;
+
+      const ids = [...new Set(input.items.map((i) => i.productId))];
+      const rows = await client.query<MenuProductRow>(
+        `${MENU_SELECT} WHERE p.id = ANY($1::uuid[]) ORDER BY p.id FOR UPDATE OF p`,
+        [ids],
+      );
+      const byId = new Map(rows.rows.map((p) => [p.id, p]));
+      const lines: { product: MenuProductRow; quantityMilli: number }[] = [];
+      for (const item of input.items) {
+        const product = byId.get(item.productId);
+        if (!product || !product.is_active)
+          throw new AppError(409, 'not_available', 'This product is not available', {
+            productId: item.productId,
+          });
+        if (!available(product))
+          throw new AppError(409, 'out_of_stock', `${product.name} is out of stock`, {
+            productId: item.productId,
+          });
+        const existing = lines.find((l) => l.product.id === product.id);
+        const quantityMilli = item.quantity * 1000;
+        if (existing) existing.quantityMilli += quantityMilli;
+        else lines.push({ product, quantityMilli });
+      }
+      const priced = lines.map((l) => {
+        const unit =
+          l.product.promo_price_cents === null
+            ? Number(l.product.selling_price_cents)
+            : Number(l.product.promo_price_cents);
+        return { ...l, unit, total: Math.round((unit * l.quantityMilli) / 1000) };
+      });
+      const total = priced.reduce((acc, l) => acc + l.total, 0);
+      const payments = input.payments ?? [];
+      // 0.27.3: payment given on an unbilled session = paid now at the till (the lines still show
+      // on the PC); no payment = the lines join the PC's bill as before.
+      const payNow = !onBill || payments.length > 0;
+      // 0.33.4: on the bill the stock moves only when the bill is paid, so the quantity is checked
+      // here (a sale paid now is checked by the sale itself).
+      if (!payNow) await this.assertStockForBill(client, lines);
+
+      const inserted = !onBill
+        ? await client.query<{ id: string }>(
+            `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, total_cents)
+             VALUES ($1, NULL, $2, $3, $4) RETURNING id`,
+            [s.station_id, sessionId, s.customer_id, total],
+          )
+        : await client.query<{ id: string }>(
+            `INSERT INTO station_orders (station_id, device_id, session_id, customer_id, total_cents,
+                    status, settlement, decided_at, decided_by)
+             VALUES ($1, NULL, $2, $3, $4, 'accepted', 'on_bill', now(), $5) RETURNING id`,
+            [s.station_id, sessionId, s.customer_id, total, actor.userId],
+          );
+      const orderId = inserted.rows[0]!.id;
+      for (const l of priced) {
+        await client.query(
+          `INSERT INTO station_order_items (order_id, product_id, name, quantity_milli, unit_price_cents, line_total_cents)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [orderId, l.product.id, l.product.name, l.quantityMilli, l.unit, l.total],
+        );
+      }
+      if (payNow) {
+        // A POS sale now (stock, receipt and drawer as at the counter).
+        const row = await this.lock(client, orderId);
+        await this.sellInTransaction(
+          client,
+          row,
+          payments,
+          s.customer_id,
+          actor,
+          !onBill ? 'accept' : 'pay',
+        );
+      }
+      await recordAudit(client, actor, {
+        action: 'order.staff_add',
+        entityType: 'station_order',
+        entityId: orderId,
+        details: {
+          sessionId,
+          settlement: payNow ? 'pay_now' : 'on_bill',
+          lines: priced.length,
+          totalCents: total,
+        },
+      });
+      return orderId;
     });
     const order = await this.getById(id);
     await this.announceOne(order);
@@ -595,9 +736,12 @@ export class OrdersService implements SessionOrdersHook {
       allow_negative_stock: boolean;
       average_cost_cents: string | number;
       purchase_cost_cents: string | number;
+      average_cost_mills: string | number;
+      purchase_cost_mills: string | number;
     }>(
       `SELECT i.order_id, i.product_id, i.name, i.quantity_milli, i.unit_price_cents, i.line_total_cents,
-              p.track_stock, p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents
+              p.track_stock, p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents,
+              p.average_cost_mills, p.purchase_cost_mills
          FROM station_orders o
          JOIN station_order_items i ON i.order_id = o.id
          JOIN products p ON p.id = i.product_id
@@ -615,7 +759,8 @@ export class OrdersService implements SessionOrdersHook {
       lineTotalCents: Number(l.line_total_cents),
       trackStock: l.track_stock,
       allowNegative: l.allow_negative_stock,
-      unitCostCents: Number(l.average_cost_cents) || Number(l.purchase_cost_cents),
+      unitCostCents: millsToCents(Number(l.average_cost_mills) || Number(l.purchase_cost_mills)),
+      unitCostMills: Number(l.average_cost_mills) || Number(l.purchase_cost_mills),
     }));
   }
 
@@ -651,6 +796,49 @@ export class OrdersService implements SessionOrdersHook {
 
   // ─── Internals ───────────────────────────────────────────────────────────────
 
+  /**
+   * 0.33.4: a product that may not go below zero cannot be put on a PC's bill beyond its stock.
+   * The stock moves only when the bill is paid, so what already waits on the bills (accepted
+   * orders, not sold yet) counts as taken. The product rows must be locked by the caller.
+   * Throws `409 out_of_stock` with what is still free (`availableMilli`).
+   */
+  private async assertStockForBill(
+    client: DbClient,
+    lines: { product: MenuProductRow; quantityMilli: number }[],
+    exceptOrderId: string | null = null,
+  ): Promise<void> {
+    const limited = lines.filter((l) => l.product.track_stock && !l.product.allow_negative_stock);
+    if (limited.length === 0) return;
+    const promised = await client.query<{ product_id: string; promised: string | number }>(
+      `SELECT i.product_id, COALESCE(SUM(i.quantity_milli), 0)::bigint AS promised
+         FROM station_order_items i JOIN station_orders o ON o.id = i.order_id
+        WHERE o.status = 'accepted' AND i.product_id = ANY($1::uuid[])
+          AND ($2::uuid IS NULL OR o.id <> $2)
+        GROUP BY i.product_id`,
+      [limited.map((l) => l.product.id), exceptOrderId],
+    );
+    const taken = new Map(promised.rows.map((r) => [r.product_id, Number(r.promised)]));
+    for (const l of limited) {
+      const free = Math.max(0, Number(l.product.stock_milli) - (taken.get(l.product.id) ?? 0));
+      if (l.quantityMilli > free) {
+        throw new AppError(
+          409,
+          'out_of_stock',
+          free > 0
+            ? `Only ${free / 1000} of ${l.product.name} left in stock`
+            : `${l.product.name} is out of stock`,
+          {
+            code: 'INSUFFICIENT_STOCK',
+            productId: l.product.id,
+            productName: l.product.name,
+            availableMilli: free,
+            requestedMilli: l.quantityMilli,
+          },
+        );
+      }
+    }
+  }
+
   private async lock(client: DbClient, id: string): Promise<OrderRow> {
     const r = await client.query<OrderRow>(`${ORDER_SELECT} WHERE o.id = $1 FOR UPDATE OF o`, [id]);
     if (!r.rows[0]) throw notFound('Order');
@@ -677,11 +865,13 @@ export class OrdersService implements SessionOrdersHook {
           productId: i.product_id,
           quantityMilli: Number(i.quantity_milli),
           discountCents: 0,
+          addonIds: [],
         })),
         discountCents: 0,
         customerId,
         notes: `${row.station_code} · order #${row.number}`,
         clientRequestId: `order:${row.id}`,
+        staff: false,
         payments: total > 0 ? payments : [],
       },
       actor,

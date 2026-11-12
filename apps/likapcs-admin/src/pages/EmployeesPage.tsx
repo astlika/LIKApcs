@@ -672,6 +672,8 @@ function RolesMatrix({ roles, loading }: { roles: RoleSummary[] | undefined; loa
   });
   const toggle = (role: RoleSummary, code: string) => {
     if (pending[role.id]) return;
+    // 0.27.0: the administrator always keeps "change the price of a paid bill".
+    if (role.code === ROLES.ADMIN && code === PERMISSIONS.POS_ADJUST_PAID) return;
     const current = role.permissions;
     const next = current.includes(code)
       ? current.filter((c) => c !== code)
@@ -794,7 +796,14 @@ function CategoryRows({
                   type="checkbox"
                   className="perm-check"
                   checked={has}
-                  disabled={busy(r)}
+                  disabled={
+                    busy(r) || (r.code === ROLES.ADMIN && code === PERMISSIONS.POS_ADJUST_PAID)
+                  }
+                  title={
+                    r.code === ROLES.ADMIN && code === PERMISSIONS.POS_ADJUST_PAID
+                      ? t('employees.alwaysOn')
+                      : undefined
+                  }
                   onChange={() => onToggle(r, code)}
                   aria-label={`${nameOf(code)} · ${t(`employees.roleNames.${r.code}` as RoleKey)}`}
                 />

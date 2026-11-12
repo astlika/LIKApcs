@@ -4,7 +4,7 @@ import { WIDGET_DESIGNS, widgetDesign, widgetFootprint } from '../src/widget-des
 
 describe('widget designs (0.13.0)', () => {
   it('offers thirteen looks and every setting value has exactly one spec', () => {
-    expect(CLIENT_WIDGET_STYLES).toHaveLength(13);
+    expect(CLIENT_WIDGET_STYLES).toHaveLength(14);
     expect(WIDGET_DESIGNS.map((d) => d.id).sort()).toEqual([...CLIENT_WIDGET_STYLES].sort());
     expect(new Set(WIDGET_DESIGNS.map((d) => d.id)).size).toBe(WIDGET_DESIGNS.length);
   });

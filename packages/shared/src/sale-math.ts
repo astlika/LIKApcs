@@ -148,7 +148,7 @@ export function computeSale(
 }
 
 export interface PaymentInput {
-  method: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'credit' | 'other';
+  method: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'credit' | 'other' | 'staff';
   amountCents: Cents;
 }
 

@@ -254,7 +254,7 @@ describe('gift minutes & bulk +minutes', () => {
     at(T0);
   });
 
-  it('0.18.1: stations.gift is owner/admin only — a manager is refused; sessions.gift no longer exists', async () => {
+  it('0.19.1: stations.gift is granted to owner, admin and manager; sessions.gift no longer exists', async () => {
     const mk = (username: string, role: string) =>
       call('POST', '/users', {
         username,
@@ -267,7 +267,7 @@ describe('gift minutes & bulk +minutes', () => {
     expect((await mk('gift-admin', 'admin')).status).toBe(201);
     const managerLogin = await login(ctx.app, 'gift-manager', 'Manager123');
     const adminLogin = await login(ctx.app, 'gift-admin', 'Admin12345');
-    expect(managerLogin.user.permissions).not.toContain('stations.gift');
+    expect(managerLogin.user.permissions).toContain('stations.gift');
     expect(adminLogin.user.permissions).toContain('stations.gift');
 
     const e = (await call<StationSummary>('POST', '/stations', { number: 5, name: 'Arena 5' }))
@@ -276,15 +276,20 @@ describe('gift minutes & bulk +minutes', () => {
     expect(started.status).toBe(201);
     const id = started.body.session.id;
 
-    const denied = await call('POST', `/sessions/${id}/gift`, { minutes: 5 }, managerLogin.token);
-    expect(denied.status).toBe(403);
-    const deniedBulk = await call(
+    const managerGift = await call(
+      'POST',
+      `/sessions/${id}/gift`,
+      { minutes: 5 },
+      managerLogin.token,
+    );
+    expect(managerGift.status).toBe(200);
+    const managerBulk = await call(
       'POST',
       '/sessions/bulk-minutes',
       { stationIds: [e.id], minutes: 5, gift: true },
       managerLogin.token,
     );
-    expect(deniedBulk.status).toBe(403);
+    expect(managerBulk.status).toBe(200);
 
     const allowed = await call('POST', `/sessions/${id}/gift`, { minutes: 5 }, adminLogin.token);
     expect(allowed.status).toBe(200);
@@ -293,7 +298,7 @@ describe('gift minutes & bulk +minutes', () => {
       `SELECT r.code FROM role_permissions rp JOIN roles r ON r.id = rp.role_id
         WHERE rp.permission_code = 'stations.gift' ORDER BY r.code`,
     );
-    expect(grants.rows.map((r) => r.code)).toEqual(['admin', 'owner']);
+    expect(grants.rows.map((r) => r.code)).toEqual(['admin', 'manager', 'owner']);
     const legacy = await ctx.pool.query(
       `SELECT 1 FROM role_permissions WHERE permission_code = 'sessions.gift'
        UNION ALL SELECT 1 FROM permissions WHERE code = 'sessions.gift'`,

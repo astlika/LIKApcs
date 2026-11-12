@@ -1,268 +1,141 @@
 /**
- * PanCafe-style floor map: every station is a PC icon whose screen colour is its live state, with
- * the station number on the screen and the running timer / amount underneath. One click selects,
- * Ctrl+click adds/removes, Shift+click selects a range, double-click (or Enter) runs the primary
- * action, right-click opens the action menu. Rubber-band selection lives in the page (it needs
- * the scrolling canvas).
+ * The stations floor (0.33.0). Four views of the same PCs: Grid (a card per PC: code, state, the
+ * timer in large figures, the bill line and the badges), List, Compact and Detailed (see
+ * StationViews). Selection is the same everywhere: click, Ctrl+click (add/remove), Shift+click
+ * (range), a checkbox per PC, a checkbox for the whole group, and a click on a zone title selects
+ * the zone. Double-click or Enter runs the primary action, right-click opens the action menu.
+ * Rubber-band selection lives in the page (it needs the scrolling canvas).
  */
 import { useMemo } from 'react';
 import { Bell, Hourglass } from 'lucide-react';
-import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
-import { formatHms, projectSession } from '../../lib/session-time';
+import type { StationSummary } from '@likapcs/shared';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useNow } from '../sessions/SessionPanel';
 import { mapOrder } from '../../lib/map-selection';
+import {
+  describeStation,
+  pcNameShown,
+  shortLineParts,
+  type BoardView,
+} from '../../lib/station-board';
+import {
+  BadgePills,
+  StateTag,
+  modifiersOf,
+  usePcEvents,
+  type SelectModifiers,
+  type TileHandlers,
+} from './StationBits';
+import { PcCheck, StationCompact, StationDetailed, StationList, timerText } from './StationViews';
 
-export type MapStatus = StationStatus | 'expiring';
+export { modifiersOf, type SelectModifiers } from './StationBits';
 
-/** Modifier keys held while clicking a tile (Ctrl/Cmd toggles, Shift selects a range). */
-export interface SelectModifiers {
-  toggle: boolean;
-  range: boolean;
-  /** Right-click: keep an existing multi-selection the tile is part of. */
-  keep?: boolean;
+export interface PcItemProps {
+  station: StationSummary;
+  fetchedAt: number;
+  selected: boolean;
+  handlers: TileHandlers;
 }
 
-export const modifiersOf = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => ({
-  toggle: e.ctrlKey || e.metaKey,
-  range: e.shiftKey,
-});
+/** Below this icon size the grid card becomes one line (the slider can make the PCs very small). */
+const LINE_BELOW = 88;
 
-/** Resolve the colour-state shown on the icon (adds "expiring" for prepaid sessions < 5 min). */
-export function mapStatus(station: StationSummary, remaining: number | null): MapStatus {
-  if (!station.isEnabled) return 'disabled';
-  if (station.activeSession && station.activeSession.status === 'paused') return 'paused';
-  if (station.activeSession && remaining !== null && remaining <= 300) return 'expiring';
-  return station.status;
-}
-
-export function PcIcon({
-  status,
-  number,
-  size,
-}: {
-  status: MapStatus;
-  number: number;
-  size: number;
-}) {
-  const fontSize = number >= 100 ? 15 : 19;
-  return (
-    <svg
-      className="pc-icon"
-      data-status={status}
-      width={size}
-      height={size * 0.88}
-      viewBox="0 0 64 56"
-      aria-hidden
-    >
-      <rect className="pc-icon__screen" x="2" y="2" width="60" height="40" rx="5" />
-      <rect className="pc-icon__glass" x="5" y="5" width="54" height="34" rx="3" />
-      {status === 'offline' || status === 'disabled' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <path d="M-9 -5 L9 5 M-9 5 L9 -5" strokeWidth="2.5" strokeLinecap="round" />
-        </g>
-      ) : status === 'paused' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <rect x="-7" y="-7" width="5" height="14" rx="1" />
-          <rect x="2" y="-7" width="5" height="14" rx="1" />
-        </g>
-      ) : status === 'locked' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <rect x="-7" y="-2" width="14" height="10" rx="2" />
-          <path d="M-4 -2 V-5 a4 4 0 0 1 8 0 V-2" fill="none" strokeWidth="2.2" />
-        </g>
-      ) : status === 'maintenance' ? (
-        <g className="pc-icon__glyph" transform="translate(32 22)">
-          <path
-            d="M-7 7 L1 -1 M1 -1 a4 4 0 1 0 4 -4 l-2 2 -2 -2 2 -2 a4 4 0 0 0 -4 4 z"
-            fill="none"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </g>
-      ) : null}
-      <text
-        className="pc-icon__number"
-        x="32"
-        y={
-          status === 'paused' ||
-          status === 'offline' ||
-          status === 'disabled' ||
-          status === 'locked' ||
-          status === 'maintenance'
-            ? 37
-            : 28
-        }
-        textAnchor="middle"
-        fontSize={
-          status === 'paused' ||
-          status === 'offline' ||
-          status === 'disabled' ||
-          status === 'locked' ||
-          status === 'maintenance'
-            ? 9
-            : fontSize
-        }
-        fontWeight={700}
-      >
-        {String(number).padStart(2, '0')}
-      </text>
-      <rect className="pc-icon__frame" x="27" y="43" width="10" height="6" />
-      <rect className="pc-icon__frame" x="18" y="49" width="28" height="4" rx="2" />
-      {status === 'occupied' || status === 'expiring' ? (
-        <circle className="pc-icon__led" cx="32" cy="41" r="1.2" />
-      ) : null}
-    </svg>
-  );
-}
-
+/** The grid card: the PC code and name, the state, the timer in large figures, the bill line and badges. */
 export function StationTile({
   station,
   fetchedAt,
   selected,
   size,
-  onSelect,
-  onPrimary,
-  onMenu,
-}: {
-  station: StationSummary;
-  fetchedAt: number;
-  selected: boolean;
-  size: number;
-  onSelect: (mods: SelectModifiers) => void;
-  onPrimary: () => void;
-  onMenu: (x: number, y: number) => void;
-}) {
-  const { t, td } = useI18n();
+  handlers,
+}: PcItemProps & { size: number }) {
+  const { t } = useI18n();
   const fmt = useFormat();
   const now = useNow();
-  const live = station.activeSession;
-  const projected = live
-    ? projectSession(
-        {
-          status: live.status,
-          billableSeconds: live.elapsedSeconds,
-          endsAt: live.endsAt,
-          pausedAt: live.pausedAt,
-        },
-        fetchedAt,
-        now,
-      )
-    : null;
-  const status = mapStatus(station, projected?.remaining ?? null);
-  const plannedSeconds =
-    live?.endsAt && live.startedAt
-      ? Math.max(1, (new Date(live.endsAt).getTime() - new Date(live.startedAt).getTime()) / 1000)
-      : null;
-  const fraction =
-    projected && projected.remaining !== null && plannedSeconds
-      ? Math.min(1, Math.max(0, projected.remaining / plannedSeconds))
-      : null;
-  const compact = size < 88;
+  const view = describeStation(station, fetchedAt, now);
+  const events = usePcEvents(handlers);
+  const stateLabel = t(`board.state.${view.state}`);
+  const width = Math.round(Math.min(240, Math.max(150, size * 1.6)));
+
+  if (size < LINE_BELOW) {
+    const text = view.timerSeconds !== null ? timerText(view) : stateLabel;
+    return (
+      <div
+        className="pcg pcg--line"
+        data-pc
+        data-id={station.id}
+        data-state={view.state}
+        data-selected={selected || undefined}
+        aria-selected={selected}
+        aria-label={`${station.code} — ${stateLabel}`}
+        {...events}
+      >
+        <span className="pcg__pip" data-status={view.state} aria-hidden />
+        <span className="pcg__code">{station.code}</span>
+        <span className="pcg__line-text num">{text}</span>
+      </div>
+    );
+  }
+
+  const line = shortLineParts(
+    view,
+    { state: stateLabel, awaiting: t('board.state.awaiting') },
+    fmt.money,
+  );
+  // The state tag already says Offline / Free: the timer and the line only repeat it, so they show
+  // only when there is a time or a bill to show.
+  const hasTime = view.timerSeconds !== null;
+  const timer = hasTime ? timerText(view) : null;
+  const lineText = line.join(' • ');
+  const hasFoot = view.badges.length > 0 || !!station.pendingRequest || view.awaitingCount > 0;
+
   return (
     <div
-      className="pc-tile"
+      className="pcg"
+      data-pc
       data-id={station.id}
-      data-status={status}
-      data-archived={station.archived ? 'true' : undefined}
+      data-state={view.state}
       data-selected={selected || undefined}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      aria-label={`${station.code} — ${td(`stations.status.${station.isEnabled ? station.status : 'disabled'}`, station.status)}`}
-      style={{ width: size + 24 }}
-      onClick={(e) => onSelect(modifiersOf(e))}
-      onDoubleClick={(e) => {
-        e.preventDefault();
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-        onPrimary();
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        // Right-click keeps a multi-selection the tile belongs to (the page decides).
-        onSelect({ toggle: false, range: false, keep: true });
-        onMenu(e.clientX, e.clientY);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          onPrimary();
-        } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-          e.preventDefault();
-          const r = e.currentTarget.getBoundingClientRect();
-          onMenu(r.left + r.width / 2, r.top + r.height / 2);
-        }
-      }}
+      data-archived={station.archived ? 'true' : undefined}
+      aria-selected={selected}
+      aria-label={`${station.code} — ${stateLabel}`}
+      style={{ width }}
+      {...events}
     >
-      <PcIcon status={status} number={station.number} size={size} />
-      {station.pendingRequest && (
-        <span
-          className="pc-tile__request"
-          title={`${station.pendingRequest.customerName} · ${formatMinutesShort(station.pendingRequest.durationMinutes)}`}
-          data-testid="tile-request"
-        >
-          <Bell size={10} />
-          {compact ? '' : t('requests.tile')}
-        </span>
+      <div className="pcg__head">
+        <div className="pcg__title">
+          <span className="pcg__code">{station.code}</span>
+          {pcNameShown(station, view) && <span className="pcg__name">{pcNameShown(station, view)}</span>}
+        </div>
+        <PcCheck checked={selected} label={t('board.checkOne', { code: station.code })} handlers={handlers} />
+      </div>
+      <StateTag state={view.state} />
+      {timer && (
+        <div className="pcg__timer num" data-kind={view.timerSeconds !== null ? 'timer' : undefined}>
+          {timer}
+        </div>
       )}
-      {station.awaitingPayment.count > 0 && (
-        <span
-          className="pc-tile__awaiting"
-          title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
-          data-testid="tile-awaiting"
-        >
-          <Hourglass size={10} />
-          {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
-        </span>
-      )}
-      <div className="pc-tile__code">{station.code}</div>
-      {!compact && station.name !== station.code && (
-        <div className="pc-tile__name">{station.name}</div>
-      )}
-      {live && projected ? (
-        <>
-          <div className="pc-tile__timer num" data-warn={status === 'expiring' || undefined}>
-            {projected.remaining !== null
-              ? formatHms(projected.remaining)
-              : formatHms(projected.elapsed)}
-          </div>
-          {!compact && (
-            <div className="pc-tile__meta">
-              <span className="num">{fmt.money(live.currentPriceCents)}</span>
-              {live.customerName && <span className="pc-tile__customer">{live.customerName}</span>}
-            </div>
-          )}
-          {fraction !== null && (
-            <div className="pc-tile__bar" aria-hidden>
-              <span style={{ width: `${fraction * 100}%` }} />
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="pc-tile__state">
-          {station.archived
-            ? t('stations.archived')
-            : td(
-                `stations.status.${station.isEnabled ? station.status : 'disabled'}`,
-                station.status,
-              )}
-          {station.isEnabled && station.status === 'available' && !station.device && !compact && (
-            <span className="faint"> · {t('stations.noDevice')}</span>
-          )}
-          {station.status === 'maintenance' && station.maintenance && !compact && (
-            <span className="faint">
-              {' '}
-              · {station.maintenance.byName ?? '—'} ·{' '}
-              {formatHms(
-                Math.max(
-                  0,
-                  Math.round((new Date(station.maintenance.until).getTime() - Date.now()) / 1000),
-                ),
-              )}
+      {lineText && lineText !== stateLabel && <div className="pcg__line">{lineText}</div>}
+      {hasFoot && (
+        <div className="pcg__foot">
+          <BadgePills badges={view.badges} compact />
+          {station.pendingRequest && (
+            <span className="pcg__flag" data-testid="tile-request" title={station.pendingRequest.customerName}>
+              <Bell size={11} />
+              {t('requests.tile')}
             </span>
           )}
+          {view.awaitingCount > 0 && (
+            <span className="pcg__flag" data-kind="awaiting" data-testid="tile-awaiting">
+              <Hourglass size={11} />
+              {fmt.money(view.awaitingCents)}
+            </span>
+          )}
+        </div>
+      )}
+      {view.fraction !== null && (
+        <div className="pcg__bar" aria-hidden>
+          <span style={{ width: `${view.fraction * 100}%` }} />
         </div>
       )}
     </div>
@@ -275,18 +148,25 @@ export function StationMap({
   selectedIds,
   size,
   groupByZone,
+  view,
   onSelect,
+  onSelectGroup,
   onPrimary,
   onMenu,
+  onHover,
 }: {
   stations: StationSummary[];
   fetchedAt: number;
   selectedIds: ReadonlySet<string>;
   size: number;
   groupByZone: boolean;
+  view: BoardView;
   onSelect: (id: string, mods: SelectModifiers) => void;
+  /** Selects (or, with Ctrl / the group checkbox, adds or removes) a whole list of PCs. */
+  onSelectGroup: (ids: string[], mods: SelectModifiers) => void;
   onPrimary: (id: string) => void;
   onMenu: (id: string, x: number, y: number) => void;
+  onHover?: (id: string, rect: DOMRect | null) => void;
 }) {
   const { t } = useI18n();
   const groups = useMemo(
@@ -298,29 +178,66 @@ export function StationMap({
     [stations, groupByZone],
   );
 
+  const handlersFor = (id: string): TileHandlers => ({
+    onSelect: (mods) => onSelect(id, mods),
+    onPrimary: () => onPrimary(id),
+    onMenu: (x, y) => onMenu(id, x, y),
+    onHover: onHover ? (rect) => onHover(id, rect) : undefined,
+  });
+
   return (
-    <div className="pc-map">
-      {groups.map((g) => (
-        <section key={g.zone ?? '__none'} className="pc-map__zone">
-          {groupByZone && groups.length > 1 && (
-            <h3 className="pc-map__zone-title">{g.zone ?? t('stations.zoneNone')}</h3>
-          )}
-          <div className="pc-map__grid">
-            {g.items.map((s) => (
-              <StationTile
-                key={s.id}
-                station={s}
-                fetchedAt={fetchedAt}
-                selected={selectedIds.has(s.id)}
-                size={size}
-                onSelect={(mods) => onSelect(s.id, mods)}
-                onPrimary={() => onPrimary(s.id)}
-                onMenu={(x, y) => onMenu(s.id, x, y)}
+    <div className="pc-map" data-view={view}>
+      {groups.map((g) => {
+        const ids = g.items.map((s) => s.id);
+        const picked = ids.filter((id) => selectedIds.has(id)).length;
+        const allPicked = ids.length > 0 && picked === ids.length;
+        const toggleGroup = (mods: SelectModifiers) => {
+          // The group checkbox: all selected -> clear this group; otherwise add the rest of it.
+          onSelectGroup(ids, { ...mods, toggle: true, range: false, keep: false });
+        };
+        const items = g.items.map((s) => ({
+          station: s,
+          fetchedAt,
+          selected: selectedIds.has(s.id),
+          handlers: handlersFor(s.id),
+        }));
+        return (
+          <section key={g.zone ?? '__none'} className="pc-map__zone">
+            {groupByZone && groups.length > 1 && (
+              <header className="pc-map__zone-head">
+                <button
+                  type="button"
+                  className="pc-map__zone-title"
+                  title={t('board.zoneSelect')}
+                  onClick={(e) => onSelectGroup(ids, modifiersOf(e))}
+                >
+                  <span>{g.zone ?? t('stations.zoneNone')}</span>
+                  <span className="pc-map__zone-count num" data-on={picked > 0 || undefined}>
+                    {picked > 0 ? `${picked}/${ids.length}` : ids.length}
+                  </span>
+                </button>
+              </header>
+            )}
+            {view === 'grid' && (
+              <div className="pc-map__grid">
+                {items.map((item) => (
+                  <StationTile key={item.station.id} {...item} size={size} />
+                ))}
+              </div>
+            )}
+            {view === 'list' && (
+              <StationList
+                items={items}
+                allSelected={allPicked}
+                someSelected={picked > 0}
+                onToggleAll={toggleGroup}
               />
-            ))}
-          </div>
-        </section>
-      ))}
+            )}
+            {view === 'compact' && <StationCompact items={items} />}
+            {view === 'detailed' && <StationDetailed items={items} />}
+          </section>
+        );
+      })}
     </div>
   );
 }

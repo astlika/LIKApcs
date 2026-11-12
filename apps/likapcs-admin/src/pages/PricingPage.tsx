@@ -2,9 +2,9 @@
  * Pricing: hourly rules (per station / weekday / time window, happy hours) and prepaid packages.
  * Money is edited as decimal text and converted to integer cents with the shared parser.
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock, Package, Pencil, Plus, Tag, Trash2 } from 'lucide-react';
+import { ChevronDown, Clock, Package, Pencil, Plus, Tag, Trash2 } from 'lucide-react';
 import {
   PERMISSIONS,
   formatMoney,
@@ -97,6 +97,85 @@ export function PricingPage() {
 
       <div className="stack" style={{ gap: 20 }}>
         <Card
+          title={t('pricing.packages')}
+          actions={
+            canManage ? (
+              <Button variant="primary" size="sm" onClick={() => setPackageDialog({ pkg: null })}>
+                <Plus size={14} /> {t('pricing.addPackage')}
+              </Button>
+            ) : undefined
+          }
+        >
+          <p className="muted" style={{ marginTop: 0 }}>
+            {t('pricing.packagesHint')}
+          </p>
+          {packages.isLoading && <Loading />}
+          {packages.isSuccess && packages.data.length === 0 && (
+            <EmptyState icon={<Package size={22} />} title={t('pricing.noPackages')} />
+          )}
+          {packages.isSuccess && packages.data.length > 0 && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t('pricing.name')}</th>
+                  <th className="right">{t('pricing.duration')}</th>
+                  <th className="right">{t('pricing.price')}</th>
+                  <th>{t('pricing.stations')}</th>
+                  <th>{t('pricing.days')}</th>
+                  <th>{t('pricing.timeWindow')}</th>
+                  <th>{t('common.status')}</th>
+                  {canManage && <th className="right">{t('common.actions')}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {packages.data.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.name}</strong>
+                      {p.isPromotional && (
+                        <span style={{ marginLeft: 8 }}>
+                          <Badge tone="accent">{t('pricing.promotional')}</Badge>
+                        </span>
+                      )}
+                    </td>
+                    <td className="right num">{p.durationMinutes} min</td>
+                    <td className="right num">{fmt.money(p.priceCents)}</td>
+                    <td>{stationNames(p.stationIds)}</td>
+                    <td>{dayLabel(p.daysOfWeek)}</td>
+                    <td className="num">{windowLabel(p.startTime, p.endTime)}</td>
+                    <td>
+                      <Badge tone={p.isActive ? 'success' : 'default'}>
+                        {p.isActive ? t('pricing.active') : t('pricing.inactive')}
+                      </Badge>
+                    </td>
+                    {canManage && (
+                      <td className="right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setPackageDialog({ pkg: p })}
+                          aria-label={t('pricing.editPackage')}
+                        >
+                          <Pencil size={14} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRemove({ kind: 'package', id: p.id })}
+                          aria-label={t('common.delete')}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        <Card
           title={t('pricing.rules')}
           actions={
             canManage ? (
@@ -171,85 +250,6 @@ export function PricingPage() {
                           size="sm"
                           variant="ghost"
                           onClick={() => setRemove({ kind: 'rule', id: r.id })}
-                          aria-label={t('common.delete')}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-
-        <Card
-          title={t('pricing.packages')}
-          actions={
-            canManage ? (
-              <Button variant="primary" size="sm" onClick={() => setPackageDialog({ pkg: null })}>
-                <Plus size={14} /> {t('pricing.addPackage')}
-              </Button>
-            ) : undefined
-          }
-        >
-          <p className="muted" style={{ marginTop: 0 }}>
-            {t('pricing.packagesHint')}
-          </p>
-          {packages.isLoading && <Loading />}
-          {packages.isSuccess && packages.data.length === 0 && (
-            <EmptyState icon={<Package size={22} />} title={t('pricing.noPackages')} />
-          )}
-          {packages.isSuccess && packages.data.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t('pricing.name')}</th>
-                  <th className="right">{t('pricing.duration')}</th>
-                  <th className="right">{t('pricing.price')}</th>
-                  <th>{t('pricing.stations')}</th>
-                  <th>{t('pricing.days')}</th>
-                  <th>{t('pricing.timeWindow')}</th>
-                  <th>{t('common.status')}</th>
-                  {canManage && <th className="right">{t('common.actions')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {packages.data.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <strong>{p.name}</strong>
-                      {p.isPromotional && (
-                        <span style={{ marginLeft: 8 }}>
-                          <Badge tone="accent">{t('pricing.promotional')}</Badge>
-                        </span>
-                      )}
-                    </td>
-                    <td className="right num">{p.durationMinutes} min</td>
-                    <td className="right num">{fmt.money(p.priceCents)}</td>
-                    <td>{stationNames(p.stationIds)}</td>
-                    <td>{dayLabel(p.daysOfWeek)}</td>
-                    <td className="num">{windowLabel(p.startTime, p.endTime)}</td>
-                    <td>
-                      <Badge tone={p.isActive ? 'success' : 'default'}>
-                        {p.isActive ? t('pricing.active') : t('pricing.inactive')}
-                      </Badge>
-                    </td>
-                    {canManage && (
-                      <td className="right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setPackageDialog({ pkg: p })}
-                          aria-label={t('pricing.editPackage')}
-                        >
-                          <Pencil size={14} />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setRemove({ kind: 'package', id: p.id })}
                           aria-label={t('common.delete')}
                         >
                           <Trash2 size={14} />
@@ -418,6 +418,81 @@ interface RuleForm {
   validTo: string;
 }
 
+/** Collapsible group for rarely-needed settings (rounding, minimums, validity, priority…). */
+function AdvancedSection({
+  open,
+  onToggle,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="span-2 adv">
+      <button type="button" className="adv__toggle" aria-expanded={open} onClick={onToggle}>
+        <ChevronDown
+          size={16}
+          className={open ? 'adv__chev adv__chev--open' : 'adv__chev'}
+          aria-hidden
+        />
+        <span className="adv__title">{t('pricing.advanced')}</span>
+        <span className="adv__hint muted">{t('pricing.advancedHint')}</span>
+      </button>
+      {open && <div className="grid grid--2 adv__body">{children}</div>}
+    </div>
+  );
+}
+
+/** Fields that live under "Advanced" in the rule dialog. */
+const RULE_ADVANCED_FIELDS = [
+  'billingIncrementMinutes',
+  'minimumMinutes',
+  'minimumChargeCents',
+  'roundingMode',
+  'roundingIncrementCents',
+  'validFrom',
+  'validTo',
+  'priority',
+];
+/** True when an advanced rule setting differs from the default, so the section starts open. */
+function ruleHasAdvanced(f: RuleForm) {
+  const minCharge = f.minimumCharge.trim();
+  return (
+    f.billingIncrementMinutes !== '1' ||
+    f.minimumMinutes !== '0' ||
+    (minCharge !== '' && minCharge !== '0' && minCharge !== '0.00' && minCharge !== '0,00') ||
+    f.roundingMode !== 'up' ||
+    f.roundingIncrementCents !== '1' ||
+    f.priority !== '0' ||
+    f.validFrom !== '' ||
+    f.validTo !== '' ||
+    f.isHappyHour
+  );
+}
+
+/** Fields that live under "Advanced" in the package dialog. */
+const PACKAGE_ADVANCED_FIELDS = [
+  'sortOrder',
+  'daysOfWeek',
+  'startTime',
+  'endTime',
+  'validFrom',
+  'validTo',
+];
+function packageHasAdvanced(f: PackageForm) {
+  return (
+    f.sortOrder !== '0' ||
+    f.daysOfWeek.length !== 7 ||
+    f.startTime !== '' ||
+    f.endTime !== '' ||
+    f.validFrom !== '' ||
+    f.validTo !== '' ||
+    f.isPromotional
+  );
+}
+
 function RuleDialog({
   rule,
   stations,
@@ -477,6 +552,9 @@ function RuleDialog({
     local.validTo = t('pricing.errors.validRange');
   const issue = (field: string) =>
     (attempted ? local[field] : undefined) ?? fieldError(error, field);
+  // Advanced settings stay folded unless non-default or invalid.
+  const [advOpen, setAdvOpen] = useState(() => ruleHasAdvanced(form));
+  const advancedOpen = advOpen || RULE_ADVANCED_FIELDS.some((f) => issue(f));
   const hasLocalIssues = Object.keys(local).length > 0;
   const unclaimed = unclaimedIssues(error, KNOWN_RULE_FIELDS);
 
@@ -602,75 +680,13 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field
-          label={t('pricing.increment')}
-          hint={t('pricing.incrementHint')}
-          error={issue('billingIncrementMinutes')}
-        >
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="number"
-              min={1}
-              max={120}
-              value={form.billingIncrementMinutes}
-              onChange={(e) => set('billingIncrementMinutes', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t('pricing.minimumMinutes')} error={issue('minimumMinutes')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="number"
-              min={0}
-              max={600}
-              value={form.minimumMinutes}
-              onChange={(e) => set('minimumMinutes', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t('pricing.minimumCharge')} error={issue('minimumChargeCents')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              inputMode="decimal"
-              value={form.minimumCharge}
-              onChange={(e) => set('minimumCharge', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t('pricing.rounding')} error={issue('roundingMode')}>
-          {(id) => (
-            <Select
-              id={id}
-              value={form.roundingMode}
-              onChange={(e) => set('roundingMode', e.target.value as RuleForm['roundingMode'])}
-            >
-              {(['up', 'down', 'nearest'] as const).map((m) => (
-                <option key={m} value={m}>
-                  {t(`pricing.roundingModes.${m}`)}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label={t('pricing.roundingIncrement')} error={issue('roundingIncrementCents')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="number"
-              min={1}
-              max={1000}
-              value={form.roundingIncrementCents}
-              onChange={(e) => set('roundingIncrementCents', e.target.value)}
-            />
-          )}
-        </Field>
+        <div className="stack" style={{ justifyContent: 'flex-end' }}>
+          <Switch
+            checked={form.isActive}
+            onChange={(v) => set('isActive', v)}
+            label={t('pricing.active')}
+          />
+        </div>
         <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
           {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
         </Field>
@@ -705,61 +721,127 @@ function RuleDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="date"
-              value={form.validFrom}
-              onChange={(e) => set('validFrom', e.target.value)}
+        <AdvancedSection open={advancedOpen} onToggle={() => setAdvOpen(!advancedOpen)}>
+          <Field
+            label={t('pricing.increment')}
+            hint={t('pricing.incrementHint')}
+            error={issue('billingIncrementMinutes')}
+          >
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="number"
+                min={1}
+                max={120}
+                value={form.billingIncrementMinutes}
+                onChange={(e) => set('billingIncrementMinutes', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.minimumMinutes')} error={issue('minimumMinutes')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="number"
+                min={0}
+                max={600}
+                value={form.minimumMinutes}
+                onChange={(e) => set('minimumMinutes', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.minimumCharge')} error={issue('minimumChargeCents')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                inputMode="decimal"
+                value={form.minimumCharge}
+                onChange={(e) => set('minimumCharge', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.rounding')} error={issue('roundingMode')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={form.roundingMode}
+                onChange={(e) => set('roundingMode', e.target.value as RuleForm['roundingMode'])}
+              >
+                {(['up', 'down', 'nearest'] as const).map((m) => (
+                  <option key={m} value={m}>
+                    {t(`pricing.roundingModes.${m}`)}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label={t('pricing.roundingIncrement')} error={issue('roundingIncrementCents')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="number"
+                min={1}
+                max={1000}
+                value={form.roundingIncrementCents}
+                onChange={(e) => set('roundingIncrementCents', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="date"
+                value={form.validFrom}
+                onChange={(e) => set('validFrom', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="date"
+                value={form.validTo}
+                onChange={(e) => set('validTo', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('pricing.priority')}
+            hint={t('pricing.priorityHint')}
+            error={issue('priority')}
+          >
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="number"
+                min={-100}
+                max={100}
+                value={form.priority}
+                onChange={(e) => set('priority', e.target.value)}
+              />
+            )}
+          </Field>
+          <div className="stack" style={{ justifyContent: 'flex-end' }}>
+            <Switch
+              checked={form.isHappyHour}
+              onChange={(v) => set('isHappyHour', v)}
+              label={
+                <>
+                  <Clock size={14} /> {t('pricing.happyHour')}
+                </>
+              }
             />
-          )}
-        </Field>
-        <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="date"
-              value={form.validTo}
-              onChange={(e) => set('validTo', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field
-          label={t('pricing.priority')}
-          hint={t('pricing.priorityHint')}
-          error={issue('priority')}
-        >
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="number"
-              min={-100}
-              max={100}
-              value={form.priority}
-              onChange={(e) => set('priority', e.target.value)}
-            />
-          )}
-        </Field>
-        <div className="stack" style={{ justifyContent: 'flex-end' }}>
-          <Switch
-            checked={form.isHappyHour}
-            onChange={(v) => set('isHappyHour', v)}
-            label={
-              <>
-                <Clock size={14} /> {t('pricing.happyHour')}
-              </>
-            }
-          />
-          <Switch
-            checked={form.isActive}
-            onChange={(v) => set('isActive', v)}
-            label={t('pricing.active')}
-          />
-        </div>
+          </div>
+        </AdvancedSection>
         {/* Enter in any field submits (the footer button lives outside the form). */}
         <button type="submit" hidden aria-hidden tabIndex={-1} />
       </form>
@@ -830,6 +912,9 @@ function PackageDialog({
     local.validTo = t('pricing.errors.validRange');
   const issue = (field: string) =>
     (attempted ? local[field] : undefined) ?? fieldError(error, field);
+  // Advanced settings stay folded unless non-default or invalid.
+  const [advOpen, setAdvOpen] = useState(() => packageHasAdvanced(form));
+  const advancedOpen = advOpen || PACKAGE_ADVANCED_FIELDS.some((f) => issue(f));
   const hasLocalIssues = Object.keys(local).length > 0;
   const unclaimed = unclaimedIssues(error, KNOWN_PACKAGE_FIELDS);
 
@@ -922,19 +1007,6 @@ function PackageDialog({
             />
           )}
         </Field>
-        <Field label={t('pricing.sortOrder')} error={issue('sortOrder')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="number"
-              min={0}
-              max={1000}
-              value={form.sortOrder}
-              onChange={(e) => set('sortOrder', e.target.value)}
-            />
-          )}
-        </Field>
         <Field label={t('pricing.duration')} error={issue('durationMinutes')}>
           {(id, inv) => (
             <Input
@@ -960,6 +1032,13 @@ function PackageDialog({
             />
           )}
         </Field>
+        <div className="stack" style={{ justifyContent: 'flex-end' }}>
+          <Switch
+            checked={form.isActive}
+            onChange={(v) => set('isActive', v)}
+            label={t('pricing.active')}
+          />
+        </div>
         <Field
           label={t('pricing.stations')}
           hint={t('pricing.stationsHint')}
@@ -982,78 +1061,89 @@ function PackageDialog({
             </div>
           )}
         </Field>
-        <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
-          {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
-        </Field>
-        <Field
-          label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`}
-          hint={t('pricing.timeWindowHint')}
-          optional
-          error={issue('startTime')}
-        >
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="time"
-              value={form.startTime}
-              onChange={(e) => set('startTime', e.target.value)}
+        <AdvancedSection open={advancedOpen} onToggle={() => setAdvOpen(!advancedOpen)}>
+          <Field label={t('pricing.sortOrder')} error={issue('sortOrder')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="number"
+                min={0}
+                max={1000}
+                value={form.sortOrder}
+                onChange={(e) => set('sortOrder', e.target.value)}
+              />
+            )}
+          </Field>
+          <div />
+          <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
+            {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
+          </Field>
+          <Field
+            label={`${t('pricing.timeWindow')} · ${t('pricing.from')}`}
+            hint={t('pricing.timeWindowHint')}
+            optional
+            error={issue('startTime')}
+          >
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="time"
+                value={form.startTime}
+                onChange={(e) => set('startTime', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field
+            label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`}
+            optional
+            error={issue('endTime')}
+          >
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="time"
+                value={form.endTime}
+                onChange={(e) => set('endTime', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="date"
+                value={form.validFrom}
+                onChange={(e) => set('validFrom', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
+            {(id, inv) => (
+              <Input
+                id={id}
+                aria-invalid={inv}
+                type="date"
+                value={form.validTo}
+                onChange={(e) => set('validTo', e.target.value)}
+              />
+            )}
+          </Field>
+          <div className="stack span-2">
+            <Switch
+              checked={form.isPromotional}
+              onChange={(v) => set('isPromotional', v)}
+              label={
+                <>
+                  <Tag size={14} /> {t('pricing.promotional')}
+                </>
+              }
             />
-          )}
-        </Field>
-        <Field
-          label={`${t('pricing.timeWindow')} · ${t('pricing.to')}`}
-          optional
-          error={issue('endTime')}
-        >
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="time"
-              value={form.endTime}
-              onChange={(e) => set('endTime', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t('pricing.validFrom')} optional error={issue('validFrom')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="date"
-              value={form.validFrom}
-              onChange={(e) => set('validFrom', e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t('pricing.validTo')} optional error={issue('validTo')}>
-          {(id, inv) => (
-            <Input
-              id={id}
-              aria-invalid={inv}
-              type="date"
-              value={form.validTo}
-              onChange={(e) => set('validTo', e.target.value)}
-            />
-          )}
-        </Field>
-        <div className="stack span-2">
-          <Switch
-            checked={form.isPromotional}
-            onChange={(v) => set('isPromotional', v)}
-            label={
-              <>
-                <Tag size={14} /> {t('pricing.promotional')}
-              </>
-            }
-          />
-          <Switch
-            checked={form.isActive}
-            onChange={(v) => set('isActive', v)}
-            label={t('pricing.active')}
-          />
-        </div>
+          </div>
+        </AdvancedSection>
         <button type="submit" hidden aria-hidden tabIndex={-1} />
       </form>
     </Dialog>

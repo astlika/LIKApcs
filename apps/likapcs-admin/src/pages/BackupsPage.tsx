@@ -12,15 +12,25 @@ import {
   FolderOpen,
   HardDriveDownload,
   Import,
+  Lock,
+  Network,
+  Plus,
   RotateCcw,
+  ShieldCheck,
   Trash2,
   Upload,
+  Copy,
+  Usb,
 } from 'lucide-react';
 import {
   PERMISSIONS,
+  type BackupEncryptionStatus,
   type BackupSummary,
   type BackupsResponse,
   type RestoreResult,
+  type ServerEndpoint,
+  type ServerInfoResponse,
+  type SettingsMap,
 } from '@likapcs/shared';
 import { api, ApiError, apiDownload, apiUpload } from '../lib/api';
 import { useFormat } from '../lib/format';
@@ -42,6 +52,9 @@ import {
   PageHeader,
   StatTile,
 } from '../components/ui/primitives';
+
+/** Server errors that mean "this encrypted archive needs its backup password" (0.26.0). */
+const ARCHIVE_PASSWORD_CODES = ['ARCHIVE_PASSWORD_REQUIRED', 'ARCHIVE_PASSWORD_WRONG'];
 
 export function formatBytes(bytes: number | null): string {
   if (bytes === null) return '—';
@@ -89,16 +102,28 @@ export function BackupsPage() {
     },
     onError,
   });
+  // An encrypted archive this PC has no key for asks for its backup password (0.26.0).
+  const [uploadRetry, setUploadRetry] = useState<{ file: File; wrong: boolean } | null>(null);
   const upload = useMutation({
-    mutationFn: (file: File) =>
-      apiUpload<BackupSummary>('/backups/upload', file, {
-        fileName: file.name.replace(/[^A-Za-z0-9._-]/g, '_'),
-      }),
+    mutationFn: ({ file, password }: { file: File; password?: string }) =>
+      apiUpload<BackupSummary>(
+        '/backups/upload',
+        file,
+        { fileName: file.name.replace(/[^A-Za-z0-9._-]/g, '_') },
+        { headers: password ? { 'x-archive-password': password } : undefined },
+      ),
     onSuccess: (b) => {
+      setUploadRetry(null);
       toast.success(t('backups.uploaded', { name: b.fileName ?? '' }));
       invalidate();
     },
-    onError,
+    onError: (err, vars) => {
+      if (err instanceof ApiError && ARCHIVE_PASSWORD_CODES.includes(err.code)) {
+        setUploadRetry({ file: vars.file, wrong: err.code === 'ARCHIVE_PASSWORD_WRONG' });
+        return;
+      }
+      onError(err);
+    },
   });
   const remove = useMutation({
     mutationFn: (b: BackupSummary) => api<BackupSummary>(`/backups/${b.id}`, { method: 'DELETE' }),
@@ -140,7 +165,7 @@ export function BackupsPage() {
                 hidden
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) upload.mutate(file);
+                  if (file) upload.mutate({ file });
                   e.target.value = '';
                 }}
               />
@@ -202,6 +227,9 @@ export function BackupsPage() {
           </div>
         </div>
       )}
+      <ServerCard canManage={canManage} />
+      {data && <ProtectionCard canManage={canManage} />}
+      {data && <TransferCard canManage={canManage} />}
       <div className="toolbar">
         <Checkbox
           checked={showDeleted}
@@ -241,6 +269,27 @@ export function BackupsPage() {
                       {b.fileName ?? '—'}
                       {b.schemaVersion !== null && (
                         <span className="faint"> · v{b.schemaVersion}</span>
+                      )}
+                      {(b.encrypted || b.externalCopy) && (
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                          {b.encrypted && (
+                            <Badge tone="info">
+                              <Lock size={11} /> {t('backups.archiveBadge')}
+                            </Badge>
+                          )}
+                          {b.externalCopy && (
+                            <span
+                              title={b.externalCopy.error ?? b.externalCopy.path ?? ''}
+                              style={{ display: 'inline-flex' }}
+                            >
+                              <Badge tone={b.externalCopy.ok ? 'success' : 'danger'}>
+                                {b.externalCopy.ok
+                                  ? t('backups.externalOk')
+                                  : t('backups.externalFailed')}
+                              </Badge>
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td>
@@ -321,6 +370,15 @@ export function BackupsPage() {
         </div>
       )}
       {restoring && <RestoreDialog backup={restoring} onClose={() => setRestoring(null)} />}
+      {uploadRetry && (
+        <ArchivePasswordDialog
+          fileName={uploadRetry.file.name}
+          wrong={uploadRetry.wrong}
+          pending={upload.isPending}
+          onSubmit={(password) => upload.mutate({ file: uploadRetry.file, password })}
+          onClose={() => setUploadRetry(null)}
+        />
+      )}
       {deleting && (
         <ConfirmDialog
           open
@@ -344,13 +402,18 @@ function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: ()
   const toast = useToast();
   const queryClient = useQueryClient();
   const [password, setPassword] = useState('');
+  const [archivePassword, setArchivePassword] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
   const [result, setResult] = useState<RestoreResult | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
       api<RestoreResult>(`/backups/${backup.id}/restore`, {
         method: 'POST',
-        body: { password, confirm: true },
+        body: {
+          password,
+          confirm: true,
+          archivePassword: archivePassword || undefined,
+        },
       }),
     onSuccess: (r) => {
       setResult(r);
@@ -361,6 +424,14 @@ function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: ()
     onError: (err) => {
       if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
         toast.error(t('backups.wrongPassword'));
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'ARCHIVE_PASSWORD_REQUIRED') {
+        toast.error(t('backups.archiveRequiredBody'));
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'ARCHIVE_PASSWORD_WRONG') {
+        toast.error(t('backups.archiveWrong'));
         return;
       }
       toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
@@ -443,6 +514,22 @@ function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: ()
               />
             )}
           </Field>
+          {backup.encrypted && (
+            <Field
+              label={t('backups.archivePasswordLabel')}
+              hint={t('backups.archivePasswordHint')}
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  autoComplete="off"
+                  value={archivePassword}
+                  onChange={(e) => setArchivePassword(e.target.value)}
+                />
+              )}
+            </Field>
+          )}
           <Checkbox
             checked={acknowledged}
             onChange={(e) => setAcknowledged(e.target.checked)}
@@ -450,6 +537,591 @@ function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: ()
           />
         </form>
       )}
+    </Dialog>
+  );
+}
+
+/** Backup password + copy outside the PC (0.26.0). The folder is only a setting; no network. */
+/** Backups › Server and network: every address and port this server answers on, with copy buttons. */
+function ServerCard({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState('');
+  const info = useQuery({
+    queryKey: ['system', 'server-info'],
+    queryFn: () => api<ServerInfoResponse>('/system/server-info'),
+    enabled: canManage,
+  });
+  const save = useMutation({
+    mutationFn: (addresses: string[]) =>
+      api<ServerInfoResponse>('/system/server-info/remote-addresses', {
+        method: 'PUT',
+        body: { addresses },
+      }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(['system', 'server-info'], next);
+      setDraft('');
+      toast.success(t('backups.netSaved'));
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  if (!canManage) return null;
+  const data = info.data;
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t('backups.netCopied'));
+    } catch {
+      toast.error(t('common.errorGeneric'));
+    }
+  };
+  const addDraft = () => {
+    const value = draft.trim();
+    if (!value || !data) return;
+    save.mutate([...data.remoteAddresses, value]);
+  };
+  const removeEndpoint = (endpoint: ServerEndpoint) => {
+    if (!data) return;
+    save.mutate(data.remoteAddresses.filter((a) => a !== endpoint.address));
+  };
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }} data-testid="server-card">
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Network size={16} className="muted" />
+        <strong>{t('backups.netCardTitle')}</strong>
+        {data && <Badge tone="success">{t('backups.netListening', { port: data.bind.port })}</Badge>}
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        {t('backups.netHelp')}
+      </p>
+
+      {data && (
+        <>
+          <div
+            className="row"
+            style={{ gap: 18, flexWrap: 'wrap', marginTop: 12, fontSize: 13 }}
+            data-testid="server-facts"
+          >
+            <span>
+              <span className="faint">{t('backups.netVersion')}: </span>
+              <span className="num">{data.version}</span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netProtocol')}: </span>
+              <span className="num">{data.scheme.toUpperCase()}</span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netBind')}: </span>
+              <span className="num">
+                {data.bind.host}:{data.bind.port}
+              </span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netDiscovery')}: </span>
+              <span className="num">
+                {data.discovery.enabled
+                  ? t('backups.netUdpPort', { port: data.discovery.port })
+                  : t('backups.netOff')}
+              </span>
+            </span>
+            <span>
+              <span className="faint">{t('backups.netCors')}: </span>
+              <span className="num">{data.corsOrigins.join(', ') || '—'}</span>
+            </span>
+          </div>
+
+          <table className="table" style={{ marginTop: 14 }} data-testid="server-endpoints">
+            <thead>
+              <tr>
+                <th>{t('backups.netColSource')}</th>
+                <th>{t('backups.netColAddress')}</th>
+                <th>{t('backups.netColApi')}</th>
+                <th>{t('backups.netColPhone')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.endpoints.map((endpoint) => (
+                <tr key={`${endpoint.source}-${endpoint.address}`}>
+                  <td>
+                    <Badge tone={endpoint.source === 'lan' ? 'info' : undefined}>
+                      {endpoint.source === 'lan' ? t('backups.netLan') : t('backups.netManual')}
+                    </Badge>
+                  </td>
+                  <td className="num">{endpoint.address}</td>
+                  <td className="num">
+                    {endpoint.api}{' '}
+                    <Button size="sm" variant="ghost" onClick={() => void copy(endpoint.api)}>
+                      <Copy size={12} />
+                    </Button>
+                  </td>
+                  <td className="num">
+                    {endpoint.phone}{' '}
+                    <Button size="sm" variant="ghost" onClick={() => void copy(endpoint.phone)}>
+                      <Copy size={12} />
+                    </Button>
+                  </td>
+                  <td>
+                    {endpoint.source === 'manual' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={save.isPending}
+                        onClick={() => removeEndpoint(endpoint)}
+                        title={t('backups.netRemove')}
+                        aria-label={t('backups.netRemove')}
+                      >
+                        <Trash2 size={12} />
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.remoteAddresses.length === 0 && (
+            <p className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+              {t('backups.netNone')}
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') addDraft();
+          }}
+          placeholder={t('backups.netPlaceholder')}
+          aria-label={t('backups.netAddLabel')}
+          style={{ maxWidth: 360 }}
+          data-testid="server-address-input"
+        />
+        <Button
+          size="sm"
+          onClick={addDraft}
+          disabled={!draft.trim() || !data || save.isPending}
+          data-testid="server-address-add"
+        >
+          <Plus size={13} /> {t('backups.netAdd')}
+        </Button>
+      </div>
+      <p className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+        {t('backups.netRestartNote')}
+      </p>
+    </div>
+  );
+}
+
+function ProtectionCard({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
+  const fmt = useFormat();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [encOpen, setEncOpen] = useState(false);
+  const [folder, setFolder] = useState<string | null>(null);
+  const status = useQuery({
+    queryKey: ['backups', 'encryption'],
+    queryFn: () => api<BackupEncryptionStatus>('/backups/encryption'),
+  });
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api<SettingsMap>('/settings'),
+  });
+  const savedFolder = (settings.data?.['backup.external_dir'] as string | undefined) ?? '';
+  const shown = folder ?? savedFolder;
+  const saveFolder = useMutation({
+    mutationFn: (value: string) =>
+      api<SettingsMap>('/settings', { method: 'PATCH', body: { 'backup.external_dir': value } }),
+    onSuccess: () => {
+      setFolder(null);
+      toast.success(t('backups.extSaved'));
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <ShieldCheck size={16} className="muted" />
+        <strong>{t('backups.encCardTitle')}</strong>
+        {status.data && (
+          <Badge tone={status.data.enabled ? 'success' : 'warning'}>
+            {status.data.enabled ? t('backups.encOn') : t('backups.encOff')}
+          </Badge>
+        )}
+        {canManage && (
+          <Button size="sm" style={{ marginLeft: 'auto' }} onClick={() => setEncOpen(true)}>
+            <Lock size={13} /> {status.data?.enabled ? t('backups.encChange') : t('backups.encSet')}
+          </Button>
+        )}
+      </div>
+      {status.data?.changedAt && (
+        <p className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+          {t('backups.encChanged', { when: fmt.dateTime(status.data.changedAt) })}
+        </p>
+      )}
+      <p className="muted" style={{ marginTop: 8 }}>
+        {t('backups.encHelp')}
+      </p>
+
+      <div
+        className="row"
+        style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 16 }}
+      >
+        <FolderOpen size={16} className="muted" />
+        <strong>{t('backups.extTitle')}</strong>
+        {settings.data && !savedFolder && <Badge>{t('backups.extOff')}</Badge>}
+      </div>
+      <p className="muted" style={{ marginTop: 6 }}>
+        {t('backups.extHelp')}
+      </p>
+      <form
+        className="row"
+        style={{ gap: 8, marginTop: 8 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canManage && !saveFolder.isPending) saveFolder.mutate(shown.trim());
+        }}
+      >
+        <Input
+          value={shown}
+          placeholder={t('backups.extPlaceholder')}
+          disabled={!canManage}
+          aria-label={t('backups.extTitle')}
+          onChange={(e) => setFolder(e.target.value)}
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        {canManage && (
+          <Button
+            type="submit"
+            loading={saveFolder.isPending}
+            disabled={shown.trim() === savedFolder.trim()}
+          >
+            {t('backups.extSave')}
+          </Button>
+        )}
+      </form>
+      {encOpen && <EncryptionDialog onClose={() => setEncOpen(false)} />}
+    </div>
+  );
+}
+
+function EncryptionDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [archivePassword, setArchivePassword] = useState('');
+  const [password, setPassword] = useState('');
+  const mutation = useMutation({
+    mutationFn: () =>
+      api<BackupEncryptionStatus>('/backups/encryption', {
+        method: 'PUT',
+        body: { archivePassword, password, confirm: true },
+      }),
+    onSuccess: () => {
+      toast.success(t('backups.encSaved'));
+      void queryClient.invalidateQueries({ queryKey: ['backups'] });
+      onClose();
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
+        toast.error(t('backups.wrongPassword'));
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
+  });
+  const valid = archivePassword.length >= 8 && password.length > 0;
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('backups.encSet')}
+      size="md"
+      locked={mutation.isPending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!valid}
+            loading={mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            {t('backups.encSave')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !mutation.isPending) mutation.mutate();
+        }}
+      >
+        <p className="muted">{t('backups.encHelp')}</p>
+        <Alert tone="warning" icon={<AlertTriangle size={16} />}>
+          {t('backups.encWarning')}
+        </Alert>
+        <Field label={t('backups.encNewPassword')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              autoComplete="new-password"
+              autoFocus
+              value={archivePassword}
+              onChange={(e) => setArchivePassword(e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label={t('backups.yourPassword')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
+
+function ArchivePasswordDialog({
+  fileName,
+  wrong,
+  pending,
+  onSubmit,
+  onClose,
+}: {
+  fileName: string;
+  wrong: boolean;
+  pending: boolean;
+  onSubmit: (password: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [password, setPassword] = useState('');
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('backups.archiveRequiredTitle')}
+      size="md"
+      locked={pending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={password.length === 0}
+            loading={pending}
+            onClick={() => onSubmit(password)}
+          >
+            <Upload size={14} /> {t('backups.archiveRetry')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (password && !pending) onSubmit(password);
+        }}
+      >
+        <p className="muted">{t('backups.archiveRequiredBody')}</p>
+        <p className="mono" style={{ fontSize: 12 }}>
+          {fileName}
+        </p>
+        {wrong && <Alert tone="danger">{t('backups.archiveWrong')}</Alert>}
+        <Field label={t('backups.archivePasswordLabel')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Result of a USB transfer export (0.27.5). */
+interface TransferExportResult {
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+/** Whole-system transfer to another PC on a USB stick, behind a 4-digit code (0.27.5). */
+function TransferCard({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  if (!canManage) return null;
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Usb size={16} className="muted" />
+        <strong>{t('backups.transferTitle')}</strong>
+        <Button size="sm" style={{ marginLeft: 'auto' }} onClick={() => setOpen(true)}>
+          <Usb size={13} /> {t('backups.transferOpen')}
+        </Button>
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        {t('backups.transferHelp')}
+      </p>
+      {open && <TransferExportDialog onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+function TransferExportDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api<SettingsMap>('/settings'),
+  });
+  const savedFolder = ((settings.data?.['backup.external_dir'] as string | undefined) ?? '').trim();
+  const [folder, setFolder] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [codeAgain, setCodeAgain] = useState('');
+  const [password, setPassword] = useState('');
+  const shownFolder = (folder ?? savedFolder).trim();
+  const codeValid = /^\d{4}$/.test(code);
+  const codeMatches = codeValid && code === codeAgain;
+  const valid = codeMatches && password.length > 0 && shownFolder.length > 0;
+  const mutation = useMutation({
+    mutationFn: () =>
+      api<TransferExportResult>('/backups/transfer', {
+        method: 'POST',
+        body: { password, code, targetDir: shownFolder },
+      }),
+    onSuccess: (r) => {
+      toast.success(
+        t('backups.transferDone', { name: r.fileName, size: formatBytes(r.sizeBytes) }),
+      );
+      onClose();
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
+        toast.error(t('backups.wrongPassword'));
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
+  });
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('backups.transferTitle')}
+      size="md"
+      locked={mutation.isPending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!valid}
+            loading={mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            <Usb size={14} /> {t('backups.transferStart')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !mutation.isPending) mutation.mutate();
+        }}
+      >
+        <p className="muted">{t('backups.transferHelp')}</p>
+        <Alert tone="warning" icon={<AlertTriangle size={16} />}>
+          {t('backups.transferSessionsHint')}
+        </Alert>
+        <Field label={t('backups.transferFolder')} hint={t('backups.transferFolderHint')}>
+          {(id) => (
+            <Input
+              id={id}
+              value={folder ?? savedFolder}
+              placeholder={t('backups.extPlaceholder')}
+              onChange={(e) => setFolder(e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label={t('backups.transferCode')} hint={t('backups.transferCodeHint')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          )}
+        </Field>
+        <Field
+          label={t('backups.transferCodeAgain')}
+          error={
+            codeAgain.length > 0 && !codeMatches ? t('backups.transferCodeMismatch') : undefined
+          }
+        >
+          {(id, invalid) => (
+            <Input
+              id={id}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              aria-invalid={invalid}
+              value={codeAgain}
+              onChange={(e) => setCodeAgain(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          )}
+        </Field>
+        <Field label={t('backups.yourPassword')}>
+          {(id) => (
+            <Input
+              id={id}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+      </form>
     </Dialog>
   );
 }

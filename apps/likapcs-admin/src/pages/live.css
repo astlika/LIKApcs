@@ -1,0 +1,129 @@
+/* 0.31.0 — Live tracking page. Navy palette: background #0B1220, panels #111A2E, accent #3B82F6.
+   Scoped to .live-page so the rest of the admin keeps its own theme. */
+.live-page {
+  --live-bg: #0b1220;
+  --live-panel: #111a2e;
+  --live-line: #1f2b45;
+  --live-accent: #3b82f6;
+  --live-text: #e2e8f0;
+  --live-muted: #8a97b1;
+  --live-good: #34d399;
+  --live-bad: #f87171;
+  background: var(--live-bg);
+  color: var(--live-text);
+  border-radius: 14px;
+  padding: 20px;
+  min-height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.live-page .page-header h1 { color: var(--live-text); }
+.live-page .page-header__sub { color: var(--live-muted); }
+.live-page .card {
+  background: var(--live-panel);
+  border: 1px solid var(--live-line);
+  color: var(--live-text);
+  box-shadow: none;
+}
+.live-page .card__title { color: var(--live-text); }
+.live-page .card__subtitle { color: var(--live-muted); }
+.live-page .stat__label { color: var(--live-muted); }
+.live-page .stat__value { color: var(--live-text); }
+.live-page .stat__sub { color: var(--live-muted); }
+.live-page .stat--accent .stat__value { color: var(--live-accent); }
+.live-page .stat--success .stat__value { color: var(--live-good); }
+.live-page .stat--danger .stat__value { color: var(--live-bad); }
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--live-line);
+  color: var(--live-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.live-pill__dot,
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live-good);
+  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6);
+  animation: live-pulse 1.8s infinite;
+  flex: 0 0 auto;
+}
+.live-dot { display: inline-block; margin-right: 8px; }
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+
+.live-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 12px;
+}
+.live-card--feed { grid-column: 1 / -1; }
+.live-muted { color: var(--live-muted); font-size: 13px; }
+.live-pad { padding: 16px; margin: 0; }
+.live-money { font-variant-numeric: tabular-nums; font-weight: 600; }
+.live-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.live-facts { margin: 0; display: grid; gap: 10px; }
+.live-facts div { display: flex; justify-content: space-between; gap: 12px; }
+.live-facts dt { color: var(--live-muted); }
+.live-facts dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.live-list, .live-feed { list-style: none; margin: 0; padding: 0; }
+.live-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--live-line);
+  flex-wrap: wrap;
+}
+.live-row__main { display: grid; gap: 2px; min-width: 0; }
+.live-row__end { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.live-name { font-weight: 600; display: inline-flex; align-items: center; }
+
+.live-feed__item {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--live-line);
+  animation: live-in 0.35s ease-out;
+}
+.live-feed__item:first-child { border-top: none; }
+.live-feed__time { color: var(--live-muted); font-size: 13px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
+.live-feed__line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.live-feed__meta { margin-top: 4px; font-size: 14px; }
+@keyframes live-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.live-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.live-table td { padding: 10px 16px; border-top: 1px solid var(--live-line); }
+.live-table tr:first-child td { border-top: none; }
+
+@media (max-width: 640px) {
+  .live-page { padding: 12px; }
+  .live-feed__item { grid-template-columns: 1fr; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-pill__dot, .live-dot, .live-feed__item { animation: none; }
+}
