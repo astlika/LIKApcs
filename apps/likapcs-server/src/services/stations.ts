@@ -18,6 +18,7 @@ import { withTransaction } from '../db/pool.js';
 import { AppError, conflict, notFound } from '../errors.js';
 import type { RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
+import { awaitingPaymentSql } from './awaiting-payment.js';
 
 interface StationRow {
   id: string;
@@ -95,11 +96,9 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
-         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode = 'endpay'
-           AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND ${awaitingPaymentSql('a')}) AS awaiting_count,
          (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
-           WHERE a.station_id = s.id AND a.billing_mode = 'endpay' AND a.billed_at IS NULL
-           AND a.status IN ('expired', 'completed')) AS awaiting_cents
+           WHERE a.station_id = s.id AND ${awaitingPaymentSql('a')}) AS awaiting_cents
     FROM stations s
     LEFT JOIN station_devices d ON d.station_id = s.id AND d.status = 'approved'
     LEFT JOIN gaming_sessions g ON g.station_id = s.id AND g.status IN ('active', 'paused')

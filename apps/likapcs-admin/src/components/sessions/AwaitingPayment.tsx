@@ -5,6 +5,10 @@
  * (PC · customer · amount · time) with a one-click "Collect" that opens the same tender panel as
  * the POS and the session end dialog. Collecting is exactly-once on the server
  * (`POST /sessions/:id/collect`, 409 when already paid); the receipt "done" dialog follows.
+ *
+ * 0.19.0: with two or more open bills, "Collect all" takes them in ONE payment step
+ * (`POST /sessions/bulk-collect`). A session that owes nothing never appears here, and an open
+ * bill is no longer drawn on the PC tile — this strip is the one place unpaid bills live.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Hourglass, Wallet } from 'lucide-react';
@@ -25,6 +29,7 @@ import { useShiftGuard } from '../../state/shift-guard';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
+import { BatchChangeDialog, BulkSettleDialog } from './BulkSettleDialog';
 import { paidFrom, useSessionCustomer } from './SessionPanel';
 import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 
@@ -55,12 +60,32 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   const canView = can(PERMISSIONS.STATIONS_VIEW);
   const canCollect = can(PERMISSIONS.STATIONS_CONTROL);
   const list = useAwaitingPayment(canView);
+  const toast = useToast();
   const [collecting, setCollecting] = useState<SessionSummary | null>(null);
+  const [collectingAll, setCollectingAll] = useState<SessionSummary[] | null>(null);
   const [paid, setPaid] = useState<SessionPaid | null>(null);
+  const [change, setChange] = useState<{ n: number; totalCents: number; cents: number } | null>(
+    null,
+  );
   const items = list.data?.items ?? [];
-  if (!canView || items.length === 0) {
-    return paid ? <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} /> : null;
-  }
+  // The dialogs that follow a payment outlive the strip (it disappears with its last bill).
+  const after = (
+    <>
+      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+      {change && (
+        <BatchChangeDialog
+          title={t('sessions.awaiting.collectedAll', {
+            n: change.n,
+            total: fmt.money(change.totalCents),
+          })}
+          totalCents={change.totalCents}
+          changeCents={change.cents}
+          onFinish={() => setChange(null)}
+        />
+      )}
+    </>
+  );
+  if (!canView || items.length === 0) return paid || change ? after : null;
   const total = items.reduce((a, s) => a + awaitingAmountCents(s), 0);
   return (
     <>
@@ -78,6 +103,18 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           </span>
           <span className="muted num">· {fmt.money(total)}</span>
           <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>
+          {canCollect && items.length > 1 && (
+            <Button
+              size="sm"
+              variant="primary"
+              className="awaiting__all"
+              onClick={() => setCollectingAll(items)}
+              data-testid={`${testId}-collect-all`}
+            >
+              <Wallet size={13} />{' '}
+              {t('sessions.awaiting.collectAll', { n: items.length, total: fmt.money(total) })}
+            </Button>
+          )}
         </div>
         <div className="awaiting__chips">
           {items.map((s) => (
@@ -116,7 +153,28 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           }}
         />
       )}
-      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+      {collectingAll && (
+        <BulkSettleDialog
+          target={{ kind: 'collect', sessions: collectingAll }}
+          onClose={() => setCollectingAll(null)}
+          onDone={({ result, changeCents }) => {
+            setCollectingAll(null);
+            toast.success(
+              t('sessions.awaiting.collectedAll', {
+                n: result.done.length,
+                total: fmt.money(result.paidCents),
+              }),
+            );
+            if (changeCents > 0)
+              setChange({
+                n: result.done.length,
+                totalCents: result.paidCents,
+                cents: changeCents,
+              });
+          }}
+        />
+      )}
+      {after}
     </>
   );
 }

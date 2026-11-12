@@ -6,7 +6,7 @@
  * the scrolling canvas).
  */
 import { useMemo } from 'react';
-import { Bell, Hourglass } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { formatMinutesShort, type StationStatus, type StationSummary } from '@likapcs/shared';
 import { formatHms, projectSession } from '../../lib/session-time';
 import { useFormat } from '../../lib/format';
@@ -207,16 +207,8 @@ export function StationTile({
           {compact ? '' : t('requests.tile')}
         </span>
       )}
-      {station.awaitingPayment.count > 0 && (
-        <span
-          className="pc-tile__awaiting"
-          title={`${t('sessions.awaiting.title')} · ${fmt.money(station.awaitingPayment.amountCents)}`}
-          data-testid="tile-awaiting"
-        >
-          <Hourglass size={10} />
-          {compact ? '' : fmt.money(station.awaitingPayment.amountCents)}
-        </span>
-      )}
+      {/* 0.19.0: an unpaid bill of an ENDED session is no longer drawn on the PC — the PC is free
+          for the next customer. Open bills live in the "To collect" strip above the map. */}
       <div className="pc-tile__code">{station.code}</div>
       {!compact && station.name !== station.code && (
         <div className="pc-tile__name">{station.name}</div>

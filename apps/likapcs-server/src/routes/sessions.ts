@@ -2,7 +2,10 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   PERMISSIONS,
+  bulkCollectSchema,
+  bulkEndSchema,
   bulkMinutesSchema,
+  bulkStartSchema,
   collectSessionSchema,
   endSessionSchema,
   extendSessionSchema,
@@ -81,6 +84,22 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   /** 0.18.0: "+ minutes" for every selected PC in one click (gift mode also needs stations.gift). */
   app.post('/sessions/bulk-minutes', control, async (request) =>
     services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
+  );
+  /** 0.19.0: a session on every selected PC — one payment step, one transaction. */
+  app.post('/sessions/bulk-start', control, async (request, reply) => {
+    const result = await services.sessions.bulkStart(
+      bulkStartSchema.parse(request.body),
+      actorOf(request),
+    );
+    return reply.status(result.replayed ? 200 : 201).send(result);
+  });
+  /** "End" for a whole selection of PCs: one payment step, split across the bills. */
+  app.post('/sessions/bulk-end', control, async (request) =>
+    services.sessions.bulkEnd(bulkEndSchema.parse(request.body), actorOf(request)),
+  );
+  /** "Collect all": several ended pay-at-the-end sessions, one payment step. */
+  app.post('/sessions/bulk-collect', control, async (request) =>
+    services.sessions.bulkCollect(bulkCollectSchema.parse(request.body), actorOf(request)),
   );
   app.post('/sessions/:id/end', control, async (request) =>
     services.sessions.end(

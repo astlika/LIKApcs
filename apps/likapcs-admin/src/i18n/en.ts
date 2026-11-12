@@ -569,6 +569,8 @@ export const en = {
     awaiting: {
       title: 'To collect',
       hint: 'Ended "End Pay" sessions whose bill is still open.',
+      collectAll: 'Collect all ({n}) · {total}',
+      collectedAll: '{n} bills collected — {total}.',
     },
     duration: 'Duration',
     minutes: 'Minutes',
@@ -1019,10 +1021,33 @@ export const en = {
     startManyTitle: 'Start {n} PCs',
     startManyHint:
       'Prices shown for {code}; every PC is quoted by its own pricing rule before you pay.',
-    bulkTenderShort: 'The amount handed over does not cover all the PCs.',
     startedManyChange: 'Session started on {n} PCs · change {change}.',
     startedMany: 'Session started on {n} PCs.',
-    startedPartial: 'Started on {ok}, failed on {failed}: {codes}',
+    bulkEndTitle: 'Stop {n} PCs',
+    bulkEndBody:
+      'One payment for every bill below. The clock stopped when this window opened; each PC keeps its own receipt.',
+    bulkEndPay: 'Stop · {total}',
+    bulkNothingDue: 'Nothing to pay: {codes}',
+    bulkEndConfirm: 'Stop {n} PCs',
+    bulkEndNone: 'None of the selected PCs has a running session any more.',
+    bulkEndLaterHint:
+      'The PCs lock now; pay-at-the-end bills stay open under "To collect" until they are paid.',
+    bulkEndLaterKeeps:
+      '"Collect later" leaves these running — open time and orders are paid on the spot: {codes}',
+    bulkEnded: '{n} PCs stopped.',
+    bulkEndedPaid: '{n} PCs stopped · {total} paid.',
+    bulkEndedAwaiting: '{total} waits under "To collect".',
+    bulkEndedKept: 'Still running (must be paid now): {codes}.',
+    bulkCollectTitle: 'Collect {n} bills',
+    bulkCollectBody:
+      'One payment for every bill that waits at the desk. Each PC keeps its own receipt.',
+    bulkCollectNone: 'These bills have already been paid.',
+    bulkBillsChanged: 'The amounts changed — nothing was charged. Check the new amounts.',
+    bulkBusy:
+      'Someone else changed these PCs at the same moment — nothing was charged. Check again.',
+    bulkRefused: 'Nothing was changed.',
+    bulkTenderShort: 'The amount handed over does not cover all the bills — nothing was changed.',
+    batchPaid: 'Paid',
   },
   settings: {
     title: 'Settings',

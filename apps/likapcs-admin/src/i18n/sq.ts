@@ -579,6 +579,8 @@ export const sq: Dictionary = {
     awaiting: {
       title: 'Për arkëtim',
       hint: 'Seanca "Pagesë në fund" të mbaruara, me llogari ende të hapur.',
+      collectAll: 'Arkëto të gjitha ({n}) · {total}',
+      collectedAll: 'U arkëtuan {n} fatura — {total}.',
     },
     duration: 'Kohëzgjatja',
     minutes: 'Minuta',
@@ -1027,10 +1029,33 @@ export const sq: Dictionary = {
     noneStartable: 'Asnjë PC i lirë në zgjedhje',
     startManyTitle: 'Nis {n} PC',
     startManyHint: 'Çmimet shfaqen për {code}; çdo PC vlerësohet me rregullin e vet para pagesës.',
-    bulkTenderShort: 'Shuma e dorëzuar nuk i mbulon të gjithë PC-të.',
     startedManyChange: 'Seanca nisi në {n} PC · kusur {change}.',
     startedMany: 'Seanca nisi në {n} PC.',
-    startedPartial: 'Nisi në {ok}, dështoi në {failed}: {codes}',
+    bulkEndTitle: 'Ndalo {n} PC',
+    bulkEndBody:
+      'Një pagesë për të gjitha faturat më poshtë. Ora u ndal kur u hap kjo dritare; çdo PC e ka faturën e vet.',
+    bulkEndPay: 'Ndalo · {total}',
+    bulkNothingDue: 'Pa asgjë për të paguar: {codes}',
+    bulkEndConfirm: 'Ndalo {n} PC',
+    bulkEndNone: 'Asnjë nga PC-të e zgjedhur nuk ka më seancë aktive.',
+    bulkEndLaterHint:
+      'PC-të kyçen tani; faturat "Pagesë në fund" mbeten të hapura te "Për arkëtim" derisa të paguhen.',
+    bulkEndLaterKeeps:
+      '"Arkëto më vonë" i lë të ndezur këta — koha e hapur dhe porositë paguhen menjëherë: {codes}',
+    bulkEnded: 'U ndalën {n} PC.',
+    bulkEndedPaid: 'U ndalën {n} PC · u paguan {total}.',
+    bulkEndedAwaiting: '{total} presin te "Për arkëtim".',
+    bulkEndedKept: 'Mbetën të ndezur (duhet paguar tani): {codes}.',
+    bulkCollectTitle: 'Arkëto {n} fatura',
+    bulkCollectBody:
+      'Një pagesë për të gjitha faturat që presin në arkë. Çdo PC e ka faturën e vet.',
+    bulkCollectNone: 'Këto fatura janë paguar tashmë.',
+    bulkBillsChanged: 'Shumat ndryshuan — nuk u arkëtua asgjë. Shiko shumat e reja.',
+    bulkBusy:
+      'Dikush tjetër i ndryshoi këta PC në të njëjtin çast — nuk u arkëtua asgjë. Provo prapë.',
+    bulkRefused: 'Nuk u ndryshua asgjë.',
+    bulkTenderShort: 'Shuma e dorëzuar nuk i mbulon të gjitha faturat — nuk u ndryshua asgjë.',
+    batchPaid: 'Paguar',
   },
   settings: {
     title: 'Cilësimet',

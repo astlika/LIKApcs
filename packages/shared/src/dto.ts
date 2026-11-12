@@ -760,6 +760,136 @@ export interface BulkMinutesResult {
   totalCents: number;
 }
 
+/**
+ * 0.19.0 — many PCs, ONE payment step: starting a whole selection, stopping it ("End" on the map)
+ * or taking the money of several ended pay-at-the-end sessions ("Collect all"). The server works
+ * out what every PC owes by its own rule, splits the tenders across those bills
+ * (`allocatePayments`) and does the whole batch in ONE transaction: every PC of the batch goes
+ * through, or nothing is changed and no money is recorded.
+ */
+const bulkTenders = {
+  /** The tenders handed over for the whole batch (cash, card, split, pay later, balance). */
+  payments: z.lazy(() => z.array(salePaymentInputSchema).max(5)).optional(),
+  /**
+   * The total the cashier was shown (and took the money for). The server alone computes the
+   * bills; when its own total differs — a price rule changed with the hour, an order was added —
+   * it refuses the batch with `BILLS_CHANGED` so the amounts are checked again.
+   */
+  expectedTotalCents: z.number().int().min(0).optional(),
+};
+
+export const bulkStartSchema = z
+  .object({
+    stationIds: z.array(z.string().uuid()).min(1).max(60),
+    billingMode: z.enum(BILLING_MODES),
+    packageId: z.string().uuid().optional(),
+    minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .optional(),
+    /** One customer for every PC of the batch (their tab / balance when paid that way). */
+    customerId: z.string().uuid().optional(),
+    customerName: z.string().trim().max(80).optional(),
+    notes: z.string().trim().max(500).optional(),
+    ...bulkTenders,
+    /** Idempotency key of the batch: sent again, it returns the sessions already started. */
+    clientRequestId: z.string().min(8).max(48).optional(),
+  })
+  .refine((q) => q.billingMode === 'postpaid' || Boolean(q.packageId) !== Boolean(q.minutes), {
+    message: 'prepaid / end-pay sessions need either a package or a number of minutes',
+    path: ['minutes'],
+  });
+export type BulkStartRequest = z.infer<typeof bulkStartSchema>;
+
+export interface BulkStartItem {
+  stationId: string;
+  code: string;
+  sessionId: string;
+  minutes: number | null;
+  /** The quote of this PC: paid now (prepaid), due at the end (end pay), 0 for open time. */
+  priceCents: number;
+}
+export interface BulkStartResult {
+  started: BulkStartItem[];
+  /** Taken now with the tenders (prepaid bills). */
+  paidCents: number;
+  /** True when this batch had already gone through and nothing was done again. */
+  replayed: boolean;
+}
+
+export const bulkEndSchema = z.object({
+  stationIds: z.array(z.string().uuid()).min(1).max(60),
+  /** Dry run: only report what every PC would owe; nothing is changed. */
+  preview: z.boolean().default(false),
+  /**
+   * `pay`: every bill of the batch is paid now with `payments`. `later`: nothing is taken now —
+   * prepaid sessions just stop, pay-at-the-end ones wait in "to collect", and sessions that must
+   * be paid on the spot (open time, orders on a prepaid bill) keep running and are reported.
+   */
+  settle: z.enum(['pay', 'later']).default('pay'),
+  /**
+   * Only these sessions — the ones the preview listed. A session that started on one of the PCs
+   * after the cashier looked is never stopped by surprise.
+   */
+  sessionIds: z.array(z.string().uuid()).max(60).optional(),
+  /**
+   * `quotedAt` of the preview: the clock stopped when the amounts were shown, so what was shown
+   * is what is billed. It is the server's own timestamp handed back (no clock skew), and the
+   * server bounds it like a single end (`SESSION_STOP_CLOCK_GRACE_SECONDS`, never in the future).
+   */
+  quotedAt: z.string().datetime().optional(),
+  /** Who pays, when the batch goes on a customer's tab or balance (credit / wallet tenders). */
+  customerId: z.string().uuid().optional(),
+  ...bulkTenders,
+});
+export type BulkEndRequest = z.infer<typeof bulkEndSchema>;
+
+export const bulkCollectSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+  preview: z.boolean().default(false),
+  customerId: z.string().uuid().optional(),
+  ...bulkTenders,
+});
+export type BulkCollectRequest = z.infer<typeof bulkCollectSchema>;
+
+export interface BulkBill {
+  stationId: string;
+  code: string;
+  sessionId: string;
+  billingMode: BillingMode;
+  customerId: string | null;
+  customerName: string | null;
+  /** What this PC owes now: its time (unless prepaid) plus the orders still on its bill. */
+  dueCents: number;
+}
+export interface BulkBillSkipped {
+  stationId: string | null;
+  code: string;
+  sessionId: string | null;
+  /**
+   * `no_active_session`: nothing runs on the PC. `needs_payment`: "stop without collecting" was
+   * chosen and this session must be paid on the spot. `not_collectable`: already paid / not an
+   * ended pay-at-the-end session.
+   */
+  reason: 'no_active_session' | 'needs_payment' | 'not_collectable';
+}
+export interface BulkSettleResult {
+  preview: boolean;
+  /** Server time the bills were worked out at — handed back as `quotedAt` when confirming. */
+  quotedAt: string;
+  /** Preview: the bills as they stand. Otherwise: the sessions that were ended / collected. */
+  done: BulkBill[];
+  skipped: BulkBillSkipped[];
+  /** Sum of `done[].dueCents`. */
+  totalCents: number;
+  /** Of that, taken now with the tenders. */
+  paidCents: number;
+  /** Of that, left for "to collect" (pay-at-the-end sessions stopped without payment). */
+  awaitingCents: number;
+}
+
 /** 0.18.0: the debts page groups by customer — one row, click for the invoices. */
 export interface DebtCustomerGroup {
   customerId: string;

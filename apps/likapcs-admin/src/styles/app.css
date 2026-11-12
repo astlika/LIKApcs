@@ -2150,24 +2150,17 @@ body:has(.pos) .toasts {
 .awaiting__amount {
   font-size: 14px;
 }
-/* Station tile: an ended end-pay bill waiting at the desk. */
-.pc-tile__awaiting {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
+/* "Collect all": every waiting bill in one payment step (0.19.0) — far right, after the hint. */
+.awaiting__all {
+  margin-left: 4px;
+  flex: none;
 }
 @media (max-width: 900px) {
   .awaiting__hint {
     display: none;
+  }
+  .awaiting__all {
+    margin-left: auto;
   }
 }
 /* "End Pay" tender (0.14.0): the PC runs now, the bill is collected at the desk at the end — accent. */
@@ -3086,6 +3079,31 @@ tr:hover .debt-cell .btn,
   border: 1px solid var(--border);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
+}
+/* One bill per row — PC, who, amount — in the "End (N)" / "Collect all" dialogs (0.19.0). */
+.bulk-bills--rows {
+  grid-template-columns: 1fr;
+  max-height: 196px;
+  margin-bottom: 0;
+}
+.bulk-bills--rows li {
+  align-items: center;
+}
+.bulk-bills__code {
+  font-weight: 700;
+  min-width: 56px;
+}
+.bulk-bills__who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.batch-change {
+  font-size: 30px;
+  line-height: 1.1;
 }
 .start-grid {
   display: grid;
