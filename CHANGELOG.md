@@ -1,8 +1,10 @@
 ## [Unreleased]
 
+## [0.33.4] - 2026-11-12
+
 ### Fixed
 
-- POS: a product that is tracked and may not go below zero can no longer be put in the sale beyond its stock — by a click, a search, a barcode or a typed quantity. The till says what is left ("Vetëm 3 në stok: …") and adds nothing more. Products allowed below zero and products without stock tracking are not limited. Before, the cart took any quantity and the server refused only at payment, in English.
+- POS: a product that is tracked and may not go below zero can no longer be put in the sale beyond its stock — by a click, a search, a barcode or a typed quantity. The till says what is left ("Vetëm 3 në stok: …") and adds nothing more. Products allowed below zero and products without stock tracking are not limited. Before, the cart took any quantity and the server refused only at payment, in English. Several clicks or scans in the same moment are counted one by one: none is lost and the limit holds.
 - PC bill: products put on a PC's bill are checked against the stock when they are added (what already waits on other bills counts as taken), with `409 out_of_stock` and what is left. Before, any quantity was accepted and the bill then could not be closed (`INSUFFICIENT_STOCK` at the end of the session). The end of a session now always closes its bill: its order lines were handed over already.
 - Stations: starting several PCs at once. The start dialog no longer shows a "PC time sold at the till" block with a disabled "Start 0 PCs…" button when no paid minutes exist. With paid minutes, one click starts every selected PC: the PCs with paid minutes use them, the others take the chosen time. One payment for a group can be shared equally over the selected PCs ("300 min" for five PCs → 60 min each).
 - Stations: a failed bulk start names the reason per PC, not only the PC codes.
@@ -13,9 +15,10 @@
 ### Changed
 
 - Reservations: a booking no longer marks its PCs. The PC cards show no "Reserved" state, pill, time, countdown or name; a booked PC is used freely until the booking's reminder time and nothing asks for a confirmation before it.
-- Reservations: the reminder is a card that stays on the screen, on every page, until it is answered (it was a four-second toast). It appears at the reminder time (default 10 minutes before, per booking and as a house default) and again at the booked time, each with the chime. It shows who comes, the phone, the PCs and whether each is free or in use.
+- Reservations: the reminder is a card that stays on the screen, on every page, until it is answered (it was a four-second toast). It appears at the reminder time (10 minutes before; the house default is changed in the reservations dialog, and the API takes it per booking) and again at the booked time, each with the chime. It shows who comes, the phone, the PCs and whether each is free or in use.
 - Reservations: "Arrived — start the PCs" (on the reminder and in the reservations dialog) opens the start dialog for the booking's PCs with the name filled in; choosing the time starts them all. There is no confirmation dialog. A PC the customer already sits at is marked as arrived.
 - Reservations: inside a booking's window the start dialog shows a ticked note "Reserved for … — the booked customer arrived"; unticked, someone else starts the PC and the booking keeps it (`ignoreReservation` used to use the booking up).
+- Reservations: when a booking reaches its reminder time the server tells its PCs, so every desk knows about it without a reload.
 - Stations: the "Debt" figure in the header counts the PCs in use by a customer who owes money.
 
 ### Added
