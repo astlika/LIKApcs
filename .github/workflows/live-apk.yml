@@ -1,0 +1,40 @@
+# likalivepcs — the owner's live monitor for Android (apps/likapcs-live).
+# Probe of the build machine (temporary; replaced by the real build).
+name: Live app (Android)
+
+on:
+  push:
+    branches: ['**']
+    tags: ['likalivepcs-v*']
+    paths:
+      - 'apps/likapcs-live/**'
+      - '.github/workflows/live-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Facts
+        run: |
+          {
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            echo "platforms: $(ls "$ANDROID_HOME/platforms" | tr '\n' ' ')"
+            echo "build-tools: $(ls "$ANDROID_HOME/build-tools" | tr '\n' ' ')"
+            echo "sdk dirs: $(ls "$ANDROID_HOME" | tr '\n' ' ')"
+            echo "cmdline-tools: $(ls "$ANDROID_HOME/cmdline-tools" 2>&1 | tr '\n' ' ')"
+            echo "JAVA_HOME=$JAVA_HOME"
+            env | grep '^JAVA_HOME_' | sort
+            echo "kvm: $(ls -l /dev/kvm 2>&1)"
+            echo "groups: $(id)"
+            echo "cpu: $(nproc) mem: $(free -m | awk '/Mem:/{print $2}') MB disk: $(df -h / | awk 'NR==2{print $4}')"
+            echo "psql: $(psql --version 2>&1) ; pg service: $(systemctl is-enabled postgresql 2>&1)"
+            echo "node: $(node -v) ; gradle: $(gradle --version 2>/dev/null | awk '/^Gradle/{print $2}')"
+            echo "image: $ImageOS $ImageVersion"
+          } > probe.txt 2>&1
+          cat probe.txt
+          msg=$(sed -e 's/%/%25/g' probe.txt | awk '{printf "%s%%0A", $0}')
+          echo "::notice title=probe::$msg"
