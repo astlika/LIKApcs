@@ -1,30 +1,646 @@
-# Changelog
-
-All notable changes to LIKApcs are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/). Admin, Client and Server share one version line.
-
 ## [Unreleased]
 
-### Changed
-
-- **The POS no longer lets a product go into a sale beyond its stock — unless the owner allows it
-  on that product.** Tapping a tile, scanning a barcode, the "+" button and a typed quantity all
-  stop at what is on the shelf and say why ("Cola: only 3 in stock" / "Chips is out of stock").
-  Products with **Allow selling without stock** ticked (Products › edit) and products whose stock
-  is not tracked are unaffected. A scan no longer adds a sold-out product "with a warning": the
-  cashier used to find out only at payment, with an English server message. The server rule is
-  unchanged (it always refused such a sale); it now has its own test for the per-product switch.
-- A sale that holds more than the shelf anyway (a parked sale resumed after the stock was sold, or
-  another cashier sold it meanwhile) marks the line in red, keeps the payment closed until the
-  quantity is lowered, and a refusal by the server is shown in the cashier's language with the
-  real quantity left.
+## [0.33.2] - 2026-10-09
 
 ### Fixed
 
-- **POS payment dialog: endless re-render while it was open.** The dialog's customer-display
-  effects depended on the display state they themselves publish, so React looped ("Maximum update
-  depth exceeded") for as long as the dialog stayed open. They now depend on the setter only.
+- Stations: a finished customer's name stays on the PC only while the bill is unpaid or the customer still owes. After the payment, with no debt left, the name is removed (it used to stay until another session started on that PC).
+- Stations: "Debt" shows on a free PC only when the bill of its last session still has an open debt. It used to show the customer's total balance, so a PC showed debt even with no open bill. A PC with a real debt keeps the customer's name.
+
+## [0.33.1] - 2026-10-09
+
+### Added
+
+- Gaming Stations: a PC can show a name for the running session only. It is taken from the customer's name when a session starts, or set by hand from the PC menu ("Emri në këtë PC"). When the session ends, the PC goes back to its own name (`stations.name`). Stored in `gaming_sessions.pc_label` (migration `0055`) and sent as `pcLabel`; changed with `PATCH /sessions/:id/pc-label`.
+- Phone APK: server connection state in the header (online, offline, no internet).
+- Phone APK: PIN lock. It locks after one minute in the background or five minutes without a touch. Five wrong PINs sign the account out. The PIN is stored on the phone only, as a salted hash.
+- Phone APK: the cash count can be entered by note and coin; the total fills the counted amount.
+- Phone: the stock screen shows every product with its stock, status and a bar against the minimum. Filters: all, out, low, plenty, OK, to order, with or without barcode, active or inactive, by category. Sort by name, stock, stock against minimum, value, category or last change. Cards or a compact list. Search with a barcode scanner or by voice where the phone supports them, and recent searches. Details sheet with the 30-day sales chart, days of stock left and recent movements. Add stock, count physically and record damage or expiry (with undo for one minute; large amounts need a second tap and the phone PIN if one is set). Copy the order list and export the list as CSV. Settings for what counts as plenty of stock and whether prices show.
+- Phone: a stock change on the phone asks for `inventory.adjust`; the server still checks it.
+- Phone APK: native system notifications for prepaid PC time (5 minutes left, time up) and for PCs that go offline, also while the app is in the background.
+- Phone: the stock screen searches the whole list on the phone (accents and typos are ignored, barcodes too), filters by supplier, and sorts by best sellers and days left. The product sheet shows minimum, note, variants, supplier, 30-day sales chart and the last movements; "Shit tani" puts the product in the sale basket; the count sheet has "Tjetra" to go on to the next product; "Faturë hyrje" saves several products on one invoice. Stock alarms can be paused for 1 or 4 hours; a swipe left or a long press adds stock. The last list stays visible offline.
+- Phone: the barcode scanner falls back to a built-in decoder where the browser has no barcode detector.
+- Phone APK: a different sound for each kind of alert (sale, PC, call, reservation, staff login, debt, low stock, time, error), also for the system notifications.
+- Phone: the barcode scanner beeps and vibrates when a code is read. The scan button is always shown. A typed or scanned barcode in the search box (Enter) opens the product with a beep.
+- Phone: POS. Holding a product for half a second adds five pieces. "Most sold" sorts the products by use on this phone. A low stock note shows on the tile (5 or fewer). The basket is kept for 10 minutes after the last change (also after a reload). "Clear basket" asks for a second tap. The savings from promotions show in the total.
+- Phone: Settings → Notifications: "Quiet for 1 hour" stops the in-app sounds and vibration on this phone. System notifications still appear.
+
+## [0.33.0] - 2026-10-09
+
+### Changed
+
+- **Stations (admin)**: every view (Grid, List, Compact, Detailed) selects PCs the same way: click, Ctrl/Cmd+click, Shift+click, a checkbox per PC, Space on the focused PC, Ctrl+A, Esc, rubber-band drag over the map, a click on a zone title, and **Select all PCs** (visible PCs only).
+- **Stations (admin)**: Grid cards are simpler: PC code, state tag, timer, bill line and badges. The timer and bill line appear only when they add information.
+- **Stations (admin)**: the action bar is one row: the selection, the main actions and **More ▾** for the rest. Only the actions that apply to the current selection are shown.
+- **Stations (admin)**: the reservations dialog works in three steps: **When** (quick hours or a date and time), **Which PCs** (PCs already booked for that hour are marked) and **Who** (customer and tolerance; phone and notes are optional). Coming reservations are grouped by hour, and cancelling asks for confirmation.
+- **Admin**: in a phone-width window (760 px or narrower) the sidebar becomes an icon rail and the topbar hides its secondary items (shift and server status, update badge, Live badge, shortcut hints).
+
+### Fixed
+
+- **Stations (admin)**: in List, Compact and Detailed views a click on a PC no longer clears the selection. Before 0.33.0 those views could not select a PC.
+
+## [0.32.0] - 2026-10-09
+
+### Added
+
+- **Stations (admin)**: redesigned Gaming Stations board for internet cafés. Four views from **View ▼** next to the icon-size slider: Grid, List, Compact and Detailed. Each PC card shows its state (Active, Awaiting payment, Debt, Offline, Reserved), session time, products and total. Header figures: active, free, awaiting payment, debt, revenue today and products sold. Hovering a PC shows the customer, time, products, total and start time. The view is saved to the account.
+- **Stations (admin)**: PC reservations. Staff book one or more PCs for a time, with a tolerance (default 5 min, changeable per reservation). A reserved PC starts only after staff confirm. A reservation that is not checked in is released automatically after its tolerance. Warnings 10 min before and at the start (in-app toast and sound).
+- **Stations (admin)**: manual badges per PC (V.I.P, Tournament, Premium, Birthday).
+- **Server**: `GET/POST /reservations`, `POST /reservations/:id/cancel`, `PATCH /reservations/:id`; `409 reservation_conflict` when a start hits a held PC; `reservation.changed` push event.
+
+## [0.31.0] - 2026-10-09
+
+### Added
+
+- **Live tracking** (admin, `/phone/`, `/tab/`, desktop): today's turnover (VAT included), gross and net profit,
+  expenses, losses (refunds and stock loss), debt given and collected, drawer expected cash, staff on duty with hours
+  and last sale, top products and a live sales feed (cashier, product, amount, profit).
+- Permission `live.view`: owner and admin by default (migration 0053); the server filters the live sale event by it,
+  so a cashier never receives it.
+- Sale notification while the admin screen is open: grouped per cashier within 2 s (at most 5 s), a toast, a short chime
+  and, on phones, a vibration. Closed apps get no notification (needs HTTPS or the native app).
+- Profit per sale is net of VAT and minus the purchase cost (as in the profit report). A sale with a product that has no
+  cost is marked "no cost" instead of showing a profit that is too high.
+
+### Fixed
+
+- Cash: the payment-method line of a shift (phone and admin «Arka») now takes the change off the cash, the same as the reports and the drawer. A cash sale with change showed the full amount handed over (e.g. 6.50 € for a 1.50 € sale with 5.00 € change); it now shows the cash kept (1.50 €).
+- Phone: the close-shift sheet shows the amount expected in the drawer before you confirm, and the difference as you type. An exact count shows «Saktë» (Exact) with no sign; a difference shows its sign and the colour of the warning threshold.
+
+### Changed
+
+- Staff report: hours come from what each person did in a shift. A shift someone else opened gives the cashier their first-to-last sale or drawer movement there; the opener keeps the whole shift. Overlapping spans on two registers count once. Someone who acted in an open shift in the last 30 minutes is on duty now.
+- The staff report counts shifts a person worked in (opened, or sold / moved cash in), not only the ones they opened.
+
+### Tests
+
+- `test/integration/staff-hours.test.ts` (new): two cashiers sell in a shift the owner opened; both get hours and are on duty; after the close nobody is on duty.
+- `cash-reports.test.ts`: the cash line by method is 450 (net of change), not 650.
+
+## [0.30.1] - 2026-10-09
+
+### Added
+
+- Reports in the admin and the desktop (`/desktop/`): the «Summary» and «Staff» tabs of 0.30.0, with the same figures and the same date range.
+- Live reports: when a sale, cash movement, expense, debt, wallet, purchase, order, product, stock or session changes, the server pushes a `reports.changed` event to the admin and to the phone and tablet. The admin and the phone refresh their reports at once. The staff screen keeps a 15-second refresh as a fallback. The event carries no data: the screens fetch the figures again.
+- Tests: `test/integration/reports-live.test.ts` (a sale sends `reports.changed` to the admin socket; a read does not).
+
+### Known gaps (not in this release)
+
+- The hours of a person count only from the cash shifts they opened. Staff who never open a shift have no hours.
+- Profit is only as complete as the product costs: a product without a purchase cost makes the gross profit too high. The screens show a warning when this happens.
+- The phone and tablet screens were tested in a simulated browser only; touch on a real device is not tested yet.
+
+## [0.30.0] - 2026-10-09
+
+### Added
+
+- Reports (phone and tablet): a «Përmbledhja» (summary) tab for any date range. It shows turnover with VAT, net profit, expenses, the drawer (net and counted difference), the detail lines and a day-by-day list. New endpoint `GET /reports/summary`. Every figure comes from the report it is named after, and the integration test checks they agree.
+- Reports (phone and tablet): a «Punonjësit» (staff) tab, shown to users with the users permission. It shows who is on duty now (live, refreshed every 15 seconds), and per person the hours from the cash shifts they opened, sales, refunds with sales, and the shortage or surplus of their closed shifts. New endpoint `GET /reports/staff`.
+- Tests: `test/integration/report-summary.test.ts` (one real cash shift run through the API, reconciled against the sales, profit and cash-book reports).
+
+### Known gaps (not in this release)
+
+- Admin and desktop (`/desktop/`) do not have the summary or the staff report yet.
+- The staff screen refreshes every 15 seconds. Live push from the server is not wired to these screens yet.
+- The hours of a person count only from the cash shifts they opened. Staff who never open a shift have no hours.
+- Profit is only as complete as the product costs: a product without a purchase cost makes the gross profit too high. The screen shows a warning when this happens.
+
+## [0.29.8] - 2026-10-09
+
+### Added
+
+- Phone and tablet, sale: split payment. A sale can be paid in several lines (cash, card, bank transfer, debt). Quick cash amounts («Sakto», 5, 10, 20, 50 €) and «+» buttons for the other methods. The change is shown and the sale stays locked until the full amount is given.
+- Phone and tablet, start page: today's sales (count, net, average), the cash drawer balance (for users who may see the cash drawer), and the five most overdue debts with a «Thirr» (call) button and a «Pagesë» button.
+- Phone and tablet: swipe down on the grip or title bar to close a sheet. A short vibration on the main actions (Android).
+- Tablet: below 700 px wide, the navigation moves to the bottom of the screen.
+- Tests: `e2e/` with a seed script, a screen-size smoke test and a real-sales test (phone and tablet) for a server with PostgreSQL.
+
+### Changed
+
+- Phone: the favourite stars in POS are at least 44 px.
+
+## [0.29.7] - 2026-10-09
+
+### Added (tablet at /tab/)
+
+- Touch-first tablet app at `/tab/` on the LIKApcs Server (same origin, like `/phone/` and `/desktop/`). Side navigation, large touch targets (52px+), and grids that use the width of the tablet. It reuses the phone's screens and logic, and screens load on demand so the first load stays small. Build with `pnpm run build` in `apps/likapcs-tablet`; the server reads it from `LIKAPCS_TAB_DIR`, or from a `tab/` folder next to the installed server. `stage-runtime.ps1` copies it there.
+- Phone app: new labels in English for the tablet shell (Main, More, Connected, Offline).
+
+### Added (desktop in the browser)
+
+- Admin desktop UI as a browser app at `/desktop/` on the LIKApcs Server (same origin as the API, like `/phone/`). Build with `pnpm run build:web` in `apps/likapcs-admin` (folder `dist-web`). The server reads it from `LIKAPCS_DESKTOP_DIR`, or from a `desktop/` folder next to the installed server. `stage-runtime.ps1` copies it there.
+- Desktop-only features (embedded server, LAN discovery, Windows firewall, start at login, native updater) are not available in the browser; they show as unavailable there. The customer display works in the browser as `/desktop/display.html` (same origin).
+
+## [0.29.5] - 2026-10-09
+
+### Added
+
+- Phone app, PCs: lock and unlock a PC, send it a message (10 s, 20 s or 1 min), and restart or shut it down. Restart and shutdown need «Fuqia e PC-ve» and ask for confirmation twice.
+- Phone app, PCs: in selection mode, remove minutes from several prepaid PCs at once, or end the running sessions of the selected PCs (asks twice).
+- Phone app, PCs: a warning when a PC goes offline, and once per session when a prepaid session has 5 minutes left.
+- Phone app: cash drawer page (open the shift, deposits and withdrawals, close the shift with a count and a confirmation).
+- Phone app: expenses page (list by period, add, void with a reason). A cash expense is taken from the open drawer.
+- Phone app: low-stock page and a barcode check. In POS, a barcode typed or scanned and confirmed with Enter adds the product to the cart.
+- Phone app, POS: discount (for users with «pos.discount»), suspend a sale, open a suspended sale from the list and finish it, or cancel it. Favourite products (★) are kept on the phone.
+- Phone app, reports: CSV downloads for sales, cash book and sold products, for the chosen period.
+- Phone app: new customer from the customer picker (name and phone), for users with «customers.manage».
+- Phone app, Settings: language (Shqip or English), saved on the account. New field `language` in the preferences (`GET`/`PUT /auth/preferences`), default `sq`.
+
+### Changed
+
+- Phone app: the shell, menu, Settings, login, home, customer picker, cash, expenses, stock, PC commands and warnings are translated to English. The PC, POS, debts and reports screens are not translated yet.
+
+## [0.29.4] - 2026-11-07
+
+### Added
+
+- Phone app, PCs: add or remove time on a running prepaid PC from one button. Removing takes 5–60 minutes off the clock with no payment (removed minutes are not refunded); adding is paid now, as at the desk. Removing is limited to what is left on the clock.
+- Phone app, PCs: the spent time and the remaining time show hours, minutes and seconds.
+- Phone app, PCs: «Të gjitha» selects every PC in selection mode, and «Asnjë» clears it.
+- Phone app: a Menu button with Reports (sales, cash book and, with permission, profit; read only), Settings and sign-out.
+- Phone app, Settings: theme (dark, light or follow the phone) and text size (normal or large). The choice is saved on the account, so the same username has the same look on every phone. New endpoints: `GET /auth/preferences` and `PUT /auth/preferences` (migration 0052).
+- Phone app, POS: products with extras can be sold. Extras are chosen per line, and the same product with different extras is a separate cart line.
+
+### Changed
+
+- Phone app: the header «Dil» button moved into the Menu.
+
+## [0.29.3] - 2026-11-07
+
+### Added
+
+- Phone app, PCs: wake offline PCs from the phone (Wake-on-LAN), one at a time or several together. Wake needs a MAC address on record for the PC.
+- Phone app, PCs: select several PCs and start them together with the same settings. PCs that fail to start stay in the list with the reason.
+- Phone app, PCs: pay with credit (debt) when starting or stopping a PC. A customer must be chosen. Stopping a postpaid PC on credit re-reads the live price before sending.
+
+### Changed
+
+- Phone app, POS: products whose tracked stock is 0 (negative stock not allowed) are no longer shown.
+
+## [0.29.2] - 2026-11-07
+
+### Added
+
+- Phone app (`/phone/`), now complete for daily work from a phone (iPhone 6s/SE 375 px up to Pro Max):
+  - **Debts:** customers with open debts, oldest first, with overdue markers. Pay the full balance or part of it, by cash, card, bank transfer or other. For cash, the amount received gives the change. Payment is applied to the oldest invoices first.
+  - **PCs:** running and paused PCs with live time and price. Pause/resume, add time with payment, stop and collect. Open-time sessions are billed by the server to the minute. Starting a PC is allowed only when the PC is online.
+  - **POS:** product search and categories, cart with quantities, optional customer, payment by cash, card, bank transfer, other, or on credit (requires a customer).
+  - Start page with PC and debt totals and quick shortcuts. Only the actions the signed-in user is allowed to perform are shown.
+
+### Changed
+
+- Phone app: bottom navigation with four tabs; money actions are blocked while the phone has no connection; every money request carries an idempotency key.
+
+## [0.29.1] - 2026-11-07
+
+### Added
+
+- Backups › Server and network: lists every address and port the server answers on (local network addresses found automatically, plus addresses typed by hand such as Tailscale IPv4, IPv6 or MagicDNS names), with API and phone-app URLs and copy buttons. Typed addresses are validated and must be a plain IP or host name (no scheme, port or path).
+
+## [0.29.0] - 2026-11-06
+
+### Added
+
+- Android phone app (debug APK, Capacitor): the phone app can be installed on Android. On first sign-in the server address is entered once (for example `http://100.x.y.z:4700` over Tailscale). The APK is a debug build, not signed for Play Store publishing. Not yet tested on a physical phone; iOS is not built.
+- Server CORS default includes `https://localhost` so the Android app (which runs from that origin) can sign in.
+
+### Changed
+
+- Stations page (admin): the status counts are filters (click one to show only those PCs). Less-used actions (Connect a PC, Show archived) moved to a "More" menu. The selection bar is compact when nothing is selected. Empty filter results show a message.
+
+## [0.28.0] - 2026-11-06
+
+### Added
+
+- Till (POS) works offline on a PC: when the server cannot be reached, a sale is kept in a local queue with a PC-numbered local number (e.g. `PC2-000001`; the PC number is set once per PC) and a provisional, non-fiscal 80 mm slip is printed at once. When the connection returns the queue is sent to the server, which gives each sale its official, gap-free `R-YYYY-NNNNNN` number. Scope of this release: POS sales only (no offline sessions, customers with debt, price or settings changes).
+- Staff purchases: an admin can record items taken for personal use. They are not sales and do not touch the cash drawer: stock goes out and an expense `staff_purchase` (method `other`) is recorded. Permission `pos.staff_purchase` (owner and admin by default, assignable under Roles & permissions). Earlier staff sales were converted to staff purchases and expenses and voided as sales.
+- PCs with prepaid time can take extra products that are paid later. The paid time is not changed; products left unpaid stay on the bill and the PC appears under "Awaiting payment", where the unpaid products are collected.
+- USB transfer: export the whole system to a USB drive as one encrypted archive, protected by a 4-digit transfer code, and import it on a fresh installation. Game-PC device links are not transferred and must be approved again. An archive from a newer version is refused, and the free space on the drive is checked before export.
+- Phone app (PWA), served by the server at `/phone/`: sign in with username, email and password; screens for the day's summary, debts and PCs. Phone login is restricted to the phone client and rate-limited. Not yet tested on a physical phone; remote access (Tailscale) is not set up by this release.
+- Backups archive every table of the database and the uploaded files.
+- Sales list: offline sales show their local number and an "Offline" tag; a sale whose price changed while offline shows a "Price changed" warning.
+
+### Changed
+
+- Staff purchases no longer appear in the sales list or in sales reports.
+
+### Fixed
+
+- Same-origin requests from the server's own address are no longer refused by CORS.
+
+## [0.27.4] - 2026-11-04
+
+### Added
+
+- Till (POS): choose a PC for the current sale in a row above the cart. Products added to the sale then go to that PC's bill: "pay later" puts them on the PC's bill (paid when the session ends), "pay now" takes the payment at the till while the lines stay on the PC. Only product lines, whole units, no extras and no discounts can go to a PC; the cart says why when it cannot.
+- Server: a payment given with an order on a running (unbilled) session sells the lines at once (`POST /sessions/:id/orders`).
+
+### Changed
+
+- Till: the cart's tool buttons (free item, PC time, staff purchase) are icons with a tooltip, in one row.
+- Removed the separate "Add to PC" button added in 0.27.3, in favour of the PC row in the sale.
+
+## [0.27.3] - 2026-11-04
+
+### Added
+
+- Till (POS): an "Add to PC" button next to PC time. The desk picks a PC from a list of the PCs with a running, paused or unpaid session, then adds products (the normal price). A PC with a pay-at-the-end session gets the products on its bill; a prepaid or already collected PC gets them paid at once at the till.
+
+## [0.27.2] - 2026-11-01
+
+### Changed
+
+- Tests only, no change for users: a test that the PC lists a product the desk added to its session, and a test that the backup archive holds exactly the database tables.
+
+## [0.27.1] - 2026-11-01
+
+### Added
+
+- The desk can add products to a PC's bill from the PC session panel and from the collect dialog (any active product, not only the PC menu). On a pay-later bill the products join the bill and are paid with the time; on a prepaid or already collected bill they are paid at once as a sale. `POST /sessions/:id/orders` (`pos.sell`), audited as `order.staff_add`.
+
+## [0.27.0] - 2026-10-29
+
+### Added
+
+- Change the price of a PC bill that is already paid (prepaid time, or a bill that was collected). A lower price gives the difference back as a `price_adjustment` refund, from the open cash shift for cash. A higher price takes the difference in on the same sale. The fixed price stays as the user set it.
+- New permission `pos.adjust_paid` ("Change the price of a bill that is already paid"). The owner and admin roles always have it; other roles can be given it in Roles & permissions.
+- "Change price" button on the Sales page for a sale that has PC time.
+- Several PCs: prepaid bills are now included when the user has `pos.adjust_paid`, and the payment method can be chosen.
+- Database migration `0049_pos_adjust_paid.sql` (permission, and `refunds.kind`).
+
+### Changed
+
+- The administrator role always keeps `pos.adjust_paid`; the Roles page locks that box for the admin role.
+
+## [0.26.0] - 2026-10-28
+
+### Added
+
+- Backups can be encrypted with a backup password (AES-256-GCM). The key is kept in a local file next to the data, never inside the database or in a backup. Set it on the Backups page (requires the account password).
+- Every archive contains a `report.txt` in Albanian: date, business, program and database versions, rows per table, photo/video files, and what is not included.
+- Optional copy outside the PC: set a folder on another disk (for example a USB drive). After each successful backup the file is copied there and checked by checksum. A failed copy does not fail the backup; the result is shown in the list and in the audit log.
+- Restoring or uploading an encrypted archive on a PC that does not know its key asks for the backup password. Older archives still open as before.
+
+## [0.25.0] - 2026-10-26
+
+### Removed
+
+- The CS2 match server (0.24.0) is removed completely: the Admin "CS2 match" page and its menu entry, the install/start/stop/connect commands on the PCs, the RCON match commands (freezetime, restart, warmup end), the server routes and the CS2 config.
+- Migration `0048` drops the `cs2_config` table, so the stored server and RCON passwords are deleted. Migration `0047` stays in the history.
+
+## [0.24.1] - 2026-10-26
+
+### Fixed
+
+- CS2 server on a PC with a Public network: the firewall rules now cover all network profiles (Private, Domain and Public) and both UDP and TCP on the game port. They are added when the server starts (one Windows admin prompt, then remembered), so clients no longer get "Unable to establish a connection with a gameserver" on Public networks.
+- The start result says whether the server is listening on its port. The Admin CS2 page shows the server PC's last result (refreshed every 5 s) instead of only the first reply.
+
+## [0.24.0] - 2026-10-26
+
+### Added
+
+- CS2 match server (Admin → CS2 match). One PC is chosen as the server: the Counter-Strike 2 dedicated server is installed there with one click (SteamCMD; the firewall rules need one Windows admin prompt), and it can be started and stopped from the panel.
+- One-click join: the chosen PCs start CS2 and join the server through a `steam://` link built by LIKApcs.
+- Match commands over RCON from the panel: freezetime 3 s, restart in 3 s, and end warmup (`mp_warmup_end`).
+- Server and RCON passwords are generated by LIKApcs, are never shown in the panel, and can be regenerated.
+- Migration `0047` adds the `cs2_config` table (one row).
+
+### Security
+
+- The CS2 commands are not accepted by the generic station command route. A PC runs only the launch arguments and connect links that LIKApcs builds, and refuses anything else.
+
+
+## [0.23.0] - 2026-10-25
+
+### Added
+
+- Windows desktop wallpaper per PC (migration `0046` adds `stations.desktop_wallpaper_file`). Station › Look sets it for one PC; the desktop app downloads it as JPEG and sets it, and puts the previous wallpaper back when the Admin clears it. Windows takes JPEG or PNG only; other pictures are converted to JPEG in the Admin.
+- Bulk wallpaper: from the station bar, one picture for the selected PCs or for all PCs (Ctrl+A), as the lock-screen wallpaper or as the Windows desktop background (`PUT /stations/wallpapers?kind=lock|desktop&stations=all|<ids>`).
+- Fixed payment or discount for several PCs at once (station bar "Pay"; `POST /sessions/bulk-settle`). Pay-at-the-end bills are ended and collected with the discount that gives the wanted amount, or each becomes a fixed amount; prepaid time is skipped and already paid bills are refused. Needs `pos.discount`.
+- Backups include the uploaded files (product pictures, wallpapers, ad videos), not only the database. The archive has an `uploads/` folder next to `tables/`, and its manifest counts the files. A restore brings the uploads back as they were at the backup; older archives without them restore as before.
+- "Remove time" for several PCs at once: the same minutes come off every selected running session (`POST /sessions/bulk-remove-time`). Each session is checked on its own, and the result lists every PC that changed and every one that was left unchanged.
+- Expenses page: a switch between "Expenses" and "Stock purchases". The stock view lists goods received into stock (supplier, product, quantity, unit cost to 3 decimals, amount, purchase link), with a count and value total, filters (dates, supplier, search) and a CSV export. These rows are information only and are not added to spending: their cost counts in profit when the goods are sold.
+- Payment method label "Staff" / "Stafi" (it used to show the raw translation key).
+
+### Fixed
+
+- The spending report showed stock-less purchase lines twice (as a stock row and as an expense). They are now listed once, as an expense.
+
+## [0.22.0] - 2026-10-21
+
+### Added
+
+- Unit prices and costs with three decimals: a product's selling price and cost, and the unit cost of a purchase line or stock adjustment, accept up to 3 decimals (e.g. 0.125 €). They are stored exactly in mills (thousandths of €); the cent columns are the same value rounded.
+- Migration `0045` adds the mills columns (`products.selling_price_mills`, `purchase_cost_mills`, `average_cost_mills`; `purchase_items`, `purchase_receipt_items` and `inventory_movements` get `unit_cost_mills`). Existing values are backfilled as cents × 10.
+
+### Changed
+
+- Sales still charge whole cents: a 0.125 € price is charged as 0.13 €, and the cost of a sold piece is booked as 13 cents. The sale line cost is `average cost (mills) × quantity`, rounded to the cent.
+- Weighted average cost is computed in mills, so it no longer rounds to the cent at every purchase.
+- Purchase lines are priced in mills; a purchase of 10 pcs at 0.125 € totals 1.25 €.
+
+## [0.21.0] - 2026-10-21
+
+### Added
+
+- Reports → "Profit & spending" (next to "Sales"): the profit and loss for any period, on the accrual basis. Revenue without VAT, the cost of the goods sold, operating expenses and stock losses (damaged, expired, missing, counted short, adjusted down), with the net profit and margins. Refunded goods that were not put back on the shelf count as a loss. Beside it: the money that actually moved (cash sales and drawer expenses, supplier payments, what is still owed to suppliers), the stock brought in (received from suppliers, opening stock, stock gains) and data checks for products or movements without a cost.
+- Reports → "Profit & spending" → spending register: every money-out and stock movement in the period, each tagged as profit (operating cost or stock loss), stock (held in inventory) or cash (paid to a supplier). Filter by type and effect. The CSV export "Spending register" has every row.
+- Products → Add/Edit product: the profit per piece is shown live under the price fields. It is the price without VAT minus the purchase cost, using the chosen VAT category (or the default one). The line says how much VAT is inside the price, or added at the till, and the margin. A cost of 0 shows a hint to enter the cost.
+
+### Changed
+
+- Purchases: products added to a purchase start at 0% VAT, so no VAT is added unless you choose it. Each line that has a product VAT rate shows an "Add VAT %" button that applies that rate to the line.
+
+### Fixed
+
+- Stock adjustments without a cost (for example a damaged bottle) are now valued at the product's average cost, not at zero, so losses and gains show their real value in the reports.
+
+## [0.20.12] - 2026-10-21
+
+### Added
+
+- Settings → Security: "Factory reset" for the owner account only. It asks for the signed-in username, the password and a tick box. Before anything is erased, the server saves a safety backup (type "Before factory reset", kept in the backup list and restorable there). Then it erases all records, accounts, settings, the audit log, sessions and uploaded pictures and videos, and the system asks for first-run setup again. The access roles, permissions and built-in units stay, so setup works straight away. The signed-in session ends.
+
+## [0.20.11] - 2026-10-21
+
+### Added
+
+- Stations: "Remove time" (−) next to "Add time" (+) for one PC with a running prepaid or pay-at-the-end session. Steps of 5 minutes or quick picks; the session always keeps at least one minute. No money moves: a prepaid session keeps what was paid, a pay-at-the-end session gets a smaller reservation. Recorded as a correction and in the audit log (`session.remove_time`).
+
+### Changed
+
+- Pricing: the page now leads with fixed-price packages (the simple way to sell time) and calls the rules "Hourly rates". Rounding, minimums, validity, time windows, priority and happy hour move under a collapsible "Advanced" section in the rule and package dialogs; it opens by itself when a value there is non-default or invalid. No data or price changes.
+
+## [0.20.10] - 2026-10-20
+
+### Added
+
+- Stations: when several PCs are selected, the PC time sold at the till is shown for each PC, and each PC starts with its own credit ("Start N PC(s) with their PC time"). A credit sold for a PC goes to that PC; a credit sold without a PC goes to the first free PC. No payment is taken again: the minutes were paid at the till. PCs without a credit keep the usual start options.
+
+## [0.20.9] - 2026-10-19
+
+### Added
+
+- POS: "Add to debt" (F7, or the button next to Payment) puts the whole current sale on the customer's tab. The payment dialog opens on "Pay later", so instalments and a cash part can be set from the keyboard. Needs a customer and the "give debts" permission.
+- POS: with a customer attached, the current sale shows his debt and balance right after his name. Both are read live from the server, so they update after every sale.
+
+### Fixed
+
+- POS: the payment dialog no longer loops ("Maximum update depth exceeded") when the customer display is connected.
+
+## [0.20.8] - 2026-10-19
+
+### Added
+
+- PC time can be sold at the till without choosing a PC. The sale is for a name: the customer's name, a typed name, or "Klient". The price is the pricing rule for all PCs (no PC selected) at that hour; if there is none, the till says so and asks for one under Pricing.
+- A 4-digit PIN is printed once with that sale (on the done dialog and the receipt). At any PC the customer chooses "Use prepaid PC time (no PC chosen)" on the lock screen, types the name and the PIN, and the PC starts with the minutes left. Wrong names and PINs get the same answer; five wrong tries lock the credit for 10 minutes.
+- Sales list: "PC time" and "Refunds" filters. The totals show the PC minutes sold and used.
+
+### Changed
+
+- A PC-time credit made at a PC still works as before; desk staff can start a credit that belongs to no PC on any PC.
+
+
+
+### Added
+
+- Staff purchase ("Blerje e stafit") in the POS current sale: items are charged at their purchase cost, PC time is free, no discount and no customer. No money is taken; the stock goes out and the sale is recorded as a staff outflow with the user, date and time.
+- Sales list: a "Staff purchases" filter.
+- Payment without the mouse: ↑/↓ or 1–9 choose the method, Enter confirms, Esc closes. F2 moves to the customer field.
+
+### Changed
+
+- The POS current sale has a calmer header, a clear totals block and a larger pay button.
+
+## [0.20.6] - 2026-10-17
+
+### Fixed
+
+- PC shutdown no longer shows a "reg.exe - Application Error (0xc0000142)" box. The client removes its Task Manager policy through the registry API instead of starting reg.exe while Windows is shutting down.
+
+## [0.20.5] - 2026-10-17
+
+### Fixed
+
+- Station dialog, standard view: the PC row and its command buttons no longer touch the edge of the card.
+- Station dialog: the footer buttons wrap onto a second line when there is no room, instead of running out of the dialog.
+
+## [0.20.4] - 2026-10-17
+
+### Fixed
+
+- Live picture froze when a new size or rate arrived while a frame was being captured on the PC. The PC now follows the newest order.
+- A focus view started from a grid thumbnail waited up to 2.5 s for its first frame. The new rate now starts at once.
+
+## [0.20.3] - 2026-10-17
+
+### Added
+
+- Station right-click menu: "View screen" opens Live screens focused on that PC. It needs remote.view and is disabled while the PC is offline.
+- Hover preview: resting the mouse on a station tile for a moment shows a small live picture at 480p. It stops when the mouse moves on, the page scrolls, or the page closes.
+
+### Changed
+
+- Live screens is no longer in the side menu. Open it from the station right-click menu.
+
+## [0.20.2] - 2026-10-17
+
+### Added
+
+- Live control and view: the focus view has a Picture size choice (480p, 520p, 720p, 1080p). The default is 720p. The PC sends only the size asked for, shrunk by Windows itself, at 3 frames per second. Higher sizes use more CPU on the PC being watched, and the view says so for 1080p.
+
+## [0.20.1] - 2026-10-17
+
+### Added
+
+- Live control (remote control, phase 2): in the focus view of a PC, "Control PC" sends the mouse and the keyboard to that PC. Owner and admin only (permission remote.control). Control stops when you leave the focus view, when the page closes, or when the session on the PC ends, and any key or button still held down is released. Each control on and off is written to the audit log.
+- Live screens stop when the session on that PC ends: the view shows "Session ended".
+
+### Added
+
+- Settings → Client screen: "Block the Windows key in Steam games" (on by default). While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.
+- Live screens (first step, read-only, LAN): Admin → Live screens shows a thumbnail of every station PC, refreshed every 2–3 seconds, and a focus view of one PC at up to 3 frames per second. Frames are shown only while the page is open and are never stored. A new permission, remote.view, controls it (owner, admin and manager by default). Each viewing session is written to the audit log.
+
+## [0.19.9] - 2026-10-17
+
+### Added
+
+- Debts: an installment plan has its own parts. Each part shows its amount, its due date (monthly, same day, last day of short months), what was paid and whether it is overdue. The amount is split in cents: 10.00 in 3 parts is 3.34 + 3.33 + 3.33.
+- Debts: a payment can be booked to one part ("Part to pay" in the payment dialog). Without a choice, the oldest unpaid part is paid first.
+- Debts: the list shows the items of the sale, so each debt can be told apart.
+- Debts: rescheduling a plan dates its unpaid parts again from the new date, monthly.
+- Debts with installments that had no repayment yet get the schedule when the server is updated. Debts that already had repayments keep their old display.
+
+### Changed
+
+- Installments count the parts that are fully paid. A part that is partly paid is shown as the next part, with what it still owes.
+
+## [0.19.8] - 2026-10-17
+
+### Changed
+
+- Till: "Sell off-inventory items" and "Installments on pay-later sales" are now on by default for new installations. Existing installations keep their current value: turn them on in Settings → Printing & POS.
+
+## [0.19.7] - 2026-10-16
+
+### Added
+
+- Countdown widget: a new, plainest look "Only the time" (only the minutes left, no bar, no amount, no PC code).
+- Countdown widget: two new corners, "Middle left" and "Middle right" (vertically centred on the edge of the screen).
+- Settings → Client screen: "Hide in games" (on by default). While a fullscreen game (for example CS2) runs on the PC, the countdown is hidden and it comes back when the game closes. Switch it off to keep the countdown visible over games.
+
+### Fixed
+
+- The countdown widget no longer counts a desktop or taskbar as a game when deciding to hide.
+- PC client (Windows): a staff notice, the "5 min / 1 min left" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. (This was meant for 0.19.6, which did not publish.)
+
+## [0.19.6] - 2026-10-16
+
+### Fixed
+
+- PC client (Windows): a staff notice, the "5 min / 1 min left" warning, a time extension, a gift or an order flash no longer makes a running game (e.g. CS2) glitch, and the mouse cursor no longer comes back on the screen. The countdown widget only moves or resizes when one of these arrives; it no longer leaves fullscreen or takes focus from the game. Not yet tested on a Windows PC running a game: test before rolling out widely.
+
+## [0.19.5] - 2026-10-16
+
+### Added
+
+- Admin, "To collect" strip: a single "Collect all (n)" button collects every waiting bill at every PC in one step, when bills wait at two or more PCs. One tender covers them all (cash, card or split); each bill keeps its own receipt. If the tender does not cover every bill, nothing is taken. Endpoint: `POST /sessions/collect-all`. The per-PC "Collect all at PC (n)" button stays as it was.
+
+## [0.19.4] - 2026-10-16
+
+### Added
+
+- Stations map: a visible "Select all PCs" button on the toolbar (Ctrl+A already did this).
+- Stations: "Stop" works for a selection of PCs. One confirmation stops every running session at once and reports each PC. Nothing is charged at that moment: postpaid and pay-at-the-end bills wait at the desk ("Pay all" on the PC), prepaid time was already paid, and open orders stay open. Endpoint: `POST /sessions/bulk-end`.
+
+## [0.19.3] - 2026-10-15
+
+### Changed
+
+- Ads (customer screens, PCs and the counter's customer display): only slides inside an enabled album are shown. A slide with no album never shows, and neither does a slide in a switched-off album. Slides with no album stay in Admin › Ads, marked "No album", until they are moved into an album.
+- Ads: a product with stock tracked at zero (or less) leaves every screen by itself and comes back when it is restocked. Admin › Ads shows it as "Out of stock". Products that do not track stock are unaffected.
+- Ads on the PCs refresh at least every 60 seconds (was 10 minutes), and the counter's customer display every 60 seconds (was 5 minutes), so a sold-out product leaves the screens within about a minute.
+
+## [0.19.2] - 2026-10-15
+
+### Added
+
+- Settings → Ads: the six main options (on/off, layout, transition, interval, shuffle, background) are at the top. Everything else is under "More options".
+- Settings → Client screen: ten ready-made views from 800×600 to 3840×2160, each with a preview and an Apply button. Apply only fills the draft; press Save to send it.
+- Ads grid 5×5 (up to 25 products per screen).
+- Stations: a "Gift minutes" button on the PC (only for users with the gift permission). It opens the add-time dialog in gift mode.
+- Stations map: at small icon sizes each PC is one line (status dot, code, timer or state).
+
+### Changed
+
+- Settings → POS & Printing: the sales switches (hide out-of-stock, off-inventory items, PC time, installments, card payments, credit days, wallet) are in their own "Sales (POS)" card. Receipt options stay under Receipts.
+
+### Security
+
+- Build tool: `esbuild` used by the server build bumped from 0.27.7 to 0.28.2 (fixes GHSA-g7r4-m6w7-qqqr, a low-severity dev-server file read on Windows). Build-time only; the shipped app does not run esbuild.
+
+## [0.19.1] - 2026-10-15
+
+### Added
+
+- **Product extras with their own price (0.19.1).** A product can have extras (e.g. *Tost* with
+  *Kackavall* +0.50), set in Admin › Products under *Extras* (its own Save). At the till, a product
+  with extras opens a dialog to tick them; each combination is its own sale line, named
+  `Tost + Kackavall`. An extra adds its price and never moves stock. The chosen extras are kept on
+  the sale line (`sale_items.addons`, migration `0037_product_addons.sql`), so past receipts do not
+  change when an extra is edited, and a parked sale resumes with its extras.
+
+### Fixed
+
+- **\"+ minutes\" on several PCs says what happened (0.19.1).** The dialog lists the PCs that will
+  get the minutes and those that will be skipped, with the reason (no running session, or postpaid).
+  After the step, a toast names each PC that was not changed. Before, only a count was shown.
+
+### Changed
+
+- **Ads have their own settings tab (0.19.1).** Settings › Ads holds the ad settings and the
+  screen options that go with them (with a preview). Settings › Client screen keeps the customer
+  display options only. The settings are the same; only where they are edited changed.
+- **Widget colours: six more (0.19.1).** Teal, orange, fuchsia, lime, red and blue, next to the
+  six existing ones.
+- **Widget centre positions (0.19.1).** The countdown widget can sit at the top centre or the
+  bottom centre of the screen, in addition to the four corners.
+- **Stock-less purchase lines are expenses (0.19.1).** A purchase line for a product that does not
+  track stock (a service, a consumable not kept in stock) is booked automatically as an expense
+  (category *Other*, payment *Other*, the supplier linked) when it is received; a partial receipt
+  books the received part. A stock product still goes into inventory as before. Migration
+  `0038_stockless_purchase_expenses.sql`. Purchases received before this change are not
+  converted; they stay as they were.
+- **Managers can give free minutes (0.19.1).** `stations.gift` is granted to the manager role too
+  (migration `0036_stations_gift_manager.sql`). Owner and admin keep it; every gift is audited.
+
+## [0.19.0] - 2026-10-14
+
+### Added
+
+- **Optional till features, all off by default (0.19).** Settings › Printing & POS now has three
+  switches: *Sell off-inventory items at the till* (the "Free item" button), *Sell PC time at the
+  till* (the "PC time" button) and *Installments on pay-later sales* (the installments field).
+  While a switch is off, its button or field is hidden in the POS and the payment panel.
+  Existing data is not changed.
+- **Off-inventory "free item" lines at the till (0.19).** The POS cart has a
+  "Free item" button: a name and a price typed in (a service, a repair, a one-off), quantity 1–999.
+  It takes the default tax rate and its price includes tax, like a catalogue product. No stock
+  moves and no cost is booked, so the margin is the whole price. The line survives suspend/resume,
+  appears on the receipt and can be refunded (restocking is a no-op for it). Each completed sale
+  with free lines is audited with the typed names and prices (`sale.completed` → `freeItems`).
+- **Cart stations: sell PC time now, the PC starts later (0.19).** The POS has a
+  "PC time" button: pick a PC and minutes; the price is that PC's own quote, and the server
+  quotes it again when the sale is made. Completing the sale creates a *time credit* for that PC
+  (migration `0031_time_credits.sql`). Starting the PC from its station screen then uses it
+  ("Use PC time (paid at the till)", all remaining minutes): no new sale and no second payment.
+  Extending a session can also redeem a credit (`creditId`, minutes only). A credit is bound to
+  its PC and used whole-request only: asking for more minutes than remain is refused.
+  Refunding a PC-time line cancels its credit, but only while none of its minutes were used.
+  Parking a sale that holds PC time is refused — it is completed or removed.
+  Migration `0032_time_credit_sessions.sql` lets a credit-started session be billed without a
+  sale of its own, with `time_credit_id` recording which credit paid for it.
+- **Simple installments on a pay-later sale (0.19).** The "Pay later" tender has an
+  optional *Installments* count (2–24). The debt records it (migration `0033_debt_installments.sql`),
+  each repayment counts as one part, and the debt shows "N of M paid · next part X". No dates are
+  scheduled — the due date still applies. Installments are refused on any tender but pay-later.
+  Combined with the off-inventory item, this sells a PC build or service paid in parts.
+- **Product variants — size, colour… (0.19).** A variant is a product of its own: its
+  own barcode, selling price and stock. In Products, a product can be a *variant of* a main product
+  and carries a label ("M", "42", "Red"); the main product lists its variant count. One level only:
+  a variant cannot have variants, and a main product with variants cannot become one. Selling a
+  variant moves only its stock. A main product with variants cannot be deleted (archive it instead).
+  Migration `0034_product_variants.sql`.
+- **Per-PC look and wallpaper (0.20).** Stations › *Look & wallpaper* sets one PC's
+  own widget size, position, design, colour and ads on/off; *House setting* leaves a value to
+  Settings › Client screen. Each PC can also have its own lock-screen wallpaper (JPEG, PNG, WebP or
+  GIF, scaled down before upload). A change reaches only the PCs it touches, live. Migration
+  `0035_station_looks.sql`.
+- **Widget colour (0.20).** Settings › Client screen has a *Widget colour* for the
+  countdown widget's accent (Indigo, Emerald, Sky, Amber, Rose, Violet, Mono). A PC can override it.
+- **Layout presets (0.20).** Settings › Client screen › *Layout presets* saves the
+  current widget, ads and lock-screen layout under a name. *Apply* loads it into the form and
+  *Save* sends it to every PC in one step. Only customer-screen layout keys are stored.
+- **Pay all: every bill waiting at one PC in one step (0.21).** When a PC has two or
+  more bills waiting (pay-at-the-end sessions that ran out or ended), the *To collect* strip shows
+  *Collect all at PC n (count)*. One tender step (cash, card or split; no pay-later) covers them
+  all, in one transaction: each bill gets its own sale and receipt, open order lines included. A
+  tender that does not cover every bill is refused and nothing is written; other PCs are not
+  touched. Endpoint `POST /stations/:id/collect-all`, audited as `session.collect_all`. A PC with
+  nothing waiting gets 409.
+- **Cash book per shift (0.21).** Reports has a *Cash book*: one row per cash shift in
+  the range (opening, cash in, cash out, expected, counted, difference). Open a row to see its drawer
+  movements. Totals cover all shifts; counted and difference only the closed ones. The export
+  kind *Cash book (one row per shift)* writes the same rows as CSV, with local times. Endpoint
+  `GET /reports/cash-book`. The older *Cash shifts* table is replaced by this card.
+- **Reports redesign (0.21).** Same numbers, new layout. A result card at the top
+  (net sales minus expenses, with sales split by source). Titled sections: Sales (columns per day and
+  per hour), Payments and sources (share bars with a legend, and the tables), Products, staff and
+  gaming, Money out and cash. The charts are plain CSS, so they need no library and work offline.
+- **Pay all shows every receipt (0.21).** After a pay-all step, the same *Payment recorded* dialog
+  opens for each bill in turn, with its receipt number, change and Print. The collect response
+  carries each bill's receipt payment (`collected[].payment`).
 
 ## [0.18.1] - 2026-10-14
 

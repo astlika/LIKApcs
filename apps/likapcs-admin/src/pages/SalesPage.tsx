@@ -13,6 +13,7 @@ import {
   type RefundRequest,
   type SaleDetail,
   type SaleStatus,
+  type SaleSessionLink,
   type SalesListResponse,
   type InvoiceData,
 } from '@likapcs/shared';
@@ -26,6 +27,7 @@ import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { Receipt, printReceipt } from '../components/pos/Receipt';
 import { CreateInvoiceDialog, InvoicePreviewDialog } from '../components/invoices/InvoiceDialogs';
+import { AdjustPriceDialog } from '../components/sessions/AdjustPriceDialog';
 import {
   Badge,
   Button,
@@ -72,6 +74,10 @@ export function SalesPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'' | SaleStatus>('');
   const [source, setSource] = useState<'' | 'retail' | 'gaming' | 'mixed'>('');
+  // 0.20.7: the staff-purchase report (who, when, at what cost), a filter on the same list.
+  const [tender, setTender] = useState<'' | 'staff'>('');
+  // 0.20.8: PC time sold (with its minutes) or sales with refunds; the totals follow the filter.
+  const [kind, setKind] = useState<'' | 'time' | 'refund'>('');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState(todayLocal());
   const [to, setTo] = useState(todayLocal());
@@ -83,13 +89,15 @@ export function SalesPage() {
     () => ({
       status: status || undefined,
       source: source || undefined,
+      tender: tender || undefined,
+      kind: kind || undefined,
       q: q.trim() || undefined,
       from: dayBound(from, false),
       to: dayBound(to, true),
       page,
       pageSize: PAGE_SIZE,
     }),
-    [status, source, q, from, to, page],
+    [status, source, tender, kind, q, from, to, page],
   );
   const sales = useQuery({
     queryKey: ['sales', 'list', query],
@@ -152,6 +160,29 @@ export function SalesPage() {
             </option>
           ))}
         </Select>
+        <Select
+          value={tender}
+          onChange={(e) => {
+            setTender(e.target.value as '' | 'staff');
+            setPage(1);
+          }}
+          aria-label={t('pos.staffReport')}
+        >
+          <option value="">{t('common.all')}</option>
+          <option value="staff">{t('pos.staffReport')}</option>
+        </Select>
+        <Select
+          value={kind}
+          onChange={(e) => {
+            setKind(e.target.value as '' | 'time' | 'refund');
+            setPage(1);
+          }}
+          aria-label={t('sales.kindLabel')}
+        >
+          <option value="">{t('common.all')}</option>
+          <option value="time">{t('sales.kindTime')}</option>
+          <option value="refund">{t('sales.kindRefund')}</option>
+        </Select>
         <label className="row" style={{ gap: 6 }}>
           <span className="muted">{t('sales.from')}</span>
           <Input
@@ -183,6 +214,8 @@ export function SalesPage() {
             label={t('sales.refunded')}
             value={fmt.money(sales.data.summary.refundedCents)}
           />
+          <StatTile label={t('sales.minutesSold')} value={String(sales.data.summary.minutesSold)} />
+          <StatTile label={t('sales.minutesUsed')} value={String(sales.data.summary.minutesUsed)} />
         </div>
       )}
       {sales.isLoading && <Loading />}
@@ -213,6 +246,23 @@ export function SalesPage() {
                 >
                   <td className="mono">
                     {s.receiptNo ?? <span className="faint">—</span>}
+                    {s.localNumber && (
+                      <span
+                        className="faint"
+                        title={t('sales.offlineHint')}
+                        style={{ marginLeft: 6, fontSize: 12 }}
+                      >
+                        {s.localNumber} · {t('sales.offlineTag')}
+                      </span>
+                    )}
+                    {s.priceChanged && (
+                      <span
+                        title={t('sales.priceChangedHint')}
+                        style={{ marginLeft: 6, fontSize: 12, color: '#f59e0b' }}
+                      >
+                        ⚠ {t('sales.priceChangedTag')}
+                      </span>
+                    )}
                     {s.source !== 'retail' && (
                       <span className="faint" style={{ marginLeft: 6, fontSize: 12 }}>
                         {t(`sales.source.${s.source}` as 'sales.source.retail')}
@@ -284,6 +334,9 @@ export function SaleDetailDialog({
   const fmt = useFormat();
   const toast = useToast();
   const [refunding, setRefunding] = useState(false);
+  const [adjusting, setAdjusting] = useState(false);
+  const { can } = useAuth();
+  const canAdjust = can(PERMISSIONS.POS_ADJUST_PAID);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [invoicing, setInvoicing] = useState(false);
   const [invoiceDoc, setInvoiceDoc] = useState<InvoiceData | null>(null);
@@ -301,6 +354,13 @@ export function SaleDetailDialog({
     onSuccess: (data) => setReceipt(data),
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
   });
+  // 0.27.0: a sale with PC time can have its bill price changed (pos.adjust_paid).
+  const link = useQuery({
+    queryKey: ['sessions', 'by-sale', saleId],
+    queryFn: () => api<{ link: SaleSessionLink | null }>(`/sessions/by-sale/${saleId}`),
+    enabled: canAdjust,
+  });
+  const sessionLink = link.data?.link ?? null;
   const s = sale.data;
   const refundable = s ? s.items.some((i) => i.refundedMilli < i.quantityMilli) : false;
   const canRefundThis =
@@ -341,6 +401,13 @@ export function SaleDetailDialog({
               (s.status === 'completed' || s.status === 'partially_refunded') && (
                 <Button onClick={() => setInvoicing(true)} data-testid="sale-issue-invoice">
                   <FileText size={14} /> {t('invoice.issue')}
+                </Button>
+              )}
+            {canAdjust &&
+              sessionLink &&
+              (s.status === 'completed' || s.status === 'partially_refunded') && (
+                <Button onClick={() => setAdjusting(true)} data-testid="sale-adjust-price">
+                  {t('adjustPrice.title')}
                 </Button>
               )}
             {canRefundThis && (
@@ -482,6 +549,16 @@ export function SaleDetailDialog({
         </div>
       )}
       {refunding && s && <RefundDialog sale={s} onClose={() => setRefunding(false)} />}
+      {adjusting && sessionLink && (
+        <AdjustPriceDialog
+          sessionId={sessionLink.sessionId}
+          stationCode={sessionLink.stationCode}
+          currentCents={sessionLink.finalPriceCents ?? 0}
+          paidCents={sessionLink.paidCents}
+          onClose={() => setAdjusting(false)}
+          onDone={() => setAdjusting(false)}
+        />
+      )}
       {invoicing && s && (
         <CreateInvoiceDialog
           sale={s}

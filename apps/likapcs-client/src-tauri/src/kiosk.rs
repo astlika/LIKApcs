@@ -20,6 +20,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+/// Owner setting: the Windows keys do nothing while a Steam game runs in front (default on).
+static BLOCK_WIN_IN_GAMES: AtomicBool = AtomicBool::new(true);
+/// True while the foreground window belongs to a game installed under `steamapps\common`.
+static GAME_IN_FRONT: AtomicBool = AtomicBool::new(false);
+
+/// Turns the Windows-key block during Steam games on or off (the owner's setting).
+pub fn set_win_block_in_games(on: bool) {
+    BLOCK_WIN_IN_GAMES.store(on, Ordering::SeqCst);
+}
 
 /// Turns the lock-screen hardening on or off. Idempotent; the policy change runs off-thread.
 pub fn set_enabled(on: bool) {
@@ -42,6 +51,17 @@ pub fn arm_boot() {
 /// low-level hooks are delivered to the installing thread.
 pub fn install() {
     imp::install();
+    #[cfg(windows)]
+    std::thread::spawn(game_watch_loop);
+}
+
+/// Checks the foreground window a few times a second. Cheap: one process-name lookup.
+#[cfg(windows)]
+fn game_watch_loop() {
+    loop {
+        GAME_IN_FRONT.store(imp::foreground_is_steam_game(), Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
 }
 
 /// Undoes everything that could outlive the process (policies). Safe to call repeatedly.
@@ -56,17 +76,62 @@ mod policy {
     use std::process::{Command, Stdio};
 
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    /// The same key without the hive name, for the registry API (which takes the hive apart).
+    const POLICY_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Policies\System";
 
     pub fn task_manager(allow: bool) {
-        let mut cmd = Command::new("reg");
         if allow {
-            cmd.args(["delete", KEY, "/v", "DisableTaskMgr", "/f"]);
-        } else {
-            cmd.args(["add", KEY, "/v", "DisableTaskMgr", "/t", "REG_DWORD", "/d", "1", "/f"]);
+            // The registry API, not reg.exe: this also runs on Exit, while Windows is shutting
+            // the session down, and starting a process then fails (0xc0000142).
+            delete_task_manager_policy();
+            return;
         }
-        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut cmd = Command::new("reg");
+        cmd.args([
+            "add",
+            KEY,
+            "/v",
+            "DisableTaskMgr",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
+            "/f",
+        ]);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         crate::hide_console(&mut cmd);
         let _ = cmd.status();
+    }
+
+    /// Removes `DisableTaskMgr` without starting any process. Missing key or value is fine.
+    fn delete_task_manager_policy() {
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+        };
+        let subkey: Vec<u16> = POLICY_SUBKEY
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let value: Vec<u16> = "DisableTaskMgr"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut hkey: HKEY = std::ptr::null_mut();
+        unsafe {
+            if RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                KEY_SET_VALUE,
+                &mut hkey,
+            ) == 0
+            {
+                RegDeleteValueW(hkey, value.as_ptr());
+                RegCloseKey(hkey);
+            }
+        }
     }
 
     /// Without this, Windows holds Run-key autostart apps back for ~10 s after logon — long
@@ -84,7 +149,9 @@ mod policy {
             "0",
             "/f",
         ]);
-        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         crate::hide_console(&mut cmd);
         let _ = cmd.status();
     }
@@ -133,15 +200,20 @@ mod policy {
 #[cfg(windows)]
 mod imp {
     use super::ENABLED;
+    use super::{BLOCK_WIN_IN_GAMES, GAME_IN_FRONT};
     use std::sync::atomic::Ordering;
+    use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_APPS, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_TAB,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, SetWindowsHookExW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN,
-        WH_KEYBOARD_LL,
+        CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, SetWindowsHookExW,
+        HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, WH_KEYBOARD_LL,
     };
 
     fn key_down(vk: u16) -> bool {
@@ -149,21 +221,56 @@ mod imp {
         unsafe { GetAsyncKeyState(vk as i32) < 0 }
     }
 
+    /// Path check for a game started by Steam: its executable lives under `steamapps\common`.
+    pub fn foreground_is_steam_game() -> bool {
+        // SAFETY: plain Win32 calls; the process handle is closed on every path below.
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_null() {
+                return false;
+            }
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == 0 {
+                return false;
+            }
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return false;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut len);
+            CloseHandle(handle);
+            if ok == 0 {
+                return false;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+            path.contains("\\steamapps\\common\\")
+        }
+    }
+
     unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code == HC_ACTION as i32 && lparam != 0 && ENABLED.load(Ordering::Relaxed) {
+        let locked = ENABLED.load(Ordering::Relaxed);
+        let game_guard =
+            BLOCK_WIN_IN_GAMES.load(Ordering::Relaxed) && GAME_IN_FRONT.load(Ordering::Relaxed);
+        if code == HC_ACTION as i32 && lparam != 0 && (locked || game_guard) {
             // SAFETY: for HC_ACTION the system guarantees lparam points at a KBDLLHOOKSTRUCT.
             let info = &*(lparam as *const KBDLLHOOKSTRUCT);
             let vk = info.vkCode as u16;
+            let is_win = vk == VK_LWIN || vk == VK_RWIN;
+            // During a Steam game only the Windows keys are swallowed; the lock screen blocks more.
             let alt = (info.flags & LLKHF_ALTDOWN) != 0;
             let ctrl = key_down(VK_CONTROL);
             let win_held = key_down(VK_LWIN) || key_down(VK_RWIN);
-            let blocked = vk == VK_LWIN
-                || vk == VK_RWIN
-                || vk == VK_APPS
-                || win_held
-                || (alt && (vk == VK_TAB || vk == VK_ESCAPE || vk == VK_F4))
-                || (ctrl && vk == VK_ESCAPE);
-            if blocked {
+            let locked_block = locked
+                && (is_win
+                    || vk == VK_APPS
+                    || win_held
+                    || (alt && (vk == VK_TAB || vk == VK_ESCAPE || vk == VK_F4))
+                    || (ctrl && vk == VK_ESCAPE));
+            let game_block = game_guard && is_win;
+            if locked_block || game_block {
                 return 1;
             }
         }

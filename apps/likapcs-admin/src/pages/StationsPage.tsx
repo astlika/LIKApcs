@@ -12,6 +12,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
+  CalendarClock,
+  Sparkles,
   ArchiveRestore,
   Check,
   ChevronDown,
@@ -25,6 +27,7 @@ import {
   MessageSquare,
   Monitor,
   MonitorCheck,
+  MoreHorizontal,
   OctagonX,
   Plus,
   Power,
@@ -52,6 +55,8 @@ import {
 import { api, ApiError, fieldError } from '../lib/api';
 import { SessionPanel, useNow } from '../components/sessions/SessionPanel';
 import { StationMap, type SelectModifiers } from '../components/stations/StationMap';
+import { ActionsBar } from '../components/stations/ActionsBar';
+import { LivePreviewCard, useLivePreview } from '../components/stations/LivePreview';
 import {
   intersects,
   mapOrder,
@@ -65,10 +70,17 @@ import { useStationActions } from '../components/stations/useStationActions';
 import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
 import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
 import { storage } from '../lib/storage';
+import { BoardStatsBar, HoverInfo, ViewMenu } from '../components/stations/BoardHeader';
+import { ReservationsDialog } from '../components/stations/ReservationsDialog';
+import { BadgesDialog } from '../components/stations/BadgesDialog';
+import { useBoardView } from '../components/stations/useBoardView';
+import { toIsoDate, type DashboardSummary, type ReservationSummary } from '@likapcs/shared';
+import '../styles/stations-board.css';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { HardwareDetails, HardwareStrip } from '../components/stations/HardwareSpecs';
 import { WakePanel } from '../components/stations/WakePanel';
+import { StationLookDialog } from '../components/stations/StationLookDialog';
 import { isWakeable } from '../components/stations/useStationActions';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
@@ -146,6 +158,30 @@ export function StationsPage() {
     refetchInterval: 20_000,
   });
   const [connectOpen, setConnectOpen] = useState(false);
+  // 0.32.0: the board: layout (View ▼), the reservations and the badges of a PC.
+  const [view, setView] = useBoardView();
+  const [reservationsOpen, setReservationsOpen] = useState(false);
+  const [badgesFor, setBadgesFor] = useState<string | null>(null);
+  const fmt = useFormat();
+  const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  const canSettings = can(PERMISSIONS.SETTINGS_MANAGE);
+  const reservations = useQuery({
+    queryKey: ['reservations'],
+    queryFn: () => api<{ items: ReservationSummary[] }>('/reservations'),
+    enabled: can(PERMISSIONS.STATIONS_VIEW),
+    refetchInterval: 15_000,
+  });
+  const openReservations = (reservations.data?.items ?? []).filter(
+    (r) => r.status === 'scheduled' || r.status === 'active',
+  ).length;
+  const dashboardDate = toIsoDate(new Date(), { timeZone: fmt.timeZone });
+  const dashboard = useQuery({
+    queryKey: ['dashboard', dashboardDate],
+    queryFn: () =>
+      api<DashboardSummary>('/dashboard/summary', { query: { date: dashboardDate } }),
+    enabled: can(PERMISSIONS.DASHBOARD_VIEW),
+    refetchInterval: 30_000,
+  });
   const pending = useQuery({
     queryKey: ['devices', 'pending'],
     queryFn: () => api<StationDeviceSummary[]>('/devices', { query: { status: 'pending' } }),
@@ -210,6 +246,18 @@ export function StationsPage() {
     setAnchorId(id);
   }, []);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // Hover preview: the PC under the mouse (after a short pause). Needs remote.view.
+  const [hover, setHover] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [previewArmed, setPreviewArmed] = useState(false);
+  const canPreview = can(PERMISSIONS.REMOTE_VIEW);
+  const preview = useLivePreview(hover?.id ?? null, canPreview && previewArmed);
+  // The card is positioned once; a scroll moves the tile, so the card goes.
+  useEffect(() => {
+    if (!hover) return;
+    const hide = () => setHover(null);
+    window.addEventListener('scroll', hide, true);
+    return () => window.removeEventListener('scroll', hide, true);
+  }, [hover]);
   const [marquee, setMarquee] = useState<{
     left: number;
     top: number;
@@ -226,6 +274,7 @@ export function StationsPage() {
     raf: number;
   } | null>(null);
   const [zone, setZone] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(null);
   const [iconSize, setIconSize] = useState<number>(() => Number(storage.get('mapIconSize') ?? 96));
   const [groupByZone, setGroupByZone] = useState<boolean>(
     () => storage.get('mapGroupZones') !== '0',
@@ -250,8 +299,13 @@ export function StationsPage() {
     [list],
   );
   const visible = useMemo(
-    () => (zone ? list.filter((s) => (s.zone?.trim() ?? '') === zone) : list),
-    [list, zone],
+    () =>
+      list.filter(
+        (s) =>
+          (!zone || (s.zone?.trim() ?? '') === zone) &&
+          (!statusFilter || bucketOf(s) === statusFilter),
+      ),
+    [list, zone, statusFilter],
   );
   const counts = useMemo(() => {
     const enabled = list.filter((s) => s.isEnabled);
@@ -306,6 +360,24 @@ export function StationsPage() {
     [anchorId, displayOrder, selectedIds, selectedSet, setSelectedId],
   );
 
+  /** A group of PCs (a zone title, a list checkbox): plain = exactly these; toggle = add them,
+   *  or remove them when they are all selected already. */
+  const selectGroup = useCallback(
+    (ids: string[], mods: SelectModifiers) => {
+      setMenu(null);
+      if (ids.length === 0) return;
+      if (mods.toggle) {
+        const allIn = ids.every((id) => selectedSet.has(id));
+        setSelectedIds(allIn ? selectedIds.filter((id) => !ids.includes(id)) : unionIds(selectedIds, ids));
+        setAnchorId(ids[ids.length - 1] ?? null);
+        return;
+      }
+      setSelectedIds(ids);
+      setAnchorId(ids[0] ?? null);
+    },
+    [selectedIds, selectedSet],
+  );
+
   // Rubber-band selection: drag on the canvas background; tiles touching the box are selected
   // (Ctrl adds them to the current selection). A plain click on the background deselects.
   const hitTest = useCallback((x1: number, y1: number, x2: number, y2: number) => {
@@ -313,14 +385,14 @@ export function StationsPage() {
     if (!canvas) return [];
     const box = normalizeRect(x1, y1, x2, y2);
     const hits: string[] = [];
-    for (const el of canvas.querySelectorAll<HTMLElement>('.pc-tile[data-id]')) {
+    for (const el of canvas.querySelectorAll<HTMLElement>('[data-pc][data-id]')) {
       if (intersects(box, el.getBoundingClientRect())) hits.push(el.dataset.id!);
     }
     return hits;
   }, []);
   const onCanvasPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || e.pointerType === 'touch') return;
-    if ((e.target as HTMLElement).closest('.pc-tile')) return;
+    if ((e.target as HTMLElement).closest('[data-pc], [role="checkbox"], button, input, select, a, label')) return;
     // The start point is kept relative to the canvas so the box stays put if the page scrolls.
     const rc = e.currentTarget.getBoundingClientRect();
     drag.current = {
@@ -406,7 +478,7 @@ export function StationsPage() {
         return;
       if (!visible.length) return;
       // A focused tile handles Enter itself (see StationTile) — avoid running the action twice.
-      if (e.key === 'Enter' && target?.closest('.pc-tile')) return;
+      if (e.key === 'Enter' && target?.closest('[data-pc]')) return;
       const order = displayOrder;
       const idx = order.findIndex((s) => s.id === selectedId);
       const move = (delta: number) => {
@@ -419,13 +491,21 @@ export function StationsPage() {
         setAnchorId(id);
         setMenu(null);
         // Focus follows the selection so Enter / context-menu keys act on the highlighted PC.
-        document.querySelector<HTMLElement>(`.pc-tile[data-id="${CSS.escape(id)}"]`)?.focus();
+        document.querySelector<HTMLElement>(`[data-pc][data-id="${CSS.escape(id)}"]`)?.focus();
       };
       if (e.key === 'ArrowRight') move(1);
       else if (e.key === 'ArrowLeft') move(-1);
       else if (e.key === 'ArrowDown') move(perRow());
       else if (e.key === 'ArrowUp') move(-perRow());
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      else if (e.key === ' ' && target?.closest('[data-pc]')) {
+        // Space toggles the focused PC (the same as Ctrl+click), in every view.
+        e.preventDefault();
+        const id = target.closest<HTMLElement>('[data-pc]')!.dataset.id!;
+        const next = toggleId(selectedIds, id);
+        setSelectedIds(next.ids);
+        setAnchorId(next.anchor);
+        setMenu(null);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         setSelectedIds(order.map((s) => s.id));
         setAnchorId(selectedId ?? order[0]!.id);
@@ -440,13 +520,13 @@ export function StationsPage() {
     };
     const perRow = () => {
       const grid = document.querySelector('.pc-map__grid');
-      const tile = grid?.querySelector<HTMLElement>('.pc-tile');
+      const tile = grid?.querySelector<HTMLElement>('.pcg');
       if (!grid || !tile) return 1;
       return Math.max(1, Math.floor(grid.clientWidth / (tile.offsetWidth + 10)));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [visible, displayOrder, selectedId, selected, primary, run, setSelectedId]);
+  }, [visible, displayOrder, selectedId, selectedIds, selected, primary, run, setSelectedId]);
 
   useEffect(() => {
     if (!menu) return;
@@ -470,27 +550,34 @@ export function StationsPage() {
     storage.set('mapGroupZones', v ? '1' : '0');
   };
 
+  const legendPill = (key: StatusFilter, count: number, text: string) => (
+    <button
+      type="button"
+      className="map-legend__item"
+      data-status={key}
+      aria-pressed={statusFilter === key}
+      title={t('map.filterHint')}
+      onClick={() => setStatusFilter(statusFilter === key ? null : key)}
+    >
+      <i /> <strong className="num">{count}</strong> {text}
+    </button>
+  );
+
   return (
     <div className="map-page">
+      <BoardStatsBar
+        stations={list}
+        dashboard={dashboard.data}
+        loading={dashboard.isFetching && !dashboard.data}
+      />
       <div className="map-toolbar">
         <div className="map-legend" aria-label={t('stations.subtitle', counts)}>
-          <span className="map-legend__item" data-status="available">
-            <i /> {counts.available} {t('map.free')}
-          </span>
-          <span className="map-legend__item" data-status="occupied">
-            <i /> {counts.occupied} {t('map.inUse')}
-          </span>
-          <span className="map-legend__item" data-status="paused">
-            <i /> {counts.paused} {t('map.paused')}
-          </span>
-          {counts.maintenance > 0 && (
-            <span className="map-legend__item" data-status="maintenance">
-              <i /> {counts.maintenance} {t('stations.status.maintenance')}
-            </span>
-          )}
-          <span className="map-legend__item" data-status="offline">
-            <i /> {counts.offline} {t('map.offline')}
-          </span>
+          {legendPill('available', counts.available, t('map.free'))}
+          {legendPill('occupied', counts.occupied, t('map.inUse'))}
+          {legendPill('paused', counts.paused, t('map.paused'))}
+          {counts.maintenance > 0 &&
+            legendPill('maintenance', counts.maintenance, t('stations.status.maintenance'))}
+          {legendPill('offline', counts.offline, t('map.offline'))}
         </div>
         <div className="map-toolbar__spacer" />
         {zones.length > 0 && (
@@ -510,6 +597,7 @@ export function StationsPage() {
         {zones.length > 0 && (
           <Switch checked={groupByZone} onChange={toggleGroup} label={t('map.groupZones')} />
         )}
+        <ViewMenu value={view} onChange={setView} />
         <label className="map-zoom" title={t('map.iconSize')}>
           <Monitor size={13} />
           <input
@@ -523,15 +611,16 @@ export function StationsPage() {
           />
           <Monitor size={18} />
         </label>
+        {can(PERMISSIONS.STATIONS_VIEW) && (
+          <Button onClick={() => setReservationsOpen(true)} data-testid="reservations-open">
+            <CalendarClock size={16} /> {t('reservations.button')}
+            {openReservations > 0 && <Badge tone="info">{openReservations}</Badge>}
+          </Button>
+        )}
         {canDevices && (pending.data?.length ?? 0) > 0 && (
           <Button variant="primary" onClick={() => setPendingOpen(true)}>
             <Cpu size={16} /> {t('stations.pendingTitle')}{' '}
             <Badge tone="warning">{pending.data!.length}</Badge>
-          </Button>
-        )}
-        {canDevices && (
-          <Button onClick={() => setConnectOpen(true)}>
-            <Link2 size={16} /> {t('stations.connectPc')}
           </Button>
         )}
         {canDevices && outdatedOnline > 0 && (
@@ -548,18 +637,33 @@ export function StationsPage() {
             <Zap size={16} /> {t('stations.wake.actionAll', { n: wakeableCount })}
           </Button>
         )}
-        {canManage && (
-          <Button
-            variant="ghost"
-            aria-pressed={showArchived}
-            onClick={() => setShowArchived((v) => !v)}
-            title={showArchived ? t('stations.hideArchived') : t('stations.showArchived')}
-            data-testid="show-archived"
-          >
-            <Archive size={16} />{' '}
-            {showArchived ? t('stations.hideArchived') : t('stations.showArchived')}
-          </Button>
-        )}
+        <ToolbarMenu
+          label={t('map.more')}
+          items={[
+            ...(canDevices
+              ? [
+                  {
+                    id: 'connect',
+                    label: t('stations.connectPc'),
+                    icon: <Link2 size={16} />,
+                    onSelect: () => setConnectOpen(true),
+                  },
+                ]
+              : []),
+            ...(canManage
+              ? [
+                  {
+                    id: 'archived',
+                    label: showArchived ? t('stations.hideArchived') : t('stations.showArchived'),
+                    icon: <Archive size={16} />,
+                    active: showArchived,
+                    testId: 'show-archived',
+                    onSelect: () => setShowArchived((v) => !v),
+                  },
+                ]
+              : []),
+          ]}
+        />
         {canManage && (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus size={16} /> {t('stations.addStation')}
@@ -571,7 +675,12 @@ export function StationsPage() {
 
       <AwaitingPaymentStrip />
 
-      <div className="map-actions" role="toolbar" aria-label={t('common.actions')}>
+      <div
+        className="map-actions"
+        role="toolbar"
+        aria-label={t('common.actions')}
+        data-empty={!selected || undefined}
+      >
         <div className="map-actions__target" data-multi={multi || undefined}>
           {multi && selected ? (
             <>
@@ -616,38 +725,27 @@ export function StationsPage() {
             <span className="muted">{t('map.selectShort')}</span>
           )}
         </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="select-all-pcs"
+          disabled={displayOrder.length === 0 || selectedIds.length === displayOrder.length}
+          onClick={() => {
+            // Every PC on the map (the same list Ctrl+A uses), so the bar actions apply to all.
+            setSelectedIds(displayOrder.map((s) => s.id));
+            setAnchorId(displayOrder[0]?.id ?? null);
+            setMenu(null);
+          }}
+        >
+          {t('map.selectAll')}
+        </Button>
         <MapHelp />
-        <div className="map-actions__buttons">
-          {actions
-            .filter((a) => a.bar)
-            .map((a) => {
-              const off = !selected || !a.enabled;
-              // A pressed action says so in words as well as in colour (screen readers, tooltips).
-              const title = off
-                ? (a.hint ?? a.label)
-                : a.pressed
-                  ? `${a.label} — ${t('map.endTasksPressed')}`
-                  : a.label;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  className="map-action"
-                  data-action={a.id}
-                  data-tone={a.tone}
-                  data-pressed={a.pressed ? 'true' : undefined}
-                  aria-pressed={a.pressed === undefined ? undefined : a.pressed}
-                  disabled={off || busy}
-                  title={title}
-                  onClick={() => run(a.id)}
-                >
-                  <a.icon size={20} />
-                  <span>{a.label}</span>
-                  {a.shortcut && selected && primary === a.id && <Kbd>{a.shortcut}</Kbd>}
-                </button>
-              );
-            })}
-        </div>
+        <ActionsBar
+          actions={actions.filter((a) => a.bar && a.enabled)}
+          primary={primary}
+          busy={busy}
+          onRun={run}
+        />
       </div>
 
       {stations.isLoading && <Loading />}
@@ -676,6 +774,10 @@ export function StationsPage() {
         </Card>
       )}
 
+      {visible.length === 0 && list.length > 0 && (
+        <p className="muted map-nomatch">{t('map.noMatch')}</p>
+      )}
+
       {visible.length > 0 && (
         <div
           className="map-canvas"
@@ -692,7 +794,9 @@ export function StationsPage() {
             selectedIds={selectedSet}
             size={iconSize}
             groupByZone={groupByZone}
+            view={view}
             onSelect={selectTile}
+            onSelectGroup={selectGroup}
             onPrimary={(id) => {
               // run() must see the newly selected station, so the primary action is
               // executed by the effect below once the selection has re-rendered.
@@ -704,9 +808,23 @@ export function StationsPage() {
             onMenu={(id, x, y) => {
               // selectTile() already handled the selection (keeps a group the tile is in).
               if (!selectedSet.has(id)) setSelectedId(id);
+              setHover(null);
               setMenu({ x, y });
             }}
+            onHover={(id, rect) => {
+              if (rect) setPreviewArmed(true);
+              setHover(rect ? { id, rect } : null);
+            }}
           />
+          {hover && (
+            <HoverCard
+              hover={hover}
+              station={visible.find((s) => s.id === hover.id)}
+              feed={preview}
+              canPreview={canPreview}
+              fetchedAt={stations.dataUpdatedAt}
+            />
+          )}
           {marquee && (
             <div
               className="map-marquee"
@@ -759,10 +877,40 @@ export function StationsPage() {
               <a.icon size={15} /> {a.label}
             </button>
           ))}
+          {!multi && canControl && (
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-menu__item"
+              data-action="badges"
+              onClick={() => {
+                setMenu(null);
+                setBadgesFor(selected.id);
+              }}
+            >
+              <Sparkles size={15} /> {t('board.badgesTitle')}
+            </button>
+          )}
         </div>
       )}
 
       {dialogs}
+      {reservationsOpen && (
+        <ReservationsDialog
+          open
+          onClose={() => setReservationsOpen(false)}
+          stations={list}
+          initialStationIds={selectedIds}
+          canControl={canControl}
+          canSettings={canSettings}
+        />
+      )}
+      {badgesFor && list.find((s) => s.id === badgesFor) && (
+        <BadgesDialog
+          station={list.find((s) => s.id === badgesFor)!}
+          onClose={() => setBadgesFor(null)}
+        />
+      )}
 
       <StationFormDialog
         open={createOpen}
@@ -829,6 +977,86 @@ export function StationsPage() {
  * Small "?" button with a popover listing the mouse/keyboard shortcuts of the map, so the
  * instructions no longer take up space in the action bar.
  */
+/** Filter buckets shown in the legend; they match the counts above the map. */
+type StatusFilter = 'available' | 'occupied' | 'paused' | 'maintenance' | 'offline';
+
+function bucketOf(s: StationSummary): StatusFilter | null {
+  if (!s.isEnabled) return null;
+  if (s.activeSession?.status === 'paused') return 'paused';
+  if (s.activeSession?.status === 'active') return 'occupied';
+  if (s.status === 'maintenance') return 'maintenance';
+  if (s.status === 'offline') return 'offline';
+  if (s.status === 'available') return 'available';
+  return null;
+}
+
+interface ToolbarMenuItem {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  active?: boolean;
+  testId?: string;
+  onSelect: () => void;
+}
+
+/** Secondary toolbar actions in one menu, so the top row keeps only the main controls. */
+function ToolbarMenu({ items, label }: { items: ToolbarMenuItem[]; label: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  if (items.length === 0) return null;
+  return (
+    <div className="map-more" ref={ref}>
+      <Button
+        variant="ghost"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+        onClick={() => setOpen((v) => !v)}
+        data-testid="toolbar-more"
+      >
+        <MoreHorizontal size={16} />
+      </Button>
+      {open && (
+        <div className="map-more__pop" role="menu">
+          {items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="menuitem"
+              className="map-more__item"
+              data-testid={item.testId}
+              onClick={() => {
+                setOpen(false);
+                item.onSelect();
+              }}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+              {item.active && <Check size={14} className="map-more__check" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MapHelp() {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -1282,6 +1510,8 @@ function StationDetailDialog({
   const canManage = can(PERMISSIONS.STATIONS_MANAGE);
   const canDevices = can(PERMISSIONS.DEVICES_MANAGE);
   const [editOpen, setEditOpen] = useState(false);
+  // 0.20.0: this PC's own look and wallpaper.
+  const [lookOpen, setLookOpen] = useState(false);
   const [confirm, setConfirm] = useState<
     'revoke' | 'reissue' | 'delete' | 'archive' | 'unarchive' | null
   >(null);
@@ -1360,6 +1590,11 @@ function StationDetailDialog({
             )}
             <div style={{ flex: 1 }} />
             {canManage && (
+              <Button onClick={() => setLookOpen(true)} data-testid="station-look">
+                {t('stations.look.button')}
+              </Button>
+            )}
+            {canManage && (
               <Button onClick={() => setEditOpen(true)}>{t('stations.editStation')}</Button>
             )}
             <Button
@@ -1410,7 +1645,7 @@ function StationDetailDialog({
                 approveRequestId={approveRequestId}
               />
             </Card>
-            <Card flush testId="station-device">
+            <Card testId="station-device">
               {device ? (
                 <div className="st-device">
                   <div className="st-device__row" data-testid="station-device-row">
@@ -1615,6 +1850,8 @@ function StationDetailDialog({
           </>
         )}
       </Dialog>
+
+      {lookOpen && <StationLookDialog station={station} onClose={() => setLookOpen(false)} />}
 
       <StationFormDialog
         open={editOpen}
@@ -1981,5 +2218,28 @@ function DeviceCommands({
         />
       )}
     </div>
+  );
+}
+
+/** The hover preview card, when the hovered PC is in the list. */
+function HoverCard({
+  hover,
+  station,
+  feed,
+  canPreview,
+  fetchedAt,
+}: {
+  hover: { id: string; rect: DOMRect };
+  station: StationSummary | undefined;
+  feed: ReturnType<typeof useLivePreview>;
+  canPreview: boolean;
+  fetchedAt: number;
+}) {
+  if (!station) return null;
+  return (
+    <>
+      {canPreview && <LivePreviewCard station={station} rect={hover.rect} feed={feed} />}
+      <HoverInfo station={station} rect={hover.rect} fetchedAt={fetchedAt} />
+    </>
   );
 }

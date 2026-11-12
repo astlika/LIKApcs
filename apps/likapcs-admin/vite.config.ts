@@ -11,7 +11,12 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // so the UI can use relative URLs. In the packaged Tauri app the server URL is configurable.
 const serverTarget = process.env.LIKAPCS_SERVER_URL ?? 'http://127.0.0.1:4700';
 
-export default defineConfig({
+// `vite build --mode web` makes the browser build served by the LIKApcs Server at /desktop/
+// (folder dist-web). The Tauri build keeps base '/' and folder dist.
+export default defineConfig(({ mode }) => {
+  const web = mode === 'web';
+  return {
+  base: web ? '/desktop/' : '/',
   plugins: [react()],
   define: { 'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version) },
   clearScreen: false,
@@ -28,7 +33,7 @@ export default defineConfig({
   build: {
     target: ['es2022', 'chrome110', 'edge110'],
     sourcemap: false,
-    outDir: 'dist',
+    outDir: web ? 'dist-web' : 'dist',
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
@@ -38,4 +43,5 @@ export default defineConfig({
     },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
+  };
 });

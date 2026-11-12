@@ -197,10 +197,15 @@ describe('updates dashboard', () => {
     const second = await call<UpdatesOverview>(owner.token, 'POST', '/system/updates/check', {});
     expect(second.body.check.ok).toBe(true);
     expect(second.body.latest.client?.version).toBe(feedVersion);
+    // Sorted in JS: a text ORDER BY puts 0.19.10 before 0.19.9.
     const rows = await ctx.pool.query<{ version: string; is_latest: boolean }>(
-      `SELECT version, is_latest FROM application_versions WHERE component = 'client' ORDER BY version`,
+      `SELECT version, is_latest FROM application_versions WHERE component = 'client'`,
     );
-    expect(rows.rows).toEqual([
+    expect(
+      [...rows.rows].sort((a, b) =>
+        a.version.localeCompare(b.version, undefined, { numeric: true }),
+      ),
+    ).toEqual([
       { version: newer, is_latest: false },
       { version: feedVersion, is_latest: true },
     ]);

@@ -154,6 +154,22 @@ export function SaleDoneDialog({
               : t('pos.finishHint')}
         </p>
         <div className="pos-done__receipt">
+          {receipt.claimPins && receipt.claimPins.length > 0 && (
+            <div className="stack" data-testid={`${testId}-claim-pins`}>
+              <strong>{t('pos.claimPinsTitle')}</strong>
+              <div className="muted small">{t('pos.claimPinsHint')}</div>
+              {receipt.claimPins.map((p) => (
+                <div key={p.creditId} className="pos-done__row">
+                  <span>
+                    {p.holderName} · {t('pos.claimPinsMinutes', { minutes: p.minutes })}
+                  </span>
+                  <span className="num" data-testid="claim-pin-value">
+                    {p.pin}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           <Receipt data={receipt} />
         </div>
       </div>

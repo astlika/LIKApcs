@@ -1,17 +1,22 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { announcePayments } from './announce.js';
 import { z } from 'zod';
 import {
   PERMISSIONS,
-  bulkCollectSchema,
-  bulkEndSchema,
+  adjustPriceSchema,
+  bulkEndSessionsSchema,
+  bulkRemoveTimeSchema,
+  bulkSettleSchema,
   bulkMinutesSchema,
-  bulkStartSchema,
   collectSessionSchema,
+  collectStationSchema,
   endSessionSchema,
   extendSessionSchema,
+  removeSessionTimeSchema,
   sessionGiftSchema,
   sessionListQuerySchema,
   sessionQuoteSchema,
+  renameSessionPcSchema,
   startSessionSchema,
   uuidSchema,
 } from '@likapcs/shared';
@@ -23,6 +28,12 @@ import { notFound } from '../errors.js';
  */
 export const sessionRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
+  // 0.34.0: money taken through a PC session is a sale: it is announced like any other.
+  const sold = <T>(p: Promise<T>): Promise<T> =>
+    p.then((r) => {
+      announcePayments(app, r);
+      return r;
+    });
   const idParams = z.object({ id: uuidSchema });
   const actorOf = (request: FastifyRequest) => ({
     userId: request.auth!.user.id,
@@ -36,6 +47,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/sessions', view, async (request) =>
     services.sessions.list(sessionListQuerySchema.parse(request.query)),
   );
+  // 0.19.0: open prepaid-time credits (sold at the till) — optionally for one PC.
+  app.get('/time-credits', view, async (request) => {
+    const q = z.object({ stationId: uuidSchema.optional() }).parse(request.query);
+    return { credits: await services.timeCredits.open(q.stationId) };
+  });
+
   app.get('/sessions/:id', view, async (request) =>
     services.sessions.getById(idParams.parse(request.params).id),
   );
@@ -57,6 +74,42 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   app.post('/sessions/:id/resume', control, async (request) =>
     services.sessions.resume(idParams.parse(request.params).id, actorOf(request)),
+  );
+  app.post('/sessions/bulk-settle', control, async (request) =>
+    sold(services.sessions.bulkSettle(bulkSettleSchema.parse(request.body), actorOf(request))),
+  );
+  // 0.27.0: change the price of a bill that is already paid (pos.adjust_paid, checked in the service).
+  app.post(
+    '/sessions/:id/adjust-price',
+    { preHandler: app.requirePermission(PERMISSIONS.POS_ADJUST_PAID) },
+    async (request) =>
+      services.sessions.adjustPrice(
+        idParams.parse(request.params).id,
+        adjustPriceSchema.parse(request.body),
+        actorOf(request),
+      ),
+  );
+  app.get('/sessions/by-sale/:saleId', view, async (request) => {
+    const { saleId } = z.object({ saleId: uuidSchema }).parse(request.params);
+    return { link: await services.sessions.saleLink(saleId) };
+  });
+  app.post('/sessions/bulk-remove-time', control, async (request) =>
+    services.sessions.bulkRemoveTime(bulkRemoveTimeSchema.parse(request.body), actorOf(request)),
+  );
+  app.post('/sessions/:id/remove-time', control, async (request) =>
+    services.sessions.removeTime(
+      idParams.parse(request.params).id,
+      removeSessionTimeSchema.parse(request.body),
+      actorOf(request),
+    ),
+  );
+  /** 0.33.0: the name the PC shows for this session (null clears it). */
+  app.patch('/sessions/:id/pc-label', control, async (request) =>
+    services.sessions.setPcLabel(
+      idParams.parse(request.params).id,
+      renameSessionPcSchema.parse(request.body),
+      actorOf(request),
+    ),
   );
   app.post('/sessions/:id/extend', control, async (request) =>
     services.sessions.extend(
@@ -85,36 +138,53 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sessions/bulk-minutes', control, async (request) =>
     services.sessions.bulkMinutes(bulkMinutesSchema.parse(request.body), actorOf(request)),
   );
-  /** 0.19.0: a session on every selected PC — one payment step, one transaction. */
-  app.post('/sessions/bulk-start', control, async (request, reply) => {
-    const result = await services.sessions.bulkStart(
-      bulkStartSchema.parse(request.body),
-      actorOf(request),
-    );
-    return reply.status(result.replayed ? 200 : 201).send(result);
-  });
-  /** "End" for a whole selection of PCs: one payment step, split across the bills. */
+  /** 0.19.4: "Ndalo" for several PCs at once — nothing is charged now; bills wait at the desk. */
   app.post('/sessions/bulk-end', control, async (request) =>
-    services.sessions.bulkEnd(bulkEndSchema.parse(request.body), actorOf(request)),
-  );
-  /** "Collect all": several ended pay-at-the-end sessions, one payment step. */
-  app.post('/sessions/bulk-collect', control, async (request) =>
-    services.sessions.bulkCollect(bulkCollectSchema.parse(request.body), actorOf(request)),
+    sold(services.sessions.bulkEnd(bulkEndSessionsSchema.parse(request.body), actorOf(request))),
   );
   app.post('/sessions/:id/end', control, async (request) =>
-    services.sessions.end(
-      idParams.parse(request.params).id,
-      endSessionSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.end(
+        idParams.parse(request.params).id,
+        endSessionSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /** End pay (0.14.0): "Collect" in the awaiting-payment strip — takes the money for an ended
    * pay-at-the-end session (time + open orders on the bill), exactly once. */
   app.post('/sessions/:id/collect', control, async (request) =>
-    services.sessions.collect(
-      idParams.parse(request.params).id,
-      collectSessionSchema.parse(request.body ?? {}),
-      actorOf(request),
+    sold(
+      services.sessions.collect(
+        idParams.parse(request.params).id,
+        collectSessionSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
+    ),
+  );
+  /**
+   * 0.21.0 — pay all: the bills waiting at one PC, paid in one tender step (one transaction; each
+   * bill keeps its own receipt). Same permission as collecting a single bill.
+   */
+  app.post('/stations/:stationId/collect-all', control, async (request) =>
+    sold(
+      services.sessions.collectStation(
+        z.object({ stationId: uuidSchema }).parse(request.params).stationId,
+        collectStationSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
+    ),
+  );
+  /**
+   * 0.19.5 — collect all PCs: every bill waiting at any PC, in one tender step (one transaction).
+   * Same permission as collecting a single bill; a tender that does not cover them refuses all.
+   */
+  app.post('/sessions/collect-all', control, async (request) =>
+    sold(
+      services.sessions.collectAllPcs(
+        collectStationSchema.parse(request.body ?? {}),
+        actorOf(request),
+      ),
     ),
   );
   /** Receipt of the session's bill — for the "paid" dialog after a prepaid start / extension or a
