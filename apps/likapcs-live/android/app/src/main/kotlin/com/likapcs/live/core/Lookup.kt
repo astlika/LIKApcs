@@ -1,6 +1,7 @@
 package com.likapcs.live.core
 
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Names for the ids in the audit log: the PC of a session, a product, a customer, a staff member.
@@ -14,6 +15,14 @@ class Lookup(private val fetch: (path: String) -> JsonElement?) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > max
     }
 
+    /** What is worth saying about a session besides its PC. */
+    class SessionInfo(val pc: String?, val who: String?, val priceCents: Long?)
+
+    private class InfoLru(private val max: Int) : LinkedHashMap<String, SessionInfo>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SessionInfo>?): Boolean = size > max
+    }
+
+    private val sessionInfo = InfoLru(200)
     private val users = Lru(300)
     private val sessions = Lru(500)
     private val products = Lru(500)
@@ -30,6 +39,7 @@ class Lookup(private val fetch: (path: String) -> JsonElement?) {
     @Synchronized
     fun clear() {
         listOf(users, sessions, products, customers, debts, orders).forEach { it.clear() }
+        sessionInfo.clear()
         stations.clear()
         expenseCategories.clear()
         logins.clear()
@@ -73,6 +83,41 @@ class Lookup(private val fetch: (path: String) -> JsonElement?) {
     fun rememberSession(id: String?, pc: String?) {
         if (!id.isNullOrEmpty() && !pc.isNullOrBlank()) sessions[id] = pc
     }
+
+    /** A PC seen in the live list (`GET /stations`, `station.changed`). */
+    @Synchronized
+    fun rememberStation(id: String?, code: String?) {
+        if (!id.isNullOrEmpty() && !code.isNullOrBlank()) stations[id] = code
+    }
+
+    /** A session as the server last described it (`session.changed`, a `SessionSummary`). */
+    @Synchronized
+    fun rememberSession(s: JsonObject?) {
+        val id = s.str("id") ?: return
+        s.str("stationCode")?.takeIf { it.isNotBlank() }?.let { sessions[id] = it }
+        sessionInfo[id] = info(s)
+    }
+
+    /** Who sat at a session's PC and what it cost; read from the server when not seen yet. */
+    @Synchronized
+    fun session(id: String?): SessionInfo? {
+        if (id.isNullOrEmpty()) return null
+        sessionInfo[id]?.let { return it }
+        val s = try {
+            fetch("/sessions/$id").asObj()
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        if (s.str("id") == null) return null
+        s.str("stationCode")?.takeIf { it.isNotBlank() }?.let { sessions[id] = it }
+        return info(s).also { sessionInfo[id] = it }
+    }
+
+    private fun info(s: JsonObject?) = SessionInfo(
+        pc = s.str("stationCode"),
+        who = s.str("pcLabel") ?: s.str("customerName"),
+        priceCents = s.long("finalPriceCents") ?: s.long("quotedPriceCents") ?: s.long("currentPriceCents"),
+    )
 
     /** Full name of a staff member. The list is read once and again when someone unknown appears. */
     @Synchronized

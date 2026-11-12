@@ -27,6 +27,9 @@ class DescriberTest {
         "/sessions/8f8cc96a" to """{"id":"8f8cc96a","stationCode":"PC 03"}""",
         "/products/67424bbe" to """{"id":"67424bbe","name":"Ujë 0.5l"}""",
         "/products/16a900da" to """{"id":"16a900da","name":"Coca-Cola 0.33l"}""",
+        "/sessions/5e55e7d0" to """{"id":"5e55e7d0","stationCode":"PC 02","customerName":"Driton","pcLabel":null,
+            "finalPriceCents":140,"quotedPriceCents":200,"currentPriceCents":140}""",
+        "/stations" to """[{"id":"st-5","code":"PC 05","name":"PC 5"},{"id":"st-7","code":"PC 07","name":"PC 7"}]""",
         "/debts/3be70c7b" to """{"id":"3be70c7b","customerName":"Arben Test"}""",
         "/expenses/categories" to """[{"code":"cleaning","nameSq":"Pastrimi","nameEn":"Cleaning"}]""",
     )
@@ -78,16 +81,119 @@ class DescriberTest {
         assertEquals("Sanduiç ×1 · fitimi 3.81 € · me borxh: Arben Test", note.text)
     }
 
+    private fun timeSale(vararg lines: String, total: Int = 200, customer: String? = null, lang: String = "sq"): Note =
+        describer(lang).sale(json("""{"saleId":"s3","cashierName":"Kasjere Test","totalCents":$total,"profitCents":$total,
+            "customerName":${customer?.let { "\"$it\"" }},
+            "items":[${lines.joinToString(",") { """{"name":"$it","quantityMilli":1000,"lineTotalCents":200,"profitCents":200,"isTime":true}""" }}]}"""))!!
+
     @Test
-    fun pcTimeLosesTheServersEnglishBracket() {
-        fun text(line: String) = describer().sale(json("""{"saleId":"s3","cashierName":"Kasjere Test","totalCents":200,
-            "profitCents":169,"items":[{"name":"$line","quantityMilli":1000,"lineTotalCents":200,"profitCents":169,"isTime":true}]}"""))!!.text
-        assertEquals("PC 01 · 60 min · fitimi 1.69 €", text("PC 01 · 60 min (prepaid)"))
-        assertEquals("PC 01 · +30 min · fitimi 1.69 €", text("PC 01 · +30 min (extension)"))
-        assertEquals("PC 02 · 1 min · fitimi 1.69 €", text("PC 02 · 1 min (postpaid)"))
-        // A package name is the shop's own word: it stays.
-        assertEquals("PC 01 · +180 min (Paketa 3 orë) · fitimi 1.69 €", text("PC 01 · +180 min (extension: Paketa 3 orë)"))
-        assertEquals("PC 05 · Paketa e natës · fitimi 1.69 €", text("PC 05 · Paketa e natës"))
+    fun aSessionPaidAtItsStartIsToldAsAStart() {
+        val note = timeSale("PC 01 · 60 min (prepaid)")
+        assertEquals("Kasjere Test nisi PC 01 · 60 min · 2.00 €", note.title)
+        assertEquals("kohë e parapaguar", note.text)
+        // Money came in: it is still a sale.
+        assertEquals(Category.SALES, note.category)
+        assertEquals("Kasjere Test started PC 01 · 60 min · 2.00 €", timeSale("PC 01 · 60 min (prepaid)", lang = "en").title)
+    }
+
+    @Test
+    fun anExtensionAndABillPaidAtTheEnd() {
+        assertEquals("Kasjere Test zgjati PC 01 · +30 min · 2.00 €", timeSale("PC 01 · +30 min (extension)").title)
+        val bill = timeSale("PC 02 · 1h 05m (postpaid)", total = 217, customer = "Driton")
+        assertEquals("Kasjere Test mbylli PC 02 · 1 h 05 min · 2.17 €", bill.title)
+        assertEquals("Driton", bill.text)
+        assertEquals("Kasjere Test mbylli PC 02 · 42 min · 2.00 €", timeSale("PC 02 · 42 min (pay at the end)").title)
+    }
+
+    @Test
+    fun aPackageNameIsTheShopsOwnWordAndStays() {
+        val note = timeSale("PC 01 · +180 min (extension: Paketa 3 orë)", customer = "Driton")
+        assertEquals("Kasjere Test zgjati PC 01 · +180 min · 2.00 €", note.title)
+        assertEquals("Paketa 3 orë · Driton", note.text)
+    }
+
+    @Test
+    fun severalPcsStartedAtOnce() {
+        val note = timeSale("PC 01 · 60 min (prepaid)", "PC 02 · 60 min (prepaid)", "PC 03 · 60 min (prepaid)", total = 600)
+        assertEquals("Kasjere Test nisi 3 PC · 6.00 €", note.title)
+        assertEquals("PC 01 · 60 min, PC 02 · 60 min, PC 03 · 60 min", note.text)
+    }
+
+    @Test
+    fun timeSoldTogetherWithProductsIsAPlainSale() {
+        val note = describer().sale(json("""{"saleId":"s5","cashierName":"Kasjere Test","totalCents":390,"profitCents":361,"items":[
+            {"name":"PC 01 · 60 min (prepaid)","quantityMilli":1000,"lineTotalCents":200,"profitCents":200,"isTime":true},
+            {"name":"Coca-Cola 0.33l","quantityMilli":1000,"lineTotalCents":190,"profitCents":161,"isTime":false}]}"""))!!
+        assertEquals("Kasjere Test shiti 3.90 €", note.title)
+        assertEquals("PC 01 · 60 min, Coca-Cola 0.33l ×1 · fitimi 3.61 €", note.text)
+        // A time line this app does not know the form of: left as the server wrote it.
+        val odd = describer().sale(json("""{"saleId":"s6","cashierName":"Kasjere Test","totalCents":200,"profitCents":169,"items":[
+            {"name":"PC 05 · Paketa e natës","quantityMilli":1000,"lineTotalCents":200,"profitCents":169,"isTime":true}]}"""))!!
+        assertEquals("Kasjere Test shiti 2.00 €", odd.title)
+        assertEquals("PC 05 · Paketa e natës · fitimi 1.69 €", odd.text)
+    }
+
+    @Test
+    fun aSaleUnderItsCostAndABigSaleAreThingsToLookAt() {
+        val loss = describer().saleAlert(json("""{"saleId":"s7","cashierName":"Kasjere Test","totalCents":100,"profitCents":-50,
+            "items":[{"name":"Coca-Cola 0.33l","quantityMilli":2000,"lineTotalCents":100,"profitCents":-50,"isTime":false}]}"""), Topic.SALE_BELOW_COST)!!
+        assertEquals("Shitje nën kosto: Kasjere Test · 1.00 €", loss.title)
+        assertEquals("Coca-Cola 0.33l ×2 · humbje 0.50 €", loss.text)
+        assertEquals("Coca-Cola 0.33l ×2 · loss 0.50 €", describer("en").saleAlert(json("""{"saleId":"s7","cashierName":"Kasjere Test","totalCents":100,"profitCents":-50,
+            "items":[{"name":"Coca-Cola 0.33l","quantityMilli":2000,"lineTotalCents":100,"profitCents":-50,"isTime":false}]}"""), Topic.SALE_BELOW_COST)!!.text)
+        assertEquals(Category.ALERTS, loss.category)
+        assertEquals(Topic.SALE_BELOW_COST, loss.topic)
+        // The same key as the plain sale message: one sale is one message.
+        assertEquals("sale:s7", loss.key)
+        val big = describer().saleAlert(json(productSale), Topic.SALE_BIG)!!
+        assertEquals("Shitje e madhe: Kasjere Test · 5.80 €", big.title)
+        assertEquals("Big sale: Kasjere Test · 5.80 €", describer("en").saleAlert(json(productSale), Topic.SALE_BIG)!!.title)
+    }
+
+    /**
+     * Two colas at 1.90 € with 1.00 € off the whole sale, as a 0.33.4 server sends it: the lines
+     * still say 3.80 €, the tax (0.43 €) is that of the 2.80 € charged, and "profit" is the lines
+     * minus tax minus cost (0.60 €) — which leaves the discount out.
+     */
+    private val discounted = """{"saleId":"s8","cashierName":"Kasjere Test","totalCents":280,"profitCents":277,"missingCost":false,
+        "items":[{"name":"Coca-Cola 0.33l","quantityMilli":2000,"lineTotalCents":380,"profitCents":277,"isTime":false}]}"""
+
+    @Test
+    fun aDiscountOnTheWholeSaleIsTakenOffTheProfit() {
+        val d = describer()
+        assertEquals(100L, d.saleDiscount(json(discounted)))
+        assertEquals(177L, d.saleProfit(json(discounted)))
+        // The plain message names the discount and the profit that is left.
+        val plain = d.sale(json(discounted))!!
+        assertEquals("Kasjere Test shiti 2.80 €", plain.title)
+        assertEquals("Coca-Cola 0.33l ×2 · zbritje 1.00 € · fitimi 1.77 €", plain.text)
+        // A sale without a discount is left as the server said it.
+        assertEquals(0L, d.saleDiscount(json(productSale)))
+        assertEquals(json(productSale).long("profitCents"), d.saleProfit(json(productSale)))
+        // No lines listed (nothing to add up): nothing is taken off.
+        assertEquals(0L, d.saleDiscount(json("""{"saleId":"s","totalCents":280,"profitCents":200}""")))
+    }
+
+    @Test
+    fun aSaleWithADiscountIsToldAsTheDiscount() {
+        val note = describer().saleAlert(json(discounted), Topic.SALE_DISCOUNT)!!
+        assertEquals("Kasjere Test dha zbritje 1.00 €", note.title)
+        assertEquals("shitja 2.80 € · Coca-Cola 0.33l ×2 · fitimi 1.77 €", note.text)
+        assertEquals(Category.ALERTS, note.category)
+        assertEquals(Topic.SALE_DISCOUNT, note.topic)
+        assertEquals("sale:s8", note.key)
+        assertEquals("Kasjere Test gave a discount of 1.00 €", describer("en").saleAlert(json(discounted), Topic.SALE_DISCOUNT)!!.title)
+    }
+
+    @Test
+    fun aDiscountThatTurnsTheSaleIntoALossSaysBoth() {
+        // A can that cost 1.40 € sold for 1.00 € after 1.50 € off: lines 2.50, tax 0.15.
+        val sale = json("""{"saleId":"s9","cashierName":"Pronari Test","totalCents":100,"profitCents":95,"missingCost":false,
+            "items":[{"name":"Red Bull 0.25l","quantityMilli":1000,"lineTotalCents":250,"profitCents":95,"isTime":false}]}""")
+        assertEquals(-55L, describer().saleProfit(sale))
+        val note = describer().saleAlert(sale, Topic.SALE_BELOW_COST)!!
+        assertEquals("Shitje nën kosto: Pronari Test · 1.00 €", note.title)
+        assertEquals("Red Bull 0.25l ×1 · zbritje 1.50 € · humbje 0.55 €", note.text)
     }
 
     @Test
@@ -148,15 +254,116 @@ class DescriberTest {
     @Test
     fun aCancelledSession() = check(
         row(362, owner, "owner", "session.cancel", "8f8cc96a", """{"reason":"Gabim në nisje"}""", "warning"),
-        Category.ALERTS, "PC 03: sesioni u anulua", "Pronari Test · arsyeja: Gabim në nisje",
+        Category.ALERTS, "PC 03: seanca u anulua", "Pronari Test · arsyeja: Gabim në nisje",
     )
 
     @Test
     fun anOpenSessionTakesThePcFromTheRowItself() = check(
         row(378, cashier, "kasjere", "session.start", "cf279083",
             """{"minutes":null,"requestId":null,"priceCents":0,"billingMode":"postpaid","stationCode":"PC 04"}"""),
-        Category.PCS, "PC 04: sesion i ri", "Kasjere Test · kohë e hapur",
+        Category.PCS, "Kasjere Test nisi PC 04", "kohë e hapur",
     )
+
+    @Test
+    fun aPaidSessionStartNamesMinutesAndPrice() = check(
+        row(379, cashier, "kasjere", "session.start", "d3a04be2",
+            """{"minutes":60,"requestId":null,"priceCents":200,"billingMode":"prepaid","stationCode":"PC 01"}"""),
+        Category.PCS, "Kasjere Test nisi PC 01 · 60 min · 2.00 €", "parapagim",
+    )
+
+    @Test
+    fun aSessionTheCustomerStartedHasNoStaffName() = check(
+        row(380, null, null, "session.start", "d3a04be2", """{"minutes":30,"priceCents":0,"billingMode":"prepaid","stationCode":"PC 01"}"""),
+        Category.PCS, "PC 01: seanca nisi · 30 min", "Sistemi · parapagim",
+    )
+
+    @Test
+    fun anExtensionByStaff() = check(
+        row(381, cashier, "kasjere", "session.extend", "d3a04be2", """{"minutes":30,"priceCents":100,"requestId":"r1"}"""),
+        Category.PCS, "Kasjere Test zgjati PC 01 · +30 min · 1.00 €", "kërkesë nga klienti",
+    )
+
+    @Test
+    fun aSessionClosedByStaffSaysHowLongWhoAndHowMuch() {
+        val entry = row(382, cashier, "kasjere", "session.end", "5e55e7d0", """{"billableSeconds":2520,"billingMode":"prepaid"}""")
+        check(entry, Category.PCS, "Kasjere Test mbylli PC 02 · 42 min", "Driton · 1.40 € · parapagim")
+        assertEquals(Topic.PC_ENDED, describer().audit(entry).topic)
+    }
+
+    // ─── PCs switched on and off from the Admin ─────────────────────────────────────────────
+
+    @Test
+    fun theWakeSignalForOnePc() {
+        val d = describer().audit(row(500, owner, "owner", "station.wake", "st-5", """{"mac":"08:BF:B8:12:34:56","targets":["255.255.255.255"],"warnings":[]}"""))
+        assertEquals("Pronari Test e ndezi PC 05", d.title)
+        assertEquals("sinjali i ndezjes u dërgua", d.text)
+        assertEquals(Category.POWER, d.category)
+        assertEquals(Topic.PC_WAKE, d.topic)
+        assertTrue(d.notify)
+        // Several in a row by the same person become one message.
+        assertEquals("wake:Pronari Test", d.group)
+        assertEquals("PC 05", d.item)
+        val (title, text) = d.many!!(listOf("PC 07", "PC 05"))
+        assertEquals("Pronari Test ndezi 2 PC", title)
+        assertEquals("PC 05, PC 07 · sinjali i ndezjes u dërgua", text)
+    }
+
+    @Test
+    fun wakeAll() {
+        val d = describer().audit(row(501, owner, "owner", "station.wake_all", null,
+            """{"sent":["PC 02","PC 01","PC 10"],"skipped":[{"code":"PC 04","reason":"no_mac"},{"code":"PC 05","reason":"online"},
+                {"code":"PC 06","reason":"online"}]}"""))
+        assertEquals("Pronari Test i ndezi të gjitha PC-të (3)", d.title)
+        assertEquals("PC 01, PC 02, PC 10 · 2 ishin ndezur · 1 nuk mund të ndizen nga rrjeti · sinjali i ndezjes u dërgua", d.text)
+        assertEquals(Topic.PC_WAKE, d.topic)
+        assertEquals("Pronari Test switched all PCs on (3)",
+            describer("en").audit(row(501, owner, "owner", "station.wake_all", null, """{"sent":["PC 02","PC 01","PC 10"],"skipped":[]}""")).title)
+    }
+
+    @Test
+    fun shutDownAndRestartFromTheAdmin() {
+        val off = describer().audit(row(502, owner, "owner", "station.command.power.shutdown", "st-5", """{"deviceId":"d1","payload":{},"ok":true,"error":null}"""))
+        assertEquals("Pronari Test e fiku PC 05", off.title)
+        assertEquals(Category.POWER, off.category)
+        assertEquals(Topic.PC_COMMAND, off.topic)
+        assertTrue(off.notify)
+        assertEquals("Pronari Test fiku 2 PC", off.many!!(listOf("PC 05", "PC 07")).first)
+        val restart = describer().audit(row(503, owner, "owner", "station.command.power.restart", "st-7", """{"ok":true}"""))
+        assertEquals("Pronari Test e rinisi PC 07", restart.title)
+        assertEquals("restart:Pronari Test", restart.group)
+        // A PC that did not answer is said as such, and never merged with the ones that did.
+        val failed = describer().audit(row(504, owner, "owner", "station.command.power.shutdown", "st-7", """{"ok":false,"error":"device disconnected"}""", "warning"))
+        assertEquals("PC 07 nuk u fik", failed.title)
+        assertEquals("Pronari Test · gabimi: device disconnected", failed.text)
+        assertNull(failed.group)
+    }
+
+    @Test
+    fun otherCommandsToAPcAreListedButNotAnnounced() {
+        val d = describer().audit(row(505, owner, "owner", "station.command.message.show", "st-5", """{"payload":{"text":"Mbyllim për 10 minuta"},"ok":true}"""))
+        assertEquals("PC 05: mesazh në ekran", d.title)
+        assertEquals("Pronari Test · Mbyllim për 10 minuta", d.text)
+        assertFalse(d.notify)
+        assertFalse(describer().audit(row(506, owner, "owner", "station.command.lock", "st-5", """{"ok":true}""")).notify)
+    }
+
+    @Test
+    fun aDiscountIsAThingToLookAt() {
+        val d = describer().audit(row(507, cashier, "kasjere", "sale.completed", "s9",
+            """{"receiptNo":"R-2026-000120","totalCents":400,"discountCents":100,"items":3}"""))
+        assertEquals("Kasjere Test dha zbritje 1.00 €", d.title)
+        assertEquals("shitja 4.00 € · R-2026-000120 · 3 artikuj", d.text)
+        assertEquals("shitja 4.00 € · R-1 · 1 artikull", describer().audit(row(510, cashier, "kasjere", "sale.completed", "s9",
+            """{"receiptNo":"R-1","totalCents":400,"discountCents":100,"items":1}""")).text)
+        assertEquals(Category.ALERTS, d.category)
+        assertEquals(Topic.SALE_DISCOUNT, d.topic)
+        assertTrue(d.notify)
+        // Without a discount the row stays quiet: the sale itself is the message.
+        assertFalse(describer().audit(row(508, cashier, "kasjere", "sale.completed", "s9", """{"receiptNo":"R-1","totalCents":400,"discountCents":0,"items":3}""")).notify)
+        val bill = describer().audit(row(509, cashier, "kasjere", "session.collect", "5e55e7d0", """{"amountCents":300,"discountCents":50,"orders":0}"""))
+        assertEquals("Kasjere Test dha zbritje 0.50 € · PC 02", bill.title)
+        assertEquals("u pagua 3.00 €", bill.text)
+    }
 
     @Test
     fun aFailedSignIn() = check(

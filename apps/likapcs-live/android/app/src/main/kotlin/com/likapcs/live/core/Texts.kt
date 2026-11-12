@@ -37,8 +37,9 @@ class Texts(val lang: String, private val zone: ZoneId = ZoneId.systemDefault())
 
     fun signedQty(milli: Long): String = if (milli > 0) "+${qty(milli)}" else qty(milli)
 
-    /** 3900 s → "1 h 05 min", 2520 s → "42 min" */
+    /** 3900 s → "1 h 05 min", 2520 s → "42 min", 40 s → "nën 1 min" */
     fun duration(seconds: Long): String {
+        if (seconds in 1..59) return t("nën 1 min", "under 1 min")
         val minutes = Math.max(0, seconds) / 60
         val h = minutes / 60
         val m = minutes % 60
