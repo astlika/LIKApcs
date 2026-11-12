@@ -289,10 +289,17 @@ export function PosPage() {
     },
     [queryClient, t, toast],
   );
+  // The newest cart, also between two events of the same moment (two scans answered together, a
+  // double click): the stock rule is judged against it, and every change is applied on the newest
+  // state (a functional update), so one addition can never overwrite another.
+  const latestCart = useRef(cart);
+  useEffect(() => {
+    latestCart.current = cart;
+  }, [cart]);
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
-      const checked = addToCartChecked(cart, product, quantityMilli);
+      const checked = addToCartChecked(latestCart.current, product, quantityMilli);
       if (checked.refused) {
         stockRefused(checked.refused);
         focusSearch();
@@ -302,18 +309,32 @@ export function PosPage() {
         setAddonPick({ product, quantityMilli });
         return;
       }
-      setCart(checked.cart);
+      latestCart.current = checked.cart;
+      setCart((c) => addToCartChecked(c, product, quantityMilli).cart);
       focusSearch();
     },
-    [cart, focusSearch, setCart, stockRefused],
+    [focusSearch, setCart, stockRefused],
+  );
+  const addWithExtras = useCallback(
+    (product: ProductSummary, quantityMilli: number, addonIds: readonly string[]) => {
+      const checked = addToCartChecked(latestCart.current, product, quantityMilli, addonIds);
+      if (checked.refused) {
+        stockRefused(checked.refused);
+        return;
+      }
+      latestCart.current = checked.cart;
+      setCart((c) => addToCartChecked(c, product, quantityMilli, addonIds).cart);
+    },
+    [setCart, stockRefused],
   );
   const changeQuantity = useCallback(
     (key: string, quantityMilli: number) => {
-      const checked = setQuantityChecked(cart, key, quantityMilli);
+      const checked = setQuantityChecked(latestCart.current, key, quantityMilli);
       if (checked.refused) stockRefused(checked.refused);
-      setCart(checked.cart);
+      latestCart.current = checked.cart;
+      setCart((c) => setQuantityChecked(c, key, quantityMilli).cart);
     },
-    [cart, setCart, stockRefused],
+    [setCart, stockRefused],
   );
 
   // Leaving the "sale completed" screen: refresh what the sale changed (stock on the tiles, the
@@ -1052,10 +1073,7 @@ export function PosPage() {
             focusSearch();
           }}
           onAdd={(addonIds) => {
-            const { product, quantityMilli } = addonPick;
-            const checked = addToCartChecked(cart, product, quantityMilli, addonIds);
-            if (checked.refused) stockRefused(checked.refused);
-            else setCart(checked.cart);
+            addWithExtras(addonPick.product, addonPick.quantityMilli, addonIds);
             setAddonPick(null);
             focusSearch();
           }}

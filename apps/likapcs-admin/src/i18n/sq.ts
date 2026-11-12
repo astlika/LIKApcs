@@ -1219,7 +1219,7 @@ export const sq: Dictionary = {
       birthday: 'Po festohet një ditëlindje këtu',
     },
     badgesTitle: 'Badge-t',
-    badgesHint: 'Stafi i vendos me dorë. Një rezervim tregon "Rezervuar" vetë.',
+    badgesHint: 'Stafi i vendos me dorë.',
     badgesSaved: '{code}: badge-t u ruajtën',
     holdLabel: 'Rezervuar',
     deadline: 'Afati: {time}',

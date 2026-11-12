@@ -1207,7 +1207,7 @@ export const en = {
       birthday: 'A birthday is being celebrated here',
     },
     badgesTitle: 'Badges',
-    badgesHint: 'Staff set these by hand. A reservation shows "Reserved" by itself.',
+    badgesHint: 'Staff set these by hand.',
     badgesSaved: '{code}: badges saved',
     holdLabel: 'Reserved',
     deadline: 'Deadline: {time}',

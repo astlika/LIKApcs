@@ -8,7 +8,7 @@
  * (`reservationId`, or the same customer record) uses up the hold; anyone else starts with
  * `ignoreReservation` and the booking keeps its PC. A booking can be changed (time, PCs, name).
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type {
   CustomerSummary,
   DashboardSummary,
@@ -300,6 +300,33 @@ describe('PC reservations', () => {
     expect(changed.status).toBe(200);
     expect(changed.body.toleranceMinutes).toBe(12);
     expect(changed.body.windowEndsAt > changed.body.startsAt).toBe(true);
+  });
+
+  it('tells the PC once when a booking reaches its reminder time (0.33.4)', async () => {
+    // A PC of its own: the other bookings of this file must not explain the message.
+    const pc6 = (await call<StationSummary>('POST', '/stations', { number: 6, name: 'Arena 6' })).body;
+    const booked = await call<ReservationSummary>('POST', '/reservations', {
+      stationIds: [pc6.id],
+      startsAt: inHour(300),
+      customerName: 'Më vonë',
+    });
+    expect(booked.status).toBe(201);
+    const told = vi.spyOn(ctx.app.services.stations, 'broadcastStation');
+    const toldPc6 = () => told.mock.calls.filter(([stationId]) => stationId === pc6.id).length;
+    try {
+      // Hours before: the booking does not touch the PC and the sweep says nothing about it.
+      await ctx.app.services.reservations.sweep();
+      expect(toldPc6()).toBe(0);
+      // Nine minutes before the start (the reminder is 10 minutes): the PC is told…
+      const inside = new Date(Date.now() + 291 * MINUTE);
+      await ctx.app.services.reservations.sweep(inside);
+      expect(toldPc6()).toBe(1);
+      // …and only once.
+      await ctx.app.services.reservations.sweep(new Date(inside.getTime() + MINUTE));
+      expect(toldPc6()).toBe(1);
+    } finally {
+      told.mockRestore();
+    }
   });
 
   it('saves the badges per PC, and the dashboard counts the product units sold', async () => {

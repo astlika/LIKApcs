@@ -84,6 +84,12 @@ const toHold = (row: HoldRow): ActiveHold => ({
 });
 
 export class ReservationsService {
+  /**
+   * 0.33.4: the open reservations whose PCs were already told that the window opened. Kept in
+   * memory only: after a restart the first sweep tells them once more, which is harmless.
+   */
+  private readonly windowAnnounced = new Set<string>();
+
   constructor(
     private readonly pool: DbPool,
     private readonly hub: RealtimeHub,
@@ -389,6 +395,8 @@ export class ReservationsService {
       });
       afterCommit(client, () => this.announce([...new Set([...waiting, ...removed])]));
     });
+    // The time or the reminder may have moved: the PCs are told again when the new window opens.
+    this.windowAnnounced.delete(id);
     await this.sweep();
     return this.getById(id);
   }
@@ -444,6 +452,9 @@ export class ReservationsService {
    * Expires what the clock has passed: scheduled reservations become active at their start; holds
    * past their window are released; a reservation with no held PC left is completed (everyone came)
    * or expired (someone did not). Announces what changed; quiet otherwise.
+   *
+   * 0.33.4: a booking that reaches its reminder time starts to keep its PCs without any write, so
+   * the sweep also tells those PCs once (the desk then sees the hold without a reload).
    */
   async sweep(now: Date = new Date()): Promise<void> {
     const released = await this.pool.query<{ station_id: string }>(
@@ -470,8 +481,30 @@ export class ReservationsService {
                            WHERE reservation_id = rv.id AND state = 'held')`,
       [now],
     );
+    const waiting = await this.pool.query<{
+      reservation_id: string;
+      station_id: string;
+      in_window: boolean;
+    }>(
+      `SELECT rs.reservation_id, rs.station_id,
+              ($1::timestamptz >= ${WINDOW_START} AND $1::timestamptz < ${WINDOW_END}) AS in_window
+         FROM reservation_stations rs
+         JOIN reservations rv ON rv.id = rs.reservation_id
+        WHERE rs.state = 'held' AND rv.status IN ('scheduled', 'active')`,
+      [now],
+    );
+    // Forget the bookings that are over; a booking still open is told once (update() resets it).
+    const open = new Set(waiting.rows.map((r) => r.reservation_id));
+    for (const id of this.windowAnnounced) if (!open.has(id)) this.windowAnnounced.delete(id);
+    const entered = waiting.rows
+      .filter((r) => r.in_window && !this.windowAnnounced.has(r.reservation_id))
+      .map((r) => r.station_id);
+    for (const r of waiting.rows) if (r.in_window) this.windowAnnounced.add(r.reservation_id);
+
     const changed = (activated.rowCount ?? 0) + (finished.rowCount ?? 0) + released.rowCount!;
-    if (changed > 0) await this.announce(released.rows.map((r) => r.station_id));
+    if (changed > 0 || entered.length > 0) {
+      await this.announce([...new Set([...released.rows.map((r) => r.station_id), ...entered])]);
+    }
   }
 
   /** Every PC must exist, be enabled and not archived. */
