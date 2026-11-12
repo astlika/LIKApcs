@@ -3,11 +3,13 @@
 // the notifications, the background service — with the app open, in the background, with the
 // screen off, in deep sleep (Doze), after its process is killed and after the phone restarts.
 //
-//   node phone-check.mjs <debug.apk>
+//   node phone-check.mjs <debug.apk> [release.apk]
 //
 // Needs: `adb` with one device attached (an emulator: the server on this machine is 10.0.2.2
 // for it), a seeded test server (see engine-check.mjs) and Node 22+. The APK must be the debug
-// build: only that one lets a test look into its screen.
+// build: only that one lets a test look into its screen. With a release APK as well, that file
+// (the one that is handed out) is installed at the end and used with the touch screen and the
+// keyboard alone: sign-in, the permission, a sale, its notification.
 //
 // Environment: LIKAPCS_URL (the server as this machine sees it), PHONE_SERVER (the address typed
 // into the app, default 10.0.2.2:4700), OUT (folder for the screenshots), STEPS (comma list to
@@ -19,8 +21,9 @@ import zlib from 'node:zlib';
 import { commands, call, as, sleep } from './shop.mjs';
 
 const APK = process.argv[2];
-if (!APK || !fs.existsSync(APK)) {
-  console.error('usage: node phone-check.mjs <debug.apk>');
+const RELEASE_APK = process.argv[3];
+if (!APK || !fs.existsSync(APK) || (RELEASE_APK && !fs.existsSync(RELEASE_APK))) {
+  console.error('usage: node phone-check.mjs <debug.apk> [release.apk]');
   process.exit(2);
 }
 const PKG = 'com.likapcs.live';
@@ -480,6 +483,13 @@ try {
     JSON.parse(layout).scrollW <= JSON.parse(layout).w,
     layout,
   );
+  // Where the form is drawn, in screen pixels: the release build shows the same page.
+  const formAt = JSON.parse(
+    await page.eval(`JSON.stringify(Object.fromEntries(['signin-server', 'signin-submit'].map((id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return [id, [Math.round((r.x + r.width / 2) * devicePixelRatio), Math.round((r.y + r.height / 2) * devicePixelRatio)]];
+    })))`),
+  );
 
   await step('a wrong password', async () => {
     await signIn(page, 'gabim-gabim');
@@ -899,6 +909,75 @@ try {
       show(notifications()),
     );
   });
+
+  if (RELEASE_APK) {
+    section('The release APK (the file that is handed out)');
+    await step('release', async () => {
+      page?.close();
+      page = null;
+      // A release build cannot be looked into: only the touch screen, the keyboard, screenshots
+      // and what Android reports are used here.
+      adb(['uninstall', PKG], { allowFail: true });
+      const installed = adb(['install', RELEASE_APK], { timeout: 180_000 });
+      check('the release APK installs', /Success/.test(installed), installed);
+      const flags = /pkgFlags=\[([^\]]*)\]/.exec(shell(`dumpsys package ${PKG}`))?.[1] ?? '';
+      check('it is not a debug build', !/DEBUGGABLE/.test(flags), flags);
+      launch();
+      const top = pageTop();
+      const [submitX, submitY] = formAt['signin-submit'];
+      const blueButton = () => {
+        const [red, green, blue] = pixel(
+          adb(['exec-out', 'screencap', '-p'], { binary: true }),
+          submitX,
+          top + submitY - 30,
+        );
+        return blue > 200 && red < 80 && green > 70 && green < 130;
+      };
+      await waitFor('the sign-in screen to be drawn', blueButton, 30_000, 500);
+      ok('it starts and draws the sign-in screen');
+      // The form by touch and keyboard: a tap into the first field, Tab from field to field
+      // (the search button and the eye button are stops too), Enter to sign in.
+      const [serverX, serverY] = formAt['signin-server'];
+      shell(`input tap ${serverX} ${top + serverY}`);
+      await sleep(600);
+      shell(`input text '${PHONE_SERVER}'`);
+      shell('input keyevent KEYCODE_TAB; input keyevent KEYCODE_TAB');
+      shell(`input text 'telefon'`);
+      shell('input keyevent KEYCODE_TAB');
+      shell(`input text 'telefon@test.local'`);
+      shell('input keyevent KEYCODE_TAB');
+      shell(`input text 'Owner12345'`);
+      await sleep(300);
+      screenshot('release-form');
+      shell('input keyevent KEYCODE_ENTER');
+      try {
+        const allow = await waitFor(
+          'Android’s permission dialog',
+          () => uiNodes().find((n) => n.id.endsWith('permission_allow_button')),
+          25_000,
+          1000,
+        );
+        tap(allow);
+        ok(
+          'typed with the keyboard, the sign-in works and Android asks for the notification permission',
+        );
+      } catch (e) {
+        fail('the sign-in with the keyboard', e.message);
+        screenshot('release-failure');
+        return;
+      }
+      await waitFor('the service', () => serviceRunning() && serviceForeground(), 20_000);
+      await expectNotification(
+        'the release build is live',
+        (n) => n.channel === 'status' && n.sub === 'live' && /^Sot /.test(n.title),
+        30_000,
+      );
+      await saleArrives('a sale is a notification in the release build');
+      await sleep(1500);
+      screenshot('release-live');
+      adb(['uninstall', PKG], { allowFail: true });
+    });
+  }
 
   const crashes = shell('logcat -d -b crash -v brief', { allowFail: true })
     .split('\n')

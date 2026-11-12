@@ -94,7 +94,7 @@ cd apps/likapcs-live/e2e
 LIKALIVE_DEVHOST=../android/devhost/build/install/devhost/bin/devhost node engine-check.mjs
 # The app itself on an attached emulator: sign-in on its screen, sales, Android's notifications,
 # background, screen off, Doze, a killed process, a restart of the phone.
-node phone-check.mjs ../android/app/build/outputs/apk/debug/app-debug.apk
+node phone-check.mjs ../android/app/build/outputs/apk/debug/app-debug.apk [release.apk]
 ```
 
 `node shop.mjs <command>` plays the shop (a sale, a refund, a session, an expense, …) to watch the

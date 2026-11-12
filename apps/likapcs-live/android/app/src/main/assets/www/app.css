@@ -519,6 +519,8 @@ svg {
   gap: 10px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
 }
 .sale:first-child {
   border-top: 0;
@@ -665,6 +667,9 @@ svg {
   gap: 10px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
+  /* Rows far below the screen are not drawn until they are scrolled near: a long list opens fast. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
 }
 .act:first-child {
   border-top: 0;
