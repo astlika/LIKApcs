@@ -901,3 +901,38 @@ Client PC                         Server                              Admin
 Verified in Phase 1 with the server integration tests (`stations-devices.test.ts`) and an end-to-end
 browser run against the Admin UI (register → live pending panel → approve → token once → WS online →
 disconnect → offline).
+
+## Reservations (0.32.0; reworked in 0.33.4)
+
+A reservation books one or more PCs for a start time. Each PC has a hold: `held` (waits for the
+customer), `checked_in` (the customer sat down) or `released` (the tolerance passed, or cancelled).
+A hold matters only inside its **window**: from `remindAt` (`startsAt - remindMinutes`) until
+`windowEndsAt` (`startsAt + toleranceMinutes`). Before the window the PC is free for anyone, its
+`StationSummary.reservation` is `null`, and a session started on it does not touch the booking.
+
+| Method | Path                         | Body / result                                                                                                                                                                                                                |
+| ------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/reservations?from&to`      | `{items: ReservationSummary[]}`; open bookings plus the ones of the last 3 h / next 36 h by default.                                                                                                                         |
+| POST   | `/reservations`              | `{stationIds, startsAt, customerName, customerId?, phone?, notes?, toleranceMinutes?, remindMinutes?}` → `201`. `409 reservation_overlap` (`codes`) when a PC is kept by another booking at that time.                       |
+| PATCH  | `/reservations/:id`          | Any of `startsAt`, `stationIds` (replaces the PCs still waiting; a checked-in PC stays), `customerId` (nullable), `customerName`, `phone`, `notes`, `toleranceMinutes`, `remindMinutes`. `409` when finished or overlapping. |
+| POST   | `/reservations/:id/check-in` | `{stationIds?}` → `{reservation, checkedIn: stationId[]}`. Marks as arrived the waiting PCs that already run a session; PCs without a session are left waiting (start them with `reservationId`).                            |
+| POST   | `/reservations/:id/cancel`   | Frees the PCs. `409` when already finished.                                                                                                                                                                                  |
+
+`POST /sessions` on a PC inside a booking's window:
+
+- `reservationId` (the booked customer arrived; also accepted **before** the window for an early
+  arrival) uses up that PC's hold. `409 reservation_mismatch` when that reservation does not keep the PC.
+- the same `customerId` as the booking uses up the hold without a question (inside the window only).
+- `ignoreReservation: true` starts the session for someone else; the booking **keeps** its PC.
+- none of these → `409 reservation_conflict` with `{reservationId, customerName, startsAt, windowEndsAt, toleranceMinutes}`.
+
+Settings: `reservations.tolerance_minutes` (default 5), `reservations.reminder_minutes` (default 10).
+Live event: `reservation.changed` (no payload).
+
+## Stock on a PC's bill (0.33.4)
+
+`POST /sessions/:id/orders` (on the bill), accepting a PC order on the bill and `POST /client/orders`
+answer `409 out_of_stock` with `{code: 'INSUFFICIENT_STOCK', productId, productName, availableMilli,
+requestedMilli}` when a product that may not go below zero is asked beyond what is free: its stock
+minus what already waits on the bills (accepted, unsold orders). The stock moves when the bill is
+paid; ending or collecting a session never fails on the stock of its order lines.

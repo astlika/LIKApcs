@@ -36,6 +36,7 @@ import {
   WifiOff,
   HandCoins,
   Megaphone,
+  Activity,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -48,6 +49,8 @@ import {
 import { api } from '../../lib/api';
 import { storage } from '../../lib/storage';
 import { useAdminSocket } from '../../lib/ws';
+import { publishLiveStatus } from '../../lib/live-status';
+import { flushOfflineQueue, getOfflineSnapshot } from '../../lib/offline-sales';
 import { toggleFullscreen, useFullscreen } from '../../lib/fullscreen';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -57,6 +60,8 @@ import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
 import { LIKA_WEBSITE_URL } from '../../lib/desktop';
 import { RequestsBell } from '../requests/requests';
+import { LiveSaleNotifier } from '../live/LiveSaleNotifier';
+import { ReservationAlerts } from '../stations/ReservationAlerts';
 import { usePendingOrders } from '../orders/orders';
 
 const ADMIN_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.0.0-dev';
@@ -89,11 +94,29 @@ export function AppShell() {
   const { theme, setTheme } = useTheme();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => storage.get('sidebarCollapsed') === '1');
+  // On a phone-width window the sidebar is an icon rail, so the page keeps its width (0.33.0).
+  const narrow = useNarrow(760);
   const [menuOpen, setMenuOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const live = useAdminSocket(Boolean(user));
+  // Punkti 4 (0.28.0): the POS reads this to choose between a live sale and the offline queue.
+  // While the connection is up, queued offline sales are sent (now, then every 30 s).
+  useEffect(() => {
+    publishLiveStatus(live);
+  }, [live]);
+  useEffect(() => {
+    if (live !== 'connected') return;
+    const run = () => {
+      if (getOfflineSnapshot().queue.some((q) => q.status === 'pending')) {
+        void flushOfflineQueue();
+      }
+    };
+    run();
+    const timer = window.setInterval(run, 30_000);
+    return () => window.clearInterval(timer);
+  }, [live]);
   const fullscreen = useFullscreen();
   const updates = useUpdates();
 
@@ -167,6 +190,12 @@ export function AppShell() {
           icon: LayoutDashboard,
           label: t('nav.dashboard'),
           permission: PERMISSIONS.DASHBOARD_VIEW,
+        },
+        {
+          to: '/live',
+          icon: Activity,
+          label: t('nav.live'),
+          permission: PERMISSIONS.LIVE_VIEW,
         },
       ],
     },
@@ -327,6 +356,7 @@ export function AppShell() {
     '/customers': t('nav.customers'),
     '/debts': t('nav.debts'),
     '/reports': t('nav.reports'),
+    '/live': t('nav.live'),
     '/employees': t('nav.employees'),
     '/audit': t('nav.audit'),
     '/settings': t('nav.settings'),
@@ -342,7 +372,7 @@ export function AppShell() {
     .toUpperCase();
 
   return (
-    <div className="shell" data-collapsed={collapsed}>
+    <div className="shell" data-collapsed={collapsed || narrow}>
       <aside className="sidebar">
         <div className="sidebar__brand">
           <div className="brand-mark">LK</div>
@@ -432,6 +462,8 @@ export function AppShell() {
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
           <RequestsBell />
+          <LiveSaleNotifier />
+          <ReservationAlerts />
 
           {cashStatus.isSuccess && (
             <Link
@@ -582,4 +614,18 @@ export function AppShell() {
       />
     </div>
   );
+}
+
+/** True while the window is at most `maxWidth` px wide (a phone-sized window). */
+function useNarrow(maxWidth: number): boolean {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const update = () => setNarrow(mql.matches);
+    update();
+    mql.addEventListener('change', update);
+    return () => mql.removeEventListener('change', update);
+  }, [query]);
+  return narrow;
 }

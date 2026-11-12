@@ -20,6 +20,21 @@ import { notFound } from '../errors.js';
 
 export const debtRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
+  // 0.34.0: a debt paid, rescheduled or written off is announced to the admins who see live tracking.
+  const noticed = <T>(
+    action: 'paid' | 'rescheduled' | 'written_off',
+    amountCents: number | null,
+    p: Promise<T>,
+  ): Promise<T> =>
+    p.then((r) => {
+      app.hub.broadcastToAdminsWith(PERMISSIONS.LIVE_VIEW, 'debt.changed', {
+        action,
+        customerName: null,
+        amountCents,
+        at: new Date().toISOString(),
+      });
+      return r;
+    });
   const idParams = z.object({ id: uuidSchema });
   const actorOf = (request: FastifyRequest) => ({
     userId: request.auth!.user.id,
@@ -46,38 +61,58 @@ export const debtRoutes: FastifyPluginAsync = async (app) => {
     return debt;
   });
   app.post('/debts/:id/pay', collect, async (request) =>
-    services.debts.pay(
-      idParams.parse(request.params).id,
-      debtPaymentSchema.parse(request.body),
-      actorOf(request),
+    noticed(
+      'paid',
+      debtPaymentSchema.parse(request.body).amountCents,
+      services.debts.pay(
+        idParams.parse(request.params).id,
+        debtPaymentSchema.parse(request.body),
+        actorOf(request),
+      ),
     ),
   );
   app.post('/customers/:id/debts/pay', collect, async (request) =>
-    services.debts.payCustomer(
-      idParams.parse(request.params).id,
-      debtPaymentSchema.parse(request.body),
-      actorOf(request),
+    noticed(
+      'paid',
+      debtPaymentSchema.parse(request.body).amountCents,
+      services.debts.payCustomer(
+        idParams.parse(request.params).id,
+        debtPaymentSchema.parse(request.body),
+        actorOf(request),
+      ),
     ),
   );
   app.post('/debts/:id/reschedule', manage, async (request) =>
-    services.debts.reschedule(
-      idParams.parse(request.params).id,
-      debtRescheduleSchema.parse(request.body),
-      actorOf(request),
+    noticed(
+      'rescheduled',
+      null,
+      services.debts.reschedule(
+        idParams.parse(request.params).id,
+        debtRescheduleSchema.parse(request.body),
+        actorOf(request),
+      ),
     ),
   );
   app.post('/customers/:id/debts/reschedule', manage, async (request) =>
-    services.debts.rescheduleCustomer(
-      idParams.parse(request.params).id,
-      debtRescheduleSchema.parse(request.body),
-      actorOf(request),
+    noticed(
+      'rescheduled',
+      null,
+      services.debts.rescheduleCustomer(
+        idParams.parse(request.params).id,
+        debtRescheduleSchema.parse(request.body),
+        actorOf(request),
+      ),
     ),
   );
   app.post('/debts/:id/write-off', writeOff, async (request) =>
-    services.debts.writeOff(
-      idParams.parse(request.params).id,
-      debtWriteOffSchema.parse(request.body),
-      actorOf(request),
+    noticed(
+      'written_off',
+      null,
+      services.debts.writeOff(
+        idParams.parse(request.params).id,
+        debtWriteOffSchema.parse(request.body),
+        actorOf(request),
+      ),
     ),
   );
 };

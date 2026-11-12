@@ -1,9 +1,12 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { forbidden } from '../errors.js';
+import { announceSale } from './announce.js';
 import {
   PERMISSIONS,
   createSaleSchema,
+  syncSalesEnvelopeSchema,
+  type SyncSalesResponse,
   refundSchema,
   saleListQuerySchema,
   suspendSaleSchema,
@@ -25,6 +28,19 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   });
   const sell = { preHandler: app.requirePermission(PERMISSIONS.POS_SELL) };
 
+  /** 0.20.8: the price of PC time sold without a PC (the cashier's line preview). */
+  app.get('/sales/time-quote', sell, async (request) => {
+    const q = z
+      .object({
+        minutes: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(24 * 60),
+      })
+      .parse(request.query);
+    return services.sales.quoteTime(q.minutes);
+  });
   app.get('/sales', sell, async (request) =>
     services.sales.list(saleListQuerySchema.parse(request.query)),
   );
@@ -40,23 +56,37 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
     }
     return services.sales.receipt(idParams.parse(request.params).id, actorOf(request), reprint);
   });
-  app.post('/sales', sell, async (request, reply) =>
-    reply
-      .code(201)
-      .send(await services.sales.create(createSaleSchema.parse(request.body), actorOf(request))),
-  );
+  // Punkt 4 (0.28.0): the offline sales of one PC, synced in order. Each sale is its own
+  // transaction; the answer says per sale whether it was created, a duplicate, or failed.
+  app.post('/sales/sync', sell, async (request): Promise<SyncSalesResponse> => {
+    const body = syncSalesEnvelopeSchema.parse(request.body);
+    return { results: await services.sales.syncOffline(body.sales, actorOf(request)) };
+  });
+  // 0.31.0: a completed sale is announced to the admins who may see live tracking. The sale is
+  // already committed; a failed announcement must never fail the sale.
+  const announce = (saleId: string) => announceSale(app, saleId);
+  app.post('/sales', sell, async (request, reply) => {
+    const sale = await services.sales.create(
+      createSaleSchema.parse(request.body),
+      actorOf(request),
+    );
+    await announce(sale.id);
+    return reply.code(201).send(sale);
+  });
   app.post('/sales/suspend', sell, async (request, reply) =>
     reply
       .code(201)
       .send(await services.sales.suspend(suspendSaleSchema.parse(request.body), actorOf(request))),
   );
-  app.post('/sales/:id/complete', sell, async (request) =>
-    services.sales.completeSuspended(
+  app.post('/sales/:id/complete', sell, async (request) => {
+    const sale = await services.sales.completeSuspended(
       idParams.parse(request.params).id,
       createSaleSchema.parse(request.body),
       actorOf(request),
-    ),
-  );
+    );
+    await announce(sale.id);
+    return sale;
+  });
   app.post('/sales/:id/void', sell, async (request, reply) => {
     await services.sales.voidSuspended(idParams.parse(request.params).id, actorOf(request));
     return reply.code(204).send();

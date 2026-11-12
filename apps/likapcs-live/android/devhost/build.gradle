@@ -1,0 +1,34 @@
+// The engine and the bridge of the app on a desktop JVM (see ../../dev/DevHost.kt): used by
+// e2e/engine-check.mjs against a real LIKApcs server, and to open the screens in a browser.
+// Never part of the APK.
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+    id 'application'
+}
+
+sourceSets {
+    main {
+        kotlin {
+            srcDirs = ['../app/src/main/kotlin/com/likapcs/live/core', '../../dev']
+        }
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1'
+}
+
+application {
+    mainClass = 'DevHostKt'
+    applicationDefaultJvmArgs = ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-Xmx256m']
+}

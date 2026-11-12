@@ -13,6 +13,7 @@ import type {
   ClientWidgetPosition,
   ClientWidgetSize,
   ClientWidgetStyle,
+  ClientWidgetTheme,
 } from './settings.js';
 
 /**
@@ -162,11 +163,25 @@ export const widgetReportPayloadSchema = z.object({
 });
 export type WidgetReportPayload = z.infer<typeof widgetReportPayloadSchema>;
 
+// ─── Live screen (remote view, phase 1) ───────────────────────────────────────
+/** Largest JPEG frame accepted from a PC, as base64 characters (about 450 KB of JPEG). */
+export const REMOTE_FRAME_MAX_BASE64 = 600_000;
+
+export const clientFrameSchema = z.object({
+  type: z.literal('client.frame'),
+  width: z.number().int().min(1).max(4096),
+  height: z.number().int().min(1).max(4096),
+  jpeg: z.string().min(16).max(REMOTE_FRAME_MAX_BASE64),
+  ts: z.string().datetime({ offset: true }),
+});
+export type ClientFrame = z.infer<typeof clientFrameSchema>;
+
 export const clientMessageSchema = z.discriminatedUnion('type', [
   clientHelloSchema,
   clientHeartbeatSchema,
   clientAckSchema,
   clientEventSchema,
+  clientFrameSchema,
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -178,7 +193,58 @@ export const adminHelloSchema = z.object({
 });
 export const adminPingSchema = z.object({ type: z.literal('admin.ping') });
 
-export const adminMessageSchema = z.discriminatedUnion('type', [adminHelloSchema, adminPingSchema]);
+/** Resolutions the focus view can ask for. Height in pixels; width follows 16:9 (the PC keeps its aspect). */
+export const REMOTE_RESOLUTIONS = ['480p', '520p', '720p', '1080p'] as const;
+export type RemoteResolution = (typeof REMOTE_RESOLUTIONS)[number];
+export const REMOTE_RESOLUTION_HEIGHT: Record<RemoteResolution, number> = {
+  '480p': 480,
+  '520p': 520,
+  '720p': 720,
+  '1080p': 1080,
+};
+export const REMOTE_DEFAULT_RESOLUTION: RemoteResolution = '720p';
+
+export const adminStreamSchema = z.object({
+  type: z.enum(['admin.stream_start', 'admin.stream_stop']),
+  stationId: z.string().uuid(),
+  /** `thumb` for the grid (about one frame every 2–3 s), `focus` for one PC in full (up to 3 fps). */
+  mode: z.enum(['thumb', 'focus']).default('focus'),
+  /** Only for `focus`: the picture size the PC should send. */
+  resolution: z.enum(REMOTE_RESOLUTIONS).default(REMOTE_DEFAULT_RESOLUTION),
+});
+
+/** One input event, in the frame's own coordinates (0–1) for the pointer. */
+export const remoteInputEventSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('move'), x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
+  z.object({
+    kind: z.literal('button'),
+    button: z.enum(['left', 'right', 'middle']),
+    down: z.boolean(),
+  }),
+  z.object({ kind: z.literal('wheel'), delta: z.number().int().min(-1200).max(1200) }),
+  z.object({ kind: z.literal('key'), code: z.string().min(1).max(32), down: z.boolean() }),
+]);
+export type RemoteInputEvent = z.infer<typeof remoteInputEventSchema>;
+
+export const adminControlSchema = z.object({
+  type: z.literal('admin.control'),
+  stationId: z.string().uuid(),
+  on: z.boolean(),
+});
+
+export const adminInputSchema = z.object({
+  type: z.literal('admin.input'),
+  stationId: z.string().uuid(),
+  event: remoteInputEventSchema,
+});
+
+export const adminMessageSchema = z.discriminatedUnion('type', [
+  adminHelloSchema,
+  adminPingSchema,
+  adminStreamSchema,
+  adminControlSchema,
+  adminInputSchema,
+]);
 export type AdminMessage = z.infer<typeof adminMessageSchema>;
 
 // ─── Server → Client ───────────────────────────────────────────────────────────
@@ -281,7 +347,17 @@ export interface ClientDisplayConfig {
   widgetSize: ClientWidgetSize;
   widgetPosition: ClientWidgetPosition;
   widgetStyle: ClientWidgetStyle;
+  /** 0.20.0: the widget's colour theme (a per-PC override applies). */
+  widgetTheme: ClientWidgetTheme;
+  /** 0.20.0: this PC's lock-screen wallpaper (absolute once the PC resolves it), or null. */
+  wallpaperUrl: string | null;
+  /** 0.23.0: this PC's Windows desktop wallpaper (absolute once resolved), or null. */
+  desktopWallpaperUrl: string | null;
   widgetShowPayment: boolean;
+  /** 0.19.7: hide the countdown widget while a fullscreen game runs. */
+  widgetHideInGames: boolean;
+  /** The Windows keys are blocked while a Steam game runs in front. */
+  blockWinInGames: boolean;
   lockTitle: ClientLockTitle;
   currency: string;
   /** Pre-filled username of the staff login that a left click on the locked screen opens. */
@@ -459,6 +535,24 @@ export interface ServerCustomerUpdate {
   customer: ClientCustomerInfo | null;
 }
 
+/** Server → client: stream frames while `active` (the grid or a focused PC is open in Admin). */
+export interface ServerStream {
+  type: 'server.stream';
+  active: boolean;
+  /** Frames per second to send (0.25–5 in phase 1; the grid uses a fraction of a frame per second). */
+  fps: number;
+  /** Widest frame the PC should send, in pixels. */
+  maxWidth: number;
+  /** Tallest frame the PC should send, in pixels. The PC keeps the screen's aspect ratio inside both. */
+  maxHeight: number;
+}
+
+/** Server → PC: one input event from the Admin who is controlling this PC (phase 2). */
+export interface ServerInput {
+  type: 'server.input';
+  event: RemoteInputEvent;
+}
+
 export type ServerToClientMessage =
   | ServerWelcomeToClient
   | ServerHeartbeatAck
@@ -467,6 +561,8 @@ export type ServerToClientMessage =
   | ServerRequestUpdate
   | ServerOrderUpdate
   | ServerCustomerUpdate
+  | ServerStream
+  | ServerInput
   | ServerError;
 
 // ─── Server → Admin ────────────────────────────────────────────────────────────
@@ -476,6 +572,8 @@ export const ADMIN_EVENTS = [
   'device.changed',
   'session.changed',
   'notification',
+  /** A sale was completed (payload: LiveSale). Sent only to admins with `live.view`. */
+  'live.sale',
   /** A backup was restored: every cached view must be reloaded. */
   'system.restored',
   /** A role's permission set changed: signed-in users must refresh their permissions. */
@@ -486,6 +584,16 @@ export const ADMIN_EVENTS = [
   'order.changed',
   /** 0.16.0: a slide / album / promo changed — the customer display's feed is stale (no payload). */
   'ads.changed',
+  /** 0.30.0: money or stock moved (sale, refund, cash, expense, debt, purchase, stock). Payload: none. Reports refresh. */
+  'reports.changed',
+  /** 0.32.0: a reservation was made, changed, cancelled or finished (no payload). The PC cards refetch. */
+  'reservation.changed',
+  /** 0.34.0: a staff member signed in (payload: StaffLoginEvent). Sent only to admins with `live.view`. */
+  'staff.login',
+  /** 0.34.0: a debt was paid, rescheduled or written off (payload: DebtChangedEvent). `live.view` only. */
+  'debt.changed',
+  /** 0.34.0: a sale took a product under its minimum stock (payload: StockLowEvent). `live.view` only. */
+  'stock.low',
 ] as const;
 export type AdminEventName = (typeof ADMIN_EVENTS)[number];
 
@@ -508,4 +616,23 @@ export interface ServerPong {
   serverTime: string;
 }
 
-export type ServerToAdminMessage = ServerWelcomeToAdmin | ServerEvent | ServerPong | ServerError;
+/** Server → Admin: one live frame of a station PC. */
+export interface ServerFrame {
+  type: 'server.frame';
+  stationId: string;
+  width: number;
+  height: number;
+  jpeg: string;
+  ts: string;
+}
+
+/** Server → Admin: whether the PC can send frames right now. */
+export interface ServerStreamStatus {
+  type: 'server.stream_status';
+  stationId: string;
+  /** `ended`: the session on this PC ended, so the view was closed by the server. */
+  state: 'live' | 'offline' | 'denied' | 'ended';
+}
+
+export type ServerToAdminMessage =
+  ServerWelcomeToAdmin | ServerEvent | ServerPong | ServerError | ServerFrame | ServerStreamStatus;

@@ -40,4 +40,14 @@ export default tseslint.config(
     files: ['**/*.test.ts', '**/*.test.tsx', 'apps/likapcs-server/src/cli.ts', 'scripts/**'],
     rules: { 'no-console': 'off' },
   },
+  // likalivepcs (Android): the screens are one plain browser script inside the APK, and the
+  // checks are command-line scripts that report on the console.
+  {
+    files: ['apps/likapcs-live/android/app/src/main/assets/www/**/*.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.browser } },
+  },
+  {
+    files: ['apps/likapcs-live/e2e/**'],
+    rules: { 'no-console': 'off' },
+  },
 );

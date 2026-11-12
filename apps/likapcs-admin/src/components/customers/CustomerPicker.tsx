@@ -19,7 +19,7 @@ import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../state/auth';
 import { useI18n } from '../../i18n';
 import { Badge } from '../ui/primitives';
-import { WalletPill } from './CustomerAccount';
+import { CustomerBalances, WalletPill } from './CustomerAccount';
 
 export interface CustomerPickerProps {
   id?: string;
@@ -32,6 +32,8 @@ export interface CustomerPickerProps {
   /** Offer "Add customer «text»" when nothing matches exactly (requires `customers.manage`). */
   allowCreate?: boolean;
   placeholder?: string;
+  /** 0.20.8: show the debt and the balance beside the picked name (the POS cart). */
+  showAccount?: boolean;
   autoFocus?: boolean;
   disabled?: boolean;
   style?: CSSProperties;
@@ -47,6 +49,7 @@ export function CustomerPicker({
   allowFreeText = false,
   allowCreate = false,
   placeholder,
+  showAccount = false,
   autoFocus,
   disabled,
   style,
@@ -135,16 +138,23 @@ export function CustomerPicker({
 
   if (value) {
     return (
-      <div className={`customer-chip ${className}`} style={style} data-testid="customer-chip">
+      <div
+        className={`customer-chip ${showAccount ? 'customer-chip--account' : ''} ${className}`}
+        style={style}
+        data-testid="customer-chip"
+      >
         <UserRound size={14} />
         <span className="customer-chip__name" title={`${value.code} · ${value.name}`}>
           {value.name}
         </span>
+        {showAccount && <CustomerBalances customer={value} testId="customer-chip-balances" />}
         {value.membership && <Badge tone="info">{value.membership}</Badge>}
         {value.discountBp > 0 && (
           <span className="faint num">−{(value.discountBp / 100).toFixed(0)}%</span>
         )}
-        <WalletPill cents={value.walletBalanceCents} testId="customer-chip-wallet" />
+        {!showAccount && (
+          <WalletPill cents={value.walletBalanceCents} testId="customer-chip-wallet" />
+        )}
         {!disabled && (
           <button
             type="button"

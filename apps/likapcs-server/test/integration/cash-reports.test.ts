@@ -193,7 +193,8 @@ describe('cash register, expenses, customers & reports', () => {
     expect(s.totals.expectedCashCents).toBe(5450);
     expect(s.totals.salesCount).toBe(2);
     expect(s.totals.salesByMethod.find((m) => m.method === 'card')?.amountCents).toBe(300);
-    expect(s.totals.salesByMethod.find((m) => m.method === 'cash')?.amountCents).toBe(650);
+    // The cash line is the cash kept (net of change): 300 + 150, the same as cashSalesCents.
+    expect(s.totals.salesByMethod.find((m) => m.method === 'cash')?.amountCents).toBe(450);
   });
 
   it('a prepaid gaming session paid in cash lands in the same drawer', async () => {

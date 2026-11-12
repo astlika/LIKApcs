@@ -1,13 +1,21 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ShieldCheck } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { ShieldCheck, Usb } from 'lucide-react';
 import type { LoginResponse, SetupStatusResponse } from '@likapcs/shared';
-import { api, ApiError, fieldError } from '../lib/api';
+import { api, ApiError, apiUpload, fieldError } from '../lib/api';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
-import { Alert, Button, Field, Input, Select, Segmented } from '../components/ui/primitives';
+import {
+  Alert,
+  Button,
+  Dialog,
+  Field,
+  Input,
+  Select,
+  Segmented,
+} from '../components/ui/primitives';
 
 /** First-run wizard: business identity + owner account. Only works while no user exists. */
 /** Suggested owner credentials shown (editable) in the wizard. */
@@ -31,6 +39,7 @@ export function SetupPage() {
   const [confirm, setConfirm] = useState(DEFAULT_OWNER.password);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
   const status = useQuery({
     queryKey: ['setup-status'],
     queryFn: () => api<SetupStatusResponse>('/system/setup-status', { auth: false }),
@@ -221,6 +230,124 @@ export function SetupPage() {
           </Button>
         </div>
       </form>
+      <div className="card auth__card auth__card--wide" style={{ marginTop: 12, padding: 16 }}>
+        <Button variant="ghost" onClick={() => setImporting(true)}>
+          <Usb size={14} /> {t('setup.importOpen')}
+        </Button>
+      </div>
+      {importing && <TransferImportDialog onClose={() => setImporting(false)} />}
     </div>
+  );
+}
+
+/**
+ * Brings a whole system over from another PC (0.27.5). Only on a fresh installation: the server
+ * refuses it as soon as a user exists. The owner logs in with the OLD PC's account afterwards.
+ */
+function TransferImportDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [code, setCode] = useState('');
+  const [done, setDone] = useState(false);
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!file) throw new Error('no file');
+      const uploaded = await apiUpload<{ id: string }>(
+        '/system/transfer/upload',
+        file,
+        { fileName: file.name.replace(/[^A-Za-z0-9._-]/g, '_') },
+        { headers: { 'x-archive-password': code } },
+      );
+      await api('/system/transfer/restore', {
+        method: 'POST',
+        body: { backupId: uploaded.id, code },
+      });
+    },
+    onSuccess: () => setDone(true),
+    onError: (err) => {
+      if (
+        err instanceof ApiError &&
+        (err.code === 'ARCHIVE_PASSWORD_WRONG' || err.code === 'ARCHIVE_CORRUPT')
+      ) {
+        toast.error(t('setup.importWrongCode'));
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'TRANSFER_VERSION_NEWER') {
+        toast.error(t('setup.importVersionNewer'));
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
+    },
+  });
+  const valid = file !== null && /^\d{4}$/.test(code);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('setup.importTitle')}
+      size="md"
+      locked={mutation.isPending}
+      footer={
+        done ? (
+          <Button variant="primary" onClick={() => window.location.reload()}>
+            {t('setup.importContinue')}
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!valid}
+              loading={mutation.isPending}
+              onClick={() => mutation.mutate()}
+            >
+              {t('setup.importStart')}
+            </Button>
+          </>
+        )
+      }
+    >
+      {done ? (
+        <Alert tone="success">{t('setup.importDone')}</Alert>
+      ) : (
+        <div className="stack">
+          <p className="muted">{t('setup.importHelp')}</p>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".enc"
+            hidden
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              e.target.value = '';
+            }}
+          />
+          <Field label={t('setup.importFile')}>
+            {() => (
+              <Button onClick={() => fileInput.current?.click()} disabled={mutation.isPending}>
+                <Usb size={14} /> {file ? file.name : t('setup.importFile')}
+              </Button>
+            )}
+          </Field>
+          <Field label={t('setup.importCode')}>
+            {(id) => (
+              <Input
+                id={id}
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={4}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+    </Dialog>
   );
 }

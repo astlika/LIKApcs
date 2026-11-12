@@ -9,11 +9,13 @@ import { useAuth } from './state/auth';
 import { useI18n } from './i18n';
 import { Card, EmptyState, Loading } from './components/ui/primitives';
 import { AppShell } from './components/layout/AppShell';
+import { LivePage } from './pages/LivePage';
 import { ServerGate } from './components/ServerGate';
 import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { StationsPage } from './pages/StationsPage';
+import { RemotePage } from './pages/RemotePage';
 import { PricingPage } from './pages/PricingPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -135,6 +137,7 @@ export function App() {
         >
           <Route index element={<HomeRoute />} />
           <Route path="stations" element={<StationsPage />} />
+          <Route path="remote" element={<RemotePage />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="products" element={<ProductsPage />} />
@@ -147,6 +150,7 @@ export function App() {
           <Route path="customers" element={<CustomersPage />} />
           <Route path="debts" element={<DebtsPage />} />
           <Route path="reports" element={<ReportsPage />} />
+          <Route path="live" element={<LivePage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="employees" element={<EmployeesPage />} />
           <Route path="settings" element={<SettingsPage />} />

@@ -1,0 +1,26 @@
+{
+  "name": "@likapcs/tablet",
+  "version": "0.33.4",
+  "private": true,
+  "description": "LIKApcs Tablet: touch-first web app for tablets, served by the server at /tab/. Reuses the phone app's screens and logic.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@likapcs/shared": "workspace:*",
+    "@tanstack/react-query": "^5.62.11",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.3"
+  }
+}

@@ -50,6 +50,23 @@ if (Test-Path $runtime) { Remove-Item -Recurse -Force $runtime }
 New-Item -ItemType Directory -Force "$runtime/server/dist", "$runtime/server/database/migrations" | Out-Null
 Copy-Item "$root/apps/likapcs-server/dist/*.js" "$runtime/server/dist/"
 Copy-Item "$root/database/migrations/*.sql" "$runtime/server/database/migrations/"
+# Punkt 5 (0.28.0): the phone app, served by the server at /phone/ (same origin, no CORS).
+Push-Location "$root/apps/likapcs-phone"
+try { pnpm run build; if ($LASTEXITCODE -ne 0) { throw 'phone build failed' } } finally { Pop-Location }
+New-Item -ItemType Directory -Force "$runtime/phone" | Out-Null
+Copy-Item -Recurse -Force "$root/apps/likapcs-phone/dist/*" "$runtime/phone/"
+
+# 0.29.5: the Admin desktop UI in the browser, served by the server at /desktop/ (same origin).
+Push-Location "$root/apps/likapcs-admin"
+try { pnpm run build:web; if ($LASTEXITCODE -ne 0) { throw 'desktop web build failed' } } finally { Pop-Location }
+New-Item -ItemType Directory -Force "$runtime/desktop" | Out-Null
+Copy-Item -Recurse -Force "$root/apps/likapcs-admin/dist-web/*" "$runtime/desktop/"
+
+# 0.29.6: the touch-first tablet app, served by the server at /tab/ (same origin).
+Push-Location "$root/apps/likapcs-tablet"
+try { pnpm run build; if ($LASTEXITCODE -ne 0) { throw 'tablet build failed' } } finally { Pop-Location }
+New-Item -ItemType Directory -Force "$runtime/tab" | Out-Null
+Copy-Item -Recurse -Force "$root/apps/likapcs-tablet/dist/*" "$runtime/tab/"
 
 # 2. Node.js runtime ----------------------------------------------------------------------------------
 $nodeZip = Join-Path $cache "node-v$NodeVersion-win-x64.zip"

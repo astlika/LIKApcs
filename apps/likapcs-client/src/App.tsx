@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type FormEvent,
 } from 'react';
 import { formatMoney, type ClientRequestOptions, type SessionRequest } from '@likapcs/shared';
@@ -18,6 +19,8 @@ import {
   isDesktopApp,
   onTrayAction,
   reapplyWidgetWindow,
+  setWidgetHideInGames,
+  setBlockWinInGames,
   reportWebviewReady,
   setWidgetLayout,
   widgetWindowSizeOk,
@@ -29,6 +32,16 @@ import { PausedScreen } from './PausedScreen';
 import { Overlay, effectiveWidgetStyle } from './Overlay';
 import { OrderPanel, ORDER_STATUS_KEY } from './OrderPanel';
 import { AdsSlideshow } from './AdsSlideshow';
+
+/** 0.20.0: this PC's wallpaper behind the lock screen (a dark wash keeps the text readable). */
+function wallpaperStyle(url: string | null): CSSProperties | undefined {
+  if (!url) return undefined;
+  return {
+    backgroundImage: `linear-gradient(180deg, rgba(5, 7, 12, 0.55), rgba(5, 7, 12, 0.78)), url("${url}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+}
 
 function useAgent(): AgentSnapshot {
   return useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
@@ -204,6 +217,16 @@ export function App() {
   useEffect(() => {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
+  // 0.19.7: hide the widget while a fullscreen game runs (default on).
+  const hideInGames = snap.state.display?.widgetHideInGames ?? true;
+  useEffect(() => {
+    void setWidgetHideInGames(hideInGames);
+  }, [hideInGames]);
+  // The Windows keys do nothing while a Steam game runs in front (default on).
+  const blockWinInGames = snap.state.display?.blockWinInGames ?? true;
+  useEffect(() => {
+    void setBlockWinInGames(blockWinInGames);
+  }, [blockWinInGames]);
 
   // Windows can finish the fullscreen → widget transition *after* the native resize landed (11
   // restores the window's old rect), leaving the countdown off-screen: the webview then reports a
@@ -369,7 +392,7 @@ export function App() {
       data-testid="lock-screen"
       data-fullscreen={fullscreen ? 'true' : undefined}
     >
-      <div className="lock__bg" />
+      <div className="lock__bg" style={wallpaperStyle(display?.wallpaperUrl ?? null)} />
       {fullscreen && slideshow}
       <header className="lock__header">
         {showBrand ? (
@@ -533,6 +556,13 @@ function RequestPill({
   );
 }
 
+// The PC-time claim (0.20.8): a wrong name or PIN is a bad request; too many tries is rate limited.
+const CLAIM_ERRORS: Partial<Record<CustomerActionError, Key>> = {
+  bad_request: 'errClaimWrong',
+  validation_error: 'errClaimWrong',
+  rate_limited: 'errClaimLocked',
+};
+
 const CUSTOMER_ERRORS: Partial<Record<CustomerActionError, Key>> = {
   invalid_credentials: 'errCustomerCredentials',
   locked: 'errCustomerLockedUntil',
@@ -561,6 +591,10 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
   const request = snap.request;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // 0.20.8: the PC-time claim (name + PIN from the receipt) replaces the sign-in form.
+  const [claim, setClaim] = useState(false);
+  const [claimName, setClaimName] = useState('');
+  const [claimPin, setClaimPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Key | null>(null);
   const [options, setOptions] = useState<ClientRequestOptions | null>(null);
@@ -623,6 +657,17 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
     setPassword('');
     if (!res.ok) setError(CUSTOMER_ERRORS[res.error] ?? 'errGeneric');
   };
+  const claimTime = async () => {
+    if (!claimName.trim() || claimPin.length !== 4 || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await agent.claimTimeCredit(claimName, claimPin);
+    setBusy(false);
+    setClaimPin('');
+    // Started: the PC unlocks with the minutes, so the panel is done.
+    if (res.ok) onClose();
+    else setError(CLAIM_ERRORS[res.error] ?? CUSTOMER_ERRORS[res.error] ?? 'errGeneric');
+  };
   const send = async () => {
     if (!options || options.kind === 'none' || !choice || busy) return;
     setBusy(true);
@@ -669,7 +714,9 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
       <div className="panel__head">
         <strong id="customer-title">
           {step === 'login'
-            ? t('customerTitle')
+            ? claim
+              ? t('claimTitle')
+              : t('customerTitle')
             : step === 'choose'
               ? options?.kind === 'extend'
                 ? t('requestExtendTitle')
@@ -699,7 +746,73 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
         )}
       </div>
 
-      {step === 'login' && (
+      {step === 'login' && claim && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void claimTime();
+          }}
+        >
+          <p className="muted small" style={{ marginTop: 0 }}>
+            {t('claimHint')}
+          </p>
+          <label className="field">
+            <span>{t('claimName')}</span>
+            <input
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              maxLength={80}
+              value={claimName}
+              onChange={(e) => setClaimName(e.target.value)}
+              disabled={busy}
+              data-testid="claim-name"
+            />
+          </label>
+          <label className="field">
+            <span>{t('claimPin')}</span>
+            <input
+              type="password"
+              autoComplete="off"
+              inputMode="numeric"
+              value={claimPin}
+              onChange={(e) => setClaimPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              disabled={busy}
+              data-testid="claim-pin"
+            />
+          </label>
+          {error && (
+            <div className="card__error" role="alert">
+              {t(error)}
+            </div>
+          )}
+          {!connected && !error && <div className="card__error">{t('errNotConnected')}</div>}
+          <div className="row">
+            <button
+              className="btn btn--ghost"
+              type="button"
+              onClick={() => {
+                setClaim(false);
+                setError(null);
+              }}
+              disabled={busy}
+            >
+              {t('claimBack')}
+            </button>
+            <button
+              className="btn btn--primary"
+              type="submit"
+              disabled={busy || !connected || !claimName.trim() || claimPin.length !== 4}
+              data-testid="claim-submit"
+            >
+              {busy ? t('claimBusy') : t('claimStart')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === 'login' && !claim && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -740,6 +853,20 @@ function CustomerDialog({ snap, t, onClose }: { snap: AgentSnapshot; t: T; onClo
             </div>
           )}
           {!connected && !error && <div className="card__error">{t('errNotConnected')}</div>}
+          <p className="small" style={{ margin: '8px 0 0' }}>
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setClaim(true);
+                setError(null);
+              }}
+              disabled={busy}
+              data-testid="claim-open"
+            >
+              {t('customerClaimOpen')}
+            </button>
+          </p>
           <div className="row">
             <button className="btn btn--ghost" type="button" onClick={onClose} disabled={busy}>
               {t('cancel')}

@@ -1,0 +1,117 @@
+/*
+ * LIKApcs Tablet: touch-first layout on top of the phone styles (imported first in main.tsx).
+ * Rules: big tap targets (52px+), no hover-only actions, 16px+ inputs (no zoom on focus),
+ * a side navigation that stays visible, and grids that use the width of the screen.
+ */
+
+html, body, #root { height: 100%; }
+body { overflow: hidden; overscroll-behavior: none; }
+button, [role='button'], a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+button { user-select: none; -webkit-user-select: none; }
+input, select, textarea { font-size: 1.05rem; }
+
+/* ---------- Shell: side navigation + main area ---------- */
+.tb { display: grid; grid-template-columns: 104px minmax(0, 1fr); height: 100vh; height: 100dvh; background: var(--bg); }
+.tb-nav {
+  display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto;
+  padding: 12px 10px; background: var(--panel); border-right: 1px solid var(--line);
+}
+.tb-brand { display: flex; align-items: center; justify-content: center; padding: 6px 0 12px; }
+.tb-brand__name { display: none; }
+.tb-nav__group { display: none; }
+.tb-nav__foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.tb-nav__item {
+  appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 650;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 76px; padding: 8px 4px; border-radius: 16px; cursor: pointer; text-align: center;
+}
+.tb-nav__item span { font-size: 0.8rem; line-height: 1.1; }
+@media (max-width: 999px) {
+  .tb-nav__foot .tb-nav__item span { font-size: 0.72rem; }
+}
+.tb-nav__item:active { transform: scale(0.97); }
+.tb-nav__item--on { background: var(--accent-soft); color: var(--accent-text); }
+.tb-nav__item--danger { color: var(--danger-text); }
+
+.tb-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.tb-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 64px; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.tb-top h1 { margin: 0; font-size: 1.4rem; }
+.tb-status { font-size: 0.9rem; font-weight: 650; padding: 6px 12px; border-radius: 999px; }
+.tb-status--on { background: var(--ok-soft); color: var(--ok-text); }
+.tb-status--off { background: var(--danger-soft); color: var(--danger-text); }
+.tb-content {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: 18px 24px 40px;
+}
+.tb-content > * { max-width: 1280px; margin-left: auto; margin-right: auto; }
+.tb-content .stack { gap: 18px; }
+.tb-content .stack-sm { gap: 12px; }
+
+@media (min-width: 1000px) {
+  .tb { grid-template-columns: 264px minmax(0, 1fr); }
+  .tb-nav { padding: 16px 14px; gap: 4px; }
+  .tb-brand { justify-content: flex-start; gap: 12px; padding: 4px 8px 16px; }
+  .tb-brand__name { display: inline; font-size: 1.2rem; }
+  .tb-nav__group {
+    display: block; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); padding: 10px 12px 4px;
+  }
+  .tb-nav__item {
+    flex-direction: row; justify-content: flex-start; gap: 14px; min-height: 52px; padding: 8px 14px;
+    font-size: 1.05rem;
+  }
+  .tb-nav__item span { font-size: 1.05rem; }
+  .tb-top { padding: 12px 32px; }
+  .tb-content { padding: 24px 32px 48px; }
+}
+
+/* ---------- Touch targets ---------- */
+.tb-content button { min-height: 52px; }
+.tb-content .small-btn, .tb-content .back-btn, .tb-content .icon-btn { min-height: 52px; }
+.tb-content .primary, .tb-content .btn { min-height: 56px; font-size: 1.05rem; }
+.tb-content .chip, .tb-content .choice { min-height: 52px; }
+.tb-content input, .tb-content select, .tb-content textarea { min-height: 52px; }
+.tb-content .pc-row { min-height: 88px; }
+.tb-content .tile { min-height: 104px; }
+.tb-content .shortcut { min-height: 84px; }
+.tb-content .menu-item { min-height: 64px; }
+
+/* ---------- Wide layouts ---------- */
+.list:has(> li > .pc-row) { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.tiles { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) !important; gap: 10px !important; }
+.shortcut-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grid-3 { gap: 12px; }
+.grid-2 { gap: 14px; }
+@media (min-width: 1000px) {
+  .shortcut-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Dialogs and sheets: centred on a tablet, not stuck to the bottom */
+.sheet-root { align-items: center; padding: 24px; }
+.sheet { max-width: 680px; border-radius: 22px; }
+.login__card { max-width: 460px; }
+.toast { max-width: 520px; }
+
+/* ---------- Narrow screens (large phones, small tablets): navigation moves to the bottom ---------- */
+@media (max-width: 699px) {
+  .tb { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .tb-nav {
+    order: 2; flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 4px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line);
+    align-items: stretch; scrollbar-width: none;
+  }
+  .tb-brand, .tb-nav__group { display: none; }
+  .tb-nav__item { flex: 0 0 auto; min-width: 76px; min-height: 60px; padding: 6px 8px; }
+  .tb-nav__foot { margin-top: 0; padding-top: 0; border-top: 0; border-left: 1px solid var(--line); padding-left: 6px; flex-direction: row; gap: 4px; }
+  .tb-nav__foot .tb-nav__item span { font-size: 0.72rem; }
+  .tb-top { padding: 10px 14px; min-height: 56px; }
+  .tb-top h1 { font-size: 1.2rem; }
+  .tb-content { padding: 14px 14px 24px; }
+  .shortcut-grid { grid-template-columns: minmax(0, 1fr); }
+  .sheet-root { align-items: flex-end; padding: 0; }
+  .sheet { max-width: none; border-radius: 22px 22px 0 0; }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+}

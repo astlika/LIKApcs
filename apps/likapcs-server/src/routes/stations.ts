@@ -7,6 +7,7 @@ import {
   registerDeviceSchema,
   staffUnlockSchema,
   stationCommandSchema,
+  stationBadgesSchema,
   stationReasonSchema,
   updateStationSchema,
   uuidSchema,
@@ -71,6 +72,17 @@ export const stationRoutes: FastifyPluginAsync = async (app) => {
       const body = createStationSchema.parse(request.body);
       const station = await services.stations.create(body, actorOf(request));
       return reply.status(201).send(station);
+    },
+  );
+
+  // 0.32.0: manual badges (V.I.P, tournament, premium, birthday) are set at the desk.
+  app.put(
+    '/stations/:id/badges',
+    { preHandler: app.requirePermission(PERMISSIONS.STATIONS_CONTROL) },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      const body = stationBadgesSchema.parse(request.body);
+      return services.stations.setBadges(id, body.badges, actorOf(request));
     },
   );
 

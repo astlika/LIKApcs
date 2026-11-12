@@ -322,7 +322,7 @@ describe('orders from the PC + customer pause / resume', () => {
     const event = await expectAdminOrder('pending', sent.body.id);
     expect(event.stationCode).toBe(station.code);
     await expectOrderPush('pending', sent.body.id);
-    expect((await stationNow()).orders).toEqual({ pending: 1, openCount: 0, openCents: 0 });
+    expect((await stationNow()).orders).toMatchObject({ pending: 1, openCount: 0, openCents: 0 });
 
     const open = await call<{ items: StationOrder[] }>(owner.token, 'GET', '/orders?open=true');
     expect(open.body.items.map((o) => o.id)).toEqual([sent.body.id]);
@@ -408,7 +408,7 @@ describe('orders from the PC + customer pause / resume', () => {
     onBill = accepted.body;
     await expectOrderPush('accepted', sent.body.id);
     const s = await stationNow();
-    expect(s.orders).toEqual({ pending: 0, openCount: 1, openCents: 200 });
+    expect(s.orders).toMatchObject({ pending: 0, openCount: 1, openCents: 200 });
     const session = await call<SessionSummary>(
       owner.token,
       'GET',
@@ -525,7 +525,7 @@ describe('orders from the PC + customer pause / resume', () => {
     expect(
       (await call<ProductSummary>(owner.token, 'GET', `/products/${chips.id}`)).body.stockMilli,
     ).toBe(0);
-    expect((await stationNow()).orders).toEqual({ pending: 0, openCount: 0, openCents: 0 });
+    expect((await stationNow()).orders).toMatchObject({ pending: 0, openCount: 0, openCents: 0 });
   });
 
   it('a prepaid session with an order on the bill bills the order on its own receipt at the end', async () => {

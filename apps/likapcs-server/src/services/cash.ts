@@ -409,6 +409,23 @@ export class CashService {
     return rows.rows.map(toShift);
   }
 
+  /** Every drawer movement of the given shifts, grouped by shift (oldest first). */
+  async movementsForShifts(shiftIds: string[]): Promise<Map<string, CashMovementSummary[]>> {
+    const byShift = new Map<string, CashMovementSummary[]>();
+    if (shiftIds.length === 0) return byShift;
+    const r = await this.pool.query<MovementRow>(
+      `${MOVEMENT_SELECT} WHERE m.shift_id = ANY($1::uuid[]) ORDER BY m.created_at, m.id`,
+      [shiftIds],
+    );
+    for (const row of r.rows) {
+      const movement = toMovement(row);
+      const list = byShift.get(movement.shiftId) ?? [];
+      list.push(movement);
+      byShift.set(movement.shiftId, list);
+    }
+    return byShift;
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────────
 
   private async lockOpenShift(client: DbClient, registerId?: string | null) {
@@ -443,7 +460,15 @@ export class CashService {
         [shiftId],
       ),
       db.query<{ method: string; amount: string; n: string }>(
-        `SELECT p.method, SUM(CASE WHEN p.kind = 'refund' THEN -p.amount_cents ELSE p.amount_cents END)::bigint::text AS amount,
+        // The cash tendered is more than the cash kept when change was given back: the change of
+        // the sales paid in cash in this shift comes off the cash line (same rule as the reports).
+        `SELECT p.method,
+                (SUM(CASE WHEN p.kind = 'refund' THEN -p.amount_cents ELSE p.amount_cents END)
+                 - CASE WHEN p.method = 'cash'
+                        THEN COALESCE((SELECT SUM(s.change_cents) FROM sales s
+                                        WHERE s.id IN (SELECT p2.sale_id FROM payments p2
+                                                        WHERE p2.shift_id = $1 AND p2.kind = 'sale' AND p2.method = 'cash')), 0)
+                        ELSE 0 END)::bigint::text AS amount,
                 count(*)::text AS n
            FROM payments p WHERE p.shift_id = $1 AND p.kind IN ('sale', 'refund')
           GROUP BY p.method ORDER BY p.method`,

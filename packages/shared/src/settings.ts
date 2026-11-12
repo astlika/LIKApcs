@@ -8,10 +8,35 @@ import { validateEndTasks } from './end-tasks.js';
  */
 
 export const CLIENT_WIDGET_SIZES = ['small', 'normal', 'large'] as const;
+/**
+ * 0.20.0: the countdown widget's colour theme (its accent gradient). Per PC it can be overridden
+ * (`stations.look`); `indigo` is the look every PC had before.
+ */
+export const CLIENT_WIDGET_THEMES = [
+  'indigo',
+  'emerald',
+  'sky',
+  'amber',
+  'rose',
+  'violet',
+  'mono',
+  'teal',
+  'orange',
+  'fuchsia',
+  'lime',
+  'red',
+  'blue',
+] as const;
+export type ClientWidgetTheme = (typeof CLIENT_WIDGET_THEMES)[number];
+
 export const CLIENT_WIDGET_POSITIONS = [
   'top-left',
+  'top-center',
   'top-right',
+  'middle-left',
+  'middle-right',
   'bottom-left',
+  'bottom-center',
   'bottom-right',
 ] as const;
 /**
@@ -23,6 +48,7 @@ export const CLIENT_WIDGET_STYLES = [
   'detailed',
   'minimal',
   'minutes',
+  'simple',
   'minutes-money',
   'compact',
   'pill',
@@ -49,7 +75,7 @@ export const CLIENT_ADS_TRANSITIONS = [
 export const CLIENT_ADS_STYLES = ['poster', 'hero', 'split', 'banner'] as const;
 export type ClientAdsStyle = (typeof CLIENT_ADS_STYLES)[number];
 /** Grid pages: columns × rows → 4, 6, 8, 9, 12 or 16 products per page. */
-export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4'] as const;
+export const CLIENT_ADS_GRIDS = ['2x2', '3x2', '4x2', '3x3', '4x3', '4x4', '5x5'] as const;
 export const CLIENT_ADS_IMAGE_FITS = ['contain', 'cover'] as const;
 export const CLIENT_ADS_CAPTIONS = ['bottom', 'top', 'hidden'] as const;
 /** Slide / backdrop colour presets (ads 0017, screen backdrop 0018). `midnight` is the default. */
@@ -76,6 +102,9 @@ export type Language = (typeof LANGUAGES)[number];
 
 export const SETTING_SCHEMAS = {
   'business.name': z.string().min(1).max(120),
+  // Extra addresses of this server typed by staff (e.g. Tailscale IPv4/IPv6 or MagicDNS names).
+  // Shown in Backups › Server and network; not public.
+  'network.remote_addresses': z.array(z.string().min(1).max(253)).max(20),
   'business.legal_name': z.string().max(160),
   'business.address': z.string().max(300),
   'business.city': z.string().max(80),
@@ -103,6 +132,10 @@ export const SETTING_SCHEMAS = {
 
   'stations.heartbeat_interval_seconds': z.number().int().min(3).max(120),
   'stations.offline_after_seconds': z.number().int().min(5).max(600),
+  /** 0.32.0: minutes a reserved PC waits for its customer before the hold is released. */
+  'reservations.tolerance_minutes': z.number().int().min(1).max(60),
+  /** 0.33.4: minutes before the booked time the desk is reminded and the PC is kept for the booking. */
+  'reservations.reminder_minutes': z.number().int().min(0).max(240),
   'stations.session_grace_seconds': z.number().int().min(0).max(3600),
   'stations.expiry_warning_minutes': z.array(z.number().int().min(1).max(120)).max(5),
   'stations.client_welcome_message': z.string().max(300),
@@ -168,8 +201,13 @@ export const SETTING_SCHEMAS = {
   'client.widget_position': z.enum(CLIENT_WIDGET_POSITIONS),
   /** `minimal` = one line like "PC1 · 23 min"; `detailed` = timer, ends-at, paid / owed. */
   'client.widget_style': z.enum(CLIENT_WIDGET_STYLES),
+  'client.widget_theme': z.enum(CLIENT_WIDGET_THEMES),
   /** Show the paid amount (prepaid) / the running amount owed (postpaid) in the widget. */
   'client.widget_show_payment': z.boolean(),
+  /** 0.19.7: hide the countdown widget while a fullscreen game runs (the PC hides it, not the desk). */
+  'client.widget_hide_in_games': z.boolean(),
+  /** The Windows keys do nothing while a Steam game runs in front (so a press cannot close it). */
+  'client.block_win_in_games': z.boolean(),
   /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
   'client.lock_title': z.enum(CLIENT_LOCK_TITLES),
   /** Lock-screen slideshow of in-stock products with photos. */
@@ -223,6 +261,12 @@ export const SETTING_SCHEMAS = {
   'pos.credit_default_days': z.number().int().min(0).max(365),
   /** 0.18.0: the POS grid hides sold-out products (a barcode scan can still add one, with a warning). */
   'pos.hide_out_of_stock': z.boolean(),
+  /** Off by default: the till offers \"sell an off-inventory item\" (phones, PCs, other non-stock). */
+  'pos.off_inventory_items': z.boolean(),
+  /** Off by default: the till offers \"PC time\" (cart stations) — sell minutes now, the PC starts later. */
+  'pos.time_items': z.boolean(),
+  /** Off by default: pay-later sales can be split into installments. */
+  'pos.installments': z.boolean(),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -239,6 +283,8 @@ export const SETTING_SCHEMAS = {
   'backup.enabled': z.boolean(),
   'backup.time': z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   'backup.keep_count': z.number().int().min(1).max(365),
+  /** 0.26.0: folder on an external disk that gets a verified encrypted copy of every backup ('' = off). */
+  'backup.external_dir': z.string().max(260),
 
   'updates.channel': z.enum(['stable', 'beta']),
   'updates.check_on_startup': z.boolean(),
@@ -254,6 +300,7 @@ export type SettingsMap = { [K in SettingKey]: z.infer<(typeof SETTING_SCHEMAS)[
 
 export const SETTING_DEFAULTS: SettingsMap = {
   'business.name': 'LIKApcs Gaming Station',
+  'network.remote_addresses': [],
   'business.legal_name': '',
   'business.address': '',
   'business.city': '',
@@ -281,6 +328,8 @@ export const SETTING_DEFAULTS: SettingsMap = {
 
   'stations.heartbeat_interval_seconds': 10,
   'stations.offline_after_seconds': 35,
+  'reservations.tolerance_minutes': 5,
+  'reservations.reminder_minutes': 10,
   'stations.session_grace_seconds': 120,
   'stations.expiry_warning_minutes': [5, 1],
   'stations.client_welcome_message': 'Welcome! Please ask the staff to start your session.',
@@ -302,7 +351,10 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_size': 'normal',
   'client.widget_position': 'top-right',
   'client.widget_style': 'detailed',
+  'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
+  'client.widget_hide_in_games': true,
+  'client.block_win_in_games': true,
   'client.lock_title': 'brand',
   'client.ads_enabled': false,
   'client.ads_layout': 'card',
@@ -333,6 +385,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.card_payments': false,
   'pos.credit_default_days': 7,
   'pos.hide_out_of_stock': true,
+  'pos.off_inventory_items': true,
+  'pos.time_items': false,
+  'pos.installments': true,
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',
@@ -344,6 +399,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'backup.enabled': true,
   'backup.time': '04:00',
   'backup.keep_count': 30,
+  'backup.external_dir': '',
 
   'updates.channel': 'stable',
   'updates.check_on_startup': true,
@@ -375,7 +431,10 @@ export const PUBLIC_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
+  'client.widget_theme',
   'client.widget_show_payment',
+  'client.widget_hide_in_games',
+  'client.block_win_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -443,7 +502,10 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_size',
   'client.widget_position',
   'client.widget_style',
+  'client.widget_theme',
   'client.widget_show_payment',
+  'client.widget_hide_in_games',
+  'client.block_win_in_games',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -476,7 +538,12 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetSize: settings['client.widget_size'],
     widgetPosition: settings['client.widget_position'],
     widgetStyle: settings['client.widget_style'],
+    widgetTheme: settings['client.widget_theme'],
+    wallpaperUrl: null,
+    desktopWallpaperUrl: null,
     widgetShowPayment: settings['client.widget_show_payment'],
+    widgetHideInGames: settings['client.widget_hide_in_games'],
+    blockWinInGames: settings['client.block_win_in_games'],
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],
