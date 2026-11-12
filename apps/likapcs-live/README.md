@@ -18,8 +18,9 @@ the realme Note 60 (720 × 1600, Android 14); it fits other phones too.
    asks once to allow installing from this source (the browser or the file manager).
 2. Open **likalivepcs v1** and sign in:
    - **Server address** — the main LIKApcs computer, e.g. `192.168.1.10:4700`. The magnifier button
-     finds it on the shop's Wi-Fi. Admin › Backups › _Server and network_ lists the addresses. To see
-     the shop from anywhere, use the computer's Tailscale address (Tailscale on the phone too).
+     looks for it on the shop's Wi-Fi; if it finds nothing, type it: Admin › Backups › _Server and
+     network_ lists the addresses. To see the shop from anywhere, use the computer's Tailscale
+     address (Tailscale on the phone too).
    - **Username, e-mail, password** — an owner or administrator account (it needs the permissions
      `live.view` and `audit.view`) that has an e-mail saved under Admin › Employees. All three must
      match, as in the LIKApcs phone app.

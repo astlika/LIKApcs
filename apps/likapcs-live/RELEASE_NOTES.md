@@ -8,7 +8,7 @@
 **Instalimi**
 
 1. Shkarkoni skedarin `.apk` më poshtë në telefon dhe hapeni. Android pyet një herë nëse lejohet instalimi nga ky burim: lejojeni.
-2. Hapni **likalivepcs v1** dhe hyni: adresa e kompjuterit kryesor (p.sh. `192.168.1.10:4700`; butoni me lupë e gjen vetë në Wi-Fi të lokalit), emri i përdoruesit, e-maili dhe fjalëkalimi i llogarisë së pronarit. Llogaria duhet të ketë e-mail të ruajtur te Admin › Punonjësit.
+2. Hapni **likalivepcs v1** dhe hyni: adresa e kompjuterit kryesor (p.sh. `192.168.1.10:4700`), emri i përdoruesit, e-maili dhe fjalëkalimi i llogarisë së pronarit. Butoni me lupë e kërkon adresën në Wi-Fi të lokalit; nëse nuk e gjen, shkruajeni me dorë — adresat janë te Admin › Kopjet rezervë › “Serveri dhe rrjeti”. Llogaria duhet të ketë e-mail të ruajtur te Admin › Punonjësit.
 3. Lejoni **njoftimet** dhe **punën në sfond** kur aplikacioni i kërkon.
 4. Te telefonat realme: Cilësimet › Aplikacionet › likalivepcs › Përdorimi i baterisë — ndizni “Lejo aktivitetin në sfond” dhe “Lejo nisjen automatike”.
 
