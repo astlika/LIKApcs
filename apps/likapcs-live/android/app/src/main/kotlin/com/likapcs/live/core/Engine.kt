@@ -437,7 +437,7 @@ class Engine(
         // Sales first: an audit row that came with a sale must find that sale already announced.
         refreshSnapshot()
         pollAudit()
-        refreshStations()
+        refreshStations(afterGap = true)
         tick()
         host.changed("all")
     }
@@ -814,13 +814,13 @@ class Engine(
     // ─── The PCs and the clock ──────────────────────────────────────────────────────────────
 
     /** The full list of PCs: which are on, and the sessions running on them. */
-    private fun refreshStations() {
+    private fun refreshStations(afterGap: Boolean = false) {
         if (current.conn != Conn.ONLINE || !can(Daily.STATIONS_VIEW)) return
         val result = get("/stations") ?: return
         if (!result.ok) return
         val list = (parseJson(result.body) as? JsonArray).objects()
         for (s in list) lookup.rememberStation(s.str("id"), s.str("code"))
-        pcs.sync(list)
+        pcs.sync(list, afterGap)
         reschedule()
     }
 

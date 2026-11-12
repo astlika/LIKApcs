@@ -768,9 +768,17 @@ try {
       await commands['session-start'](5, 2);
       const endsAt = Date.parse((await station(5, await as('owner'))).activeSession.endsAt);
       const due = endsAt - 60_000;
-      const alarm = await waitFor('the app’s alarm', () => clockAlarm(), 10_000, 1000).catch(
-        () => null,
-      );
+      // (An appointment made earlier — the summary of the day, say — may still be the one
+      // listed for a moment: the one for this minute is waited for.)
+      const alarm = await waitFor(
+        'the app’s alarm',
+        () => {
+          const found = clockAlarm();
+          return found && Math.abs(found.when - due) < 5000 ? found : null;
+        },
+        10_000,
+        1000,
+      ).catch(() => clockAlarm());
       check(
         'the app asks Android to wake it at that minute',
         alarm && Math.abs(alarm.when - due) < 5000,

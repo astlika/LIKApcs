@@ -56,6 +56,9 @@ class PcWatch(
 
         /** When `online` last changed, on this phone's clock. */
         var changedAt = 0L
+
+        /** Seen off right after the link came back: not believed before this moment. */
+        var holdUntil = 0L
         var sessionId: String? = null
     }
 
@@ -97,8 +100,14 @@ class PcWatch(
 
     // ─── What the engine feeds in ───────────────────────────────────────────────────────────
 
-    /** The full list of PCs (`GET /stations`): at every connect, and on every wake-up. */
-    fun sync(stations: List<JsonObject>) {
+    /**
+     * The full list of PCs (`GET /stations`): at every connect, and on every wake-up.
+     *
+     * `afterGap`: the link to the server has just come back. Then a PC seen off is not believed
+     * at once: when it was the server that restarted, the PCs take up to half a minute to find
+     * it again, and until then the server lists every one of them as off.
+     */
+    fun sync(stations: List<JsonObject>, afterGap: Boolean = false) {
         load()
         val now = clock()
         lookedAt = now
@@ -108,7 +117,7 @@ class PcWatch(
             val id = s.str("id") ?: continue
             if (s.obj("archived") != null) continue
             present += id
-            observe(s, now)
+            observe(s, now, hold = afterGap)
             s.obj("activeSession").str("id")?.let { live += it }
         }
         pcs.keys.retainAll(present)
@@ -240,7 +249,7 @@ class PcWatch(
 
     // ─── PCs on and off ─────────────────────────────────────────────────────────────────────
 
-    private fun observe(s: JsonObject, now: Long) {
+    private fun observe(s: JsonObject, now: Long, hold: Boolean = false) {
         val id = s.str("id") ?: return
         if (s.bool("deleted") == true || s.obj("archived") != null) {
             pcs.remove(id)
@@ -254,10 +263,12 @@ class PcWatch(
             pc = Pc(id)
             pc.online = online
             pc.changedAt = now
+            if (hold && !online) pc.holdUntil = now + RECONNECT_GRACE_MS
             pcs[id] = pc
         } else if (pc.online != online) {
             pc.online = online
             pc.changedAt = now
+            pc.holdUntil = if (hold && !online) now + RECONNECT_GRACE_MS else 0
         }
         pc.code = s.str("code") ?: s.str("name") ?: pc.code
         pc.paired = device != null
@@ -284,6 +295,9 @@ class PcWatch(
         else -> OFF_SETTLE_MS
     }
 
+    /** The moment a change of this PC may be told. */
+    private fun dueAt(pc: Pc): Long = maxOf(pc.changedAt + settle(pc), pc.holdUntil)
+
     /** A customer's session is on this PC, and the owner wants to hear when such a PC goes off. */
     private fun playing(pc: Pc): Boolean = pc.sessionId?.let { sessions[it] } != null && wants(Topic.PC_DROPPED)
 
@@ -302,7 +316,7 @@ class PcWatch(
         }
         // Before anything is told, look again: an event can be older than what was read since,
         // and "PC 05 u fik" must never be a mistake.
-        val ripe = pcs.values.any { pc -> announced[pc.id].let { it != null && it != pc.online } && now >= pc.changedAt + settle(pc) }
+        val ripe = pcs.values.any { pc -> announced[pc.id].let { it != null && it != pc.online } && now >= dueAt(pc) }
         if (ripe && now - lookedAt > FRESH_MS) {
             val list = fetch("/stations").asArr().objects()
             if (list.isEmpty()) {
@@ -320,7 +334,7 @@ class PcWatch(
         for (pc in pcs.values) {
             val told = announced[pc.id] ?: continue
             if (told == pc.online) continue
-            val due = pc.changedAt + settle(pc)
+            val due = dueAt(pc)
             if (now >= due) {
                 announced[pc.id] = pc.online
                 when {
@@ -498,6 +512,12 @@ class PcWatch(
 
         /** …and longer when a customer was playing on it: the alert must not be a false alarm. */
         const val DROP_SETTLE_MS = 30_000L
+
+        /**
+         * After the link came back a PC seen off is believed only when it stays off this long: the
+         * PCs' own programs try the server again at most every 36 seconds.
+         */
+        const val RECONNECT_GRACE_MS = 45_000L
 
         /** PCs that change within this time of the one before join its message… */
         const val MERGE_MS = 120_000L

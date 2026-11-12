@@ -194,6 +194,52 @@ class PcWatchTest {
     }
 
     @Test
+    fun afterTheServerRestartsThePcsAreGivenTimeToFindItAgain() {
+        val w = watch()
+        pc(1, true); pc(2, true); pc(3, false)
+        w.sync(all())
+        // The server restarts. This phone finds it again first: for the server every PC is off.
+        pc(1, false); pc(2, false)
+        w.sync(all(), afterGap = true)
+        clock.plus(15_000)
+        w.tick()
+        assertEquals(emptyList<String>(), titles())
+        // Twenty seconds later the PCs' own programs have connected again.
+        pc(1, true); pc(2, true)
+        w.station(pc(1, true))
+        w.station(pc(2, true))
+        clock.plus(40_000)
+        w.tick()
+        assertEquals(emptyList<String>(), titles())
+        assertEquals(0L, w.nextDue(clock.now))
+    }
+
+    @Test
+    fun aPcThatStaysOffAfterTheLinkCameBackIsToldAfterThatTime() {
+        val w = watch()
+        pc(1, true); pc(2, true)
+        w.sync(all())
+        // While the phone had no connection PC 02 was switched off.
+        pc(2, false)
+        w.sync(all(), afterGap = true)
+        assertEquals(start + PcWatch.RECONNECT_GRACE_MS, w.nextDue(clock.now))
+        clock.plus(PcWatch.RECONNECT_GRACE_MS - 1_000)
+        w.tick()
+        assertEquals(emptyList<String>(), titles())
+        clock.plus(1_000)
+        w.tick()
+        assertEquals(listOf("PC 02 u fik"), titles())
+        // A PC that goes off later, on a link that stayed up, is told after the usual ten seconds.
+        w.station(pc(1, false))
+        clock.plus(PcWatch.OFF_SETTLE_MS)
+        w.tick()
+        // (Close enough to the first to join its message.)
+        assertEquals(listOf("PC 02 u fik", "U fikën 2 PC"), titles())
+        assertEquals(notes[0].key, notes[1].key)
+        assertTrue(notes[1].update)
+    }
+
+    @Test
     fun aPcWithoutAClientIsNeverAnnounced() {
         val w = watch()
         pc(1, true); pc(2, false, paired = false)

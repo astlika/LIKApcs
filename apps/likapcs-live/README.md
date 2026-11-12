@@ -78,7 +78,8 @@ sales feed), **Activity** (the list of changes, newest first) and **Settings**. 
 A paid action is announced once, as the sale it made — a sale with a discount, below its cost or
 above the set amount is that one message too, as a "thing to look at". PCs that come on (or go
 off) shortly after each other are one notification that grows; a PC that only blinks is not
-announced. After a gap (no network, phone off) the app catches up: each missed sale and change is
+announced, and after the link to the server came back a PC is believed to be off only when it
+stays off for 45 seconds (after a restart of the server the PCs need that long to find it again). After a gap (no network, phone off) the app catches up: each missed sale and change is
 announced once; when there are many, the newest five are shown one by one and the rest as one
 line.
 
