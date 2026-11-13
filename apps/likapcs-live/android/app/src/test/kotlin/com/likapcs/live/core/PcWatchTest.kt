@@ -240,6 +240,45 @@ class PcWatchTest {
     }
 
     @Test
+    fun aSlowLookTellsWhatBecameRipeWhileItWasOnItsWay() {
+        val w = watch()
+        pc(1, false); pc(2, false); pc(3, false)
+        w.sync(all())
+        clock.plus(60_000)
+        w.station(pc(2, true))
+        clock.plus(1_000)
+        w.station(pc(3, true))
+        // The look before PC 02 is told takes over a second: PC 03 has settled when it is back.
+        api.onFetch = { clock.plus(1_200) }
+        clock.plus(1_500)
+        w.tick()
+        api.onFetch = null
+        assertEquals(listOf("U ndezën 2 PC"), titles())
+        assertEquals(0L, w.nextDue(clock.now))
+    }
+
+    @Test
+    fun aChangeWhoseMomentHasPassedIsDueAtOnce() {
+        val w = watch()
+        pc(1, false); pc(2, false); pc(3, false)
+        w.sync(all())
+        w.station(pc(2, true))
+        clock.plus(1_000)
+        w.station(pc(3, true))
+        clock.plus(1_500)
+        w.tick()
+        assertEquals(listOf("PC 02 u ndez"), titles())
+        // Showing it took its time: the moment of PC 03 has passed before the next one is asked for.
+        clock.plus(1_300)
+        val next = w.nextDue(clock.now)
+        assertTrue("due right away, was ${next - clock.now} ms", next > clock.now && next - clock.now <= 500)
+        clock.now = next
+        w.tick()
+        assertEquals(listOf("PC 02 u ndez", "U ndezën 2 PC"), titles())
+        assertEquals(0L, w.nextDue(clock.now))
+    }
+
+    @Test
     fun aPcWithoutAClientIsNeverAnnounced() {
         val w = watch()
         pc(1, true); pc(2, false, paired = false)

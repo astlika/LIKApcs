@@ -23,8 +23,12 @@ class FakeApi {
     val answers = HashMap<String, String>()
     val asked = ArrayList<String>()
 
+    /** Runs while a question is on its way: a test lets time pass here. */
+    var onFetch: (() -> Unit)? = null
+
     fun fetch(path: String): JsonElement? {
         asked += path
+        onFetch?.invoke()
         // A query string may vary (dates): the path before it is enough to find the answer.
         return (answers[path] ?: answers[path.substringBefore('?')])?.let { parseJson(it) }
     }

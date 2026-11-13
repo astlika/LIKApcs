@@ -215,7 +215,9 @@ class PcWatch(
 
     /** The next moment `tick` has something to do (epoch ms, later than `now`); 0: nothing is waiting. */
     fun nextDue(now: Long): Long {
-        var next = if (pendingAt > now) pendingAt else 0L
+        // A change that is ripe already (the look before telling took its time) is due at once:
+        // it must not wait for the next thing to happen.
+        var next = if (pendingAt == 0L) 0L else maxOf(pendingAt, now + OVERDUE_MS)
         if (!wants(Topic.PC_ENDING)) return next
         val lead = options.endingMinutes * 60_000L
         val ahead = skew()
@@ -302,7 +304,7 @@ class PcWatch(
     private fun playing(pc: Pc): Boolean = pc.sessionId?.let { sessions[it] } != null && wants(Topic.PC_DROPPED)
 
     private fun flush() {
-        val now = clock()
+        var now = clock()
         if (!wants(Topic.PC_POWER) && !wants(Topic.PC_DROPPED)) {
             // Nobody wants to hear of it: the changes count as told, and nothing is read for them.
             var moved = false
@@ -319,6 +321,8 @@ class PcWatch(
         val ripe = pcs.values.any { pc -> announced[pc.id].let { it != null && it != pc.online } && now >= dueAt(pc) }
         if (ripe && now - lookedAt > FRESH_MS) {
             val list = fetch("/stations").asArr().objects()
+            // The read took its time: what follows counts from when it came back.
+            now = clock()
             if (list.isEmpty()) {
                 // No answer (the link is down): told after the next full read.
                 pendingAt = 0
@@ -530,6 +534,9 @@ class PcWatch(
 
         /** A session this little longer than the warning time gets no warning (it would come at its start). */
         private const val SHORT_MS = 30_000L
+
+        /** A change that is ripe already is told this soon. */
+        private const val OVERDUE_MS = 200L
 
         /** A full read this fresh needs no second look before a change is told. */
         private const val FRESH_MS = 1_500L
