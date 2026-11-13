@@ -36,6 +36,7 @@ import { TimeCreditsService } from './services/time-credits.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { StaffPurchasesService } from './services/staff-purchases.js';
+import { InternetAccessService } from './services/internet-access.js';
 import { CustomersService } from './services/customers.js';
 import { DebtsService } from './services/debts.js';
 import { StatementService } from './services/statement.js';
@@ -50,6 +51,7 @@ import { InvoiceService } from './services/invoices.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { staffPurchaseRoutes } from './routes/staff-purchases.js';
+import { internetAccessRoutes } from './routes/internet-access.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { liveRoutes } from './routes/live.js';
@@ -89,6 +91,7 @@ export interface Services {
   pricing: PricingService;
   sessions: SessionsService;
   catalog: CatalogService;
+  internetAccess: InternetAccessService;
   ads: AdsService;
   maintenance: MaintenanceService;
   sales: SalesService;
@@ -232,6 +235,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   const productImages = new ProductImageStore(path.join(config.uploadDir, 'products'));
   const catalog = new CatalogService(pool, settings, productImages);
+  const internetAccess = new InternetAccessService(pool, catalog);
   const ads = new AdsService(
     pool,
     productImages,
@@ -300,6 +304,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     pricing,
     sessions,
     catalog,
+    internetAccess,
     ads,
     sales,
     timeCredits,
@@ -386,6 +391,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(requestRoutes);
       await api.register(orderRoutes);
       await api.register(catalogRoutes);
+      await api.register(internetAccessRoutes);
       await api.register(adsRoutes);
       await api.register(salesRoutes);
       await api.register(cashRoutes);

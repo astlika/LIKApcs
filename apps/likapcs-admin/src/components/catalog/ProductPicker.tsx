@@ -45,7 +45,8 @@ export function ProductPicker({
     queryKey: ['products', 'picker', debounced],
     queryFn: () =>
       api<{ items: ProductSummary[]; total: number }>('/products', {
-        query: { q: debounced, pageSize: 10 },
+        // `standard`: internet access is not bought in pieces — its stock is its loaded codes.
+        query: { q: debounced, pageSize: 10, kind: 'standard' },
       }),
     enabled: open && debounced.length > 0,
     staleTime: 10_000,

@@ -40,6 +40,7 @@ import {
 } from '../stockView';
 import {
   daysLeftFor,
+  isInternetAccess,
   loadSnapshot,
   saveSnapshot,
   searchProducts,
@@ -387,7 +388,8 @@ export function Stock() {
   // The product after the one being counted, in the order of the list.
   const nextAfter = (p: ProductSummary): ProductSummary | null => {
     const i = visible.findIndex((x) => x.id === p.id);
-    return i >= 0 ? (visible[i + 1] ?? null) : null;
+    // Internet access is not counted by hand: its stock is its unused codes.
+    return i >= 0 ? (visible.slice(i + 1).find((x) => !isInternetAccess(x)) ?? null) : null;
   };
   const countNext = adjusting?.mode === 'count' ? nextAfter(adjusting.product) : null;
 
@@ -745,11 +747,13 @@ export function Stock() {
                 compact={prefs.view === 'compact'}
                 showPrice={prefs.showPrices}
                 units={units}
-                canAdjust={canAdjust}
+                canAdjust={canAdjust && !isInternetAccess(p)}
                 statusName={statusName(p)}
                 days={daysLeftFor(p, soldMap.get(p.id))}
                 onOpen={() => setSelected(p)}
-                onQuick={() => canAdjust && setAdjusting({ product: p, mode: 'add' })}
+                onQuick={() =>
+                  canAdjust && !isInternetAccess(p) && setAdjusting({ product: p, mode: 'add' })
+                }
               />
             </Fragment>
           );
@@ -784,7 +788,7 @@ export function Stock() {
           prefs={prefs}
           allProducts={all}
           supplierName={selected.supplierId ? (supplierMap.get(selected.supplierId) ?? null) : null}
-          canAdjust={canAdjust}
+          canAdjust={canAdjust && !isInternetAccess(selected)}
           canCost={canCost}
           canManage={can(me.data, PERMISSIONS.PRODUCTS_MANAGE)}
           canSell={canSell}
@@ -810,7 +814,7 @@ export function Stock() {
       )}
       {bulkOpen && (
         <BulkSheet
-          products={all}
+          products={all.filter((p) => !isInternetAccess(p))}
           onClose={() => setBulkOpen(false)}
           onDone={(n) => notify(t('Faturën e hyrjes e ruajtëm: {n} produkte', { n }))}
         />

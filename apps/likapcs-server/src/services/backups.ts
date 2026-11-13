@@ -732,6 +732,11 @@ export class BackupService {
         );
         const tables = (await this.publicTables(client)).filter((t) => !SKIP_ON_RESTORE.has(t));
         const ordered = await this.foreignKeyOrder(client, tables);
+        // 0.34.0: the tables reference each other in a circle (a session → the time credit it was
+        // started from → the sale line it was sold on → the session that line bills), so no order
+        // puts every parent before its children. The references are checked once, when every
+        // table is back, instead of table by table.
+        const deferred = await this.deferForeignKeys(client);
         await client.query(
           `TRUNCATE ${tables.map(quoteIdent).join(', ')} RESTART IDENTITY CASCADE`,
         );
@@ -754,6 +759,9 @@ export class BackupService {
           tablesRestored += 1;
           rowsRestored += stream.rowCount;
         }
+        // Every reference of the restored data is checked here; a broken archive stops the restore
+        // and nothing is changed.
+        await this.enforceForeignKeys(client, deferred);
         await this.resetSequences(client);
         if (input.transfer) {
           // Devices belong to the PC that registered them: they are revoked here and must be
@@ -1040,7 +1048,56 @@ export class BackupService {
     return rows.map((r) => r.tablename);
   }
 
-  /** Parents before children (Kahn's algorithm over pg_constraint); self-references are ignored. */
+  /**
+   * Lets the foreign keys of the public schema wait until `enforceForeignKeys` (inside the
+   * caller's transaction). They are normally checked at the end of each statement; for the length
+   * of a restore they are made deferrable and deferred. The change is part of the transaction, so
+   * a failed restore leaves the constraints exactly as they were. Returns the constraints that
+   * were changed, to be put back.
+   */
+  private async deferForeignKeys(client: {
+    query: DbPool['query'];
+  }): Promise<{ table: string; name: string }[]> {
+    const { rows } = await client.query<{ table: string; name: string }>(
+      `SELECT c.conrelid::regclass::text AS "table", c.conname AS name
+         FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+        WHERE c.contype = 'f' AND n.nspname = 'public' AND NOT c.condeferrable
+          AND c.conparentid = 0
+        ORDER BY 1, 2`,
+    );
+    await client.query('SAVEPOINT defer_foreign_keys');
+    try {
+      for (const fk of rows) {
+        await client.query(
+          `ALTER TABLE ${fk.table} ALTER CONSTRAINT ${quoteIdent(fk.name)} DEFERRABLE`,
+        );
+      }
+      await client.query('SET CONSTRAINTS ALL DEFERRED');
+      await client.query('RELEASE SAVEPOINT defer_foreign_keys');
+      return rows;
+    } catch (err) {
+      // A database whose tables this role may not alter: restore as before, table by table in
+      // the best order there is (this works whenever the data has no circular reference).
+      await client.query('ROLLBACK TO SAVEPOINT defer_foreign_keys');
+      this.options.log?.error({ err }, 'foreign keys could not be deferred for the restore');
+      return [];
+    }
+  }
+
+  /** Checks everything that was deferred, now, and makes the constraints immediate again. */
+  private async enforceForeignKeys(
+    client: { query: DbPool['query'] },
+    deferred: { table: string; name: string }[],
+  ): Promise<void> {
+    await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+    for (const fk of deferred) {
+      await client.query(
+        `ALTER TABLE ${fk.table} ALTER CONSTRAINT ${quoteIdent(fk.name)} NOT DEFERRABLE`,
+      );
+    }
+  }
+
+  /** The order the tables are restored in: see `restoreOrder`. */
   private async foreignKeyOrder(
     client: { query: DbPool['query'] },
     tables: string[],
@@ -1050,34 +1107,7 @@ export class BackupService {
          FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
         WHERE c.contype = 'f' AND n.nspname = 'public' AND c.conrelid <> c.confrelid`,
     );
-    const set = new Set(tables);
-    const parentsOf = new Map<string, Set<string>>(tables.map((t) => [t, new Set()]));
-    for (const { child, parent } of rows) {
-      if (set.has(child) && set.has(parent)) parentsOf.get(child)!.add(parent);
-    }
-    const ordered: string[] = [];
-    const done = new Set<string>();
-    while (ordered.length < tables.length) {
-      const ready = tables
-        .filter((t) => !done.has(t))
-        .filter((t) => [...parentsOf.get(t)!].every((p) => done.has(p)));
-      if (ready.length === 0) {
-        // Cycle (mutual FKs): fall back to alphabetical for the rest; COPY checks FKs per statement
-        // so this only matters when both sides reference rows of each other.
-        for (const t of tables) {
-          if (!done.has(t)) {
-            ordered.push(t);
-            done.add(t);
-          }
-        }
-        break;
-      }
-      for (const t of ready) {
-        ordered.push(t);
-        done.add(t);
-      }
-    }
-    return ordered;
+    return restoreOrder(tables, rows);
   }
 
   private async resetSequences(client: { query: DbPool['query'] }): Promise<void> {
@@ -1099,6 +1129,62 @@ export class BackupService {
 }
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * The order tables are restored in: parents before children (Kahn's algorithm over the foreign
+ * keys); self-references are ignored.
+ *
+ * Where tables reference each other in a circle no such order exists, so the circle is opened at
+ * one of the tables that are on it — the one with the fewest parents still missing, by name on a
+ * tie — and the order goes on from there. A table that only waits for a circle (it references
+ * one, but is not on it) is never moved ahead: it still comes after every one of its parents,
+ * which the triggers that look a parent up rely on (`internet_access_codes` → `products`). The
+ * reference that closes a circle is checked at the end of the restore (`deferForeignKeys`).
+ */
+export function restoreOrder(
+  tables: readonly string[],
+  references: readonly { child: string; parent: string }[],
+): string[] {
+  const set = new Set(tables);
+  const parentsOf = new Map<string, Set<string>>(tables.map((t) => [t, new Set()]));
+  for (const { child, parent } of references) {
+    if (child !== parent && set.has(child) && set.has(parent)) parentsOf.get(child)!.add(parent);
+  }
+  const ordered: string[] = [];
+  const done = new Set<string>();
+  const missingOf = (t: string) => [...parentsOf.get(t)!].filter((p) => !done.has(p));
+  /** True when `t` is its own ancestor among the tables still to come. */
+  const onCircle = (t: string): boolean => {
+    const seen = new Set<string>();
+    const stack = missingOf(t);
+    while (stack.length > 0) {
+      const p = stack.pop()!;
+      if (p === t) return true;
+      if (seen.has(p)) continue;
+      seen.add(p);
+      stack.push(...missingOf(p));
+    }
+    return false;
+  };
+  while (ordered.length < tables.length) {
+    const left = tables.filter((t) => !done.has(t));
+    const ready = left.filter((t) => missingOf(t).length === 0);
+    if (ready.length > 0) {
+      for (const t of ready) {
+        ordered.push(t);
+        done.add(t);
+      }
+      continue;
+    }
+    // Nothing is ready, so every table left waits for another one: at least one circle exists.
+    const next = left
+      .filter(onCircle)
+      .sort((a, b) => missingOf(a).length - missingOf(b).length || (a < b ? -1 : 1))[0]!;
+    ordered.push(next);
+    done.add(next);
+  }
+  return ordered;
+}
 
 export function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;

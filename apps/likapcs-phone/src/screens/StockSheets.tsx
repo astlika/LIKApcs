@@ -19,6 +19,7 @@ import {
 } from '../stockView';
 import {
   handOffToSale,
+  isInternetAccess,
   isStockSnoozed,
   searchProducts,
   setSnooze,
@@ -65,6 +66,8 @@ const MOVE_LABEL: Record<string, string> = {
   damaged: 'Dëmtim',
   expired: 'Skadencë',
   missing: 'Mungesë',
+  codes_loaded: 'Kode interneti të shtuara',
+  codes_removed: 'Kode interneti të hequra',
 };
 
 // ── Product details ──────────────────────────────────────────────────────────
@@ -158,6 +161,10 @@ export function ProductSheet({
                 {t('Dëmtim / skadencë')}
               </Btn>
             </>
+          ) : isInternetAccess(product) ? (
+            <Notice tone="info">
+              {t('Paketë interneti: stoku janë kodet e lira. Kodet shtohen te Admin › Produktet.')}
+            </Notice>
           ) : (
             <Notice tone="info">
               {t('Ndryshimi i stokut është vetëm për llogaritë me leje.')}

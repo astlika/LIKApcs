@@ -30,6 +30,7 @@ import {
   X,
   Users,
   CalendarClock,
+  Wifi,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -74,6 +75,8 @@ import {
   pcItemsFromCart,
   type PcTarget,
   emptyCart,
+  hasInternetAccess,
+  isInternetAccess,
   lineKey,
   lineName,
   removeLine,
@@ -133,6 +136,7 @@ async function fetchPcTargets(): Promise<PcTarget[]> {
 
 const PC_BLOCK_KEYS = {
   notPc: 'pos.pcBlock.notPc',
+  internet: 'pos.pcBlock.internet',
   addons: 'pos.pcBlock.addons',
   whole: 'pos.pcBlock.whole',
   discount: 'pos.pcBlock.discount',
@@ -253,6 +257,11 @@ export function PosPage() {
         toast.error(t('pos.staffNoFreeItems'));
         return;
       }
+      // 0.34.0: a staff purchase shows no code; internet access is an ordinary sale.
+      if (hasInternetAccess(cart)) {
+        toast.error(t('pos.staffNoInternet'));
+        return;
+      }
       setCart((c) => ({
         ...c,
         staff: true,
@@ -268,7 +277,17 @@ export function PosPage() {
   // 0.33.4: a product that may not go below zero is not put in the sale beyond its stock — by a
   // click, a search, a barcode or a typed quantity. Products allowed below zero are not limited.
   const stockRefused = useCallback(
-    (refusal: StockRefusal) => {
+    (refusal: StockRefusal, internet = false) => {
+      // 0.34.0: for internet access the stock is the codes that are left.
+      if (internet) {
+        toast.error(
+          refusal.stockMilli > 0
+            ? t('pos.codesOnly', { n: refusal.stockMilli / 1000, name: refusal.productName })
+            : t('pos.codesNone', { name: refusal.productName }),
+          t('pos.codesRefill'),
+        );
+        return;
+      }
       toast.error(
         refusal.stockMilli > 0
           ? t('pos.stockOnly', { n: refusal.stockMilli / 1000, name: refusal.productName })
@@ -299,9 +318,18 @@ export function PosPage() {
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      // 0.34.0: an internet code is handed over when a sale is paid at the till — so it never
+      // goes on a staff purchase or on a PC's bill.
+      if (isInternetAccess(product) && (latestCart.current.staff || latestCart.current.pc)) {
+        toast.error(
+          latestCart.current.staff ? t('pos.staffNoInternet') : t('pos.pcBlock.internet'),
+        );
+        focusSearch();
+        return;
+      }
       const checked = addToCartChecked(latestCart.current, product, quantityMilli);
       if (checked.refused) {
-        stockRefused(checked.refused);
+        stockRefused(checked.refused, isInternetAccess(product));
         focusSearch();
         return;
       }
@@ -313,13 +341,13 @@ export function PosPage() {
       setCart((c) => addToCartChecked(c, product, quantityMilli).cart);
       focusSearch();
     },
-    [focusSearch, setCart, stockRefused],
+    [focusSearch, setCart, stockRefused, t, toast],
   );
   const addWithExtras = useCallback(
     (product: ProductSummary, quantityMilli: number, addonIds: readonly string[]) => {
       const checked = addToCartChecked(latestCart.current, product, quantityMilli, addonIds);
       if (checked.refused) {
-        stockRefused(checked.refused);
+        stockRefused(checked.refused, isInternetAccess(product));
         return;
       }
       latestCart.current = checked.cart;
@@ -330,7 +358,10 @@ export function PosPage() {
   const changeQuantity = useCallback(
     (key: string, quantityMilli: number) => {
       const checked = setQuantityChecked(latestCart.current, key, quantityMilli);
-      if (checked.refused) stockRefused(checked.refused);
+      if (checked.refused) {
+        const line = latestCart.current.lines.find((l) => lineKey(l) === key);
+        stockRefused(checked.refused, line?.kind === 'product' && isInternetAccess(line.product));
+      }
       latestCart.current = checked.cart;
       setCart((c) => setQuantityChecked(c, key, quantityMilli).cart);
     },
@@ -630,6 +661,9 @@ export function PosPage() {
                     </div>
                   )}
                   <div className="tile__name" title={p.name}>
+                    {isInternetAccess(p) && (
+                      <Wifi size={13} className="tile__wifi" aria-label={t('internet.badge')} />
+                    )}
                     {p.name}
                   </div>
                 </div>
@@ -646,7 +680,13 @@ export function PosPage() {
                     <span
                       className={`tile__stock ${out ? 'text-danger' : p.lowStock ? 'text-warning' : 'faint'}`}
                     >
-                      {out ? t('pos.outOfStock') : t('pos.stockLeft', { n: p.stockMilli / 1000 })}
+                      {isInternetAccess(p)
+                        ? out
+                          ? t('pos.codesOut')
+                          : t('pos.codesLeft', { n: p.stockMilli / 1000 })
+                        : out
+                          ? t('pos.outOfStock')
+                          : t('pos.stockLeft', { n: p.stockMilli / 1000 })}
                     </span>
                   )}
                 </div>
@@ -793,6 +833,11 @@ export function PosPage() {
                         <span className="text-success"> · {t('pos.promo')}</span>
                       )}
                   </div>
+                  {line.kind === 'product' && isInternetAccess(line.product) && (
+                    <div className="pos-line__note faint" data-testid="pos-line-internet">
+                      <Wifi size={11} style={{ verticalAlign: '-1px' }} /> {t('pos.internetNote')}
+                    </div>
+                  )}
                 </div>
                 <div className="pos-line__qty">
                   {line.kind === 'time' ? (
@@ -1409,6 +1454,8 @@ function PaymentDialog({
   // Punkti 4 (0.28.0): a sale made while this PC cannot reach the server waits in the offline
   // queue with its own number. Anything the server could not settle later is refused here.
   const queueOffline = (request: OfflineSaleDraft['request']): QueuedSale => {
+    // 0.34.0: the code comes from the server — offline the customer would leave without one.
+    if (hasInternetAccess(cart)) throw new OfflineRefusedError(t('pos.offlineInternet'));
     if (!getOfflineSnapshot().deviceCode) throw new OfflineRefusedError(t('pos.offlineNoDevice'));
     if (cart.lines.some((l) => l.kind !== 'product')) {
       throw new OfflineRefusedError(t('pos.offlineItems'));
@@ -1448,7 +1495,8 @@ function PaymentDialog({
         const receipt = await api<ReceiptData>(`/sales/${order.saleId}/receipt`);
         return { sale, receipt };
       }
-      const body = { ...cartToRequest(cart), payments: tender.payments };
+      // `accessCodes`: this till shows the internet codes a sale hands out (0.34.0).
+      const body = { ...cartToRequest(cart), payments: tender.payments, accessCodes: true };
       if (!resumedId && getLiveStatus() !== 'connected') {
         return { offline: queueOffline(body as OfflineSaleDraft['request']) };
       }
@@ -1460,6 +1508,12 @@ function PaymentDialog({
       } catch (err) {
         // The connection broke during the sale: it goes to the queue with the same
         // clientRequestId, so a retry can never sell twice (the server answers `duplicate`).
+        // 0.34.0: with internet access the sale never goes to the offline queue (the cashier
+        // would not see the code). The answer was lost, the sale may have been made: the same
+        // request is sent again — it is made once, and its codes come back with it.
+        if (err instanceof ApiError && err.status === 0 && hasInternetAccess(cart)) {
+          throw new OfflineRefusedError(t('pos.internetRetry'));
+        }
         if (!resumedId && err instanceof ApiError && err.status === 0) {
           return { offline: queueOffline(body as OfflineSaleDraft['request']) };
         }
@@ -1483,6 +1537,26 @@ function PaymentDialog({
       if (shiftGuard.handle(err, () => complete.mutate())) return;
       const shortage = stockShortageOf(err);
       if (shortage) {
+        // 0.34.0: for internet access "no stock" means the codes ran out (another till sold them).
+        const internet = cart.lines.some(
+          (l) =>
+            l.kind === 'product' &&
+            isInternetAccess(l.product) &&
+            l.product.name === shortage.productName,
+        );
+        if (internet) {
+          toast.error(
+            shortage.availableMilli > 0
+              ? t('pos.codesOnly', {
+                  n: shortage.availableMilli / 1000,
+                  name: shortage.productName,
+                })
+              : t('pos.codesNone', { name: shortage.productName }),
+            t('pos.codesRefill'),
+          );
+          void queryClient.invalidateQueries({ queryKey: ['products'] });
+          return;
+        }
         // 0.33.4: the stock changed since the product was added: say it in the till's language.
         toast.error(stockShortageText(shortage, t), t('pos.stockHint'));
         void queryClient.invalidateQueries({ queryKey: ['products'] });

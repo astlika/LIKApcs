@@ -126,6 +126,24 @@ export function Receipt({ data }: { data: ReceiptData }) {
           </div>
         )}
       </div>
+      {sale.items.some((i) => (i.accessCodes?.length ?? 0) > 0) && (
+        <div className="receipt__codes" data-testid="receipt-access-codes">
+          {sale.items
+            .filter((i) => (i.accessCodes?.length ?? 0) > 0)
+            .map((i) => (
+              <div key={i.id} className="receipt__codes-line">
+                <div className="receipt__codes-name">
+                  {t('receipt.accessCode', { name: i.description })}
+                </div>
+                {i.accessCodes.map((code) => (
+                  <div key={code} className="receipt__code">
+                    {code}
+                  </div>
+                ))}
+              </div>
+            ))}
+        </div>
+      )}
       {data.claimPins && data.claimPins.length > 0 && (
         <div className="receipt__totals" data-testid="receipt-claim-pins">
           {data.claimPins.map((p) => (

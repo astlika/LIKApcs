@@ -15,3 +15,4 @@ export * from './ads-pages.js';
 export * from './end-tasks.js';
 export * from './allocate-payments.js';
 export * from './installments.js';
+export * from './access-codes.js';

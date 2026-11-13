@@ -357,7 +357,10 @@ function MenuEditor() {
   const products = useQuery({
     queryKey: ['products', 'menu-editor'],
     queryFn: () =>
-      api<{ items: ProductSummary[] }>('/products', { query: { active: 'active', pageSize: 500 } }),
+      // `standard`: an internet access package is never on the PC menu.
+      api<{ items: ProductSummary[] }>('/products', {
+        query: { active: 'active', pageSize: 500, kind: 'standard' },
+      }),
   });
   const categories = useQuery({
     queryKey: ['categories'],

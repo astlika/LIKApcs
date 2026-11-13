@@ -83,9 +83,24 @@ export interface PcTarget {
   billed: boolean;
 }
 
+/**
+ * 0.34.0: an internet access package — each unit sold hands out one of its codes, when the sale
+ * is paid at the till. (A product saved before 0.34.0 has no `kind`: it is an ordinary product.)
+ */
+export const isInternetAccess = (product: Pick<ProductSummary, 'kind'>): boolean =>
+  product.kind === 'internet_access';
+
+/** Whether the cart holds internet access: such a sale needs the server, and never goes to a PC. */
+export const hasInternetAccess = (cart: Cart): boolean =>
+  cart.lines.some((l) => l.kind === 'product' && isInternetAccess(l.product));
+
 /** Why the cart cannot go to a PC's bill as it is (null: it can). */
-export function pcBlocker(cart: Cart): 'notPc' | 'addons' | 'whole' | 'discount' | null {
+export function pcBlocker(
+  cart: Cart,
+): 'notPc' | 'internet' | 'addons' | 'whole' | 'discount' | null {
   if (cart.lines.some((l) => l.kind !== 'product')) return 'notPc';
+  // A PC's bill is paid later; an internet code is handed over when the sale is paid.
+  if (hasInternetAccess(cart)) return 'internet';
   if (cart.lines.some((l) => l.kind === 'product' && l.addonIds.length > 0)) return 'addons';
   if (cart.lines.some((l) => l.kind === 'product' && l.quantityMilli % 1000 !== 0)) return 'whole';
   if (cart.discountCents > 0 || cart.lines.some((l) => l.kind === 'product' && l.discountCents > 0))
@@ -257,6 +272,10 @@ export function setQuantityChecked(
   quantityMilli: number,
 ): { cart: Cart; refused: StockRefusal | null } {
   const line = cart.lines.find((l) => lineKey(l) === key);
+  // 0.34.0: internet access is sold by the piece — one code each — so a typed 1.5 becomes 2.
+  if (line && line.kind === 'product' && isInternetAccess(line.product) && quantityMilli > 0) {
+    quantityMilli = Math.max(1000, Math.round(quantityMilli / 1000) * 1000);
+  }
   if (!line || line.kind !== 'product' || quantityMilli <= line.quantityMilli) {
     return { cart: setQuantity(cart, key, quantityMilli), refused: null };
   }

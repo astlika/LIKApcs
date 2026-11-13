@@ -11,6 +11,8 @@ import {
   cartToRequest,
   cartTotals,
   emptyCart,
+  hasInternetAccess,
+  isInternetAccess,
   lineKey,
   lineName,
   removeLine,
@@ -23,6 +25,7 @@ import {
 
 const product = (over: Partial<ProductSummary>): ProductSummary => ({
   id: 'p1',
+  kind: 'standard',
   parentId: null,
   parentName: null,
   variantLabel: null,
@@ -398,5 +401,65 @@ describe('stock at the till (0.33.4)', () => {
     const more = setQuantityChecked(shrunk, 'cola', 4000);
     expect(more.refused?.allowedMilli).toBe(1000);
     expect(cartQuantityOf(more.cart, 'cola')).toBe(3000);
+  });
+});
+
+describe('internet access at the till (0.34.0)', () => {
+  const wifi = (over: Partial<ProductSummary> = {}) =>
+    product({
+      id: 'wifi-1h',
+      name: 'Internet 1h',
+      kind: 'internet_access',
+      stockMilli: 3000,
+      ...over,
+    });
+
+  it('is an ordinary line in the cart, limited by the codes that are left', () => {
+    let cart = addToCartChecked(emptyCart(), wifi()).cart;
+    cart = addToCartChecked(cart, wifi()).cart;
+    expect(cart.lines).toHaveLength(1);
+    expect(cartQuantityOf(cart, 'wifi-1h')).toBe(2000);
+    expect(isInternetAccess(wifi())).toBe(true);
+    expect(isInternetAccess(product({}))).toBe(false);
+    expect(hasInternetAccess(cart)).toBe(true);
+    expect(hasInternetAccess(addToCart(emptyCart(), product({})))).toBe(false);
+    // Three codes left: the fourth is refused.
+    cart = addToCartChecked(cart, wifi()).cart;
+    const fourth = addToCartChecked(cart, wifi());
+    expect(fourth.refused).toEqual({
+      productName: 'Internet 1h',
+      stockMilli: 3000,
+      allowedMilli: 0,
+    });
+    expect(cartQuantityOf(fourth.cart, 'wifi-1h')).toBe(3000);
+    // No codes at all: nothing goes in.
+    const none = addToCartChecked(emptyCart(), wifi({ stockMilli: 0 }));
+    expect(none.refused?.allowedMilli).toBe(0);
+    expect(none.cart.lines).toHaveLength(0);
+  });
+
+  it('is sold by the piece: a typed fraction becomes a whole number of codes', () => {
+    const cart = addToCartChecked(emptyCart(), wifi({ stockMilli: 10_000 })).cart;
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 2500).cart, 'wifi-1h')).toBe(3000);
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 2400).cart, 'wifi-1h')).toBe(2000);
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 300).cart, 'wifi-1h')).toBe(1000);
+    // Zero still removes the line; an ordinary product keeps its fraction.
+    expect(setQuantityChecked(cart, 'wifi-1h', 0).cart.lines).toHaveLength(0);
+    const cola = addToCart(emptyCart(), product({ id: 'cola' }));
+    expect(cartQuantityOf(setQuantityChecked(cola, 'cola', 2500).cart, 'cola')).toBe(2500);
+  });
+
+  it('never goes to a PC bill: the code is handed over when the sale is paid', () => {
+    const cart = addToCart(addToCart(emptyCart(), product({ id: 'cola' })), wifi());
+    expect(pcBlocker(cart)).toBe('internet');
+    expect(pcBlocker(removeLine(cart, 'wifi-1h'))).toBeNull();
+  });
+
+  it('a product saved before this version has no kind and is an ordinary product', () => {
+    const old = { ...product({ id: 'old' }) } as Partial<ProductSummary>;
+    delete old.kind;
+    const cart = addToCart(emptyCart(), old as ProductSummary);
+    expect(hasInternetAccess(cart)).toBe(false);
+    expect(pcBlocker(cart)).toBeNull();
   });
 });

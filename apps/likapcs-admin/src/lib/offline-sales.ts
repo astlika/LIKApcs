@@ -32,8 +32,14 @@ export interface QueuedSale {
   queuedAt: string;
   status: OfflineStatus;
   error: string | null;
-  body: CreateSaleRequest;
+  body: QueuedSaleBody;
 }
+
+/**
+ * The request as it is stored and sent. `accessCodes` (0.34.0) has a default on the server and
+ * sales queued by an older version do not carry it; an offline sale never holds internet access.
+ */
+export type QueuedSaleBody = Omit<CreateSaleRequest, 'accessCodes'> & { accessCodes?: boolean };
 
 export interface SyncedSale {
   localNumber: string;
@@ -145,7 +151,7 @@ export function nextLocalNumber(deviceCode: string): string {
 
 export interface OfflineSaleDraft {
   /** The normal sale request (items, payments, notes); its clientRequestId is kept. */
-  request: Omit<CreateSaleRequest, 'offline'> & { clientRequestId: string };
+  request: Omit<QueuedSaleBody, 'offline'> & { clientRequestId: string };
   lines: OfflineLine[];
   /** The price each product line showed at the till (without extras). */
   unitPrices: { productId: string; unitPriceCents: number }[];
