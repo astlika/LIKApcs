@@ -1686,6 +1686,19 @@
 
   /** True while a number or an hour in Settings is being typed: the page is not redrawn under it. */
   let settingsStale = false;
+
+  // Changes of settings reach the engine one after the other, in the order they were made (the
+  // app answers its calls on several threads, so two sent at once could overtake each other).
+  let optionChain = Promise.resolve();
+  let optionsWaiting = 0;
+  function sendOptions(args) {
+    optionsWaiting++;
+    const answer = optionChain.then(() => call('setOptions', args));
+    optionChain = answer.then(() => {
+      optionsWaiting--;
+    });
+    return answer;
+  }
   /** Options the engine refused a moment ago (name → true): their fields are marked. */
   const refusedOptions = {};
 
@@ -1806,9 +1819,10 @@
     const user = state.user || {};
 
     const setOption = (args, name) =>
-      call('setOptions', args).then((r) => {
+      sendOptions(args).then((r) => {
         if (r.ok) {
-          applyState(r.data);
+          // An answer that a newer change has already overtaken is not drawn.
+          if (optionsWaiting === 0) applyState(r.data);
         } else if (name) {
           // Out of range: the field is marked and shows the stored value again.
           refusedOptions[name] = true;
@@ -1818,6 +1832,21 @@
     const armed = Date.now() < signOutArmed;
     const topics = state.topics || {};
     const options = state.options || {};
+
+    /** A switch moves on the screen at once; the engine's answer (what it stored) follows. */
+    const flip = (group, key, on) => {
+      const values = Object.assign({}, state[group]);
+      values[key] = on;
+      const next = Object.assign({}, state);
+      next[group] = values;
+      state = next;
+      renderSettings();
+      const patch = {};
+      patch[key] = on;
+      const args = {};
+      args[group] = patch;
+      setOption(args);
+    };
 
     /** A switch with a title and a line under it; `sub` for the finer ones inside a kind. */
     const switchRow = (attrs, title, text, isOn, toggle, sub) =>
@@ -1896,11 +1925,10 @@
         h('h2', { class: 'card__title' }, t('Për çfarë të njoftohem')),
         KINDS.map(([id, title, text, kindTopics]) => {
           const isOn = !state.categories || state.categories[id] !== false;
-          const row = switchRow({ 'data-kind': id }, title, text, isOn, () => {
-            const patch = {};
-            patch[id] = !isOn;
-            setOption({ categories: patch });
-          });
+          // (What is on is looked up when the finger lands, not when the row was drawn.)
+          const row = switchRow({ 'data-kind': id }, title, text, isOn, () =>
+            flip('categories', id, (state.categories || {})[id] === false),
+          );
           // The finer switches are shown while their kind is on.
           if (!isOn || !kindTopics) return row;
           return [
@@ -1916,11 +1944,7 @@
                     topicTitle,
                     topicText,
                     topicOn,
-                    () => {
-                      const patch = {};
-                      patch[topic] = !topicOn;
-                      setOption({ topics: patch });
-                    },
+                    () => flip('topics', topic, (state.topics || {})[topic] === false),
                     true,
                   ),
                   topicOn && fields ? optionFields(fields, setOption) : null,
@@ -1973,7 +1997,7 @@
           'Pa zë në orët e qeta',
           'Njoftimet vijnë, por pa tingull dhe pa dridhje.',
           options['quiet.on'] === true,
-          () => setOption({ options: { 'quiet.on': options['quiet.on'] !== true } }),
+          () => flip('options', 'quiet.on', (state.options || {})['quiet.on'] !== true),
         ),
         options['quiet.on'] === true
           ? [
@@ -1989,7 +2013,8 @@
                 'Përveç gjërave për t’u parë',
                 'Rimbursime, anulime, PC e fikur gjatë seancës: këto bien edhe në orët e qeta.',
                 options['quiet.alerts'] === true,
-                () => setOption({ options: { 'quiet.alerts': options['quiet.alerts'] !== true } }),
+                () =>
+                  flip('options', 'quiet.alerts', (state.options || {})['quiet.alerts'] !== true),
                 true,
               ),
             ]

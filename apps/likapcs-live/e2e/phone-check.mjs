@@ -117,7 +117,11 @@ async function step(name, fn) {
 
 /** The app's notifications as the system holds them: [{ channel, title, text, big, key }]. */
 function notifications() {
-  const dump = shell('dumpsys notification --noredact', { timeout: 30_000 });
+  // Only what is shown: Android also lists a notification that is on its way to the screen (for
+  // a moment an update and the one it replaces would both be there).
+  const dump = shell('dumpsys notification --noredact', { timeout: 30_000 }).split(
+    /\n\s*Enqueued Notification List:/,
+  )[0];
   const records = [];
   const blocks = dump.split(/\n(?=\s+NotificationRecord\()/);
   for (const block of blocks) {
@@ -986,11 +990,36 @@ try {
     );
     await sleep(600);
     screenshot('settings-pcs');
+    const drawn = (value) =>
+      page.waitFor(
+        `the switch drawn ${value}`,
+        `document.querySelector('[data-topic="pc.wake"]').getAttribute('aria-checked') === '${value}'`,
+        8000,
+      );
     await page.click('[data-topic="pc.wake"]');
-    await waitFor('the switch', async () => (await page.state()).topics['pc.wake'] === false);
+    await drawn('false');
+    await waitFor(
+      'the switch stored off',
+      async () => (await page.state()).topics['pc.wake'] === false,
+    );
     await page.click('[data-topic="pc.wake"]');
-    await waitFor('the switch', async () => (await page.state()).topics['pc.wake'] === true);
+    await drawn('true');
+    await waitFor(
+      'the switch stored on',
+      async () => (await page.state()).topics['pc.wake'] === true,
+    );
     ok('a switch inside a kind is switched off and on again from the screen');
+    // Two taps right after each other end where they started: off, then on again.
+    await page.eval(`(() => { const row = () => document.querySelector('[data-topic="pc.power"]');
+      row().click(); row().click(); })()`);
+    await sleep(1500);
+    check(
+      'two quick taps are two changes, in their order',
+      (await page.state()).topics['pc.power'] === true &&
+        (await page.eval(
+          `document.querySelector('[data-topic="pc.power"]').getAttribute('aria-checked')`,
+        )) === 'true',
+    );
     // A number typed into its field (the check above set it to 1).
     await page.eval(`(() => { const el = document.querySelector('[data-option="ending.minutes"]');
       el.focus(); el.value = '5'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
@@ -1028,18 +1057,33 @@ try {
       'the ones right behind it make the same notification grow',
       (n) => n.title === 'U ndezën 3 PC',
     );
-    const about = notifications().filter((n) => /u ndez$|^U ndezën/.test(n.title));
+    const cameOn = () => notifications().filter((n) => /u ndez$|^U ndezën/.test(n.title));
+    const about = await waitFor(
+      'one notification',
+      () => (cameOn().length === 1 ? cameOn() : null),
+      6000,
+      500,
+    ).catch(cameOn);
     check(
       '…one notification in the place of the first, not three',
       first && grown && grown.key === first.key && about.length === 1,
-      () => show(about),
+      () => about.map((n) => `${n.key} [${n.channel}] ${n.title}`).join('\n'),
     );
+    // "Ndiz të gjitha" in the Admin. The server tells the phone nothing at that moment: the app
+    // reads who did it from the log when the first woken PC reports in (or at its next look at
+    // the log: a minute at most while the phone is awake). So the woken PC comes on, as it would.
     await commands['pc-wake-all']();
+    await commands['pc-on'](5);
     await expectNotification(
       '"Ndiz të gjitha" in the Admin: who did it, and how many PCs',
       (n) =>
         n.channel === 'power' && /^Pronari Test i ndezi të gjitha PC-të \(\d+\)$/.test(n.title),
       20_000,
+    );
+    await expectNotification(
+      '…and the PC it woke joins the ones that came on',
+      (n) => n.channel === 'power' && n.title === 'U ndezën 4 PC',
+      15_000,
     );
     shell('cmd statusbar expand-notifications');
     await sleep(1500);

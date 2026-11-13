@@ -106,6 +106,11 @@ The phone needs a direct route to the server (the shop's Wi-Fi, or Tailscale): t
 in between, so nothing leaves the shop's own network. When the route is gone the app keeps
 trying and catches up afterwards.
 
+Who woke a PC from the Admin is only in the server's log: the server sends nothing at that
+moment. The app reads it when the woken PC reports in (it then reads the log), or at its next
+look at the log — within a minute while the phone is awake, at the next periodic wake-up (every
+few minutes) while it sleeps.
+
 Some messages come from the clock, not from the server ("5 minutes left" is sent to the PC only).
 For those the engine asks the phone to wake it at the moment (`Host.wakeAt`). Android allows an
 exact alarm to an app that may run in the background — the permission the app asks for in its
