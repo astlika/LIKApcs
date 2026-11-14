@@ -410,6 +410,24 @@ describe('spoken time warnings', () => {
     const byStaff = commands().filter((c) => c.command === 'session.end');
     expect(byStaff).toHaveLength(1);
     expect((byStaff[0]!.payload as { reason?: string }).reason).toBeUndefined();
+
+    // A mark that was passed before the session began is not announced late: three minutes
+    // bought, so "5 minutes" would be wrong. The one-minute warning still comes.
+    received = [];
+    const brief = await call<SessionMutationResponse>(owner.token, 'POST', '/sessions', {
+      stationId: pc.id,
+      billingMode: 'prepaid',
+      minutes: 3,
+      payments: [{ method: 'cash', amountCents: 30 }],
+    });
+    expect(brief.status, JSON.stringify(brief.body)).toBe(201);
+    await ctx.app.services.sessions.tick();
+    expect(commands().filter((c) => c.command === 'message.show')).toHaveLength(0);
+    vi.setSystemTime(plus(32));
+    await ctx.app.services.sessions.tick();
+    const late = commands().filter((c) => c.command === 'message.show');
+    expect(late).toHaveLength(1);
+    expect(late[0]!.payload).toMatchObject({ announce: { minutes: 1 } });
     vi.useRealTimers();
   }, 60_000);
 });

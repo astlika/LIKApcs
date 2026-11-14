@@ -15,6 +15,8 @@ describe('browser apps served by the server', () => {
     fs.mkdirSync(path.join(root, 'assets'));
     fs.writeFileSync(path.join(root, 'index.html'), '<html>desktop shell</html>');
     fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log(1);');
+    fs.mkdirSync(path.join(root, 'voice'));
+    fs.writeFileSync(path.join(root, 'voice', 'sq-5.mp3'), Buffer.from([0xff, 0xfb, 0x90, 0x00]));
     registerPhoneRoutes(app, root, '/desktop');
     await app.ready();
   });
@@ -31,6 +33,11 @@ describe('browser apps served by the server', () => {
     const asset = await app.inject({ method: 'GET', url: '/desktop/assets/app.js' });
     expect(asset.statusCode).toBe(200);
     expect(asset.headers['content-type']).toContain('javascript');
+    // 0.35.0: the built-in voices are played by an <audio> element, which wants an audio type.
+    const voice = await app.inject({ method: 'GET', url: '/desktop/voice/sq-5.mp3' });
+    expect(voice.statusCode).toBe(200);
+    expect(voice.headers['content-type']).toBe('audio/mpeg');
+    expect(voice.rawPayload.length).toBe(4);
   });
 
   it('redirects /desktop to /desktop/ and falls back to the shell for client routes', async () => {

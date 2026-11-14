@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-14
+
 ### Added
 
 - **Voice on the PCs** — the customer PC now says the time warnings aloud: "Edhe pesë minuta", "Edhe një minutë" and, when the time runs out, "Koha juaj mbaroi". A game in exclusive fullscreen hides the countdown widget (Windows lets no other program draw over it); the voice is heard in every game and at every resolution. Settings › Client screen › "Zëri në PC": on or off, the language of the voice (Albanian or English), the volume, a short chime before the voice. Built-in voices exist for 15, 10, 5 and 1 minutes and for the end of the time; a warning at another minute plays the chime. The announcements follow the expiry warnings (Settings › Stations, default 5 and 1 minutes).
@@ -8,12 +10,14 @@
 
 ### Changed
 
-- Client: the countdown widget is shown during games unless the owner hides it — "Fshih gjatë lojës" (Settings › Client screen) is now off by default. An installation where the switch was saved keeps its choice.
+- Client: on a new installation the countdown widget is shown during games — "Fshih gjatë lojës" (Settings › Client screen) is now off by default. An existing installation keeps the value it has stored (on, unless it was turned off): turn the switch off there to show the countdown during games.
+- A time warning is sent only while its minutes are true. A mark that was passed more than half a minute ago — a session that began with less time, a resume or an extension near the end, a restart of the server — is skipped; before, "5 minutes" could be shown with 3 left.
 
 ### Fixed
 
 - Admin (installed app): the app's content policy allowed pictures from the server but named no sound or video; media from the server is now allowed, which the preview of an own recording needs.
-- Client: the countdown widget keeps its corner when the screen changes under it. A game that switches the resolution left the widget at its old coordinates — outside the new screen, or in the middle of it once the game closed; it is now put back within a second, in the corner the owner chose.
+- The Admin in the browser (`/desktop`): sound files are served as audio.
+- Client: the countdown widget keeps its corner when the screen changes under it. Its place was computed only when the session or the layout changed, so a game that switches the resolution could leave it away from its corner or outside the screen; it is now put back within a second, in the corner the owner chose.
 
 ## [0.34.0] - 2026-11-13
 

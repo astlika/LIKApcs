@@ -233,6 +233,12 @@ function describe(row: SessionRow, seconds: number): string {
   return `${row.station_code} · ${duration} (${MODE_WORDS[row.billing_mode] ?? row.billing_mode})`;
 }
 
+/**
+ * How late an expiry warning may still be sent. The watcher looks every second, so a warning
+ * normally goes out within a second of its mark; anything later than this is no longer true.
+ */
+const WARNING_LATE_MINUTES = 0.5;
+
 export class SessionsService {
   /** Stations whose device dropped while a session was live: stationId → disconnect time. */
   private readonly offlineSince = new Map<string, number>();
@@ -2312,6 +2318,10 @@ export class SessionsService {
             const key = `${s.id}:${minutes}`;
             if (remaining > minutes || this.warned.has(key)) continue;
             this.warned.add(key);
+            // 0.35.0: the PC says the minutes aloud, so they have to be true. A mark that was
+            // passed a while ago (a session that began with less time, a resume or an extension
+            // near the end, a server restart) is skipped: "5 minutes" with 3 left is wrong.
+            if (remaining < minutes - WARNING_LATE_MINUTES) continue;
             const text =
               language === 'sq'
                 ? `Edhe ${minutes} minuta kohë`

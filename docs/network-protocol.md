@@ -983,7 +983,9 @@ except two fields on commands that already existed:
 
 - `message.show` of a time warning carries `announce: {minutes}` next to `text` and
   `durationSeconds`. The PC shows the text as before and says the minutes. A message typed at the
-  desk has no `announce` and is not spoken.
+  desk has no `announce` and is not spoken. A warning is sent only while its minutes are true: a mark that
+  was passed more than half a minute ago (a session that began with less time, a resume or an
+  extension near the end, a server restart) is skipped.
 - `session.end` carries `reason: 'expired'` when the time ran out (the PC says "time is up"); a
   session ended by staff has no `reason`.
 
@@ -1016,4 +1018,4 @@ The format is sniffed from the bytes (`400` with `details.code: VOICE_FORMAT` ot
 above 2 MB, `409 VOICE_TOO_MANY` beyond 12 recordings). Settings: `client.voice_enabled`,
 `client.voice_language` (`sq` \| `en`), `client.voice_volume` (0–100), `client.voice_chime`,
 `client.voice_custom` (slot → `{file, name}`, written by the two routes above). The files live in
-`<dataDir>/uploads/voice` and, like every upload, are not part of a database backup.
+`<dataDir>/uploads/voice` and, like every upload, go into every backup and come back with a restore.
