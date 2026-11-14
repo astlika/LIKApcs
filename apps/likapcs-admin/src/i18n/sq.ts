@@ -1776,7 +1776,7 @@ export const sq: Dictionary = {
       showPaymentHint: 'Parapagim: sa u pagua. Kohë e hapur: shuma që po rritet për pagesë.',
       hideInGames: 'Fshih gjatë lojës',
       hideInGamesHint:
-        'Kur po ecën një lojë në ekran të plotë (p.sh. CS2) në PC, numëruesi fshihet dhe kthehet kur mbyllet loja. E fikur: numëruesi mbahet mbi lojë.',
+        'Kur po ecën një lojë në ekran të plotë (p.sh. CS2) në PC, numëruesi fshihet dhe kthehet kur mbyllet loja. E fikur: numëruesi nuk fshihet; duket mbi lojërat në «Fullscreen Windowed», por jo mbi një lojë në ekran të plotë të vërtetë.',
       blockWin: 'Blloko tastin Windows në lojërat e Steam-it',
       blockWinHint:
         'Kur një lojë e instaluar nga Steam është në pamje, tastet Windows nuk bëjnë asgjë, që loja të mos mbyllet pa dashje. Çaktivizojeni për të lejuar menunë Start gjatë lojës.',

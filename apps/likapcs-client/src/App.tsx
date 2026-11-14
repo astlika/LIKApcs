@@ -218,7 +218,8 @@ export function App() {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
   // 0.19.7: hide the widget while a fullscreen game runs — only when the owner asked for it
-  // (0.35.1: off until the server says otherwise; the widget is kept above the game instead).
+  // (0.35.1: off until the server says otherwise. 0.35.2: the widget is never lifted above the
+  // game — that threw games out of fullscreen; it shows wherever Windows lets it).
   const hideInGames = snap.state.display?.widgetHideInGames ?? false;
   useEffect(() => {
     void setWidgetHideInGames(hideInGames);

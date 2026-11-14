@@ -102,10 +102,11 @@ struct WidgetState {
     hide_in_games: AtomicBool,
     /// 0.19.7: the widget is hidden right now because a fullscreen game is in front.
     hidden_for_game: AtomicBool,
-    /// 0.35.1: title of the last program the widget was lifted above (one log line per program).
-    raised_over: Mutex<Option<String>>,
     /// 0.35.0: the screen the widget was last placed on (see `widget_follow_screen`).
     screen: Mutex<Option<ScreenShape>>,
+    /// 0.35.2: the lock window as it was last found not covering its screen (one log line per
+    /// case, see `lock_cover_tick`).
+    lock_repaired: Mutex<Option<(i32, i32, u32, u32)>>,
 }
 
 /// 0.35.0: a screen as (x, y, width, height, scale × 1000). A game that switches the resolution,
@@ -465,9 +466,14 @@ fn game_in_front(_app: &AppHandle) -> bool {
 
 /// Once a second while the PC runs. 0.19.7: hides the countdown widget while a fullscreen game is
 /// in front and shows it again afterwards, when the owner asked for that
-/// (`client.widget_hide_in_games`). 0.35.1: otherwise keeps the widget above the game. Only hides,
-/// shows or lifts the window and never takes focus, so the game keeps its focus and the cursor
-/// stays hidden.
+/// (`client.widget_hide_in_games`). Only hides or shows the window: it never takes focus and never
+/// changes the order of the windows, so the game keeps its focus and its screen.
+///
+/// 0.35.2: the widget is NOT lifted above a game any more. 0.35.1 put it back on top of the
+/// game's window once a second; a game in exclusive fullscreen (CS2 in "Fullscreen") holds the
+/// screen only while its own window is the top one, so Windows took the screen away from it and
+/// the game minimized — again every time it was opened. Do not bring that back: a window of
+/// another program cannot be shown over exclusive fullscreen, and trying costs the game.
 fn widget_watch_tick(app: &AppHandle) {
     let state = app.state::<WidgetState>();
     let overlay = state.overlay.load(Ordering::SeqCst);
@@ -486,34 +492,54 @@ fn widget_watch_tick(app: &AppHandle) {
             let _ = window.show();
         }
     }
-    if overlay && !want_hidden {
-        widget_keep_above(&window, &state);
-    }
 }
 
-/// 0.35.1: lifts the countdown widget back above a program that came to lie over it. A game in
-/// fullscreen makes its own window "always on top"; activated after the widget, it lands above
-/// it and the widget stays behind for as long as the game runs — being topmost once, when the
-/// session starts, is not enough. The widget is put at the top of the order again, without
-/// activating it. A game that takes the screen for itself alone (exclusive fullscreen) still
-/// shows nothing but itself: no window of another program can be drawn there.
-#[cfg(windows)]
-fn widget_keep_above(window: &WebviewWindow, state: &WidgetState) {
-    let Some(title) = diag::foreground_above(window) else {
+/// 0.35.2: keeps the lock screen over the whole screen. The window is made fullscreen once, when
+/// the PC locks, with the size the screen has at that moment. Locked while a game holds the
+/// screen in a smaller resolution (CS in 4:3), it stayed that small when Windows went back to its
+/// own resolution, and the desktop lay open beside it. Once a second while the PC is locked: a
+/// lock window that is not exactly over its screen is put over it again. Position and size only —
+/// nothing is shown, hidden, raised or focused here.
+fn lock_cover_tick(app: &AppHandle) {
+    let locked = app.state::<KioskState>().locked.clone();
+    if !locked.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    diag::lift(window);
-    let Ok(mut last) = state.raised_over.lock() else {
+    if window.is_minimized().unwrap_or(false) {
+        return; // the focus guard brings it back; a minimized window has no place to compare
+    }
+    let Some((x, y, width, height, _)) = screen_shape(&window) else {
         return;
     };
-    if last.as_deref() != Some(title.as_str()) {
-        append_crash_log(&format!("widget: {title} came to lie over it — lifted above again"));
-        *last = Some(title);
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let state = app.state::<WidgetState>();
+    let Ok(mut repaired) = state.lock_repaired.lock() else {
+        return;
+    };
+    if position.x == x && position.y == y && size.width == width && size.height == height {
+        *repaired = None;
+        return;
+    }
+    // The PC may have been unlocked while the screen was read: never stretch the widget.
+    if !locked.load(Ordering::SeqCst) {
+        return;
+    }
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let found = (position.x, position.y, size.width, size.height);
+    if *repaired != Some(found) {
+        append_crash_log(&format!(
+            "lock: the window was {}x{} at {},{} on a {width}x{height} screen — put over the whole screen again",
+            size.width, size.height, position.x, position.y
+        ));
+        *repaired = Some(found);
     }
 }
-
-#[cfg(not(windows))]
-fn widget_keep_above(_window: &WebviewWindow, _state: &WidgetState) {}
 
 /// 0.35.0: keeps the countdown widget in its corner when the screen changes under it. A game
 /// that switches the resolution leaves the widget at its old coordinates: outside the new
@@ -734,10 +760,12 @@ async fn widget_check(
             detail,
         });
     }
-    // 0.35.1: only a game that Windows itself reports as Direct3D fullscreen can cover the widget;
-    // a borderless ("fullscreen windowed") game is drawn like any window and the widget stays on it.
+    // 0.35.1: a game that Windows itself reports as Direct3D fullscreen covers the widget; a
+    // borderless ("fullscreen windowed") game is drawn like any window and the widget stays on it.
+    // 0.35.2: unless the game's window lies above the widget ("always on top" games) — the widget
+    // is no longer lifted over it, so the desk is told that it may be unseen.
     if let Some(title) = diag::exclusive_fullscreen_foreground(&window) {
-        if diag::direct3d_fullscreen() {
+        if diag::direct3d_fullscreen() || diag::foreground_above(&window).is_some() {
             return Ok(WidgetCheck {
                 ok: false,
                 detail: format!("fullscreen-app:{title}"),
@@ -764,13 +792,13 @@ mod diag {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
-        GetWindowTextW, GetWindowThreadProcessId, SetWindowPos, GWL_STYLE, GW_HWNDPREV,
-        HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_CAPTION,
+        GetWindowTextW, GetWindowThreadProcessId, GWL_STYLE, GW_HWNDPREV, WS_CAPTION,
     };
 
     /// 0.35.1: title of the foreground window when it belongs to another program and lies above
     /// the widget in the window order. Only an "always on top" window can: the widget is one, so
-    /// every ordinary window is below it already.
+    /// every ordinary window is below it already. Read only (0.35.2): the order is looked at for
+    /// the report to the desk and never changed.
     pub fn foreground_above(window: &tauri::WebviewWindow) -> Option<String> {
         let own = window.hwnd().ok()?.0 as HWND;
         // SAFETY: plain Win32 queries without owned pointers. The walk is bounded: the order can
@@ -799,27 +827,6 @@ mod diag {
                 }
             }
             None
-        }
-    }
-
-    /// 0.35.1: puts the widget at the top of the "always on top" windows again. It is not
-    /// activated, moved or resized; the request is posted, so this thread never waits for the
-    /// window's own thread.
-    pub fn lift(window: &tauri::WebviewWindow) {
-        let Ok(own) = window.hwnd() else {
-            return;
-        };
-        // SAFETY: our own window handle, no pointers.
-        unsafe {
-            SetWindowPos(
-                own.0 as HWND,
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-            );
         }
     }
 
@@ -894,6 +901,10 @@ mod diag {
 #[cfg(not(windows))]
 mod diag {
     pub fn exclusive_fullscreen_foreground(_window: &tauri::WebviewWindow) -> Option<String> {
+        None
+    }
+
+    pub fn foreground_above(_window: &tauri::WebviewWindow) -> Option<String> {
         None
     }
 
@@ -1350,8 +1361,8 @@ pub fn run() {
             overlay: AtomicBool::new(false),
             hide_in_games: AtomicBool::new(false),
             hidden_for_game: AtomicBool::new(false),
-            raised_over: Mutex::new(None),
             screen: Mutex::new(None),
+            lock_repaired: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             device_identity,
@@ -1381,12 +1392,13 @@ pub fn run() {
             quit_app
         ])
         .setup(move |app| {
-            // Once a second: keep the countdown widget above a game (0.35.1), or hide it while
-            // one runs when the owner asked for that (0.19.7).
+            // Once a second: hide the countdown widget while a game runs when the owner asked for
+            // that (0.19.7), and keep the lock screen over the whole screen (0.35.2).
             let watch = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_millis(1000));
                 widget_watch_tick(&watch);
+                lock_cover_tick(&watch);
             });
             // Keyboard hardening is armed from the start: the client boots locked.
             kiosk::install();

@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.35.2] - 2026-11-14
+
+### Fixed
+
+- **Client: a game is no longer thrown out of fullscreen.** 0.35.1 put the countdown widget back above the game's window once a second. A game in exclusive fullscreen (CS2 in "Fullscreen") holds the screen only while its own window is the top one: with another window put above it, Windows takes the screen away and the game minimizes — again every time it is opened. The lifting is removed: the client no longer changes the order of the windows. The widget shows on the desktop and over games in "Fullscreen Windowed"; over a game in exclusive fullscreen no window of another program can be shown, and there the voice says the time. "Fshih gjatë lojës" (Settings › Client screen) stays as it is set.
+- **Client: the lock screen always covers the whole screen.** The lock window took the size of the screen once, at the moment the PC locked. Locked while a game held the screen in a smaller resolution (CS in 4:3), it kept that size when Windows went back to its own resolution, and the desktop lay open beside it. Once a second while the PC is locked, a lock window that is not exactly over its screen is put over it again.
+- Admin › Stations: the widget line reads "Widget-i mund të mos duket" also for a game whose window lies above the widget. Settings › Client screen: the hint of "Fshih gjatë lojës" no longer says that the widget is kept above the game.
+
 ## [0.35.1] - 2026-11-14
 
 ### Fixed
