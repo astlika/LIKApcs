@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Admin (installed app): sound and video from the server may be played — the app's content policy named pictures only, so the preview of an own recording (and of a video ad) was blocked.
+- Admin (installed app): the app's content policy allowed pictures from the server but named no sound or video; media from the server is now allowed, which the preview of an own recording needs.
 - Client: the countdown widget keeps its corner when the screen changes under it. A game that switches the resolution left the widget at its old coordinates — outside the new screen, or in the middle of it once the game closed; it is now put back within a second, in the corner the owner chose.
 
 ## [0.34.0] - 2026-11-13
