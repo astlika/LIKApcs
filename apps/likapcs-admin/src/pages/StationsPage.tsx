@@ -2227,17 +2227,7 @@ function DeviceCommands({
           <em>{t(`stations.tasksEnd.${ended.trigger === 'auto' ? 'automatic' : 'byStaff'}`)}</em>
         </span>
       )}
-      {station.device?.widget && (
-        <span
-          className="st-commands__widget"
-          data-ok={station.device.widget.ok ? 'true' : 'false'}
-          data-testid="device-widget"
-          title={`${station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')} · ${station.device.widget.detail}`}
-        >
-          <MonitorCheck size={12} />
-          {station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')}
-        </span>
-      )}
+      {station.device?.widget && <WidgetReport report={station.device.widget} />}
       {!online && <span className="st-commands__offline">{t('stations.commandsOffline')}</span>}
       <Dialog
         open={messageOpen}
@@ -2309,5 +2299,41 @@ function HoverCard({
       {canPreview && <LivePreviewCard station={station} rect={hover.rect} feed={feed} />}
       <HoverInfo station={station} rect={hover.rect} fetchedAt={fetchedAt} />
     </>
+  );
+}
+
+/**
+ * What the PC says about its countdown widget, in words the desk can act on (0.35.1): hidden by
+ * the owner's own setting, covered by a game in exclusive fullscreen, or simply visible.
+ */
+function WidgetReport({ report }: { report: { ok: boolean; detail: string } }) {
+  const { t } = useI18n();
+  const game = report.detail.startsWith('fullscreen-app:')
+    ? report.detail.slice('fullscreen-app:'.length)
+    : null;
+  const label = report.ok
+    ? t('stations.widgetOk')
+    : report.detail === 'hidden-for-game'
+      ? t('stations.widgetHiddenForGame')
+      : game !== null
+        ? t('stations.widgetCovered')
+        : t('stations.widgetHidden');
+  const why = report.ok
+    ? report.detail
+    : report.detail === 'hidden-for-game'
+      ? t('stations.widgetHiddenForGameHint')
+      : game !== null
+        ? t('stations.widgetCoveredHint', { game })
+        : report.detail;
+  return (
+    <span
+      className="st-commands__widget"
+      data-ok={report.ok ? 'true' : 'false'}
+      data-testid="device-widget"
+      title={`${label} · ${why}`}
+    >
+      <MonitorCheck size={12} />
+      {label}
+    </span>
   );
 }

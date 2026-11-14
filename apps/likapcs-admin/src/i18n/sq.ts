@@ -312,6 +312,12 @@ export const sq: Dictionary = {
       'Gjithçka: faktet e pajisjes, Wake-on-LAN, veprimet me token, regjistri i lidhjeve.',
     widgetOk: 'Widget-i duket',
     widgetHidden: "Widget-i s'shfaqet në PC",
+    widgetHiddenForGame: 'Widget-i i fshehur gjatë lojës',
+    widgetHiddenForGameHint:
+      'Cilësimi «Fshih gjatë lojës» është i ndezur (Cilësimet › Ekrani i klientit).',
+    widgetCovered: 'Widget-i mund të mos duket',
+    widgetCoveredHint:
+      '{game} është në ekran të plotë. Nëse loja e merr ekranin vetëm për vete (ekran i plotë ekskluziv), Windows-i nuk lejon asnjë dritare mbi të: te cilësimet e lojës zgjidh «Fullscreen Windowed» dhe widget-i rri mbi lojë. Zëri i paralajmëron klientët gjithsesi.',
     archived: 'E arkivuar',
     archivedAt: 'Arkivuar më {when} nga {who}',
     showArchived: 'Shfaq të arkivuara',
@@ -1770,7 +1776,7 @@ export const sq: Dictionary = {
       showPaymentHint: 'Parapagim: sa u pagua. Kohë e hapur: shuma që po rritet për pagesë.',
       hideInGames: 'Fshih gjatë lojës',
       hideInGamesHint:
-        'Kur po ecën një lojë në ekran të plotë (p.sh. CS2) në PC, numëruesi fshihet dhe kthehet kur mbyllet loja.',
+        'Kur po ecën një lojë në ekran të plotë (p.sh. CS2) në PC, numëruesi fshihet dhe kthehet kur mbyllet loja. E fikur: numëruesi mbahet mbi lojë.',
       blockWin: 'Blloko tastin Windows në lojërat e Steam-it',
       blockWinHint:
         'Kur një lojë e instaluar nga Steam është në pamje, tastet Windows nuk bëjnë asgjë, që loja të mos mbyllet pa dashje. Çaktivizojeni për të lejuar menunë Start gjatë lojës.',

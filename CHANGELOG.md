@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.35.1] - 2026-11-14
+
+### Fixed
+
+- **Client: the countdown widget stays on the screen during a game.** Two things took it away. First, "Fshih gjatë lojës" (Settings › Client screen) was on in every installation older than 0.35.0 and hid the widget on purpose in each fullscreen game; migration `0058_widget_stays_in_games.sql` turns the stored value off once — the switch is still there for whoever wants the widget hidden. Second, a game in fullscreen makes its own window "always on top" and, being opened after the widget, lands above it; the widget was made topmost only when the session started and then stayed behind the game. The PC now checks once a second whether the program in front lies above the widget and lifts the widget back to the top, without activating it, so the game keeps its focus and its cursor.
+- What Windows does not allow: a game that takes the screen for itself alone (exclusive fullscreen with "fullscreen optimizations" switched off) shows no window of any other program. There the game's own display mode "Fullscreen Windowed" keeps the widget visible, and the spoken warnings of 0.35.0 reach the customer either way.
+- Admin › Stations: the widget line of a PC says what is true. It read "Widget-i duket" while the setting had hidden the widget, and "Widget-i s'shfaqet në PC" on every borderless game although the widget was on it. Now: "Widget-i i fshehur gjatë lojës" (the setting), "Widget-i mund të mos duket" (Windows reports the game as Direct3D fullscreen; the tooltip names the game and the way out) or "Widget-i duket". The PC reports again when the cause changes, not only when visible turns to hidden.
+
 ## [0.35.0] - 2026-11-14
 
 ### Added

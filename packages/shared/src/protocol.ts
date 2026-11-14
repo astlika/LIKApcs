@@ -155,7 +155,10 @@ export type TasksEndedPayload = z.infer<typeof tasksEndedPayloadSchema>;
 /**
  * The PC's own answer to "can the customer see the countdown?" (0.17.1). `ok` = the widget window
  * is visible, on-screen and not covered by an exclusive-fullscreen app; `detail` says what is
- * wrong otherwise, so the desk sees the cause without walking to the PC.
+ * wrong otherwise, so the desk sees the cause without walking to the PC. Causes the desk names
+ * (0.35.1): `hidden-for-game` (the owner's "hide in games" setting hid it) and
+ * `fullscreen-app:<title>` (a game in Direct3D fullscreen may cover it); with `ok`,
+ * `over-game:<title>` says the widget lies on a borderless game.
  */
 export const widgetReportPayloadSchema = z.object({
   ok: z.boolean(),

@@ -341,21 +341,23 @@ export class Agent {
   /** Server URL that offered the newest signed client (LAN updates, 0.17.1). */
   private lanUpdateBase: string | null = null;
   private widgetReportTimer: ReturnType<typeof setInterval> | null = null;
-  private lastWidgetOk: boolean | null = null;
+  /** The last answer sent (`ok` and the cause): a new cause is news to the desk too (0.35.1). */
+  private lastWidgetReport: string | null = null;
   private syncWidgetReports(mode: WindowMode): void {
     if (this.widgetReportTimer) {
       clearInterval(this.widgetReportTimer);
       this.widgetReportTimer = null;
     }
     if (mode !== 'overlay') {
-      this.lastWidgetOk = null;
+      this.lastWidgetReport = null;
       return;
     }
     const run = async () => {
       try {
         const check = await widgetCheck();
-        if (check.ok === this.lastWidgetOk) return;
-        this.lastWidgetOk = check.ok;
+        const answer = `${check.ok ? 1 : 0}:${check.detail}`;
+        if (answer === this.lastWidgetReport) return;
+        this.lastWidgetReport = answer;
         this.send({
           type: 'client.event',
           event: 'widget_report',

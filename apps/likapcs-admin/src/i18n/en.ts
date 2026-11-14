@@ -301,6 +301,12 @@ export const en = {
     viewAdvancedHint: 'Everything: device facts, Wake-on-LAN, token actions, connection log.',
     widgetOk: 'Widget visible',
     widgetHidden: 'Widget not visible on the PC',
+    widgetHiddenForGame: 'Widget hidden during the game',
+    widgetHiddenForGameHint:
+      'The setting "Hide in games" is on (Settings › Client screen).',
+    widgetCovered: 'The widget may be covered',
+    widgetCoveredHint:
+      '{game} is in fullscreen. If the game takes the screen for itself alone (exclusive fullscreen), Windows lets no other window show over it: choose "Fullscreen Windowed" in the game\'s settings and the widget stays on the game. The voice warns the customer either way.',
     archived: 'Archived',
     archivedAt: 'Archived {when} by {who}',
     showArchived: 'Show archived',
@@ -1762,7 +1768,7 @@ export const en = {
       showPaymentHint: 'Prepaid: what was paid. Open time: the running amount to pay.',
       hideInGames: 'Hide in games',
       hideInGamesHint:
-        'When a fullscreen game (for example CS2) is running on the PC, the countdown is hidden and it comes back when the game closes.',
+        'When a fullscreen game (for example CS2) is running on the PC, the countdown is hidden and it comes back when the game closes. Off: the countdown is kept above the game.',
       blockWin: 'Block the Windows key in Steam games',
       blockWinHint:
         'While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.',

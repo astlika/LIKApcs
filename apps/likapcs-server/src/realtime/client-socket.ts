@@ -288,7 +288,8 @@ export const clientSocketRoutes: FastifyPluginAsync = async (app) => {
               const parsed = widgetReportPayloadSchema.safeParse(message.payload);
               if (parsed.success) {
                 hub.setWidgetReport(presence.deviceId, parsed.data);
-                if (parsed.data.ok === false) {
+                // Hidden by the owner's own "hide in games" setting is no fault: not logged.
+                if (parsed.data.ok === false && parsed.data.detail !== 'hidden-for-game') {
                   await recordAudit(
                     app.pool,
                     {
