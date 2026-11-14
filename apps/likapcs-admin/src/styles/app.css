@@ -7419,3 +7419,219 @@ button.ads-album .ads-album__meta {
   padding-right: 0;
   border-right: 0;
 }
+
+/* ─── Internet access (0.34.0): Wi-Fi codes sold as products ─────────────────── */
+.access-intro {
+  margin: 0;
+  font-size: 13px;
+}
+.access-package {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+.access-package .faint {
+  font-size: 12px;
+}
+.access-new {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+}
+.access-quick {
+  margin-top: -2px;
+}
+.access-codes__input {
+  min-height: 140px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.access-summary {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.access-summary__count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+.access-summary__count strong {
+  font-size: 18px;
+}
+.access-summary__count .mono {
+  font-size: 12px;
+  word-break: break-all;
+}
+.access-summary__result {
+  font-weight: 600;
+}
+.access-summary .checkbox {
+  margin-top: 8px;
+}
+.access-order-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.access-code-cell {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  user-select: all;
+  word-break: break-all;
+}
+/* The till: a Wi-Fi mark on the tile, the code in large type once the sale is paid. */
+.pos-line__note {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile__wifi {
+  margin-right: 4px;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+.pos-codes {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pos-codes__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.pos-codes__line {
+  display: grid;
+  gap: 4px;
+}
+.pos-codes__name {
+  font-size: 13px;
+  color: var(--text-muted, var(--muted));
+}
+.pos-codes__code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input, var(--surface));
+  border: 1px solid var(--border);
+}
+.access-code {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  user-select: all;
+  word-break: break-all;
+}
+.pos-codes__hint {
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+}
+.sale-codes {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+}
+.sale-codes__code {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--text);
+  font-weight: 600;
+  user-select: all;
+}
+/* The printed receipt: the code stands on its own, large enough to be typed from paper. */
+.receipt__codes {
+  border-top: 1px dashed #999;
+  margin-top: 6px;
+  padding-top: 6px;
+  text-align: center;
+}
+.receipt__codes-line + .receipt__codes-line {
+  margin-top: 6px;
+}
+.receipt__codes-name {
+  font-size: 11px;
+}
+.receipt__code {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+}
+
+/* 0.35.0 — Settings › Client screen: spoken time warnings. */
+.voice-volume {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.voice-rows__title {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.voice-rows__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.voice-rows {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.voice-row:last-child {
+  border-bottom: 0;
+}
+.voice-row[data-unused='true'] {
+  opacity: 0.75;
+}
+.voice-row__plays {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.voice-row__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-row__actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+@media (max-width: 860px) {
+  .voice-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .voice-row__actions {
+    justify-content: flex-start;
+  }
+}

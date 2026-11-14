@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileText, Printer, Receipt as ReceiptIcon, RotateCcw, Undo2 } from 'lucide-react';
+import { FileText, Printer, Receipt as ReceiptIcon, RotateCcw, Undo2, Wifi } from 'lucide-react';
 import {
   PERMISSIONS,
   SALE_STATUSES,
@@ -462,6 +462,17 @@ export function SaleDetailDialog({
                         {i.sku}
                       </span>
                     )}
+                    {(i.accessCodes?.length ?? 0) > 0 && (
+                      <div className="sale-codes" data-testid="sale-access-codes">
+                        <Wifi size={12} style={{ verticalAlign: '-1px' }} />{' '}
+                        {t('sales.accessCodes')}:{' '}
+                        {i.accessCodes.map((code) => (
+                          <span key={code} className="mono sale-codes__code">
+                            {code}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="right num">{qty(i.quantityMilli)}</td>
                   <td className="right num">{fmt.money(i.unitPriceCents)}</td>
@@ -685,7 +696,14 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
               const max = i.quantityMilli - i.refundedMilli;
               return (
                 <tr key={i.id}>
-                  <td>{i.description}</td>
+                  <td>
+                    {i.description}
+                    {(i.accessCodes?.length ?? 0) > 0 && (
+                      <div className="faint" style={{ fontSize: 12 }}>
+                        {t('sales.refundCodeNote')}
+                      </div>
+                    )}
+                  </td>
                   <td className="right num">
                     {qty(max)}
                     {i.refundedMilli > 0 && (

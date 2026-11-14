@@ -15,6 +15,7 @@ import {
   Plus,
   Tag,
   Trash2,
+  Wifi,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -39,6 +40,10 @@ import {
 import { useFormat } from '../lib/format';
 import { unitProfit } from '../lib/unit-profit';
 import { ProductExtrasEditor } from '../components/catalog/ProductExtrasEditor';
+import {
+  InternetAccessCodesDialog,
+  InternetAccessLoadDialog,
+} from '../components/catalog/InternetAccess';
 import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -51,6 +56,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Alert,
   Loading,
   PageHeader,
   Pagination,
@@ -89,10 +95,15 @@ export function ProductsPage() {
   const [movementsFor, setMovementsFor] = useState<ProductSummary | null>(null);
   const [deleting, setDeleting] = useState<ProductSummary | null>(null);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  // 0.34.0: internet access — the paste dialog (for a new or a given package) and one package's codes.
+  const [accessLoad, setAccessLoad] = useState<{ productId?: string } | null>(null);
+  const [accessCodes, setAccessCodes] = useState<ProductSummary | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // A scan on the list finds the product (exact barcode match in the search); while a dialog is
   // open the dialog owns the scanner.
-  const dialogOpen = Boolean(editing || adjusting || movementsFor || deleting || categoriesOpen);
+  const dialogOpen = Boolean(
+    editing || adjusting || movementsFor || deleting || categoriesOpen || accessLoad || accessCodes,
+  );
   const onListScan = useCallback((code: string) => {
     setQ(code);
     setPage(1);
@@ -152,6 +163,11 @@ export function ProductsPage() {
             {canManage && (
               <Button onClick={() => setCategoriesOpen(true)}>
                 <Tag size={14} /> {t('products.manageCategories')}
+              </Button>
+            )}
+            {canManage && (
+              <Button onClick={() => setAccessLoad({})} data-testid="internet-open">
+                <Wifi size={14} /> {t('internet.add')}
               </Button>
             )}
             {canManage && (
@@ -230,6 +246,12 @@ export function ProductsPage() {
                       <div>
                         <div className="row" style={{ gap: 8 }}>
                           <strong>{p.name}</strong>
+                          {p.kind === 'internet_access' && (
+                            <Badge tone="purple">
+                              <Wifi size={11} style={{ verticalAlign: '-1px' }} />{' '}
+                              {t('internet.badge')}
+                            </Badge>
+                          )}
                           {!p.isActive && <Badge>{t('products.archived')}</Badge>}
                           {p.isActive && p.lowStock && (
                             <Badge tone="warning">{t('products.lowBadge')}</Badge>
@@ -280,7 +302,9 @@ export function ProductsPage() {
                           p.stockMilli <= 0 ? 'text-danger' : p.lowStock ? 'text-warning' : ''
                         }
                       >
-                        {qty(p.stockMilli)} {p.unitCode}
+                        {p.kind === 'internet_access'
+                          ? t('internet.codesUnit', { n: qty(p.stockMilli) })
+                          : `${qty(p.stockMilli)} ${p.unitCode}`}
                       </span>
                     ) : (
                       <span className="faint">∞</span>
@@ -298,7 +322,20 @@ export function ProductsPage() {
                       >
                         <History size={14} />
                       </Button>
-                      {canAdjust && p.trackStock && p.isActive && (
+                      {canManage && p.kind === 'internet_access' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon
+                          onClick={() => setAccessCodes(p)}
+                          aria-label={t('internet.codesButton')}
+                          title={t('internet.codesButton')}
+                          data-testid="internet-codes-open"
+                        >
+                          <Wifi size={14} />
+                        </Button>
+                      )}
+                      {canAdjust && p.trackStock && p.isActive && p.kind !== 'internet_access' && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -365,6 +402,20 @@ export function ProductsPage() {
         <CategoriesDialog
           categories={categories.data ?? []}
           onClose={() => setCategoriesOpen(false)}
+        />
+      )}
+      {accessCodes && !accessLoad && (
+        <InternetAccessCodesDialog
+          product={accessCodes}
+          onClose={() => setAccessCodes(null)}
+          onAddCodes={() => setAccessLoad({ productId: accessCodes.id })}
+        />
+      )}
+      {accessLoad && (
+        <InternetAccessLoadDialog
+          categories={categories.data ?? []}
+          initialProductId={accessLoad.productId}
+          onClose={() => setAccessLoad(null)}
         />
       )}
     </>
@@ -441,6 +492,9 @@ function ProductDialog({
   const toast = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProductForm>(() => formFrom(product));
+  // 0.34.0: an internet access package keeps what its codes rely on (counted stock, sold by the
+  // piece at the till); the name, price, category and the "running low" level stay editable.
+  const isAccess = product?.kind === 'internet_access';
   const mainProducts = useQuery({
     queryKey: ['products', 'mains'],
     queryFn: () => api<{ items: ProductSummary[] }>('/products', { query: { pageSize: 500 } }),
@@ -674,6 +728,11 @@ function ProductDialog({
           if (valid) save.mutate();
         }}
       >
+        {isAccess && (
+          <Alert tone="info" icon={<Wifi size={16} />}>
+            {t('internet.productNote')}
+          </Alert>
+        )}
         <div className="grid grid--2">
           <Field label={t('products.name')} error={fe('name')}>
             {(id, invalid) => (
@@ -793,6 +852,7 @@ function ProductDialog({
                 id={id}
                 value={form.unitCode}
                 maxLength={16}
+                disabled={isAccess}
                 onChange={(e) => set('unitCode', e.target.value)}
               />
             )}
@@ -846,18 +906,22 @@ function ProductDialog({
           </div>
         )}
         <div className="grid grid--2">
-          <Switch
-            checked={form.trackStock}
-            onChange={(v) => set('trackStock', v)}
-            label={t('products.trackStock')}
-          />
-          <Switch
-            checked={form.allowNegativeStock}
-            onChange={(v) => set('allowNegativeStock', v)}
-            label={t('products.allowNegative')}
-            disabled={!form.trackStock}
-          />
-          <Field label={t('products.minStock')}>
+          {!isAccess && (
+            <Switch
+              checked={form.trackStock}
+              onChange={(v) => set('trackStock', v)}
+              label={t('products.trackStock')}
+            />
+          )}
+          {!isAccess && (
+            <Switch
+              checked={form.allowNegativeStock}
+              onChange={(v) => set('allowNegativeStock', v)}
+              label={t('products.allowNegative')}
+              disabled={!form.trackStock}
+            />
+          )}
+          <Field label={isAccess ? t('internet.lowAtField') : t('products.minStock')}>
             {(id) => (
               <Input
                 id={id}
@@ -900,60 +964,68 @@ function ProductDialog({
               label={t('products.active')}
             />
           )}
-          <div className="grid grid--2" data-testid="product-variant">
-            <Field
-              label={t('products.variantOf')}
-              optional
-              hint={
-                product && product.variantCount > 0 ? t('products.variantOfHasVariants') : undefined
-              }
-            >
-              {(id) => (
-                <Select
-                  id={id}
-                  value={form.parentId}
-                  disabled={Boolean(product && product.variantCount > 0)}
-                  onChange={(e) => set('parentId', e.target.value)}
-                  data-testid="product-variant-of"
-                >
-                  <option value="">{t('products.variantOfNone')}</option>
-                  {(mainProducts.data?.items ?? [])
-                    .filter((p) => !p.parentId && p.id !== product?.id)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                </Select>
-              )}
-            </Field>
-            <Field label={t('products.variantLabel')} hint={t('products.variantLabelHint')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={form.variantLabel}
-                  maxLength={40}
-                  disabled={!form.parentId}
-                  onChange={(e) => set('variantLabel', e.target.value)}
-                  data-testid="product-variant-label"
-                />
-              )}
-            </Field>
-          </div>
-          <div data-testid="product-client-menu">
-            <Switch
-              checked={form.clientMenu}
-              onChange={(v) => set('clientMenu', v)}
-              label={
-                <span>
-                  {t('products.clientMenu')}
-                  <div className="faint" style={{ fontSize: 12 }}>
-                    {t('products.clientMenuHint')}
-                  </div>
-                </span>
-              }
-            />
-          </div>
+          {!isAccess && (
+            <div className="grid grid--2" data-testid="product-variant">
+              <Field
+                label={t('products.variantOf')}
+                optional
+                hint={
+                  product && product.variantCount > 0
+                    ? t('products.variantOfHasVariants')
+                    : undefined
+                }
+              >
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={form.parentId}
+                    disabled={Boolean(product && product.variantCount > 0)}
+                    onChange={(e) => set('parentId', e.target.value)}
+                    data-testid="product-variant-of"
+                  >
+                    <option value="">{t('products.variantOfNone')}</option>
+                    {(mainProducts.data?.items ?? [])
+                      .filter(
+                        (p) => !p.parentId && p.id !== product?.id && p.kind !== 'internet_access',
+                      )
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label={t('products.variantLabel')} hint={t('products.variantLabelHint')}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    value={form.variantLabel}
+                    maxLength={40}
+                    disabled={!form.parentId}
+                    onChange={(e) => set('variantLabel', e.target.value)}
+                    data-testid="product-variant-label"
+                  />
+                )}
+              </Field>
+            </div>
+          )}
+          {!isAccess && (
+            <div data-testid="product-client-menu">
+              <Switch
+                checked={form.clientMenu}
+                onChange={(v) => set('clientMenu', v)}
+                label={
+                  <span>
+                    {t('products.clientMenu')}
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      {t('products.clientMenuHint')}
+                    </div>
+                  </span>
+                }
+              />
+            </div>
+          )}
         </div>
         <Field label={t('products.description')} optional>
           {(id) => (

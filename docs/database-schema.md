@@ -211,6 +211,19 @@ to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind
   `INSERT … ON CONFLICT DO UPDATE … RETURNING`). `shift_id` stays NULL until the cash-shift module
   (Phase 5) attaches sessions to open shifts.
 
+### Internet access codes (0057)
+
+- **products.kind** — `standard` or `internet_access`. A package must be tracked, never negative,
+  unit `pc`, no parent and not on the PC menu (`products_internet_access_shape`).
+- **internet_access_codes** — one row per code: `product_id`, `code` (case-sensitive), `batch_id`
+  (one paste = one batch), `status` (`available` / `sold`), `created_by/at`, and — once sold —
+  `sale_id`, `sale_item_id`, `sold_by`, `sold_at`. A code waits to be sold in one place only
+  (partial unique index on `code` where `status = 'available'`).
+- Triggers: a sold code cannot be changed or deleted; codes belong to a package only; the stock
+  of a package and the number of its unused codes must be equal when a transaction ends
+  (`internet_access_stock_matches_codes`).
+- **inventory_movements.movement_type** gains `codes_loaded` and `codes_removed`.
+
 ## Operations
 
 ```bash

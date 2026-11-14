@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
+import {
+  ACCESS_CODE_MAX_LENGTH,
+  ACCESS_CODE_PATTERN,
+  ACCESS_CODES_MAX_PER_LOAD,
+} from './access-codes.js';
 import { ALL_ROLE_CODES } from './permissions.js';
 import type { StationLook } from './client-look.js';
 import type {
@@ -1232,6 +1237,13 @@ export const productBarcodeSchema = z.object({
 });
 export type ProductBarcodeInput = z.infer<typeof productBarcodeSchema>;
 
+/**
+ * 0.34.0: what a product is. `internet_access` is a Wi-Fi package whose stock is its unused access
+ * codes (see `internetAccessLoadSchema`); it is created with the codes, never with `POST /products`.
+ */
+export const PRODUCT_KINDS = ['standard', 'internet_access'] as const;
+export type ProductKind = (typeof PRODUCT_KINDS)[number];
+
 export const productSchema = z.object({
   name: z.string().trim().min(1).max(120),
   /** Empty → generated (`SKU-000001`). */
@@ -1281,6 +1293,8 @@ export interface ProductBarcodeSummary {
 export interface ProductSummary {
   id: string;
   name: string;
+  /** 0.34.0: `internet_access` for a Wi-Fi package (its stock is its unused codes). */
+  kind: ProductKind;
   sku: string;
   categoryId: string | null;
   categoryName: string | null;
@@ -1362,11 +1376,147 @@ export const productListQuerySchema = z.object({
   q: z.string().trim().max(80).optional(),
   categoryId: z.string().uuid().optional(),
   lowStock: z.coerce.boolean().optional(),
+  /** 0.34.0: only products of this kind (e.g. the internet access packages). */
+  kind: z.enum(PRODUCT_KINDS).optional(),
   active: z.enum(['all', 'active', 'inactive']).default('active'),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(50),
 });
 export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+// ─── 0.34.0: internet access (Wi-Fi codes sold as products) ──────────────────
+
+/** One code as it is stored: see `ACCESS_CODE_PATTERN`. */
+const accessCodeSchema = z.string().regex(ACCESS_CODE_PATTERN, 'access code');
+
+/** A new package: an ordinary product of the kind `internet_access`. */
+export const internetAccessPackageSchema = z.object({
+  /** What the till and the receipt show: "Internet 1h". */
+  name: z.string().trim().min(1).max(120),
+  sellingPriceCents: z.number().int().min(0).max(100_000_000),
+  categoryId: z.string().uuid().nullable().default(null),
+  /** The stock list marks the package "running low" from this many unused codes down. */
+  lowAtCodes: z.number().int().min(0).max(100_000).default(10),
+});
+export type InternetAccessPackageInput = z.infer<typeof internetAccessPackageSchema>;
+
+/**
+ * `POST /internet-access/load`: adds pasted codes to a package — an existing one (`productId`) or
+ * a new one (`package`), exactly one of the two. A code that already waits to be sold is always
+ * left out; a code that was sold before is left out unless `allowSoldBefore` says the hotspot
+ * system issued it again.
+ */
+export const internetAccessLoadSchema = z
+  .object({
+    productId: z.string().uuid().optional(),
+    package: internetAccessPackageSchema.optional(),
+    codes: z.array(accessCodeSchema).max(ACCESS_CODES_MAX_PER_LOAD),
+    allowSoldBefore: z.boolean().default(false),
+  })
+  .refine((v) => (v.productId === undefined) !== (v.package === undefined), {
+    message: 'Provide productId or package',
+    path: ['productId'],
+  })
+  .refine((v) => v.package !== undefined || v.codes.length > 0, {
+    message: 'Paste at least one code',
+    path: ['codes'],
+  });
+export type InternetAccessLoadRequest = z.infer<typeof internetAccessLoadSchema>;
+
+/** `POST /internet-access/check`: what a paste would do, without changing anything. */
+export const internetAccessCheckSchema = z.object({
+  codes: z.array(accessCodeSchema).min(1).max(ACCESS_CODES_MAX_PER_LOAD),
+});
+export type InternetAccessCheckRequest = z.infer<typeof internetAccessCheckSchema>;
+
+/** A pasted code that is already known to the system. */
+export interface InternetAccessKnownCode {
+  code: string;
+  productId: string;
+  productName: string;
+  /** When it was sold (the last time, if more than once); null while it waits to be sold. */
+  soldAt: string | null;
+}
+
+export interface InternetAccessCheckResult {
+  /** Codes the system has never seen. */
+  fresh: number;
+  /** Codes that already wait to be sold: they are never loaded twice. */
+  waiting: InternetAccessKnownCode[];
+  /** Codes that were sold before. */
+  soldBefore: InternetAccessKnownCode[];
+}
+
+export interface InternetAccessPackageSummary {
+  product: ProductSummary;
+  /** Unused codes: the same number as the product's stock. */
+  availableCodes: number;
+  soldCodes: number;
+  lastLoadedAt: string | null;
+  lastSoldAt: string | null;
+}
+
+export interface InternetAccessLoadResult extends InternetAccessCheckResult {
+  package: InternetAccessPackageSummary;
+  /** How many codes were added now (`fresh`, plus the sold-before ones when they were allowed). */
+  added: number;
+  /** The id of this load (null when nothing was added): `remove` takes it to undo the paste. */
+  batchId: string | null;
+  /** True when the package itself was created by this request. */
+  created: boolean;
+}
+
+export const INTERNET_ACCESS_CODE_STATUSES = ['available', 'sold'] as const;
+export type InternetAccessCodeStatus = (typeof INTERNET_ACCESS_CODE_STATUSES)[number];
+
+export const internetAccessCodesQuerySchema = z.object({
+  productId: z.string().uuid().optional(),
+  status: z.enum(INTERNET_ACCESS_CODE_STATUSES).optional(),
+  /** A code or a part of it (case matters, as in the codes themselves). */
+  q: z.string().trim().max(ACCESS_CODE_MAX_LENGTH).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).default(100),
+});
+export type InternetAccessCodesQuery = z.infer<typeof internetAccessCodesQuerySchema>;
+
+export interface InternetAccessCodeSummary {
+  id: number;
+  code: string;
+  status: InternetAccessCodeStatus;
+  productId: string;
+  productName: string;
+  batchId: string;
+  loadedAt: string;
+  loadedByName: string | null;
+  saleId: string | null;
+  receiptNo: string | null;
+  soldAt: string | null;
+  soldByName: string | null;
+}
+
+/**
+ * `POST /internet-access/remove`: takes unused codes out of a package (a wrong paste, codes the
+ * hotspot system no longer accepts). Exactly one of: the listed `ids`, a whole `batchId`, or
+ * `all` unused codes of the package. Sold codes are never removed.
+ */
+export const internetAccessRemoveSchema = z
+  .object({
+    productId: z.string().uuid(),
+    ids: z.array(z.number().int().min(1)).min(1).max(ACCESS_CODES_MAX_PER_LOAD).optional(),
+    batchId: z.string().uuid().optional(),
+    all: z.literal(true).optional(),
+    reason: z.string().trim().min(2).max(200),
+  })
+  .refine((v) => [v.ids, v.batchId, v.all].filter((x) => x !== undefined).length === 1, {
+    message: 'Provide ids, batchId or all',
+    path: ['ids'],
+  });
+export type InternetAccessRemoveRequest = z.infer<typeof internetAccessRemoveSchema>;
+
+export interface InternetAccessRemoveResult {
+  removed: number;
+  package: InternetAccessPackageSummary;
+}
 
 /** Result of scanning/typing a code at the POS. */
 export interface ProductLookupResponse {
@@ -1610,6 +1760,12 @@ export const createSaleSchema = z.object({
    */
   staff: z.boolean().default(false),
   payments: z.array(salePaymentInputSchema).max(10),
+  /**
+   * 0.34.0: this till shows the internet access codes of the sale it just made (`items[].accessCodes`).
+   * A sale with an internet access product is refused without it, so a program that cannot show a
+   * code never takes one out of the stock.
+   */
+  accessCodes: z.boolean().default(false),
 });
 export type CreateSaleRequest = z.infer<typeof createSaleSchema>;
 
@@ -1709,6 +1865,11 @@ export interface SaleItemSummary {
   refundedMilli: number;
   /** 0.19.1: the extras chosen on a product line (ids of the product's extras at the time). */
   addonIds: string[];
+  /**
+   * 0.34.0: the internet access codes handed out on this line, one per unit sold, in the order
+   * they were taken. Empty on every other line. They stay with the sale: a reprint shows them again.
+   */
+  accessCodes: string[];
 }
 
 export interface SalePaymentSummary {

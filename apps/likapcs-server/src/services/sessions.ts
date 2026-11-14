@@ -233,6 +233,12 @@ function describe(row: SessionRow, seconds: number): string {
   return `${row.station_code} · ${duration} (${MODE_WORDS[row.billing_mode] ?? row.billing_mode})`;
 }
 
+/**
+ * How late an expiry warning may still be sent. The watcher looks every second, so a warning
+ * normally goes out within a second of its mark; anything later than this is no longer true.
+ */
+const WARNING_LATE_MINUTES = 0.5;
+
 export class SessionsService {
   /** Stations whose device dropped while a session was live: stationId → disconnect time. */
   private readonly offlineSince = new Map<string, number>();
@@ -616,9 +622,14 @@ export class SessionsService {
             : ((await this.reservations?.holdOf(client, req.stationId, req.reservationId, now)) ??
               null);
         if (!own) {
-          throw new AppError(409, 'reservation_mismatch', 'This reservation does not keep this PC', {
-            reservationId: req.reservationId,
-          });
+          throw new AppError(
+            409,
+            'reservation_mismatch',
+            'This reservation does not keep this PC',
+            {
+              reservationId: req.reservationId,
+            },
+          );
         }
         checkInReservationId = own.reservationId;
       } else if (hold) {
@@ -1630,8 +1641,12 @@ export class SessionsService {
   ): Promise<SessionSummary> {
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
-      if (row.status !== 'active' && row.status !== 'paused') throw conflict('Session is not running');
-      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [id, req.pcLabel]);
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict('Session is not running');
+      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [
+        id,
+        req.pcLabel,
+      ]);
       await recordAudit(client, actor, {
         action: 'session.pc_label',
         entityType: 'gaming_session',
@@ -2192,7 +2207,9 @@ export class SessionsService {
     });
     if (!session) return null;
     await this.announceRequests(settled);
-    await this.mirror(session, 'session.end', { sessionId: id }, actor);
+    // 0.35.0: `reason` tells the PC the time ran out (it then says "Koha juaj mbaroi"); staff
+    // ending a session, or the customer leaving, stays silent.
+    await this.mirror(session, 'session.end', { sessionId: id, reason: 'expired' }, actor);
     await this.broadcast(session);
     this.autoEndTasks(session, actor);
     return session;
@@ -2301,6 +2318,10 @@ export class SessionsService {
             const key = `${s.id}:${minutes}`;
             if (remaining > minutes || this.warned.has(key)) continue;
             this.warned.add(key);
+            // 0.35.0: the PC says the minutes aloud, so they have to be true. A mark that was
+            // passed a while ago (a session that began with less time, a resume or an extension
+            // near the end, a server restart) is skipped: "5 minutes" with 3 left is wrong.
+            if (remaining < minutes - WARNING_LATE_MINUTES) continue;
             const text =
               language === 'sq'
                 ? `Edhe ${minutes} minuta kohë`
@@ -2310,7 +2331,9 @@ export class SessionsService {
               ? await this.hub.sendCommand(
                   deviceId,
                   'message.show',
-                  { text, durationSeconds: 15 },
+                  // 0.35.0: `announce` lets the PC say it as well ("Edhe 5 minuta"); an older
+                  // client shows the text and ignores the rest.
+                  { text, durationSeconds: 15, announce: { minutes } },
                   { timeoutMs: 5000 },
                 )
               : null;

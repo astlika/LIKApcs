@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { commands, call, as, sleep } from './shop.mjs';
+import { commands, call, as, sleep, allPcsOff } from './shop.mjs';
 
 const HOST_CMD = process.env.LIKALIVE_DEVHOST;
 if (!HOST_CMD) {
@@ -166,6 +166,36 @@ const has = (category, title, text) => (n) =>
   (title instanceof RegExp ? title.test(n.title) : n.title.includes(title)) &&
   (text === undefined || (text instanceof RegExp ? text.test(n.text) : n.text.includes(text)));
 
+/** "HH:MM" on this machine's clock, `minutes` from now: the quiet hours are the phone's own. */
+function clock(minutes = 0) {
+  const d = new Date(Date.now() + minutes * 60_000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+/** The same on the shop's clock (the server's time zone): the day's hours follow that one. */
+let shopZone = 'UTC';
+function shopClock(minutes = 0) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: shopZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(Date.now() + minutes * 60_000));
+  const part = (type) => parts.find((p) => p.type === type).value;
+  return `${part('hour')}:${part('minute')}`;
+}
+const options = async (values) => bridge('setOptions', values);
+
+async function cancelReservations() {
+  const t = await as('owner');
+  const from = encodeURIComponent(new Date(Date.now() - 3_600_000).toISOString());
+  const to = encodeURIComponent(new Date(Date.now() + 48 * 3_600_000).toISOString());
+  const list = await call('GET', `/reservations?from=${from}&to=${to}`, undefined, t);
+  for (const r of list.items ?? []) {
+    if (r.status !== 'scheduled') continue;
+    await call('POST', `/reservations/${r.id}/cancel`, {}, t).catch(() => undefined);
+  }
+}
+
 async function endOpenSessions() {
   const t = await as('owner');
   for (const s of await call('GET', '/stations', undefined, t)) {
@@ -180,7 +210,12 @@ async function endOpenSessions() {
 
 try {
   await commands.setup();
+  shopZone = (await call('GET', '/settings/public'))['locale.timezone'] ?? 'UTC';
   await endOpenSessions();
+  await cancelReservations();
+  // Four of the six PCs get a (pretend) client program, as in a real shop; PC 04 and PC 06 stay
+  // without one. All of them are off when the owner signs in.
+  await commands['pc-pair'](1, 2, 3, 5);
   await startRelay();
   await startHost();
 
@@ -254,21 +289,21 @@ try {
   await clearNotes();
   await commands['session-start'](1, 60);
   await expectNote(
-    'prepaid time is a sale',
-    has('sales', 'Kasjere Test shiti 2.00 €', 'PC 01 · 60 min'),
+    'time paid at the start is told as what it is: a session that began',
+    has('sales', 'Kasjere Test nisi PC 01 · 60 min · 2.00 €'),
   );
-  await expectNoNote('…and is not announced again as a session', has('pcs', 'PC 01: sesion i ri'));
+  await expectNoNote('…and is not announced a second time', has('pcs', /nisi PC 01/));
   await commands['session-open'](2);
   await expectNote(
     'open time (nothing paid yet) is a PC message',
-    has('pcs', 'PC 02: sesion i ri', 'kohë e hapur'),
+    has('pcs', 'Kasjere Test nisi PC 02', 'kohë e hapur'),
   );
   await commands['session-open'](3);
-  await expectNote('a second open session right after', has('pcs', 'PC 03: sesion i ri'));
+  await expectNote('a second open session right after', has('pcs', 'Kasjere Test nisi PC 03'));
   await commands['session-extend'](1, 30);
   await expectNote(
-    'an extension is a sale',
-    has('sales', 'Kasjere Test shiti 1.00 €', 'PC 01 · +30 min'),
+    'an extension says so, with the minutes and the money',
+    has('sales', 'Kasjere Test zgjati PC 01 · +30 min · 1.00 €'),
   );
   await commands['session-gift'](1, 15);
   await expectNote(
@@ -278,12 +313,12 @@ try {
   await commands['session-cancel'](3);
   await expectNote(
     'a cancelled session is an alert',
-    has('alerts', 'PC 03: sesioni u anulua', 'Gabim në nisje'),
+    has('alerts', 'PC 03: seanca u anulua', 'Gabim në nisje'),
   );
   await commands['session-end'](1);
   await expectNote(
-    'a prepaid session that ends is a PC message',
-    has('pcs', 'PC 01: sesioni mbaroi'),
+    'a session that staff end: who, which PC, how long',
+    has('pcs', /^Kasjere Test mbylli PC 01 · /),
   );
 
   console.log('\nMoney, stock, accounts');
@@ -366,6 +401,251 @@ try {
   await expectNote('English wording', has('sales', /^Kasjere Test sold \d+\.\d\d €$/, 'profit'));
   await bridge('setOptions', { lang: 'sq' });
 
+  console.log('\nSales worth a look');
+  await clearNotes();
+  await commands['discount-sale']();
+  await expectNote(
+    'a sale with a discount is an alert: who gave it, how much, on what',
+    has(
+      'alerts',
+      'Pronari Test dha zbritje 1.00 €',
+      /^shitja 2\.80 € · Coca-Cola 0\.33l ×2 · fitimi 2\.37 €/,
+    ),
+  );
+  await sleep(2500);
+  const discounted = (await notes()).filter((n) => /2\.80 €/.test(`${n.title} ${n.text}`));
+  check('…one message for that sale, not two or three', discounted.length === 1, () =>
+    show(discounted),
+  );
+  await clearNotes();
+  await commands['loss-sale']();
+  await expectNote(
+    'a sale below its cost is an alert, with the loss',
+    has(
+      'alerts',
+      'Shitje nën kosto: Pronari Test · 1.00 €',
+      'Red Bull 0.25l ×1 · zbritje 1.50 € · humbje 0.55 €',
+    ),
+  );
+  await sleep(2500);
+  const lost = (await notes()).filter((n) => /1\.00 €|1\.50 €/.test(`${n.title} ${n.text}`));
+  check('…again one message', lost.length === 1, () => show(lost));
+  await commands['big-sale'](2);
+  await expectNoNote(
+    'a big sale is not announced unless asked for',
+    has('alerts', /Shitje e madhe/),
+  );
+  const big = await options({ topics: { 'sale.big': true }, options: { 'big.cents': 300 } });
+  check(
+    'the owner switches "big sale" on, from 3 €',
+    big.ok && big.data.topics['sale.big'] === true && big.data.options['big.cents'] === 300,
+    () => JSON.stringify(big).slice(0, 300),
+  );
+  await commands['big-sale'](2);
+  await expectNote('…and now it is', has('alerts', 'Shitje e madhe: Kasjere Test · 3.80 €'));
+  const refused = await options({ options: { 'ending.minutes': 0 } });
+  check(
+    'a value out of range is refused',
+    refused.ok === false && refused.error.code === 'bad_option',
+    () => JSON.stringify(refused).slice(0, 300),
+  );
+  await options({ topics: { 'sale.big': false } });
+
+  console.log('\nThe PCs themselves');
+  await clearNotes();
+  // Three things are set going that take a minute or two, and are looked at further down:
+  // a two-minute session (a warning one minute before its end, then its time is up), a
+  // reservation with its reminder a minute from now, and "no sale for a minute".
+  const set = await options({
+    topics: { 'sales.idle': true },
+    options: {
+      'ending.minutes': 1,
+      'idle.minutes': 1,
+      'work.from': shopClock(-120),
+      'work.to': shopClock(120),
+    },
+  });
+  check('minutes and hours are set', set.ok && set.data.options['ending.minutes'] === 1, () =>
+    JSON.stringify(set).slice(0, 300),
+  );
+  const booking = await commands.reservation(2, 1);
+  await commands['session-start'](5, 2);
+  const shortAt = Date.now();
+  await expectNote('the short session begins', has('sales', /^Kasjere Test nisi PC 05 · 2 min/));
+
+  await commands['pc-on'](1);
+  const first = await expectNote(
+    'a PC that comes on',
+    has('power', 'PC 01 u ndez', '1 nga 4 PC janë ndezur'),
+  );
+  await commands['pc-on'](2);
+  await commands['pc-on'](3);
+  const grown = await expectNote(
+    'the ones right behind it join the same message',
+    has('power', 'U ndezën 3 PC', 'PC 01, PC 02, PC 03 · 3 nga 4 PC janë ndezur'),
+  );
+  check(
+    '…which takes the place of the first without ringing again',
+    grown && first && grown.key === first.key && grown.update === true,
+    () => JSON.stringify({ first, grown }),
+  );
+  const came = (await notes()).filter((n) => n.topic === 'pc.power');
+  check('…so there is one message, not three', came.length === 1, () => show(came));
+
+  await commands['pc-wake'](5);
+  await expectNote(
+    '"Ndiz" in the Admin: who woke which PC',
+    has('power', 'Pronari Test e ndezi PC 05', 'sinjali i ndezjes u dërgua'),
+  );
+  await commands['pc-wake-all']();
+  await expectNote(
+    '"Ndiz të gjitha": how many, and why the others were left out',
+    has(
+      'power',
+      'Pronari Test i ndezi të gjitha PC-të (1)',
+      'PC 05 · 3 ishin ndezur · 2 nuk mund të ndizen nga rrjeti',
+    ),
+  );
+  await commands['pc-restart'](2);
+  await expectNote('a restart sent from the Admin', has('power', 'Pronari Test e rinisi PC 02'));
+  await commands['pc-shutdown'](3);
+  await expectNote('a shut-down sent from the Admin', has('power', 'Pronari Test e fiku PC 03'));
+  await expectNote(
+    '…and the PC really going off, once it stays off',
+    has('power', 'PC 03 u fik', '2 nga 4 PC janë ndezur'),
+    20000,
+  );
+  await expectNoNote(
+    'the restarted PC only blinked: not announced as off',
+    (n) => n.topic === 'pc.power' && /PC 02/.test(n.title) && /u fik/.test(n.title),
+    500,
+  );
+
+  await commands['session-start'](1, 60);
+  await sleep(1500);
+  await commands['pc-off'](1);
+  await expectNote(
+    'a PC that goes off while a customer plays on it is an alert',
+    has(
+      'alerts',
+      'PC 01 u fik gjatë seancës',
+      /^Driton · mbeten 5\d min · PC-ja nuk është më e lidhur/,
+    ),
+    45000,
+  );
+  await expectNoNote(
+    '…and not also a plain "went off"',
+    (n) => n.topic === 'pc.power' && /PC 01 u fik/.test(n.title),
+    500,
+  );
+
+  await expectNote(
+    'a session with a minute left',
+    has('pcs', 'PC 05: mbeten 1 min', /^Driton · mbaron në \d\d:\d\d$/),
+    Math.max(5000, shortAt + 75_000 - Date.now()),
+  );
+  await expectNote(
+    'the reservation is announced at its reminder time',
+    has('pcs', /^Rezervim pas 1 min: Driton$/, /^PC 05, PC 06 · ora \d\d:\d\d · 044 123 456$/),
+    Math.max(5000, shortAt + 80_000 - Date.now()),
+  );
+  await expectNote(
+    'no sale for a minute, inside the working hours',
+    has('alerts', /^Asnjë shitje prej 1 min/, /^Shitja e fundit: ora \d\d:\d\d\.$/),
+    Math.max(5000, shortAt + 110_000 - Date.now()),
+  );
+  await expectNote(
+    'time that runs out',
+    has('pcs', 'PC 05: koha mbaroi', /^Driton · 2 min/),
+    Math.max(5000, shortAt + 150_000 - Date.now()),
+  );
+  await options({
+    topics: { 'sales.idle': false },
+    options: { 'ending.minutes': 5, 'idle.minutes': 120 },
+  });
+  await commands['reservation-cancel'](booking.id);
+
+  await clearNotes();
+  await options({ topics: { 'pc.power': false } });
+  await commands['pc-on'](3);
+  await expectNoNote(
+    'with its switch off, a PC coming on is not told',
+    (n) => n.topic === 'pc.power',
+    6000,
+  );
+  await options({ topics: { 'pc.power': true } });
+  await commands['pc-off'](3);
+  await expectNote(
+    '…and with it on again, its going off is',
+    has('power', 'PC 03 u fik', '1 nga 4 PC janë ndezur'),
+    20000,
+  );
+  // Closing time. (PC 02 still has its open session from above: it is paid first, or the PC
+  // going off would be the alert seen before.)
+  await commands['session-end'](2);
+  await commands['session-end'](1);
+  allPcsOff();
+  await expectNote(
+    'closing time: the last one going off joins the message before it',
+    has('power', 'U fikën 2 PC', 'PC 02, PC 03 · 0 nga 4 PC janë ndezur'),
+    20000,
+  );
+
+  console.log('\nThe day');
+  await clearNotes();
+  await options({ options: { 'step.cents': 1000 } });
+  await bridge('refresh');
+  await sleep(1500);
+  await commands['big-sale'](40);
+  await expectNote(
+    'the turnover passing the next mark',
+    has('day', /^Qarkullimi i ditës kaloi \d+0\.00 €$/, /^Sot \d+\.\d\d € · \d+ shitje · fitimi /),
+  );
+  await options({ options: { 'step.cents': 100000000 } });
+  await commands['debt-due-today']();
+  await options({ options: { 'debts.at': shopClock() } });
+  await expectNote(
+    'the debts that are due today, at the hour the owner chose',
+    has('day', /^Sot skado(n një borxh|jnë \d+ borxhe) · \d+\.\d\d €$/, 'Arben Test'),
+  );
+  await options({ options: { 'summary.at': shopClock() } });
+  await expectNote(
+    'the summary of the day',
+    has('day', /^Dita sot: \d+\.\d\d € · \d+ shitje$/, /^fitimi .* · .*Kasjere Test \d+\.\d\d €/),
+  );
+  await clearNotes();
+  await options({
+    options: { 'quiet.on': true, 'quiet.from': clock(-60), 'quiet.to': clock(60) },
+  });
+  await commands.sale();
+  const hushed = await expectNote(
+    'a sale during the quiet hours is still shown',
+    has('sales', /shiti/),
+  );
+  check('…but without sound', hushed?.silent === true, () => JSON.stringify(hushed));
+  await commands.refund();
+  const hushedAlert = await expectNote(
+    'an alert during the quiet hours',
+    has('alerts', /^Rimbursim/),
+  );
+  check('…is silent too', hushedAlert?.silent === true, () => JSON.stringify(hushedAlert));
+  await options({ options: { 'quiet.alerts': true } });
+  await commands['bad-login']();
+  const loud = await expectNote(
+    'unless the owner wants alerts to ring',
+    has('alerts', /^Hyrje e dështuar/),
+  );
+  check('…then it rings', loud?.silent === false, () => JSON.stringify(loud));
+  await options({ options: { 'quiet.on': false, 'quiet.alerts': false } });
+  await commands.sale();
+  await sleep(1500);
+  const ringing = (await notes()).filter(has('sales', /shiti/));
+  check(
+    'after the quiet hours sales ring again',
+    ringing.length === 2 && ringing.some((n) => n.silent === false),
+    () => JSON.stringify(ringing),
+  );
+
   console.log('\nA gap (the phone was off)');
   await stopHost();
   await commands.sale(2);
@@ -380,7 +660,7 @@ try {
   const missed = (await notes()).filter(has('sales', /^Kasjere Test shiti/));
   check('…each one once (2)', missed.length === 2, () => `got ${missed.length}`);
   await expectNote('the expense made meanwhile', has('money', 'Shpenzim 7.00 €'));
-  await expectNote('the session opened meanwhile', has('pcs', 'PC 04: sesion i ri'));
+  await expectNote('the session opened meanwhile', has('pcs', 'Kasjere Test nisi PC 04'));
   await stopHost();
   await startHost();
   await waitState('a second restart', (s) => s.connection === 'online');
@@ -481,7 +761,9 @@ try {
 } catch (e) {
   fail('the check itself', e.stack ?? String(e));
 } finally {
+  allPcsOff();
   await endOpenSessions().catch(() => undefined);
+  await cancelReservations().catch(() => undefined);
   await stopHost();
   relay.server?.close();
   for (const p of relay.pairs) {

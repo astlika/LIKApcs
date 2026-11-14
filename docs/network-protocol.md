@@ -936,3 +936,86 @@ answer `409 out_of_stock` with `{code: 'INSUFFICIENT_STOCK', productId, productN
 requestedMilli}` when a product that may not go below zero is asked beyond what is free: its stock
 minus what already waits on the bills (accepted, unsold orders). The stock moves when the bill is
 paid; ending or collecting a session never fails on the stock of its order lines.
+
+## Internet access codes (0.34.0, migration 0057)
+
+A package ("Internet 1 orë") is a product with `kind: 'internet_access'` (`ProductSummary.kind`;
+`GET /products?kind=standard|internet_access`). Its stock is the number of its unused codes: it
+is tracked, never negative, sold by the piece, has no variants and is not on the PC menu.
+
+| Route                           | Permission        | Body / query                                                                                             | Result                                                                                                                 |
+| ------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GET /internet-access/packages` | `products.view`   | —                                                                                                        | `{items: [{product, availableCodes, soldCodes, lastLoadedAt, lastSoldAt}]}`                                            |
+| `POST /internet-access/check`   | `products.manage` | `{codes[]}`                                                                                              | `{fresh, waiting[], soldBefore[]}` — nothing is stored                                                                 |
+| `POST /internet-access/load`    | `products.manage` | `{productId \| package{name, sellingPriceCents, categoryId?, lowAtCodes=10}, codes[], allowSoldBefore?}` | `{added, batchId, created, fresh, waiting[], soldBefore[], package}`; `201` when the package was created               |
+| `GET /internet-access/codes`    | `products.manage` | `?productId&status=available\|sold&q&page&pageSize≤500`                                                  | `{items, total, page, pageSize}`; unused codes in the order they will be sold, sold ones with receipt, time and seller |
+| `POST /internet-access/remove`  | `products.manage` | `{productId, ids[] \| batchId \| all: true, reason}`                                                     | `{removed, package}`; only unused codes, `409 ACCESS_CODES_NONE_UNUSED` when there are none                            |
+
+Codes are 4–64 visible characters, case-sensitive, at most 5000 per request. A code that already
+waits to be sold (in any package) is never loaded twice — it is reported in `waiting[]`. A code
+that was sold before is loaded only with `allowSoldBefore: true`. A package is created together
+with its first load (`package{…}`), never with `POST /products`; a second package with the same
+name is refused (`409 ACCESS_PACKAGE_EXISTS`).
+
+**Selling.** `POST /sales` and `POST /sales/:id/complete` must carry `accessCodes: true` — "this
+till shows the codes it is given" — when the sale holds a package, else `409
+ACCESS_CODES_NOT_SHOWN` and nothing is sold. Each unit takes the oldest unused code inside the
+sale's transaction (`SELECT … FOR UPDATE SKIP LOCKED`), and the codes come back on the line:
+`SaleDetail.items[].accessCodes: string[]` (also on `GET /sales/:id`, the receipt and a reprint).
+The same `clientRequestId` answers with the same sale and codes. Whole units only (`400
+ACCESS_CODES_WHOLE`), never offline (`400 OFFLINE_ACCESS_CODES`), too few codes → `409
+INSUFFICIENT_STOCK`. A parked sale takes no code until it is completed. A refund returns the
+money; the code stays sold and the stock does not go back up.
+
+**Refused for a package.** `POST /products/:id/stock` and purchases (`409 INTERNET_ACCESS_STOCK`);
+staff purchases, the PC menu and a PC's bill (`409 INTERNET_ACCESS_TILL_ONLY`); changing what makes
+it a package on `PATCH /products/:id` (`409 INTERNET_ACCESS_SHAPE`). `DELETE /products/:id`
+archives a package that has codes.
+
+Audit: `internet_access.codes.loaded`, `internet_access.codes.removed`, and `accessCodes: n` on
+`sale.completed`. The codes themselves are never written to the audit log. Stock movements:
+`codes_loaded`, `codes_removed`, `sale`.
+
+## Spoken time warnings (0.35.0)
+
+The customer PC says the expiry warnings aloud. Nothing new is sent at the time of a warning
+except two fields on commands that already existed:
+
+- `message.show` of a time warning carries `announce: {minutes}` next to `text` and
+  `durationSeconds`. The PC shows the text as before and says the minutes. A message typed at the
+  desk has no `announce` and is not spoken. A warning is sent only while its minutes are true: a mark that
+  was passed more than half a minute ago (a session that began with less time, a resume or an
+  extension near the end, a server restart) is skipped.
+- `session.end` carries `reason: 'expired'` when the time ran out (the PC says "time is up"); a
+  session ended by staff has no `reason`.
+
+What is played is decided on the PC from `display.voice` (`ClientDisplayConfig`, sent in the
+welcome and in every `server.display`):
+
+```json
+{
+  "enabled": true,
+  "language": "sq",
+  "volume": 100,
+  "chime": true,
+  "custom": { "5": "/api/v1/files/voice/<24 hex>.mp3" }
+}
+```
+
+A slot is the minutes left (`"5"`, `"1"` … as in `stations.expiry_warning_minutes`) or `"up"`. For
+a slot the PC plays the chime (when on), then the owner's recording from `custom`, else the
+built-in voice in `language` (15, 10, 5, 1 and `up`), else nothing more. A recording that cannot be
+played falls through to the built-in voice. A client older than 0.35.0 ignores all of this; a
+server older than 0.35.0 sends no `voice` and the PC stays silent.
+
+| Route                        | Permission        | Body / query                                                         | Result                                                |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `PUT /client/voice/:slot`    | `settings.manage` | raw audio (MP3, WAV, OGG, M4A; ≤ 2 MB), `?name=` the file's own name | `{custom}` — the whole `client.voice_custom` map      |
+| `DELETE /client/voice/:slot` | `settings.manage` | —                                                                    | `{custom}`                                            |
+| `GET /files/voice/:name`     | public            | —                                                                    | the recording; random immutable names, cached forever |
+
+The format is sniffed from the bytes (`400` with `details.code: VOICE_FORMAT` otherwise, `413`
+above 2 MB, `409 VOICE_TOO_MANY` beyond 12 recordings). Settings: `client.voice_enabled`,
+`client.voice_language` (`sq` \| `en`), `client.voice_volume` (0–100), `client.voice_chime`,
+`client.voice_custom` (slot → `{file, name}`, written by the two routes above). The files live in
+`<dataDir>/uploads/voice` and, like every upload, go into every backup and come back with a restore.

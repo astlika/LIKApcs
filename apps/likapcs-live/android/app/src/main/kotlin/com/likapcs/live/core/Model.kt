@@ -14,6 +14,9 @@ enum class Category(val id: String) {
     /** PC sessions, requests and orders from PCs, reservations. */
     PCS("pcs"),
 
+    /** PCs switched on and off: the wake signal, a PC coming on or going off, shut down and restart. */
+    POWER("power"),
+
     /** The drawer, expenses, purchases, debts and wallets. */
     MONEY("money"),
 
@@ -26,11 +29,69 @@ enum class Category(val id: String) {
     /** Settings, backups, devices, updates. */
     SYSTEM("system"),
 
+    /** The day as a whole: turnover marks, the evening summary, debts due today. */
+    DAY("day"),
+
     /** The link between this phone and the server. */
     CONNECTION("connection");
 
     companion object {
         fun of(id: String?): Category? = entries.firstOrNull { it.id == id }
+    }
+}
+
+/**
+ * A finer switch inside a kind (1.1). A message that carries a topic is shown only while both its
+ * kind and its topic are on. `default` false: the owner has to switch it on first.
+ */
+enum class Topic(val id: String, val category: Category, val default: Boolean = true) {
+    /** "Ndiz" / "Ndiz të gjitha" in the Admin: the wake signal was sent. */
+    PC_WAKE("pc.wake", Category.POWER),
+
+    /** A PC really came on (its client connected) or went off. */
+    PC_POWER("pc.power", Category.POWER),
+
+    /** Shut down / restart sent from the Admin. */
+    PC_COMMAND("pc.command", Category.POWER),
+
+    /** A PC went off while a customer's session was running on it. */
+    PC_DROPPED("pc.dropped", Category.ALERTS),
+
+    /** A session was started or extended. */
+    PC_SESSION("pc.session", Category.PCS),
+
+    /** A session has only a few minutes left. */
+    PC_ENDING("pc.ending", Category.PCS),
+
+    /** A session ended: stopped by staff, or its time ran out. */
+    PC_ENDED("pc.ended", Category.PCS),
+
+    /** A reservation starts soon. */
+    RESERVATION_SOON("reservation.soon", Category.PCS),
+
+    /** A sale with a discount. */
+    SALE_DISCOUNT("sale.discount", Category.ALERTS),
+
+    /** A sale that lost money: sold under cost. */
+    SALE_BELOW_COST("sale.below_cost", Category.ALERTS),
+
+    /** A sale above the amount the owner set. */
+    SALE_BIG("sale.big", Category.ALERTS, default = false),
+
+    /** No sale for some hours during working hours. */
+    SALES_IDLE("sales.idle", Category.ALERTS, default = false),
+
+    /** The day's turnover passed the next mark (every 100 €, say). */
+    TURNOVER_STEP("turnover.step", Category.DAY),
+
+    /** The summary of the day at the hour the owner chose. */
+    DAY_SUMMARY("day.summary", Category.DAY),
+
+    /** Debts that are due today, once in the morning. */
+    DEBT_DUE("debt.due", Category.DAY);
+
+    companion object {
+        fun of(id: String?): Topic? = entries.firstOrNull { it.id == id }
     }
 }
 
@@ -45,6 +106,15 @@ data class Note(
     val at: Long,
     /** Which screen a tap opens: `sales`, `activity` or `settings`. */
     val tab: String = "activity",
+    /** The finer switch this message belongs to, when it has one. */
+    val topic: Topic? = null,
+    /**
+     * True: a message with this key may already be on the screen and this one takes its place
+     * without ringing again ("U ndezën 3 PC" growing to "U ndezën 12 PC").
+     */
+    val update: Boolean = false,
+    /** Set by the engine during the owner's quiet hours: shown, but without sound or vibration. */
+    val silent: Boolean = false,
 )
 
 enum class Conn(val id: String) {
@@ -102,5 +172,12 @@ interface Host {
 
     /** Keep the processor awake for up to `ms` while a message is handled. */
     fun stayAwake(ms: Long)
+
+    /**
+     * Wake the engine (`Engine.wake`) at this moment (epoch ms) even when the phone sleeps: a
+     * session is about to end, the summary of the day is due. 0 takes the request back. One
+     * request at a time: a new one replaces the one before.
+     */
+    fun wakeAt(epochMs: Long)
     fun log(line: String)
 }

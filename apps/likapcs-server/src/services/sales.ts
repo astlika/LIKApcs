@@ -33,6 +33,7 @@ import {
   type SalesListResponse,
   type SuspendSaleRequest,
   type ClaimPin,
+  type ProductKind,
 } from '@likapcs/shared';
 import { millsToCents, multiplyMillsByQuantity } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
@@ -40,6 +41,7 @@ import { withTransaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ACTIVE_PROMO_SQL } from './ads.js';
+import { takeAccessCodes } from './internet-access.js';
 import { applyMovement } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 import type { SettingsService } from './settings.js';
@@ -143,6 +145,8 @@ interface ProductForSale {
   addons?: AddonForSale[];
   id: string;
   name: string;
+  /** 0.34.0: `internet_access` → each unit sold hands out one of the package's codes. */
+  kind: ProductKind;
   sku: string;
   selling_price_cents: string | number;
   /** Live promo price (Admin › Ads) or null — see ACTIVE_PROMO_SQL. */
@@ -285,10 +289,13 @@ export class SalesService {
       line_total_cents: string;
       refunded_milli: string;
       addons: { id: string }[];
+      access_codes: string[] | null;
     }>(
       `SELECT i.id::text, i.line_no, i.product_id, i.gaming_session_id, i.description, p.sku, i.quantity_milli::text,
               i.unit_price_cents::text, i.discount_cents::text, i.tax_rate_bp, i.tax_cents::text,
-              i.line_total_cents::text, i.refunded_milli::text, i.addons
+              i.line_total_cents::text, i.refunded_milli::text, i.addons,
+              (SELECT array_agg(c.code ORDER BY c.id) FROM internet_access_codes c
+                WHERE c.sale_item_id = i.id) AS access_codes
          FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
         WHERE i.sale_id = $1 ORDER BY i.line_no`,
       [saleId],
@@ -308,6 +315,7 @@ export class SalesService {
       lineTotalCents: Number(i.line_total_cents),
       refundedMilli: Number(i.refunded_milli),
       addonIds: (i.addons ?? []).map((a) => a.id),
+      accessCodes: i.access_codes ?? [],
     }));
   }
 
@@ -668,6 +676,7 @@ export class SalesService {
       input.staff,
       claimPins,
       Boolean(offline),
+      input.accessCodes,
     );
     const sale = await this.getById(saleId, client);
     return claimPins.length > 0 ? { ...sale, claimPins } : sale;
@@ -718,11 +727,21 @@ export class SalesService {
     actor: SaleActor,
   ): Promise<SaleDetail> {
     return withTransaction(this.pool, async (client) => {
-      const s = await client.query<{ status: string }>(
-        'SELECT status FROM sales WHERE id = $1 FOR UPDATE',
+      const s = await client.query<{ status: string; client_request_id: string | null }>(
+        'SELECT status, client_request_id FROM sales WHERE id = $1 FOR UPDATE',
         [id],
       );
       if (!s.rows[0]) throw notFound('Sale');
+      // 0.34.0: the same request sent again (its answer was lost on the way) gets the sale it
+      // already completed — with its internet codes — instead of an error.
+      if (
+        s.rows[0].status !== 'suspended' &&
+        s.rows[0].status !== 'void' &&
+        input.clientRequestId &&
+        s.rows[0].client_request_id === input.clientRequestId
+      ) {
+        return this.getById(id, client);
+      }
       if (s.rows[0].status !== 'suspended') throw conflict('Only suspended sales can be completed');
       await client.query('DELETE FROM sale_items WHERE sale_id = $1', [id]);
       await client.query(
@@ -730,7 +749,18 @@ export class SalesService {
           WHERE id = $1`,
         [id, actor.userId, input.customerId, input.notes ?? null, input.clientRequestId ?? null],
       );
-      await this.fillAndComplete(client, id, input, input.payments, actor);
+      await this.fillAndComplete(
+        client,
+        id,
+        input,
+        input.payments,
+        actor,
+        undefined,
+        false,
+        [],
+        false,
+        input.accessCodes,
+      );
       return this.getById(id, client);
     });
   }
@@ -778,10 +808,11 @@ export class SalesService {
         refunded_milli: string;
         refunded_cents: string;
         track_stock: boolean | null;
+        kind: ProductKind | null;
       }>(
         `SELECT i.id::text, i.product_id, i.quantity_milli::text, i.line_total_cents::text, i.refunded_milli::text,
                 COALESCE((SELECT sum(ri.amount_cents) FROM refund_items ri WHERE ri.sale_item_id = i.id), 0)::text AS refunded_cents,
-                p.track_stock
+                p.track_stock, p.kind
            FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
           WHERE i.sale_id = $1 ORDER BY i.line_no FOR UPDATE OF i`,
         [saleId],
@@ -830,7 +861,14 @@ export class SalesService {
           'UPDATE sale_items SET refunded_milli = refunded_milli + $2 WHERE id = $1',
           [item.saleItemId, item.quantityMilli],
         );
-        if (input.restock && line.product_id && line.track_stock) {
+        // 0.34.0: the money of an internet access line can be given back, but its code was handed
+        // out and may have been used: it stays sold and never returns to the stock.
+        if (
+          input.restock &&
+          line.product_id &&
+          line.track_stock &&
+          line.kind !== 'internet_access'
+        ) {
           await applyMovement(client, {
             productId: line.product_id,
             type: 'sale_return',
@@ -955,7 +993,7 @@ export class SalesService {
   ): Promise<Map<string, ProductForSale>> {
     const unique = [...new Set(ids)].sort();
     const r = await client.query<ProductForSale>(
-      `SELECT p.id, p.name, p.sku, p.selling_price_cents, p.price_includes_tax, p.average_cost_cents, p.purchase_cost_cents,
+      `SELECT p.id, p.name, p.kind, p.sku, p.selling_price_cents, p.price_includes_tax, p.average_cost_cents, p.purchase_cost_cents,
              p.average_cost_mills, p.purchase_cost_mills,
               p.track_stock, p.allow_negative_stock, p.is_active, tc.rate_bp AS tax_rate_bp,
               ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents
@@ -1194,8 +1232,11 @@ export class SalesService {
     staff = false,
     claimPins: ClaimPin[] = [],
     offline = false,
+    /** 0.34.0: the till shows the internet access codes of this sale (see `createSaleSchema`). */
+    showsAccessCodes = false,
   ): Promise<void> {
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
+    assertAccessCodeRules(input.items, products, { offline, showsAccessCodes });
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
     if (!staff && givenPayments.some((p) => p.method === 'staff')) {
       throw badRequest('The staff tender is only for a staff purchase', { code: 'PAYMENT' });
@@ -1272,9 +1313,11 @@ export class SalesService {
       if (!('productId' in item)) continue;
       perProduct.set(item.productId, (perProduct.get(item.productId) ?? 0) + item.quantityMilli);
     }
+    let accessCodesSold = 0;
     for (const [productId, qty] of [...perProduct.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       const p = products.get(productId)!;
       if (!p.track_stock) continue;
+      const internet = p.kind === 'internet_access';
       await applyMovement(client, {
         productId,
         type: 'sale',
@@ -1286,8 +1329,27 @@ export class SalesService {
         referenceId: saleId,
         actorUserId: actor.userId,
         // An offline sale already left the shelf: the stock may go below zero until it is counted.
-        allowNegative: p.allow_negative_stock || offline,
+        // Internet access never does: there is no code to hand out below zero.
+        allowNegative: !internet && (p.allow_negative_stock || offline),
+        accessCodes: internet,
       });
+      if (internet) {
+        // 0.34.0: one code per unit, the oldest unused ones first, tied to the line they were sold on.
+        const lineOfEachUnit: number[] = [];
+        for (const [i, item] of input.items.entries()) {
+          if (!('productId' in item) || item.productId !== productId) continue;
+          for (let n = 0; n < item.quantityMilli / 1000; n += 1)
+            lineOfEachUnit.push(saleItemIds.get(i)!);
+        }
+        await takeAccessCodes(client, {
+          productId,
+          productName: p.name,
+          saleId,
+          saleItemIds: lineOfEachUnit,
+          soldBy: actor.userId,
+        });
+        accessCodesSold += lineOfEachUnit.length;
+      }
     }
     if (offline && fixedPrices) {
       // Punkti 4: the price the cashier saw differs from the price on the server now → flag it.
@@ -1401,7 +1463,46 @@ export class SalesService {
           isTimeItem(i) ? [{ stationId: i.stationId, minutes: i.minutes }] : [],
         ),
         methods: [...new Set(payments.map((p) => p.method))],
+        // 0.34.0: how many internet access codes left with this sale (the codes are on its lines).
+        ...(accessCodesSold > 0 ? { accessCodes: accessCodesSold } : {}),
       },
     });
+  }
+}
+
+/**
+ * 0.34.0: what a sale with an internet access package must look like before anything is written.
+ * Whole units only (one code each); never offline (the code comes from the server, the customer
+ * would leave without one); and only from a till that shows the codes it is given.
+ */
+function assertAccessCodeRules(
+  items: readonly SaleItemInput[],
+  products: Map<string, ProductForSale>,
+  opts: { offline: boolean; showsAccessCodes: boolean },
+): void {
+  for (const item of items) {
+    if (!('productId' in item)) continue;
+    const p = products.get(item.productId);
+    if (!p || p.kind !== 'internet_access') continue;
+    const details = { productId: p.id, productName: p.name };
+    if (opts.offline) {
+      throw badRequest(`${p.name} cannot be sold offline: its code comes from the server`, {
+        code: 'OFFLINE_ACCESS_CODES',
+        ...details,
+      });
+    }
+    if (!opts.showsAccessCodes) {
+      throw conflict(
+        `${p.name} hands out an internet access code, and this program cannot show it. Update the program, or sell it from the Admin till.`,
+        { code: 'ACCESS_CODES_NOT_SHOWN', ...details },
+      );
+    }
+    if (item.quantityMilli % 1000 !== 0) {
+      throw badRequest(`${p.name} is sold by the piece: one code each`, {
+        code: 'ACCESS_CODES_WHOLE',
+        field: 'quantityMilli',
+        ...details,
+      });
+    }
   }
 }

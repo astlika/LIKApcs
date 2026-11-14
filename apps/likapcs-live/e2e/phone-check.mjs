@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { commands, call, as, sleep } from './shop.mjs';
+import { commands, call, as, sleep, station, allPcsOff } from './shop.mjs';
 
 const APK = process.argv[2];
 const RELEASE_APK = process.argv[3];
@@ -117,7 +117,11 @@ async function step(name, fn) {
 
 /** The app's notifications as the system holds them: [{ channel, title, text, big, key }]. */
 function notifications() {
-  const dump = shell('dumpsys notification --noredact', { timeout: 30_000 });
+  // Only what is shown: Android also lists a notification that is on its way to the screen (for
+  // a moment an update and the one it replaces would both be there).
+  const dump = shell('dumpsys notification --noredact', { timeout: 30_000 }).split(
+    /\n\s*Enqueued Notification List:/,
+  )[0];
   const records = [];
   const blocks = dump.split(/\n(?=\s+NotificationRecord\()/);
   for (const block of blocks) {
@@ -168,6 +172,48 @@ async function saleArrives(name, timeoutMs = 12_000) {
     fail(name, `sale notifications now:\n${show(sales())}`);
     return false;
   }
+}
+
+/**
+ * The alarm the app set for its appointment with the clock, as Android lists it:
+ * { when (epoch ms), window ("0" = exact), reason (why Android allows it to be exact), flags }.
+ */
+function clockAlarm() {
+  const dump = shell('dumpsys alarm', { timeout: 30_000 });
+  const found =
+    /Alarm\{\S+ type \d+ origWhen (\d+) whenElapsed \d+ com\.likapcs\.live\}\s*\n\s*tag=\S*com\.likapcs\.live\.CLOCK\s*\n\s*type=\S+ origWhen=.*? window=(\S+)(?: exactAllowReason=(\S+))?.*? flags=(0x[0-9a-f]+)/.exec(
+      dump,
+    );
+  if (!found) return null;
+  return { when: Number(found[1]), window: found[2], reason: found[3] ?? '', flags: found[4] };
+}
+
+/** The app's notification channels as Android holds them: the ids. */
+function channels() {
+  const dump = shell('dumpsys notification --noredact', { timeout: 30_000 });
+  const start = dump.indexOf(`AppSettings: ${PKG} (`);
+  if (start < 0) return [];
+  const next = dump.indexOf('AppSettings: ', start + 20);
+  const block = dump.slice(start, next < 0 ? undefined : next);
+  return [...block.matchAll(/NotificationChannel\{mId='([^']+)'/g)].map((m) => m[1]);
+}
+
+/** "HH:MM" on the phone's own clock, `minutes` from now. */
+function phoneClock(minutes = 0) {
+  const [h, m] = shell('date +%H:%M').trim().split(':').map(Number);
+  const at = (((h * 60 + m + minutes) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`;
+}
+
+function forceDoze() {
+  shell('dumpsys battery unplug');
+  shell('dumpsys deviceidle enable', { allowFail: true });
+  const forced = shell('dumpsys deviceidle force-idle', { allowFail: true }).trim();
+  return { forced, mode: () => shell('dumpsys deviceidle get deep', { allowFail: true }).trim() };
+}
+function endDoze() {
+  shell('dumpsys deviceidle unforce', { allowFail: true });
+  shell('dumpsys battery reset', { allowFail: true });
 }
 
 const servicesDump = () => shell(`dumpsys activity services ${PKG}`, { timeout: 30_000 });
@@ -459,6 +505,8 @@ try {
 
   await commands.setup();
   await setUserActive(true);
+  // Four of the six PCs get a (pretend) client program, as in a real shop; all are off for now.
+  await commands['pc-pair'](1, 2, 3, 5);
   adb(['uninstall', PKG], { allowFail: true });
   const installed = adb(['install', '-r', APK], { timeout: 180_000 });
   check('the APK installs', /Success/.test(installed), installed);
@@ -679,6 +727,8 @@ try {
 
   section('The app in the background');
   await step('home', async () => {
+    // For the check of the clock further down: "time is running out" one minute before the end.
+    await page.bridge('setOptions', { options: { 'ending.minutes': 1 } });
     shell('input keyevent KEYCODE_HOME');
     await sleep(1500);
     await saleArrives('a sale while another app is in front');
@@ -714,6 +764,57 @@ try {
       );
       shell('dumpsys deviceidle unforce', { allowFail: true });
       shell('dumpsys battery reset', { allowFail: true });
+    });
+
+    await step('the clock, in deep sleep', async () => {
+      // 1.1: "PC 05: one minute left" is not sent by the server: the app itself has to wake up
+      // at that minute, with the screen off and the phone in deep sleep.
+      await commands['session-start'](5, 2);
+      const endsAt = Date.parse((await station(5, await as('owner'))).activeSession.endsAt);
+      const due = endsAt - 60_000;
+      // (An appointment made earlier — the summary of the day, say — may still be the one
+      // listed for a moment: the one for this minute is waited for.)
+      const alarm = await waitFor(
+        'the app’s alarm',
+        () => {
+          const found = clockAlarm();
+          return found && Math.abs(found.when - due) < 5000 ? found : null;
+        },
+        10_000,
+        1000,
+      ).catch(() => clockAlarm());
+      check(
+        'the app asks Android to wake it at that minute',
+        alarm && Math.abs(alarm.when - due) < 5000,
+        () => `alarm ${JSON.stringify(alarm)}, the minute ${due}`,
+      );
+      check(
+        `…to the second, without a further permission (Android: "${alarm?.reason}", flags ${alarm?.flags})`,
+        alarm?.window === '0',
+        () => JSON.stringify(alarm),
+      );
+      const doze = forceDoze();
+      await sleep(1500);
+      check('the phone is in deep sleep again', doze.mode() === 'IDLE', doze.forced);
+      const warned = await expectNotification(
+        'a session with a minute left is told while the phone sleeps',
+        (n) => n.channel === 'pcs' && n.title === 'PC 05: mbeten 1 min',
+        Math.max(15_000, due + 40_000 - Date.now()),
+      );
+      const late = Date.now() - due;
+      if (warned) {
+        check(
+          `…at that minute (seen ${(late / 1000).toFixed(1)} s after it)`,
+          late > -3000 && late < 20_000,
+          `${late} ms`,
+        );
+      }
+      await expectNotification(
+        'and the time running out, a minute later',
+        (n) => n.channel === 'pcs' && n.title === 'PC 05: koha mbaroi',
+        Math.max(15_000, endsAt + 45_000 - Date.now()),
+      );
+      endDoze();
     });
   }
 
@@ -868,6 +969,150 @@ try {
     );
   });
 
+  section('What is new in 1.1');
+  await step('the kinds', async () => {
+    const ids = channels();
+    check(
+      'Android has a channel for each new kind, and the silent one',
+      ['power', 'day', 'quiet'].every((id) => ids.includes(id)),
+      ids.join(', '),
+    );
+  });
+
+  await step('the finer switches', async () => {
+    await page.click('#tab-settings');
+    await page.waitFor(
+      'the new switches',
+      `!!document.querySelector('[data-kind="power"]') && !!document.querySelector('[data-kind="day"]') && !!document.querySelector('[data-topic="pc.wake"]')`,
+    );
+    await page.eval(
+      `document.querySelector('[data-kind="pcs"]').scrollIntoView({ block: 'start' })`,
+    );
+    await sleep(600);
+    screenshot('settings-pcs');
+    const drawn = (value) =>
+      page.waitFor(
+        `the switch drawn ${value}`,
+        `document.querySelector('[data-topic="pc.wake"]').getAttribute('aria-checked') === '${value}'`,
+        8000,
+      );
+    await page.click('[data-topic="pc.wake"]');
+    await drawn('false');
+    await waitFor(
+      'the switch stored off',
+      async () => (await page.state()).topics['pc.wake'] === false,
+    );
+    await page.click('[data-topic="pc.wake"]');
+    await drawn('true');
+    await waitFor(
+      'the switch stored on',
+      async () => (await page.state()).topics['pc.wake'] === true,
+    );
+    ok('a switch inside a kind is switched off and on again from the screen');
+    // Two taps right after each other end where they started: off, then on again.
+    await page.eval(`(() => { const row = () => document.querySelector('[data-topic="pc.power"]');
+      row().click(); row().click(); })()`);
+    await sleep(1500);
+    check(
+      'two quick taps are two changes, in their order',
+      (await page.state()).topics['pc.power'] === true &&
+        (await page.eval(
+          `document.querySelector('[data-topic="pc.power"]').getAttribute('aria-checked')`,
+        )) === 'true',
+    );
+    // A number typed into its field (the check above set it to 1).
+    await page.eval(`(() => { const el = document.querySelector('[data-option="ending.minutes"]');
+      el.focus(); el.value = '5'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await waitFor('the minutes', async () => (await page.state()).options['ending.minutes'] === 5);
+    ok('"minutes before the end" is typed into its field and stored');
+    await page.eval(`(() => { const el = document.querySelector('[data-option="ending.minutes"]');
+      el.focus(); el.value = '0'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await sleep(800);
+    check(
+      'a value that makes no sense is not stored, and the field is marked',
+      (await page.state()).options['ending.minutes'] === 5 &&
+        (await page.eval(
+          `document.querySelector('[data-option="ending.minutes"]').parentNode.className.includes('opt--bad')`,
+        )),
+    );
+    await page.eval(
+      `document.querySelector('[data-kind="power"]').scrollIntoView({ block: 'start' })`,
+    );
+    await sleep(600);
+    screenshot('settings-power');
+    await page.eval(`document.getElementById('settings-quiet').scrollIntoView({ block: 'start' })`);
+    await sleep(600);
+    screenshot('settings-quiet');
+  });
+
+  await step('PCs coming on', async () => {
+    await commands['pc-on'](1);
+    const first = await expectNotification(
+      'a PC that comes on is a notification of the new kind',
+      (n) => n.channel === 'power' && n.title === 'PC 01 u ndez',
+    );
+    await commands['pc-on'](2);
+    await commands['pc-on'](3);
+    const grown = await expectNotification(
+      'the ones right behind it make the same notification grow',
+      (n) => n.title === 'U ndezën 3 PC',
+    );
+    const cameOn = () => notifications().filter((n) => /u ndez$|^U ndezën/.test(n.title));
+    const about = await waitFor(
+      'one notification',
+      () => (cameOn().length === 1 ? cameOn() : null),
+      6000,
+      500,
+    ).catch(cameOn);
+    check(
+      '…one notification in the place of the first, not three',
+      first && grown && grown.key === first.key && about.length === 1,
+      () => about.map((n) => `${n.key} [${n.channel}] ${n.title}`).join('\n'),
+    );
+    // "Ndiz të gjitha" in the Admin. The server tells the phone nothing at that moment: the app
+    // reads who did it from the log when the first woken PC reports in (or at its next look at
+    // the log: a minute at most while the phone is awake). So the woken PC comes on, as it would.
+    await commands['pc-wake-all']();
+    await commands['pc-on'](5);
+    await expectNotification(
+      '"Ndiz të gjitha" in the Admin: who did it, and how many PCs',
+      (n) =>
+        n.channel === 'power' && /^Pronari Test i ndezi të gjitha PC-të \(\d+\)$/.test(n.title),
+      20_000,
+    );
+    await expectNotification(
+      '…and the PC it woke joins the ones that came on',
+      (n) => n.channel === 'power' && n.title === 'U ndezën 4 PC',
+      15_000,
+    );
+    shell('cmd statusbar expand-notifications');
+    await sleep(1500);
+    screenshot('shade-pcs');
+    shell('cmd statusbar collapse');
+    await sleep(500);
+    allPcsOff();
+  });
+
+  await step('quiet hours', async () => {
+    const set = await page.bridge('setOptions', {
+      options: { 'quiet.on': true, 'quiet.from': phoneClock(-60), 'quiet.to': phoneClock(60) },
+    });
+    check('the quiet hours are set around now', set.ok && set.data.options['quiet.on'] === true);
+    const before = new Set(notifications().map((n) => n.key));
+    await commands.sale();
+    const hushed = await expectNotification(
+      'a sale during the quiet hours is still shown',
+      (n) => !before.has(n.key) && / shiti /.test(n.title),
+    );
+    check(
+      '…through the silent channel, still as a sale',
+      hushed?.channel === 'quiet' && /\|sales\|/.test(hushed?.key ?? ''),
+      () => JSON.stringify(hushed),
+    );
+    await page.bridge('setOptions', { options: { 'quiet.on': false } });
+    await saleArrives('with the quiet hours over, a sale rings again');
+  });
+
   section('The sign-in ends on the server');
   await step('ended', async () => {
     await setUserActive(false);
@@ -987,6 +1232,7 @@ try {
   fail('the check itself', e.stack ?? String(e));
   screenshot('failure');
 } finally {
+  allPcsOff();
   page?.close();
   try {
     fs.writeFileSync(

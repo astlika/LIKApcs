@@ -16,15 +16,17 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.likapcs.live.core.Engine
+import com.likapcs.live.core.WakePlan
 
 /**
  * Keeps the link to the LIKApcs server open while the app is closed and the screen is off.
  *
  * A foreground service ("special use": a connection to the owner's own server that delivers each
  * sale as it happens) with a permanent notification that doubles as the day's summary. Nothing
- * here holds the processor awake: the phone sleeps, and three things wake the engine up —
- * a message from the server on the open connection, a change of network, and an alarm every
- * few minutes that checks the link and reads anything the server did not push.
+ * here holds the processor awake: the phone sleeps, and four things wake the engine up —
+ * a message from the server on the open connection, a change of network, an alarm every few
+ * minutes that checks the link and reads anything the server did not push, and the engine's own
+ * appointments with the clock (a session about to end, the summary of the day).
  */
 class LiveService : Service() {
     private val live: LiveApp get() = application as LiveApp
@@ -126,9 +128,14 @@ class LiveService : Service() {
     }
 }
 
-/** The periodic wake-up: one alarm at a time, each one sets the next. */
+/**
+ * The wake-ups. A periodic one: one alarm at a time, each one sets the next. And the engine's
+ * appointment with the clock: one moment at a time, set and moved by the engine.
+ */
 object Alarms {
     private const val ACTION = "com.likapcs.live.WAKE"
+    const val ACTION_CLOCK = "com.likapcs.live.CLOCK"
+    const val EXTRA_AT = "at"
     private const val EVERY_MS = 3 * 60_000L
 
     /** After half an hour without the server (the owner is away from the shop's network): less often. */
@@ -150,10 +157,51 @@ object Alarms {
 
     fun cancel(context: Context) {
         try {
-            (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pending(context))
+            val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            manager.cancel(pending(context))
+            manager.cancel(clock(context, 0))
         } catch (e: Exception) {
             // nothing was set
         }
+    }
+
+    /**
+     * The engine's appointment with the clock (`Host.wakeAt`): wake it at `epochMs`, also while
+     * the phone sleeps. 0 takes the appointment back.
+     *
+     * To the minute when the phone allows exact alarms — which it does for an app that may run
+     * in the background, the question this app asks in its setup; no further permission is asked
+     * for. Otherwise the phone may deliver an alarm late by up to three quarters of the wait, so
+     * the wait is taken in steps (`WakePlan`), each short enough that even a late one is not past
+     * the moment.
+     */
+    fun at(context: Context, epochMs: Long) {
+        try {
+            val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (epochMs <= 0) {
+                manager.cancel(clock(context, 0))
+                return
+            }
+            val operation = clock(context, epochMs)
+            if (Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) {
+                try {
+                    manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMs, operation)
+                    return
+                } catch (e: SecurityException) {
+                    // The allowance went away between the question and the call.
+                }
+            }
+            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, WakePlan.step(System.currentTimeMillis(), epochMs), operation)
+        } catch (e: Exception) {
+            Log.w(Notifier.TAG, "clock alarm not set: ${e.message}")
+        }
+    }
+
+    /** A clock alarm went off. True: it was an early step, and the next one is set. */
+    fun onward(context: Context, target: Long): Boolean {
+        if (!WakePlan.early(System.currentTimeMillis(), target)) return false
+        at(context, target)
+        return true
     }
 
     private fun pending(context: Context): PendingIntent = PendingIntent.getBroadcast(
@@ -161,25 +209,42 @@ object Alarms {
         Intent(context, WakeReceiver::class.java).setAction(ACTION),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+
+    /** The one clock alarm: setting it again replaces it, whatever moment it carried. */
+    private fun clock(context: Context, epochMs: Long): PendingIntent = PendingIntent.getBroadcast(
+        context, 2,
+        Intent(context, WakeReceiver::class.java).setAction(ACTION_CLOCK).putExtra(EXTRA_AT, epochMs),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
 }
 
-/** The alarm: check the link, read what was missed, and bring the service back if the phone stopped it. */
+/**
+ * An alarm. The periodic one: check the link, read what was missed, and bring the service back if
+ * the phone stopped it. The clock one: say what is due now (and the same care for the service).
+ */
 class WakeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val live = context.applicationContext as LiveApp
         if (!live.engine.signedIn()) return
+        val clock = intent?.action == Alarms.ACTION_CLOCK
+        // An early step towards a moment the phone would not promise to keep: only the next step.
+        if (clock && Alarms.onward(context, intent?.getLongExtra(Alarms.EXTRA_AT, 0) ?: 0)) return
+        val reason = if (clock) Engine.WAKE_CLOCK else Engine.WAKE_ALARM
         live.notifier.stayAwake(15_000)
         Alarms.schedule(context)
         if (LiveService.running) {
-            live.engine.wake(Engine.WAKE_ALARM)
+            live.engine.wake(reason)
             return
         }
-        if (LiveService.start(context)) return
+        val started = LiveService.start(context)
+        // The engine is started here as well (the service does the same a moment later): what is
+        // due by the clock is said at once, with or without the server.
+        live.engine.start()
+        live.engine.wake(reason)
+        if (started) return
         // The phone does not let the service start from the background. Use the receiver's own
         // few seconds instead: connect, announce what was missed, and try again at the next alarm.
         val pending = goAsync()
-        live.engine.start()
-        live.engine.wake(Engine.WAKE_ALARM)
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 pending.finish()

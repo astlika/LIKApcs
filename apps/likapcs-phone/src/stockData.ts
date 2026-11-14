@@ -76,6 +76,15 @@ export function searchProducts(list: ProductSummary[], q: string): ProductSummar
   return list.filter((p) => matchesFuzzy(p, term));
 }
 
+// ── Internet access (0.34.0) ─────────────────────────────────────────────────
+
+/**
+ * A Wi-Fi package: its stock is its unused codes (loaded in the Admin), and each unit sold hands
+ * out one code. A product saved before 0.34.0 has no `kind` and is an ordinary product.
+ */
+export const isInternetAccess = (p: Pick<ProductSummary, 'kind'>): boolean =>
+  p.kind === 'internet_access';
+
 // ── Sales of the last 30 days ───────────────────────────────────────────────
 
 /** Units sold per product in the movements given (only `sale` rows, returns are not counted). */

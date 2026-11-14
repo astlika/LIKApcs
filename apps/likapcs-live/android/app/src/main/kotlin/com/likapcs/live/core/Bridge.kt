@@ -111,6 +111,12 @@ class Bridge(
             putJsonObject("categories") {
                 for (c in Category.entries) put(c.id, engine.enabled(c))
             }
+            // 1.1: the finer switches inside the kinds, and the numbers and hours some of them use.
+            put("topics", engine.options.topicsJson())
+            put("options", engine.options.toJson())
+            // The day's hours follow this clock; the quiet hours follow the phone's.
+            put("shopZone", engine.shopZone().id)
+            put("phoneZone", java.time.ZoneId.systemDefault().id)
             putJsonObject("setup") {
                 put("notifications", shell.notifications())
                 put("battery", shell.batteryFree())
@@ -173,6 +179,16 @@ class Bridge(
             }
             throw Failure("no_permission", "the account has no live.view permission")
         }
+
+        // 4. The shop's time zone: the day and its hours (summary, debts, working hours) are the
+        //    shop's, wherever this phone is. Stored before the reset, which counts from "today".
+        val zone = try {
+            http.request("GET", "$server/api/v1/settings/public", connectTimeoutMs = 4_000, readTimeoutMs = 6_000)
+                .takeIf { it.ok }?.json().str("locale.timezone")?.takeIf { Engine.validZone(it) }
+        } catch (e: IOException) {
+            null
+        }
+        store.put(Keys.ZONE, zone)
 
         engine.resetForSignIn(baseline)
         store.put(Keys.SERVER, server)
@@ -251,7 +267,15 @@ class Bridge(
             val on = (value as? JsonPrimitive)?.content == "true"
             store.put(Keys.category(category), if (on) "1" else "0")
         }
-        engine.optionsChanged()
+        args.obj("topics")?.forEach { (id, value) ->
+            val topic = Topic.of(id) ?: return@forEach
+            engine.options.set(topic, (value as? JsonPrimitive)?.content == "true")
+        }
+        val before = engine.options.toJson()
+        val refused = Options.applyAll(engine.options, args.obj("options"))
+        val after = engine.options.toJson()
+        engine.optionsChanged(listOf(Options.SUMMARY_AT, Options.DEBTS_AT).filter { before[it] != after[it] })
+        if (refused.isNotEmpty()) throw Failure("bad_option", refused.joinToString(", "))
         return state()
     }
 

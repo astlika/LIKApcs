@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PricingTerms } from './billing.js';
 import type { ClientCustomerInfo } from './dto.js';
+import type { ClientVoiceConfig } from './voice.js';
 import type {
   AdTheme,
   ClientAdsCaption,
@@ -154,7 +155,10 @@ export type TasksEndedPayload = z.infer<typeof tasksEndedPayloadSchema>;
 /**
  * The PC's own answer to "can the customer see the countdown?" (0.17.1). `ok` = the widget window
  * is visible, on-screen and not covered by an exclusive-fullscreen app; `detail` says what is
- * wrong otherwise, so the desk sees the cause without walking to the PC.
+ * wrong otherwise, so the desk sees the cause without walking to the PC. Causes the desk names
+ * (0.35.1): `hidden-for-game` (the owner's "hide in games" setting hid it) and
+ * `fullscreen-app:<title>` (a game in Direct3D fullscreen may cover it); with `ok`,
+ * `over-game:<title>` says the widget lies on a borderless game.
  */
 export const widgetReportPayloadSchema = z.object({
   ok: z.boolean(),
@@ -358,6 +362,11 @@ export interface ClientDisplayConfig {
   widgetHideInGames: boolean;
   /** The Windows keys are blocked while a Steam game runs in front. */
   blockWinInGames: boolean;
+  /**
+   * 0.35.0: spoken time warnings ("Edhe 5 minuta"). Absent from a server older than 0.35.0: the
+   * PC then says nothing.
+   */
+  voice?: ClientVoiceConfig;
   lockTitle: ClientLockTitle;
   currency: string;
   /** Pre-filled username of the staff login that a left click on the locked screen opens. */

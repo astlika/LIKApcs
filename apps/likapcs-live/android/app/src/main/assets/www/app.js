@@ -227,8 +227,69 @@
     'Rimbursime, anulime, ndryshime çmimi, minuta falas, hyrje të dështuara.':
       'Refunds, voids, price changes, free minutes, failed sign-ins.',
     Kompjuterët: 'The PCs',
-    'Sesione, kërkesa dhe porosi nga PC-të, rezervime.':
+    'Seanca, kërkesa dhe porosi nga PC-të, rezervime.':
       'Sessions, requests and orders from the PCs, reservations.',
+    'Zbritje në shitje': 'A discount in a sale',
+    'Kush e dha dhe sa.': 'Who gave it and how much.',
+    'Shitje nën kosto': 'A sale below cost',
+    'Kur një shitje del me humbje.': 'When a sale ends in a loss.',
+    'PC e fikur gjatë seancës': 'A PC that goes off during a session',
+    'Kur një PC shkëputet ndërsa klienti po luan.':
+      'When a PC drops off while a customer is playing.',
+    'Shitje e madhe': 'A big sale',
+    nga: 'from',
+    'Asnjë shitje prej kohësh': 'No sale for a while',
+    pas: 'after',
+    'në orarin': 'in the hours',
+    deri: 'to',
+    'Seanca që nisin ose zgjaten': 'Sessions that start or are extended',
+    'Kush e nisi, cilin PC, sa minuta dhe sa para.':
+      'Who started it, which PC, how many minutes and how much money.',
+    'Koha po mbaron': 'Time is running out',
+    'min para fundit': 'min before the end',
+    'Seanca që mbarojnë': 'Sessions that end',
+    'Kur mbaron koha ose kur e mbyll punonjësi.': 'When the time is up or staff close it.',
+    'Rezervim që fillon së shpejti': 'A reservation that starts soon',
+    'Në kohën e kujtesës që ka rezervimi.': 'At the reminder time set for the reservation.',
+    'Ndezja dhe fikja e PC-ve': 'PCs on and off',
+    'Kush i ndezi, cilat u ndezën ose u fikën.': 'Who switched them on, which came on or went off.',
+    'Ndezje nga Admini': 'Switched on from the Admin',
+    '“Ndiz” dhe “Ndiz të gjitha”: kush dhe cilat PC.':
+      '“Switch on” and “Switch all on”: who and which PCs.',
+    'PC që ndizen dhe fiken': 'PCs coming on and going off',
+    'Kur një PC lidhet me serverin ose shkëputet.':
+      'When a PC connects to the server or drops off.',
+    'Fikje dhe rinisje nga Admini': 'Shut-downs and restarts from the Admin',
+    'Kush e fiku ose e rinisi cilin PC.': 'Who shut down or restarted which PC.',
+    Dita: 'The day',
+    'Qarkullimi, përmbledhja dhe borxhet e ditës.': 'The day’s turnover, summary and debts.',
+    'Qarkullimi kalon një shumë': 'The turnover passes an amount',
+    çdo: 'every',
+    'Përmbledhja e ditës': 'The summary of the day',
+    'në orën': 'at',
+    'Borxhet që skadojnë sot': 'Debts due today',
+    'Orët e qeta': 'Quiet hours',
+    'Pa zë në orët e qeta': 'Silent during the quiet hours',
+    'Njoftimet vijnë, por pa tingull dhe pa dridhje.':
+      'Notifications arrive, but without sound or vibration.',
+    'nga ora': 'from',
+    'deri në': 'until',
+    'Përveç gjërave për t’u parë': 'Except things to look at',
+    'Rimbursime, anulime, PC e fikur gjatë seancës: këto bien edhe në orët e qeta.':
+      'Refunds, voids, a PC going off during a session: these ring in the quiet hours too.',
+    'Mbi një shumë që e caktoni vetë.': 'Above an amount you set.',
+    'Kur kalon një kohë pa asnjë shitje, brenda orarit të punës.':
+      'When some time passes without a sale, inside the working hours.',
+    'Pak para se të mbarojë koha e një seance.': 'Shortly before a session’s time is up.',
+    'Sa herë që qarkullimi i ditës kalon shumën tjetër.':
+      'Each time the day’s turnover passes the next amount.',
+    'Qarkullimi, fitimi dhe kush sa shiti, një herë në ditë.':
+      'Turnover, profit and who sold how much, once a day.',
+    'Kush duhet të paguajë sot dhe sa.': 'Who has to pay today and how much.',
+    'Orët e qeta janë sipas orës së telefonit.': 'The quiet hours follow the phone’s clock.',
+    'Orët e përmbledhjes, të borxheve dhe orari i punës janë sipas orës së lokalit.':
+      'The hours of the summary, of the debts and the working hours follow the shop’s clock.',
+    Ndezje: 'On / off',
     Paratë: 'Money',
     'Arka, shpenzimet, blerjet, borxhet.': 'The drawer, expenses, purchases, debts.',
     'Stoku dhe çmimet': 'Stock and prices',
@@ -351,6 +412,10 @@
     refresh:
       'M20 11a8 8 0 0 0-14.5-4L4 8.5M4 4v4.5h4.5M4 13a8 8 0 0 0 14.5 4l1.5-1.5M20 20v-4.5h-4.5',
     bell: 'M6 16.5V11a6 6 0 1 1 12 0v5.5l1.5 2h-15l1.5-2ZM10 21h4',
+    power: 'M12 3v9M6.4 7.4a8 8 0 1 0 11.2 0',
+    calendar:
+      'M7 3v3M17 3v3M4 9.5h16M5.5 5h13A1.5 1.5 0 0 1 20 6.5v12a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-12A1.5 1.5 0 0 1 5.5 5Z',
+    moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z',
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg';
@@ -396,10 +461,12 @@
     sales: { icon: 'cart', label: 'Shitje' },
     alerts: { icon: 'alert', label: 'Vëmendje' },
     pcs: { icon: 'pc', label: 'PC' },
+    power: { icon: 'power', label: 'Ndezje' },
     money: { icon: 'coins', label: 'Para' },
     stock: { icon: 'box', label: 'Stoku' },
     people: { icon: 'user', label: 'Njerëz' },
     system: { icon: 'wrench', label: 'Sistemi' },
+    day: { icon: 'calendar', label: 'Dita' },
     connection: { icon: 'link', label: 'Lidhja' },
   };
 
@@ -802,6 +869,12 @@
       activity: h('section', { class: 'view', id: 'view-activity' }),
       settings: h('section', { class: 'view', id: 'view-settings' }),
     };
+    // A number or an hour in Settings was left: draw what changed meanwhile.
+    ui.views.settings.addEventListener('focusout', () =>
+      setTimeout(() => {
+        if (settingsStale) renderSettings();
+      }, 0),
+    );
     ui.liveSetup = h('div');
     ui.liveBody = h('div');
     fill(ui.views.live, ui.liveSetup, ui.liveBody);
@@ -1390,7 +1463,8 @@
     ui.fresh.hidden = !(tab === 'activity' && activity.stale);
     const filters = [['all', 'Të gjitha']].concat(
       Object.keys(CATEGORY)
-        .filter((k) => k !== 'connection')
+        // Not in the server's log: the link is this phone's own, the day's messages come from the clock.
+        .filter((k) => k !== 'connection' && k !== 'day')
         .map((k) => [k, CATEGORY[k].label]),
     );
     const bar = h(
@@ -1513,20 +1587,187 @@
   }
 
   // ─── Settings ──────────────────────────────────────────────────────────────────────────
+  // A kind: [id, title, text, topics]. A topic (a finer switch inside its kind):
+  // [id, title, text, fields]. A field (a number or an hour the topic uses):
+  // [option, 'min' | 'eur' | 'time', word before, word after].
   const KINDS = [
     ['sales', 'Çdo shitje', 'Kush shiti, çfarë dhe sa.'],
     [
       'alerts',
       'Gjëra për t’u parë',
       'Rimbursime, anulime, ndryshime çmimi, minuta falas, hyrje të dështuara.',
+      [
+        ['sale.discount', 'Zbritje në shitje', 'Kush e dha dhe sa.'],
+        ['sale.below_cost', 'Shitje nën kosto', 'Kur një shitje del me humbje.'],
+        ['pc.dropped', 'PC e fikur gjatë seancës', 'Kur një PC shkëputet ndërsa klienti po luan.'],
+        [
+          'sale.big',
+          'Shitje e madhe',
+          'Mbi një shumë që e caktoni vetë.',
+          [['big.cents', 'eur', 'nga', '€']],
+        ],
+        [
+          'sales.idle',
+          'Asnjë shitje prej kohësh',
+          'Kur kalon një kohë pa asnjë shitje, brenda orarit të punës.',
+          [
+            ['idle.minutes', 'min', 'pas', 'min'],
+            ['work.from', 'time', 'në orarin'],
+            ['work.to', 'time', 'deri'],
+          ],
+        ],
+      ],
     ],
-    ['pcs', 'Kompjuterët', 'Sesione, kërkesa dhe porosi nga PC-të, rezervime.'],
+    [
+      'pcs',
+      'Kompjuterët',
+      'Seanca, kërkesa dhe porosi nga PC-të, rezervime.',
+      [
+        [
+          'pc.session',
+          'Seanca që nisin ose zgjaten',
+          'Kush e nisi, cilin PC, sa minuta dhe sa para.',
+        ],
+        [
+          'pc.ending',
+          'Koha po mbaron',
+          'Pak para se të mbarojë koha e një seance.',
+          [['ending.minutes', 'min', null, 'min para fundit']],
+        ],
+        ['pc.ended', 'Seanca që mbarojnë', 'Kur mbaron koha ose kur e mbyll punonjësi.'],
+        [
+          'reservation.soon',
+          'Rezervim që fillon së shpejti',
+          'Në kohën e kujtesës që ka rezervimi.',
+        ],
+      ],
+    ],
+    [
+      'power',
+      'Ndezja dhe fikja e PC-ve',
+      'Kush i ndezi, cilat u ndezën ose u fikën.',
+      [
+        ['pc.wake', 'Ndezje nga Admini', '“Ndiz” dhe “Ndiz të gjitha”: kush dhe cilat PC.'],
+        ['pc.power', 'PC që ndizen dhe fiken', 'Kur një PC lidhet me serverin ose shkëputet.'],
+        ['pc.command', 'Fikje dhe rinisje nga Admini', 'Kush e fiku ose e rinisi cilin PC.'],
+      ],
+    ],
     ['money', 'Paratë', 'Arka, shpenzimet, blerjet, borxhet.'],
     ['stock', 'Stoku dhe çmimet', 'Stok i ulët, rregullime stoku, produkte.'],
     ['people', 'Punonjësit', 'Kush u kyç, llogari, klientë.'],
     ['system', 'Sistemi', 'Cilësime, kopje rezervë, pajisje.'],
+    [
+      'day',
+      'Dita',
+      'Qarkullimi, përmbledhja dhe borxhet e ditës.',
+      [
+        [
+          'turnover.step',
+          'Qarkullimi kalon një shumë',
+          'Sa herë që qarkullimi i ditës kalon shumën tjetër.',
+          [['step.cents', 'eur', 'çdo', '€']],
+        ],
+        [
+          'day.summary',
+          'Përmbledhja e ditës',
+          'Qarkullimi, fitimi dhe kush sa shiti, një herë në ditë.',
+          [['summary.at', 'time', 'në orën']],
+        ],
+        [
+          'debt.due',
+          'Borxhet që skadojnë sot',
+          'Kush duhet të paguajë sot dhe sa.',
+          [['debts.at', 'time', 'në orën']],
+        ],
+      ],
+    ],
     ['connection', 'Lidhja me serverin', 'Kur lidhja mungon më shumë se 5 minuta.'],
   ];
+
+  /** True while a number or an hour in Settings is being typed: the page is not redrawn under it. */
+  let settingsStale = false;
+
+  // Changes of settings reach the engine one after the other, in the order they were made (the
+  // app answers its calls on several threads, so two sent at once could overtake each other).
+  let optionChain = Promise.resolve();
+  let optionsWaiting = 0;
+  function sendOptions(args) {
+    optionsWaiting++;
+    const answer = optionChain.then(() => call('setOptions', args));
+    optionChain = answer.then(() => {
+      optionsWaiting--;
+    });
+    return answer;
+  }
+  /** Options the engine refused a moment ago (name → true): their fields are marked. */
+  const refusedOptions = {};
+
+  /** What a field shows for the stored value (cents as euros). */
+  function optionText(type, value) {
+    if (value === null || value === undefined) return '';
+    if (type === 'eur') {
+      const cents = Number(value);
+      return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
+    }
+    return String(value);
+  }
+
+  /** What is sent for what was typed; null when it is not a number or an hour. */
+  function optionValue(type, text) {
+    const raw = String(text).trim().replace(',', '.');
+    if (type === 'time') return /^\d{1,2}:\d{2}$/.test(raw) ? raw : null;
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) return null;
+    if (type === 'eur') return Math.round(parseFloat(raw) * 100);
+    return /^\d+$/.test(raw) ? parseInt(raw, 10) : null;
+  }
+
+  /** The fields of a topic (or of the quiet hours): each stores its value when it is left. */
+  function optionFields(fields, save) {
+    const values = (state && state.options) || {};
+    return h(
+      'div',
+      { class: 'opts' },
+      fields.map(([name, type, before, after]) =>
+        h(
+          'label',
+          { class: 'opt' + (refusedOptions[name] ? ' opt--bad' : '') },
+          before ? h('span', null, t(before)) : null,
+          h('input', {
+            class: 'opt__input' + (type === 'time' ? ' opt__input--time' : ''),
+            type: type === 'time' ? 'time' : 'text',
+            inputmode: type === 'time' ? null : type === 'eur' ? 'decimal' : 'numeric',
+            autocomplete: 'off',
+            'data-option': name,
+            value: optionText(type, values[name]),
+            onfocus: (e) => {
+              // A new try: the mark of the last refused value goes.
+              delete refusedOptions[name];
+              e.target.parentNode.classList.remove('opt--bad');
+            },
+            onkeydown: (e) => {
+              if (e.key === 'Enter') e.target.blur();
+            },
+            onchange: (e) => {
+              const value = optionValue(type, e.target.value);
+              // Left first, so the page may be drawn again with what the engine stored.
+              e.target.blur();
+              if (value === null) {
+                refusedOptions[name] = true;
+                settingsStale = false;
+                renderSettings();
+                return;
+              }
+              delete refusedOptions[name];
+              const patch = {};
+              patch[name] = value;
+              save({ options: patch }, name);
+            },
+          }),
+          after ? h('span', null, t(after)) : null,
+        ),
+      ),
+    );
+  }
 
   function footText() {
     const d = (state && state.device) || {};
@@ -1555,6 +1796,13 @@
   function renderSettings() {
     const view = ui.views && ui.views.settings;
     if (!view) return;
+    const typing = document.activeElement;
+    if (typing && typing.tagName === 'INPUT' && view.contains(typing)) {
+      // A number or an hour is being typed: drawn again when the field is left.
+      settingsStale = true;
+      return;
+    }
+    settingsStale = false;
     const c = state.connection;
     const status =
       c === 'online'
@@ -1570,11 +1818,57 @@
       h('div', { class: 'kv' }, h('span', null, label), h('span', null, value || '—'));
     const user = state.user || {};
 
-    const setOption = (args) =>
-      call('setOptions', args).then((r) => {
-        if (r.ok) applyState(r.data);
+    const setOption = (args, name) =>
+      sendOptions(args).then((r) => {
+        if (r.ok) {
+          // An answer that a newer change has already overtaken is not drawn.
+          if (optionsWaiting === 0) applyState(r.data);
+        } else if (name) {
+          // Out of range: the field is marked and shows the stored value again.
+          refusedOptions[name] = true;
+          renderSettings();
+        }
       });
     const armed = Date.now() < signOutArmed;
+    const topics = state.topics || {};
+    const options = state.options || {};
+
+    /** A switch moves on the screen at once; the engine's answer (what it stored) follows. */
+    const flip = (group, key, on) => {
+      const values = Object.assign({}, state[group]);
+      values[key] = on;
+      const next = Object.assign({}, state);
+      next[group] = values;
+      state = next;
+      renderSettings();
+      const patch = {};
+      patch[key] = on;
+      const args = {};
+      args[group] = patch;
+      setOption(args);
+    };
+
+    /** A switch with a title and a line under it; `sub` for the finer ones inside a kind. */
+    const switchRow = (attrs, title, text, isOn, toggle, sub) =>
+      h(
+        'button',
+        Object.assign(
+          {
+            class: 'switch-row' + (sub ? ' switch-row--sub' : ''),
+            role: 'switch',
+            'aria-checked': String(isOn),
+            onclick: toggle,
+          },
+          attrs,
+        ),
+        h(
+          'span',
+          { class: 'switch-row__text' },
+          h('strong', null, t(title)),
+          text ? h('span', null, t(text)) : null,
+        ),
+        h('span', { class: 'switch' + (isOn ? ' switch--on' : '') }),
+      );
 
     const keep = view.scrollTop;
     fill(
@@ -1629,29 +1923,35 @@
         'section',
         { class: 'card', id: 'settings-kinds' },
         h('h2', { class: 'card__title' }, t('Për çfarë të njoftohem')),
-        KINDS.map(([id, title, text]) => {
+        KINDS.map(([id, title, text, kindTopics]) => {
           const isOn = !state.categories || state.categories[id] !== false;
-          return h(
-            'button',
-            {
-              class: 'switch-row',
-              role: 'switch',
-              'aria-checked': String(isOn),
-              'data-kind': id,
-              onclick: () => {
-                const patch = {};
-                patch[id] = !isOn;
-                setOption({ categories: patch });
-              },
-            },
-            h(
-              'span',
-              { class: 'switch-row__text' },
-              h('strong', null, t(title)),
-              h('span', null, t(text)),
-            ),
-            h('span', { class: 'switch' + (isOn ? ' switch--on' : '') }),
+          // (What is on is looked up when the finger lands, not when the row was drawn.)
+          const row = switchRow({ 'data-kind': id }, title, text, isOn, () =>
+            flip('categories', id, (state.categories || {})[id] === false),
           );
+          // The finer switches are shown while their kind is on.
+          if (!isOn || !kindTopics) return row;
+          return [
+            row,
+            h(
+              'div',
+              { class: 'topics' },
+              kindTopics.map(([topic, topicTitle, topicText, fields]) => {
+                const topicOn = topics[topic] !== false;
+                return [
+                  switchRow(
+                    { 'data-topic': topic },
+                    topicTitle,
+                    topicText,
+                    topicOn,
+                    () => flip('topics', topic, (state.topics || {})[topic] === false),
+                    true,
+                  ),
+                  topicOn && fields ? optionFields(fields, setOption) : null,
+                ];
+              }),
+            ),
+          ];
         }),
         h(
           'p',
@@ -1660,6 +1960,17 @@
             'Tingulli dhe mënyra si shfaqet secili lloj ndryshohen te cilësimet e njoftimeve të telefonit.',
           ),
         ),
+        // Said only when it makes a difference: the phone is in another time zone than the shop.
+        state.shopZone && state.phoneZone && state.shopZone !== state.phoneZone
+          ? h(
+              'p',
+              { class: 'hint', id: 'settings-zone', style: 'margin:6px 0 0' },
+              t('Orët e përmbledhjes, të borxheve dhe orari i punës janë sipas orës së lokalit.') +
+                ' (' +
+                state.shopZone +
+                ')',
+            )
+          : null,
         h(
           'div',
           { class: 'btn-row' },
@@ -1675,6 +1986,46 @@
             t('Hap cilësimet e njoftimeve'),
           ),
         ),
+      ),
+
+      h(
+        'section',
+        { class: 'card', id: 'settings-quiet' },
+        h('h2', { class: 'card__title' }, t('Orët e qeta')),
+        switchRow(
+          { 'data-option': 'quiet.on' },
+          'Pa zë në orët e qeta',
+          'Njoftimet vijnë, por pa tingull dhe pa dridhje.',
+          options['quiet.on'] === true,
+          () => flip('options', 'quiet.on', (state.options || {})['quiet.on'] !== true),
+        ),
+        options['quiet.on'] === true
+          ? [
+              optionFields(
+                [
+                  ['quiet.from', 'time', 'nga ora'],
+                  ['quiet.to', 'time', 'deri në'],
+                ],
+                setOption,
+              ),
+              switchRow(
+                { 'data-option': 'quiet.alerts' },
+                'Përveç gjërave për t’u parë',
+                'Rimbursime, anulime, PC e fikur gjatë seancës: këto bien edhe në orët e qeta.',
+                options['quiet.alerts'] === true,
+                () =>
+                  flip('options', 'quiet.alerts', (state.options || {})['quiet.alerts'] !== true),
+                true,
+              ),
+            ]
+          : null,
+        state.shopZone && state.phoneZone && state.shopZone !== state.phoneZone
+          ? h(
+              'p',
+              { class: 'hint', id: 'settings-quiet-zone', style: 'margin:10px 0 0' },
+              t('Orët e qeta janë sipas orës së telefonit.'),
+            )
+          : null,
       ),
 
       h(

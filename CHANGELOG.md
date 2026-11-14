@@ -1,8 +1,50 @@
 ## [Unreleased]
 
+## [0.35.1] - 2026-11-14
+
+### Fixed
+
+- **Client: the countdown widget stays on the screen during a game.** Two things took it away. First, "Fshih gjatë lojës" (Settings › Client screen) was on in every installation older than 0.35.0 and hid the widget on purpose in each fullscreen game; migration `0058_widget_stays_in_games.sql` turns the stored value off once — the switch is still there for whoever wants the widget hidden. Second, a game in fullscreen makes its own window "always on top" and, being opened after the widget, lands above it; the widget was made topmost only when the session started and then stayed behind the game. The PC now checks once a second whether the program in front lies above the widget and lifts the widget back to the top, without activating it, so the game keeps its focus and its cursor.
+- What Windows does not allow: a game that takes the screen for itself alone (exclusive fullscreen with "fullscreen optimizations" switched off) shows no window of any other program. There the game's own display mode "Fullscreen Windowed" keeps the widget visible, and the spoken warnings of 0.35.0 reach the customer either way.
+- Admin › Stations: the widget line of a PC says what is true. It read "Widget-i duket" while the setting had hidden the widget, and "Widget-i s'shfaqet në PC" on every borderless game although the widget was on it. Now: "Widget-i i fshehur gjatë lojës" (the setting), "Widget-i mund të mos duket" (Windows reports the game as Direct3D fullscreen; the tooltip names the game and the way out) or "Widget-i duket". The PC reports again when the cause changes, not only when visible turns to hidden.
+
+## [0.35.0] - 2026-11-14
+
 ### Added
 
+- **Voice on the PCs** — the customer PC now says the time warnings aloud: "Edhe pesë minuta", "Edhe një minutë" and, when the time runs out, "Koha juaj mbaroi". A game in exclusive fullscreen hides the countdown widget (Windows lets no other program draw over it); the voice is heard in every game and at every resolution. Settings › Client screen › "Zëri në PC": on or off, the language of the voice (Albanian or English), the volume, a short chime before the voice. Built-in voices exist for 15, 10, 5 and 1 minutes and for the end of the time; a warning at another minute plays the chime. The announcements follow the expiry warnings (Settings › Stations, default 5 and 1 minutes).
+- Voice on the PCs: the owner's own recording for any announcement — "Ngarko audio" on its row (MP3, WAV, OGG or M4A, up to 2 MB and 20 seconds). It is stored on the server, reaches every PC at once and is played instead of the built-in voice; if it cannot be played, the built-in voice speaks. "Provo" plays an announcement on the Admin computer the way a PC plays it.
+- API: `PUT /client/voice/:slot` (raw audio body, `?name=`), `DELETE /client/voice/:slot`, public `GET /files/voice/:name`; settings `client.voice_enabled`, `client.voice_language`, `client.voice_volume`, `client.voice_chime`, `client.voice_custom`; `voice` in the display configuration the PCs receive; `announce: {minutes}` on the `message.show` of a time warning and `reason: 'expired'` on the `session.end` of a session whose time ran out.
+
+### Changed
+
+- Client: on a new installation the countdown widget is shown during games — "Fshih gjatë lojës" (Settings › Client screen) is now off by default. An existing installation keeps the value it has stored (on, unless it was turned off): turn the switch off there to show the countdown during games.
+- A time warning is sent only while its minutes are true. A mark that was passed more than half a minute ago — a session that began with less time, a resume or an extension near the end, a restart of the server — is skipped; before, "5 minutes" could be shown with 3 left.
+
+### Fixed
+
+- Admin (installed app): the app's content policy allowed pictures from the server but named no sound or video; media from the server is now allowed, which the preview of an own recording needs.
+- The Admin in the browser (`/desktop`): sound files are served as audio.
+- Client: the countdown widget keeps its corner when the screen changes under it. Its place was computed only when the session or the layout changed, so a game that switches the resolution could leave it away from its corner or outside the screen; it is now put back within a second, in the corner the owner chose.
+
+## [0.34.0] - 2026-11-13
+
+### Added
+
+- **Internet access (Wi-Fi codes) sold as a product** — Products has a second button, "Shto internet access", next to "Shto produkt". A package ("Internet 1 orë", "Internet 1 ditë" …) has a name, a price and its codes, pasted in bulk: one per line, up to 5000 at a time (spaces, commas and semicolons also separate them; list numbers and quotes are dropped; a code repeated in the paste counts once). More codes can be added to a package at any time, and unused codes can be removed again. Each unit sold at the till gives the customer the oldest unused code: it shows large on the "sale completed" dialog (with a copy button), prints on the receipt and on a reprint, stays on the sale (Sales → the sale) and is never given out again. The stock of a package is the number of its unused codes ("N kode" on the product and on the till tile), so "running low" and "out of stock" work as for any product (warning at 10 codes unless changed). The phone and tablet till show the code after the sale as well.
+- Internet access, the rules the server keeps: a code that already waits to be sold is never loaded twice (also not into another package); a code that was sold before is loaded again only when confirmed; a code is given at payment only — a parked sale takes none, and a package cannot go on a PC's bill, the PC menu or a staff purchase, cannot be bought in a purchase, cannot have its stock changed by hand and cannot be sold offline; a till that cannot show codes is refused (`409 ACCESS_CODES_NOT_SHOWN`), so an older phone app never sells a code nobody sees; a refund returns the money but the code stays sold; two tills selling at the same moment never get the same code. The codes are not written to the audit log (only how many were loaded, removed or sold).
+- API: `GET /internet-access/packages`, `POST /internet-access/check`, `POST /internet-access/load`, `GET /internet-access/codes`, `POST /internet-access/remove`; `kind` on every product and `?kind=` on `GET /products`; `accessCodes: true` on `POST /sales` and `POST /sales/:id/complete`, and `accessCodes[]` on every sale line.
+- Migration `0057_internet_access.sql`: `products.kind`, the table `internet_access_codes`, the movement types `codes_loaded` and `codes_removed`. The database itself refuses a package whose stock and unused codes differ, and any change to a sold code.
 - **likalivepcs v1 (Android)** — a new app for the owner's phone (`apps/likapcs-live`, package `com.likapcs.live`): every sale as a notification the moment it happens (who sold, what, how much, the profit), who sold how much today, and every change the server records (refunds, cancelled sessions, free minutes, expenses, cash in and out, stock, prices, sign-ins) — also while the app is closed and the screen is off. It only reads, and the server is unchanged: it uses the admin WebSocket, `GET /live/snapshot` and the audit log, with an owner or administrator account. Its APK is built, checked on an emulator and published by its own workflow on a `likalivepcs-v*` tag, as a release that is not marked "Latest". See `apps/likapcs-live/README.md`.
+- **likalivepcs 1.1.0 (Android)** — more to be told about, each with its own switch in the app's settings. The PCs: who woke which PC from the Admin ("Arta e ndezi PC 05", "… i ndezi të gjitha PC-të (12)"), a PC really coming on or going off (several in a row are one notification that grows: "U ndezën 12 PC"), shut-downs and restarts sent from the Admin, a PC that goes off during a session (an alert), a session's time running out ("PC 05: mbeten 5 min") and running out, and a reservation at its reminder time. Sessions are worded as what they are ("Arta nisi PC 05 · 60 min · 2.00 €", "… zgjati …", "… mbylli …"). Sales: a discount, a sale below cost, a sale above a set amount, no sale for a set time inside the working hours. The day: the turnover passing every set amount, a summary at a chosen hour, the debts due today. Quiet hours: notifications still arrive, without sound. The profit in a sale's message now has a discount on the whole sale taken off (the server's per-sale figure in `GET /live/snapshot` and `live.sale` adds up the lines, which do not carry that discount). The server is unchanged: PC power comes from `GET /stations` and `station.changed`, the rest from the audit log, `session.changed`, `GET /reservations`, `GET /debts` and `GET /settings/public` (the shop's time zone).
+
+### Changed
+
+- `POST /sales/:id/complete` sent again with the same `clientRequestId` answers with the sale it already completed (it used to answer `409`), so a till that lost the answer still gets the receipt and its codes.
+
+### Fixed
+
+- Backups: restoring a backup (also a transfer to another PC) failed with "Internal server error" whenever the database held a refund, a product on a PC's bill or a PC session started from PC time sold at the till — since 0.19.0. The tables reference each other in a circle and were loaded in an order that broke those references; nothing was changed by the failed restore. The references are now checked once, when every table is back; a backup with a broken reference is still refused. A backup is restored by the version with the same database schema, so take a new backup after this update.
 
 ## [0.33.4] - 2026-11-12
 

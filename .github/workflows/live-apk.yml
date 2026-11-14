@@ -213,7 +213,7 @@ jobs:
             for f in engine-check.log phone/phone-check.log; do
               [ -f "$f" ] && echo "$f: $(grep -c '  ok  ' "$f") passed, $(grep -c 'FAIL' "$f") failed"
             done
-            [ -f phone/phone-check.log ] && grep -E "notification on the phone|on the screen \(" phone/phone-check.log | sed -E 's/^ *[0-9]+s +ok +/measured: /'
+            [ -f phone/phone-check.log ] && grep -E "notification on the phone|on the screen \(|at that minute \(" phone/phone-check.log | sed -E 's/^ *[0-9]+s +ok +/measured: /'
           } > summary.txt
           { echo '### likalivepcs'; echo '```'; cat summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           note() { echo "::$1 title=$2::$(head -c 6000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; }
