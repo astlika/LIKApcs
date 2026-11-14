@@ -32,6 +32,7 @@ import {
   type SessionRequestCreate,
   type StationOrder,
   type ClientDisplayConfig,
+  VOICE_SLOT_UP,
 } from '@likapcs/shared';
 import {
   APP_VERSION,
@@ -65,6 +66,7 @@ import {
   widgetCheck,
 } from './native';
 import { RemoteStreamer } from './remote-stream';
+import { voicePlayer } from './voice';
 import { applyDesktopWallpaper } from './desktop-wallpaper';
 import {
   Clock,
@@ -1131,6 +1133,10 @@ export class Agent {
       case 'update':
         await this.selfUpdate('command');
         break;
+      case 'voice':
+        // 0.35.0: say it ("Edhe 5 minuta"); the settings decide what is played, if anything.
+        void voicePlayer.announce(this.snapshot.state.display?.voice, effect.slot);
+        break;
       case 'end_tasks': {
         // End Task (0.17.0): `taskkill` needs a moment per program; the ack already went out, so
         // the desk first sees the button pressed and then what the PC actually closed.
@@ -1551,6 +1557,9 @@ export class Agent {
     let next = state;
     if (state.session && sessionView(state.session, now).expired) {
       next = { ...state, mode: 'locked', session: null };
+      // 0.35.0: "Koha juaj mbaroi" — said here, where the PC locks itself; the server's
+      // `session.end` that follows finds no session and stays silent.
+      void voicePlayer.announce(state.display?.voice, VOICE_SLOT_UP);
       this.send({
         type: 'client.event',
         event: 'session_expired_locally',

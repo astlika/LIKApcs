@@ -70,6 +70,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
 import { reservationRoutes } from './routes/reservations.js';
 import { looksRoutes } from './routes/looks.js';
+import { voiceRoutes } from './routes/voice.js';
 import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
@@ -84,6 +85,7 @@ import { SettingsService } from './services/settings.js';
 import { ReservationsService } from './services/reservations.js';
 import { StationsService } from './services/stations.js';
 import { LooksService } from './services/looks.js';
+import { VoiceClipStore, VoiceService } from './services/voice.js';
 import { UsersService } from './services/users.js';
 
 export interface Services {
@@ -115,6 +117,7 @@ export interface Services {
   userPreferences: UserPreferencesService;
   stations: StationsService;
   looks: LooksService;
+  voice: VoiceService;
   devices: DevicesService;
   audit: AuditQueryService;
   search: SearchService;
@@ -195,6 +198,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     stations,
     new ProductImageStore(path.join(config.uploadDir, 'wallpapers')),
   );
+  // 0.35.0: the owner's own recordings for the spoken time warnings on the PCs.
+  const voice = new VoiceService(
+    settings,
+    new VoiceClipStore(path.join(config.uploadDir, 'voice')),
+  );
   // Archive / delete take the PC off the station: StationsService asks DevicesService to revoke.
   stations.useRevokeDevice((deviceId, actor) => devices.revoke(deviceId, actor));
   const audit = new AuditQueryService(pool);
@@ -258,7 +266,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     uploadDir: config.uploadDir,
     keyFile: path.join(config.dataDir, 'backup-keys.json'),
     wipeUploads: async () => {
-      for (const dir of ['wallpapers', 'products', 'videos']) {
+      for (const dir of ['wallpapers', 'products', 'videos', 'voice']) {
         const target = path.join(config.uploadDir, dir);
         await fsp.rm(target, { recursive: true, force: true });
         await fsp.mkdir(target, { recursive: true });
@@ -325,6 +333,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     requests,
     orders,
     looks,
+    voice,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -385,6 +394,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
       await api.register(looksRoutes);
+      await api.register(voiceRoutes);
       await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);

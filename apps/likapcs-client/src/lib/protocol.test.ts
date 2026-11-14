@@ -87,21 +87,21 @@ describe('Clock', () => {
   });
 });
 
-describe('reduce()', () => {
-  const welcome: ServerWelcomeToClient = {
-    type: 'server.welcome',
-    protocolVersion: 1,
-    serverVersion: '0.2.0',
-    serverTime: new Date(T0).toISOString(),
-    station: { id: 's1', number: 1, code: 'PC 01', name: 'Main hall 1' },
-    heartbeatIntervalSeconds: 10,
-    offlineAfterSeconds: 30,
-    language: 'sq',
-    welcomeMessage: 'Mirë se vini',
-    businessName: 'Arena',
-    session: null,
-  };
+const welcome: ServerWelcomeToClient = {
+  type: 'server.welcome',
+  protocolVersion: 1,
+  serverVersion: '0.2.0',
+  serverTime: new Date(T0).toISOString(),
+  station: { id: 's1', number: 1, code: 'PC 01', name: 'Main hall 1' },
+  heartbeatIntervalSeconds: 10,
+  offlineAfterSeconds: 30,
+  language: 'sq',
+  welcomeMessage: 'Mirë se vini',
+  businessName: 'Arena',
+  session: null,
+};
 
+describe('reduce()', () => {
   it('welcome without a session locks; with a session unlocks', () => {
     const locked = applyWelcome(initialState, welcome);
     expect(locked.mode).toBe('locked');
@@ -711,5 +711,111 @@ describe('withAbsoluteWallpaper (0.20.0)', () => {
     expect(withAbsoluteWallpaper({ ...base, wallpaperUrl: url }, 'http://x').wallpaperUrl).toBe(
       url,
     );
+  });
+});
+
+describe('spoken time warnings (0.35.0)', () => {
+  const startSession = () => {
+    const state = applyWelcome(initialState, welcome);
+    const started = reduce(
+      state,
+      cmd({
+        command: 'session.start',
+        payload: {
+          sessionId: 'g-voice',
+          startedAt: new Date(T0).toISOString(),
+          endsAt: new Date(T0 + 3_600_000).toISOString(),
+          billing: {
+            billingMode: 'prepaid',
+            paidCents: 150,
+            terms: null,
+            billableSeconds: 0,
+            asOf: new Date(T0).toISOString(),
+          },
+        },
+      }),
+      T0,
+    );
+    expect(started.ok).toBe(true);
+    return started.state;
+  };
+
+  it('a time warning shows its text and says the minutes', () => {
+    const state = startSession();
+    const warned = reduce(
+      state,
+      cmd({
+        command: 'message.show',
+        payload: { text: 'Edhe 5 minuta kohë', durationSeconds: 15, announce: { minutes: 5 } },
+      }),
+      T0,
+    );
+    expect(warned.ok).toBe(true);
+    expect(warned.state.notice?.text).toBe('Edhe 5 minuta kohë');
+    expect(warned.effects).toEqual([{ type: 'voice', slot: '5' }]);
+  });
+
+  it('an ordinary message from the desk is not spoken', () => {
+    const state = startSession();
+    for (const payload of [
+      { text: 'Closing soon' },
+      { text: 'x', announce: null },
+      { text: 'x', announce: {} },
+      { text: 'x', announce: { minutes: 'five' } },
+      { text: 'x', announce: { minutes: 0 } },
+      { text: 'x', announce: { minutes: 500 } },
+    ]) {
+      const shown = reduce(state, cmd({ command: 'message.show', payload }), T0);
+      expect(shown.ok).toBe(true);
+      expect(shown.effects).toEqual([]);
+    }
+  });
+
+  it('"time is up" is said when the time ran out, not when staff end the session', () => {
+    const state = startSession();
+    const expired = reduce(
+      state,
+      cmd({ command: 'session.end', payload: { sessionId: 'g-voice', reason: 'expired' } }),
+      T0,
+    );
+    expect(expired.state.mode).toBe('locked');
+    expect(expired.effects).toContainEqual({ type: 'voice', slot: 'up' });
+
+    const byStaff = reduce(
+      state,
+      cmd({ command: 'session.end', payload: { sessionId: 'g-voice' } }),
+      T0,
+    );
+    expect(byStaff.effects.some((e) => e.type === 'voice')).toBe(false);
+
+    // The PC already locked itself (and said it): the server's command adds nothing.
+    const already = reduce(
+      { ...state, mode: 'locked', session: null },
+      cmd({ command: 'session.end', payload: { sessionId: 'g-voice', reason: 'expired' } }),
+      T0,
+    );
+    expect(already.effects.some((e) => e.type === 'voice')).toBe(false);
+  });
+
+  it("makes the owner's recordings absolute, like the wallpaper", () => {
+    const display = {
+      ...welcome.display!,
+      voice: {
+        enabled: true,
+        language: 'sq' as const,
+        volume: 80,
+        chime: true,
+        custom: { '5': '/api/v1/files/voice/aaaaaaaaaaaaaaaaaaaaaaaa.mp3', up: 'http://x/y.mp3' },
+      },
+    };
+    const absolute = withAbsoluteWallpaper(display, 'http://192.168.1.10:4700');
+    expect(absolute.voice?.custom).toEqual({
+      '5': 'http://192.168.1.10:4700/api/v1/files/voice/aaaaaaaaaaaaaaaaaaaaaaaa.mp3',
+      up: 'http://x/y.mp3',
+    });
+    expect(absolute.voice).toMatchObject({ enabled: true, language: 'sq', volume: 80 });
+    // A server older than 0.35.0 sends no voice settings at all.
+    const { voice: _none, ...old } = display;
+    expect(withAbsoluteWallpaper(old, 'http://192.168.1.10:4700').voice).toBeUndefined();
   });
 });

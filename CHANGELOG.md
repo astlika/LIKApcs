@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added
+
+- **Voice on the PCs** — the customer PC now says the time warnings aloud: "Edhe pesë minuta", "Edhe një minutë" and, when the time runs out, "Koha juaj mbaroi". A game in exclusive fullscreen hides the countdown widget (Windows lets no other program draw over it); the voice is heard in every game and at every resolution. Settings › Client screen › "Zëri në PC": on or off, the language of the voice (Albanian or English), the volume, a short chime before the voice. Built-in voices exist for 15, 10, 5 and 1 minutes and for the end of the time; a warning at another minute plays the chime. The announcements follow the expiry warnings (Settings › Stations, default 5 and 1 minutes).
+- Voice on the PCs: the owner's own recording for any announcement — "Ngarko audio" on its row (MP3, WAV, OGG or M4A, up to 2 MB and 20 seconds). It is stored on the server, reaches every PC at once and is played instead of the built-in voice; if it cannot be played, the built-in voice speaks. "Provo" plays an announcement on the Admin computer the way a PC plays it.
+- API: `PUT /client/voice/:slot` (raw audio body, `?name=`), `DELETE /client/voice/:slot`, public `GET /files/voice/:name`; settings `client.voice_enabled`, `client.voice_language`, `client.voice_volume`, `client.voice_chime`, `client.voice_custom`; `voice` in the display configuration the PCs receive; `announce: {minutes}` on the `message.show` of a time warning and `reason: 'expired'` on the `session.end` of a session whose time ran out.
+
+### Changed
+
+- Client: the countdown widget is shown during games unless the owner hides it — "Fshih gjatë lojës" (Settings › Client screen) is now off by default. An installation where the switch was saved keeps its choice.
+
+### Fixed
+
+- Client: the countdown widget keeps its corner when the screen changes under it. A game that switches the resolution left the widget at its old coordinates — outside the new screen, or in the middle of it once the game closed; it is now put back within a second, in the corner the owner chose.
+
 ## [0.34.0] - 2026-11-13
 
 ### Added

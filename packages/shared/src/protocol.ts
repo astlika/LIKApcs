@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PricingTerms } from './billing.js';
 import type { ClientCustomerInfo } from './dto.js';
+import type { ClientVoiceConfig } from './voice.js';
 import type {
   AdTheme,
   ClientAdsCaption,
@@ -358,6 +359,11 @@ export interface ClientDisplayConfig {
   widgetHideInGames: boolean;
   /** The Windows keys are blocked while a Steam game runs in front. */
   blockWinInGames: boolean;
+  /**
+   * 0.35.0: spoken time warnings ("Edhe 5 minuta"). Absent from a server older than 0.35.0: the
+   * PC then says nothing.
+   */
+  voice?: ClientVoiceConfig;
   lockTitle: ClientLockTitle;
   currency: string;
   /** Pre-filled username of the staff login that a left click on the locked screen opens. */

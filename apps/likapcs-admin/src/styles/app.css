@@ -7575,3 +7575,63 @@ button.ads-album .ads-album__meta {
   letter-spacing: 0.04em;
   word-break: break-all;
 }
+
+/* 0.35.0 — Settings › Client screen: spoken time warnings. */
+.voice-volume {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.voice-rows__title {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.voice-rows__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.voice-rows {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.voice-row:last-child {
+  border-bottom: 0;
+}
+.voice-row[data-unused='true'] {
+  opacity: 0.75;
+}
+.voice-row__plays {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.voice-row__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-row__actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+@media (max-width: 860px) {
+  .voice-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .voice-row__actions {
+    justify-content: flex-start;
+  }
+}

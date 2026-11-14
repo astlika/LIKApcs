@@ -10,6 +10,8 @@ import {
   isProtectedProcess,
   normalizeExeName,
   priceForSeconds,
+  VOICE_SLOT_UP,
+  voiceSlotOfMinutes,
   type ClientDisplayConfig,
   type ClientSessionBilling,
   type ServerCommand,
@@ -171,6 +173,8 @@ export type Effect =
   | { type: 'wol_configure' }
   /** End Task (0.17.0): close these programs (owner's list only), then report the outcome. */
   | { type: 'end_tasks'; exes: string[]; skipped: string[] }
+  /** 0.35.0: say an announcement — minutes left (`5`, `1` …) or `up` (see shared/voice.ts). */
+  | { type: 'voice'; slot: string }
   | {
       type: 'event';
       event: 'locked' | 'unlocked' | 'maintenance_ended';
@@ -247,6 +251,20 @@ export function withAbsoluteWallpaper(
     ...display,
     wallpaperUrl: absolute(display.wallpaperUrl),
     desktopWallpaperUrl: absolute(display.desktopWallpaperUrl ?? null),
+    // 0.35.0: the owner's own voice recordings live on the server too.
+    ...(display.voice
+      ? {
+          voice: {
+            ...display.voice,
+            custom: Object.fromEntries(
+              Object.entries(display.voice.custom ?? {}).map(([slot, url]) => [
+                slot,
+                absolute(url) ?? url,
+              ]),
+            ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -404,19 +422,29 @@ export function reduce(
     case 'session.end':
       return {
         state: { ...state, mode: 'locked', session: null, celebration: null },
-        effects: [{ type: 'event', event: 'locked', payload: { sessionId: str(p.sessionId) } }],
+        effects: [
+          { type: 'event', event: 'locked', payload: { sessionId: str(p.sessionId) } },
+          // 0.35.0: the time ran out → "Koha juaj mbaroi". Not when staff end the session, and
+          // not twice: when the PC noticed the end itself, the session is already gone here.
+          ...(state.session && str(p.reason) === 'expired'
+            ? [{ type: 'voice' as const, slot: VOICE_SLOT_UP }]
+            : []),
+        ],
         ok: true,
       };
     case 'message.show': {
       const text = str(p.text);
       if (!text) return { state, effects: [], ok: false, error: 'text missing' };
       const seconds = Math.min(600, Math.max(3, num(p.durationSeconds) ?? 20));
+      // 0.35.0: a time warning also names the minutes, so the PC can say them.
+      const announce = p.announce as { minutes?: unknown } | null | undefined;
+      const slot = voiceSlotOfMinutes(num(announce?.minutes) ?? Number.NaN);
       return {
         state: {
           ...state,
           notice: { id: command.commandId, text, untilServerMs: serverNowMs + seconds * 1000 },
         },
-        effects: [],
+        effects: slot ? [{ type: 'voice', slot }] : [],
         ok: true,
       };
     }

@@ -975,3 +975,45 @@ archives a package that has codes.
 Audit: `internet_access.codes.loaded`, `internet_access.codes.removed`, and `accessCodes: n` on
 `sale.completed`. The codes themselves are never written to the audit log. Stock movements:
 `codes_loaded`, `codes_removed`, `sale`.
+
+## Spoken time warnings (0.35.0)
+
+The customer PC says the expiry warnings aloud. Nothing new is sent at the time of a warning
+except two fields on commands that already existed:
+
+- `message.show` of a time warning carries `announce: {minutes}` next to `text` and
+  `durationSeconds`. The PC shows the text as before and says the minutes. A message typed at the
+  desk has no `announce` and is not spoken.
+- `session.end` carries `reason: 'expired'` when the time ran out (the PC says "time is up"); a
+  session ended by staff has no `reason`.
+
+What is played is decided on the PC from `display.voice` (`ClientDisplayConfig`, sent in the
+welcome and in every `server.display`):
+
+```json
+{
+  "enabled": true,
+  "language": "sq",
+  "volume": 100,
+  "chime": true,
+  "custom": { "5": "/api/v1/files/voice/<24 hex>.mp3" }
+}
+```
+
+A slot is the minutes left (`"5"`, `"1"` … as in `stations.expiry_warning_minutes`) or `"up"`. For
+a slot the PC plays the chime (when on), then the owner's recording from `custom`, else the
+built-in voice in `language` (15, 10, 5, 1 and `up`), else nothing more. A recording that cannot be
+played falls through to the built-in voice. A client older than 0.35.0 ignores all of this; a
+server older than 0.35.0 sends no `voice` and the PC stays silent.
+
+| Route                        | Permission        | Body / query                                                         | Result                                                |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `PUT /client/voice/:slot`    | `settings.manage` | raw audio (MP3, WAV, OGG, M4A; ≤ 2 MB), `?name=` the file's own name | `{custom}` — the whole `client.voice_custom` map      |
+| `DELETE /client/voice/:slot` | `settings.manage` | —                                                                    | `{custom}`                                            |
+| `GET /files/voice/:name`     | public            | —                                                                    | the recording; random immutable names, cached forever |
+
+The format is sniffed from the bytes (`400` with `details.code: VOICE_FORMAT` otherwise, `413`
+above 2 MB, `409 VOICE_TOO_MANY` beyond 12 recordings). Settings: `client.voice_enabled`,
+`client.voice_language` (`sq` \| `en`), `client.voice_volume` (0–100), `client.voice_chime`,
+`client.voice_custom` (slot → `{file, name}`, written by the two routes above). The files live in
+`<dataDir>/uploads/voice` and, like every upload, are not part of a database backup.

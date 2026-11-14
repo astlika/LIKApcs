@@ -616,9 +616,14 @@ export class SessionsService {
             : ((await this.reservations?.holdOf(client, req.stationId, req.reservationId, now)) ??
               null);
         if (!own) {
-          throw new AppError(409, 'reservation_mismatch', 'This reservation does not keep this PC', {
-            reservationId: req.reservationId,
-          });
+          throw new AppError(
+            409,
+            'reservation_mismatch',
+            'This reservation does not keep this PC',
+            {
+              reservationId: req.reservationId,
+            },
+          );
         }
         checkInReservationId = own.reservationId;
       } else if (hold) {
@@ -1630,8 +1635,12 @@ export class SessionsService {
   ): Promise<SessionSummary> {
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
-      if (row.status !== 'active' && row.status !== 'paused') throw conflict('Session is not running');
-      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [id, req.pcLabel]);
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict('Session is not running');
+      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [
+        id,
+        req.pcLabel,
+      ]);
       await recordAudit(client, actor, {
         action: 'session.pc_label',
         entityType: 'gaming_session',
@@ -2192,7 +2201,9 @@ export class SessionsService {
     });
     if (!session) return null;
     await this.announceRequests(settled);
-    await this.mirror(session, 'session.end', { sessionId: id }, actor);
+    // 0.35.0: `reason` tells the PC the time ran out (it then says "Koha juaj mbaroi"); staff
+    // ending a session, or the customer leaving, stays silent.
+    await this.mirror(session, 'session.end', { sessionId: id, reason: 'expired' }, actor);
     await this.broadcast(session);
     this.autoEndTasks(session, actor);
     return session;
@@ -2310,7 +2321,9 @@ export class SessionsService {
               ? await this.hub.sendCommand(
                   deviceId,
                   'message.show',
-                  { text, durationSeconds: 15 },
+                  // 0.35.0: `announce` lets the PC say it as well ("Edhe 5 minuta"); an older
+                  // client shows the text and ignores the rest.
+                  { text, durationSeconds: 15, announce: { minutes } },
                   { timeoutMs: 5000 },
                 )
               : null;

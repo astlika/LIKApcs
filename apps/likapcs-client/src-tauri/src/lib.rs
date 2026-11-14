@@ -102,6 +102,25 @@ struct WidgetState {
     hide_in_games: AtomicBool,
     /// 0.19.7: the widget is hidden right now because a fullscreen game is in front.
     hidden_for_game: AtomicBool,
+    /// 0.35.0: the screen the widget was last placed on (see `widget_follow_screen`).
+    screen: Mutex<Option<ScreenShape>>,
+}
+
+/// 0.35.0: a screen as (x, y, width, height, scale × 1000). A game that switches the resolution,
+/// and gives it back when it closes, changes it.
+type ScreenShape = (i32, i32, u32, u32, u32);
+
+fn screen_shape(window: &WebviewWindow) -> Option<ScreenShape> {
+    let monitor = window.current_monitor().ok().flatten()?;
+    let size = monitor.size();
+    let position = monitor.position();
+    Some((
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        (monitor.scale_factor() * 1000.0).round() as u32,
+    ))
 }
 
 /// Screen position (physical pixels) of the last left click on the tray icon; the settings
@@ -448,6 +467,7 @@ fn game_in_front(_app: &AppHandle) -> bool {
 fn widget_watch_tick(app: &AppHandle) {
     let state = app.state::<WidgetState>();
     let overlay = state.overlay.load(Ordering::SeqCst);
+    widget_follow_screen(app, &state, overlay);
     let hidden = state.hidden_for_game.load(Ordering::SeqCst);
     let want_hidden =
         overlay && state.hide_in_games.load(Ordering::SeqCst) && game_in_front(app);
@@ -463,6 +483,42 @@ fn widget_watch_tick(app: &AppHandle) {
     } else if overlay {
         let _ = window.show();
     }
+}
+
+/// 0.35.0: keeps the countdown widget in its corner when the screen changes under it. A game
+/// that switches the resolution leaves the widget at its old coordinates: outside the new
+/// screen, or somewhere in the middle of it once the game closes. Only the size and the position
+/// are set again — the window is neither shown nor focused, so a running game keeps its focus.
+fn widget_follow_screen(app: &AppHandle, state: &WidgetState, overlay: bool) {
+    let Ok(mut last) = state.screen.lock() else {
+        return;
+    };
+    if !overlay {
+        *last = None;
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(now) = screen_shape(&window) else {
+        return;
+    };
+    let changed = matches!(*last, Some(before) if before != now);
+    *last = Some(now);
+    if !changed {
+        return;
+    }
+    let Ok(layout) = state.layout.lock().map(|layout| *layout) else {
+        return;
+    };
+    let (width, height) = layout.dimensions();
+    let _ = window.set_size(LogicalSize::new(width, height));
+    position_overlay(&window, layout.position, width, height);
+    let _ = window.set_always_on_top(true);
+    append_crash_log(&format!(
+        "widget: the screen changed to {}x{} — put back in its corner",
+        now.2, now.3
+    ));
 }
 
 /// 0.19.7: owner setting `client.widget_hide_in_games`, pushed by the client's settings.
@@ -1183,6 +1239,7 @@ pub fn run() {
             overlay: AtomicBool::new(false),
             hide_in_games: AtomicBool::new(true),
             hidden_for_game: AtomicBool::new(false),
+            screen: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             device_identity,
