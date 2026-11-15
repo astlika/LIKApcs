@@ -129,8 +129,8 @@ describe('voice settings', () => {
     });
   });
 
-  it('shows the countdown during games unless the owner hides it', () => {
-    expect(SETTING_DEFAULTS['client.widget_hide_in_games']).toBe(false);
+  it('hides the countdown during games unless the owner keeps it on them', () => {
+    expect(SETTING_DEFAULTS['client.widget_hide_in_games']).toBe(true);
   });
 
   it('refuses a volume, a language or a file name that cannot be', () => {

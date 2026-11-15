@@ -195,8 +195,8 @@ describe('spoken time warnings', () => {
       chime: true,
       custom: {},
     });
-    // The countdown stays on the screen during a game unless the owner hides it.
-    expect(display.widgetHideInGames).toBe(false);
+    // The countdown hides while a game holds the screen unless the owner keeps it there (0.35.3).
+    expect(display.widgetHideInGames).toBe(true);
   });
 
   it('tells every PC at once when the owner changes language or volume', async () => {

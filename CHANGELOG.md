@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+## [0.35.3] - 2026-11-15
+
+### Fixed
+
+- **Client: games keep the screen — the countdown widget hides again while a game is in fullscreen, as it did up to 0.34.0.** Since 0.35.1 the widget stayed on the screen during a game ("Fshih gjatë lojës" had been turned off in every installation), and games in exclusive fullscreen — CS2 at a resolution of its own, 4:3 on a 16:9 screen — were reported to minimize as soon as they were entered, also after 0.35.2 had stopped raising the widget over the game. A game in exclusive fullscreen holds the screen only while nothing else is on it. Now "Fshih gjatë lojës" is on again (the default, and migration 0059 turns the stored value back on); the widget is hidden within a quarter of a second of a fullscreen program coming to the front, and while that program is in front the client does nothing else to its window: it is not moved, resized, shown or raised (0.35.0–0.35.2 moved it the moment the game changed the resolution), and the widget check that runs every 15 seconds no longer repairs it there. Two seconds after the game is left the widget is back, in its corner. During a game the voice says the time.
+- Client: a program counts as fullscreen at any resolution — a window without a caption that covers the screen it is on (1024×768, 800×600, 640×480), not only from 1280×720 up. The Alt+Tab switcher of Windows is no longer taken for a game: the widget stays as it is until the switch is over.
+
+### Changed
+
+- Admin › Settings › Client screen: the hint of "Fshih gjatë lojës" says what turning it off costs — with the countdown left on the screen, a game in "Fullscreen" can minimize as soon as it opens; off is for games that run in "Fullscreen Windowed".
+
 ## [0.35.2] - 2026-11-14
 
 ### Fixed

@@ -376,8 +376,9 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_style': 'detailed',
   'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
-  // 0.35.0: shown over the game wherever Windows allows it; the voice covers the rest.
-  'client.widget_hide_in_games': false,
+  // 0.35.3: on again, as up to 0.34.0. A widget left on the screen cost games in exclusive
+  // fullscreen their screen (they minimized); the voice says the time during a game.
+  'client.widget_hide_in_games': true,
   'client.block_win_in_games': true,
   'client.voice_enabled': true,
   'client.voice_language': 'sq',
