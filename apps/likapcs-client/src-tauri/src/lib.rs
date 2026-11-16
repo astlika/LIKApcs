@@ -491,6 +491,9 @@ enum Corner {
     Kept,
     /// Moved, from and to (physical pixels).
     Moved((i32, i32), (i32, i32)),
+    /// The window is minimized: it has no place to set, and bringing it back would take the
+    /// focus from the game. Nothing was done (on the desktop the 15-second check restores it).
+    Minimized,
     /// The screen or the window could not be read: nothing was done.
     Unknown,
 }
@@ -601,6 +604,7 @@ fn widget_watch_tick(app: &AppHandle, watch: &mut GameWatch) {
             format!("moved from {from_x},{from_y} into its corner at {to_x},{to_y}")
         }
         Corner::Kept => "the widget is in its corner".to_string(),
+        Corner::Minimized => "the widget is minimized and was left so".to_string(),
         Corner::Unknown => "the widget's place could not be read".to_string(),
     };
     match title {
@@ -634,6 +638,9 @@ fn widget_to_corner(window: &WebviewWindow, state: &WidgetState) -> Corner {
     let Ok(layout) = state.layout.lock().map(|layout| *layout) else {
         return Corner::Unknown;
     };
+    if window.is_minimized().unwrap_or(false) {
+        return Corner::Minimized;
+    }
     let Ok(Some(monitor)) = window.current_monitor() else {
         return Corner::Unknown;
     };
@@ -641,6 +648,9 @@ fn widget_to_corner(window: &WebviewWindow, state: &WidgetState) -> Corner {
         return Corner::Unknown;
     };
     let scale = monitor.scale_factor();
+    if !scale.is_normal() || scale <= 0.0 {
+        return Corner::Unknown; // the conversions below insist on a real scale
+    }
     let (mut width, mut height) = layout.dimensions();
     let now = size.to_logical::<f64>(scale);
     if now.width >= 32.0 && now.height >= 16.0 {

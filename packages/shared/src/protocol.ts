@@ -158,7 +158,8 @@ export type TasksEndedPayload = z.infer<typeof tasksEndedPayloadSchema>;
  * wrong otherwise, so the desk sees the cause without walking to the PC. Causes the desk names
  * (0.35.1): `hidden-for-game` (the owner's "hide in games" setting hid it) and
  * `fullscreen-app:<title>` (a game in Direct3D fullscreen may cover it); with `ok`,
- * `over-game:<title>` says the widget lies on a borderless game.
+ * `over-game:<title>` says the widget lies on a borderless game. 0.35.4: `off-screen:<title>` —
+ * the widget is still outside the game's screen after the PC has put it in its corner there.
  */
 export const widgetReportPayloadSchema = z.object({
   ok: z.boolean(),
