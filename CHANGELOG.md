@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## [0.35.4] - 2026-11-16
+
+### Fixed
+
+- **Client: the countdown stays on the screen during a game, at every resolution.** With "Fshih gjatë lojës" off, a game that sets a resolution of its own (CS2 or CS 1.6 at 1024×768, 800×600 or 640×480 on a full-HD or 4K desktop) left the widget where it stood on the desktop: outside the smaller screen, so the minutes were not seen for the whole game. Up to 0.34.0 the 15-second widget check moved it in; 0.35.3 stopped every window call during a game, and this move with them. The widget is now put in its corner of the game's screen once the same game has held the same screen for eight seconds: one move, and nothing is shown, raised, resized or focused. It is never moved sooner after the screen or the program in front changed — 0.35.0–0.35.2 moved it within a second of the game's change of resolution, and games minimized as they were entered. A game that keeps the desktop's resolution finds the widget in its corner already, and nothing is touched.
+- Client: back on the desktop the widget returns to its corner after eight seconds on the same screen. A customer who leaves the game for a moment (Alt+Tab) and comes back finds the widget where it was in the game.
+- Client: on a screen narrower than the widget (a wide card in a 640×480 game) the widget starts at the screen's own corner, so the beginning of the card is what is seen.
+
+### Changed
+
+- Admin › Stations: a PC whose widget is still outside the game's screen after those eight seconds says so — "Widget-i s'shfaqet në PC", with `off-screen:<game>` in the tooltip. On the PC, `crash.log` (`%LOCALAPPDATA%\LIKApcs-Client`) gets one line per game: the game, its screen, whether the widget was moved and from where to where, and what Windows says about the game (Direct3D fullscreen; the game's window above the widget).
+- Admin › Settings › Client screen: the hint of "Fshih gjatë lojës" says what on and off do. 0.35.3 advised leaving it on because a widget left on the screen could minimize a game; on the owner's PCs a widget that is left alone did not — games ran with the switch off.
+- Build: the Tauri, tao and wry versions of both desktop apps are fixed in `Cargo.toml` (`tauri` 2.12.5, `tauri-runtime` 2.12.2, `tauri-runtime-wry` 2.12.3, `tauri-utils` 2.10.2, `tauri-build` 2.7.4, `tao` 0.37.2, `wry` 0.57.2 — what 0.35.3 was built with). No `Cargo.lock` is committed, so every build took the newest versions of that day, and a new one could change how a window behaves next to a game without any change here. The CI run notes the versions it resolved.
+
 ## [0.35.3] - 2026-11-15
 
 ### Fixed

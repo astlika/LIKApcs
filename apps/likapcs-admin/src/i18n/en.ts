@@ -1768,7 +1768,7 @@ export const en = {
       showPaymentHint: 'Prepaid: what was paid. Open time: the running amount to pay.',
       hideInGames: 'Hide in games',
       hideInGamesHint:
-        'While a game holds the whole screen (for example CS2), the countdown is hidden and comes back when the game is left; the time is said aloud. Leave it on: with the countdown on the screen, a game in "Fullscreen" can minimize as soon as it opens. Turn it off only if the games run in "Fullscreen Windowed" and you want the countdown on them.',
+        'On: while a game holds the whole screen (for example CS2), the countdown is hidden and comes back when the game is left; the time is said aloud. Off: the countdown stays on the screen during the game; when the game changes the resolution, it is put in its corner eight seconds after the game has taken the screen. If it is still not seen in some game, that game keeps the screen for itself alone: there the voice says the time.',
       blockWin: 'Block the Windows key in Steam games',
       blockWinHint:
         'While a game installed by Steam is in front, the Windows keys do nothing, so a press cannot close the game by accident. Turn it off to allow the Start menu during games.',

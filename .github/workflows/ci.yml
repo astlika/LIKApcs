@@ -117,6 +117,25 @@ jobs:
           New-Item -ItemType File -Force -Path apps/likapcs-admin/src-tauri/runtime/.keep | Out-Null
       - run: cargo check --all-targets
         working-directory: apps/likapcs-admin/src-tauri
+      # No Cargo.lock is committed: the run's notes say which versions of the window layer the
+      # check resolved (pinned in both Cargo.toml files since 0.35.4), so a surprise is seen here.
+      - name: Resolved Tauri crates
+        if: always()
+        shell: bash
+        run: |
+          for app in client admin; do
+            lock="apps/likapcs-$app/src-tauri/Cargo.lock"
+            versions=""
+            if [ -f "$lock" ]; then
+              for crate in tauri tauri-runtime tauri-runtime-wry tauri-utils tauri-macros tauri-codegen tauri-build tao wry; do
+                found=$(awk -v n="name = \"$crate\"" '{ sub(/\r$/, "") } $0 == n { getline; sub(/\r$/, ""); gsub(/version = |"/, ""); printf "%s", $0 }' "$lock")
+                versions="$versions$crate ${found:-?}, "
+              done
+            else
+              versions="no Cargo.lock"
+            fi
+            echo "::notice title=Crates ($app)::$versions"
+          done
 
   # The native Windows build is slow (Rust); run it on demand and in the release workflow.
   windows-smoke:
