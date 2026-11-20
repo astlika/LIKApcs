@@ -78,7 +78,12 @@ export function displaySaleOf(
   const totals = cartTotals(cart, customer?.discountBp ?? 0);
   return {
     lines: cart.lines.map((l) => {
-      const unit = l.kind === 'product' ? unitPriceOf(l.product) : l.unitPriceCents;
+      const unit =
+        l.kind === 'product'
+          ? unitPriceOf(l.product)
+          : l.kind === 'offer'
+            ? l.offer.priceCents
+            : l.unitPriceCents;
       const gross = Math.round((unit * l.quantityMilli) / 1000);
       return {
         id: lineKey(l),

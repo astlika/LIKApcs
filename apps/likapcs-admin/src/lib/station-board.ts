@@ -83,6 +83,13 @@ export interface StationView {
   productsCents: number;
   /** gaming + products: what the PC shows as its total. */
   totalCents: number;
+  /**
+   * 0.36.0: what the PC still owes right now — time that is not paid yet (also of an ended
+   * session whose bill waits) and the open products. The total above counts paid time too.
+   */
+  dueCents: number;
+  /** 0.36.0: the registered customer of the running session, or null. */
+  customerId: string | null;
   products: StationOrderLine[];
   /** When the running session started (ISO), or null. */
   startedAt: string | null;
@@ -135,6 +142,8 @@ export function describeStation(
     gamingCents,
     productsCents,
     totalCents: gamingCents + productsCents,
+    dueCents: (live?.dueCents ?? 0) + station.awaitingPayment.amountCents + productsCents,
+    customerId: live?.customerId ?? null,
     products: station.orders.items,
     startedAt: live?.startedAt ?? null,
     debtCents: station.debt.cents,

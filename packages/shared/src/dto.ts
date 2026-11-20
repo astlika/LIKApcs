@@ -446,6 +446,10 @@ export interface ActiveSessionSummary {
   elapsedSeconds: number;
   remainingSeconds: number | null;
   currentPriceCents: number;
+  /** 0.36.0: the registered customer of the session (null: a typed name or nobody). */
+  customerId: string | null;
+  /** 0.36.0: time still to pay right now (see `SessionSummary.dueCents`); products come on top. */
+  dueCents: number;
 }
 
 export const registerDeviceSchema = z.object({
@@ -619,6 +623,8 @@ export const pricingRuleSchema = z
     billingIncrementMinutes: z.number().int().min(1).max(120).default(1),
     minimumChargeCents: z.number().int().min(0).max(1_000_000).default(0),
     minimumMinutes: z.number().int().min(0).max(600).default(0),
+    /** 0.36.0: a session no longer than this is free; past it the whole time is charged (0 = off). */
+    freeMinutes: z.number().int().min(0).max(60).default(0),
     roundingMode: z.enum(['up', 'down', 'nearest']).default('up'),
     roundingIncrementCents: z.number().int().min(1).max(1000).default(1),
     isHappyHour: z.boolean().default(false),
@@ -647,6 +653,7 @@ export interface PricingRuleSummary {
   billingIncrementMinutes: number;
   minimumChargeCents: number;
   minimumMinutes: number;
+  freeMinutes: number;
   roundingMode: 'up' | 'down' | 'nearest';
   roundingIncrementCents: number;
   isHappyHour: boolean;
@@ -794,12 +801,135 @@ export const extendSessionSchema = z
     requestId: z.string().uuid().optional(),
     /** 0.19.0: extend with minutes from a time credit sold for this PC (minutes only). */
     creditId: z.string().uuid().optional(),
+    /**
+     * 0.36.0: a paid session takes the minutes now and pays them at the end — nothing is taken
+     * here, the amount joins the PC's bill (`SessionSummary.dueCents`) and waits at the desk when
+     * the session ends. A pay-at-the-end session always works like this.
+     */
+    later: z.boolean().optional(),
+    /**
+     * 0.36.0: the registered customer of this session, set or changed here (pay later and the
+     * balance need one). The session keeps it.
+     */
+    customerId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
     path: ['minutes'],
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
+
+/**
+ * 0.36.0: set, change or clear who sits at a session — the registered customer (`customerId`) or
+ * a name typed by hand (`customerName`). Both null clears it. For a running session and for an
+ * ended one whose bill still waits. The products on its bill follow the customer.
+ */
+export const sessionCustomerSchema = z
+  .object({
+    customerId: z.string().uuid().nullable(),
+    customerName: z.string().trim().max(80).nullable().optional(),
+  })
+  .refine((c) => !(c.customerId && c.customerName), {
+    message: 'either a registered customer or a typed name',
+    path: ['customerName'],
+  });
+export type SessionCustomerRequest = z.infer<typeof sessionCustomerSchema>;
+
+/**
+ * 0.36.0 — payment for one or several PCs on ONE receipt, at any time: while the sessions run or
+ * after they ended. Each PC pays what it owes right now — time that is not paid yet and the
+ * products on its bill.
+ *
+ * - A paid (prepaid) session: the minutes added "to pay at the end", and its products. It runs on.
+ * - A pay-at-the-end session that runs: the whole reserved amount; from then on it is a paid
+ *   session and runs until its time is up.
+ * - An open-time session that runs: with `stopOpen` (the default) it is stopped and billed in
+ *   full; without, the time so far is paid and the session runs on — the rest is owed later.
+ * - An ended session whose bill waits: the bill.
+ *
+ * A session with nothing to pay is left out (see `skipped`); when nothing at all is owed the
+ * request is refused (409 `nothing_due`).
+ */
+export const paySessionsSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+  stopOpen: z.boolean().default(true),
+  /** Who pays (pay later and the balance need a registered customer). Goes on the receipt. */
+  customerId: z.string().uuid().nullable().default(null),
+  /** Comes off the time of the bill (`pos.discount`); spread over the PCs by their share. */
+  discountCents: z.number().int().min(0).max(1_000_000).default(0),
+  ...sessionTenders,
+  /**
+   * The `asOf` of the quote the desk showed (`POST /sessions/pay/quote`): running time is priced
+   * at that instant, so the amount shown is the amount billed while the money is counted. The
+   * server bounds it (never the future, never more than `SESSION_STOP_CLOCK_GRACE_SECONDS` back).
+   */
+  asOf: z.string().datetime().optional(),
+  /** Idempotency key: a retried request never takes the money twice. */
+  clientRequestId: z.string().min(8).max(64).optional(),
+});
+export type PaySessionsRequest = z.infer<typeof paySessionsSchema>;
+
+/** `GET /sessions/open-bills?customerId=` — what a customer has on the PCs and has not paid. */
+export interface CustomerOpenBills {
+  customerId: string;
+  bills: {
+    session: SessionSummary;
+    /** The products on this bill, one row per product. */
+    items: { name: string; quantityMilli: number; lineTotalCents: number }[];
+  }[];
+  /** Time and products still to pay on these PCs. */
+  totalCents: number;
+}
+
+export const paySessionsQuoteSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+  stopOpen: z.boolean().default(true),
+});
+
+/** `POST /sessions/pay/quote` — the lines `pay` would put on the receipt right now. */
+export interface PaySessionsQuote {
+  /** Send this back as `asOf` with the payment. */
+  asOf: string;
+  bills: (PaySessionsBill & {
+    customerId: string | null;
+    customerName: string | null;
+    billingMode: BillingMode;
+    /** The products on this PC's bill. */
+    items: { name: string; quantityMilli: number; lineTotalCents: number }[];
+  })[];
+  skipped: PaySessionsResponse['skipped'];
+  timeCents: number;
+  ordersCents: number;
+  totalCents: number;
+}
+
+/** One PC on the receipt of `POST /sessions/pay`. */
+export interface PaySessionsBill {
+  sessionId: string;
+  stationId: string;
+  stationCode: string;
+  stationName: string;
+  /** Time paid on this receipt, after this PC's share of the discount. */
+  timeCents: number;
+  discountCents: number;
+  ordersCents: number;
+  /** An open-time session that was stopped by this payment. */
+  stopped: boolean;
+  /** The session runs on after the payment. */
+  running: boolean;
+}
+
+export interface PaySessionsResponse {
+  /**
+   * The one receipt. null when nothing had to be paid: open-time sessions that owed nothing were
+   * stopped, and there is no receipt of 0.00.
+   */
+  payment: SessionPaymentSummary | null;
+  bills: PaySessionsBill[];
+  /** Sessions that owed nothing (or were cancelled) and are not on the receipt. */
+  skipped: { sessionId: string; reason: 'nothing_due' | 'cancelled' | 'not_found' }[];
+  totalCents: number;
+}
 
 /**
  * 0.20.11: take minutes off a running prepaid or pay-at-the-end session. No money moves: a prepaid
@@ -941,16 +1071,32 @@ export const bulkMinutesSchema = z
     reason: z.string().trim().max(200).optional(),
     /** Paid mode: how the batch is paid at the desk (cash / card / bank transfer / other). */
     paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
-    /** Paid mode: the tenders for the whole batch (see above). Takes precedence over paymentMethod. */
-    payments: z
-      .lazy(() =>
-        z.array(salePaymentInputSchema.extend({ method: z.enum(PAYMENT_METHODS) })).max(5),
-      )
-      .optional(),
+    /**
+     * Paid mode: the tenders for the whole batch (see above). Takes precedence over paymentMethod.
+     * 0.36.0: `credit` (pay later) and `wallet` are allowed with `customerId`.
+     */
+    payments: z.lazy(() => z.array(salePaymentInputSchema).max(5)).optional(),
+    /**
+     * 0.36.0: nothing is paid now — every paid session takes the minutes on its bill, to pay at
+     * the end (see `extendSessionSchema.later`).
+     */
+    later: z.boolean().default(false),
+    /** 0.36.0: who pays the batch (needed for pay later and the balance). The sessions keep their own customers. */
+    customerId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
     path: ['minutes'],
+  })
+  .refine(
+    (e) =>
+      Boolean(e.customerId) ||
+      !(e.payments ?? []).some((p) => p.method === 'credit' || p.method === 'wallet'),
+    { message: 'pay later and the balance need a customer', path: ['customerId'] },
+  )
+  .refine((e) => !(e.payments ?? []).some((p) => p.method === 'staff'), {
+    message: 'a staff purchase cannot pay PC time',
+    path: ['payments'],
   });
 export type BulkMinutesRequest = z.infer<typeof bulkMinutesSchema>;
 
@@ -958,7 +1104,10 @@ export interface BulkMinutesApplied {
   stationId: string;
   code: string;
   minutes: number;
+  /** Paid now for this PC. */
   priceCents: number;
+  /** 0.36.0: put on this PC's bill, to pay at the end. */
+  laterCents?: number;
 }
 export interface BulkMinutesSkipped {
   stationId: string;
@@ -1024,6 +1173,7 @@ export interface SessionQuoteResponse {
     minimumChargeCents: number;
     roundingMode: 'up' | 'down' | 'nearest';
     roundingIncrementCents: number;
+    freeMinutes?: number;
   };
 }
 
@@ -1073,6 +1223,20 @@ export interface SessionSummary {
   /** Accepted "on the bill" orders still open on this session: settled together with it (0.10.0). */
   openOrdersCents: number;
   openOrdersCount: number;
+  /**
+   * 0.36.0: time that is still to pay on this session right now (the products on the bill come on
+   * top: `openOrdersCents`). Paid session: the minutes added "to pay at the end". Pay at the end:
+   * the reserved amount while it runs, the amount fixed at the end afterwards. Open time: the
+   * running amount minus `advanceCents`. 0 once the bill is paid.
+   */
+  dueCents: number;
+  /** 0.36.0: open time only — what was already paid for the time while the session runs on. */
+  advanceCents: number;
+  /**
+   * 0.36.0: a paid session — how many of its last seconds were added "to pay at the end". With
+   * `dueCents` and `unpaidTimeDueCents` the desk shows what stopping it right now would cost.
+   */
+  unpaidSeconds: number;
   /**
    * End pay (0.14.0): the session has ended but the bill has not been collected yet — it sits in
    * the "awaiting payment" strip until `POST /sessions/:id/collect`. `finalPriceCents` is the
@@ -1454,6 +1618,8 @@ export interface InternetAccessPackageSummary {
   soldCodes: number;
   lastLoadedAt: string | null;
   lastSoldAt: string | null;
+  /** 0.36.0: shown on the quick bar of the POS and of the Stations page (`GET` of the list only). */
+  inBar?: boolean;
 }
 
 export interface InternetAccessLoadResult extends InternetAccessCheckResult {
@@ -1666,14 +1832,30 @@ export const timeSaleItemSchema = z.object({
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
 });
 
+/**
+ * 0.36.0: an offer sold at the till — "Coca-Cola + 60 min" at one price (see `offers.ts`). The
+ * server puts the offer's products and its PC time on the sale as lines of their own (stock, tax
+ * and the time credit work as for any line) and shares the offer's price among them.
+ * With PC time: `stationId` is the PC that gets the minutes — it starts, or its running session
+ * gets them, as soon as the sale is paid. Without a PC the minutes belong to `holderName` and a
+ * PIN starts them at any PC, as with `timeSaleItemSchema`.
+ */
+export const offerSaleItemSchema = z.object({
+  offerId: z.string().uuid(),
+  stationId: z.string().uuid().optional(),
+  holderName: z.string().trim().min(1).max(80).optional(),
+});
+
 export const saleItemInputSchema = z.union([
   productSaleItemSchema,
   freeSaleItemSchema,
   timeSaleItemSchema,
+  offerSaleItemSchema,
 ]);
 export type ProductSaleItemInput = z.infer<typeof productSaleItemSchema>;
 export type FreeSaleItemInput = z.infer<typeof freeSaleItemSchema>;
 export type TimeSaleItemInput = z.infer<typeof timeSaleItemSchema>;
+export type OfferSaleItemInput = z.infer<typeof offerSaleItemSchema>;
 export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
 
 /** 0.19.0: an open prepaid-time credit at a PC (see `GET /time-credits`). */
@@ -1870,6 +2052,32 @@ export interface SaleItemSummary {
    * they were taken. Empty on every other line. They stay with the sale: a reprint shows them again.
    */
   accessCodes: string[];
+  /**
+   * 0.36.0: the offer this line was sold in. The lines of one offer share `group` (1, 2, … within
+   * the sale) and together cost the offer's price; a receipt shows them as one row
+   * (`receiptRows`). `id` is null once the offer itself was deleted — the name stays.
+   */
+  offer?: SaleItemOffer | null;
+}
+
+export interface SaleItemOffer {
+  id: string | null;
+  name: string;
+  group: number;
+}
+
+/**
+ * 0.36.0: what happened to the PC minutes of an offer right after the sale was paid.
+ * `started`: the PC was free and runs with the minutes · `extended`: the running session got them
+ * · `kept`: the minutes stay paid for that PC (the desk starts them at Stations) — `reason` says
+ * why they could not be given at once.
+ */
+export interface OfferStartResult {
+  stationId: string;
+  stationCode: string;
+  minutes: number;
+  result: 'started' | 'extended' | 'kept';
+  reason: string | null;
 }
 
 export interface SalePaymentSummary {
@@ -1925,6 +2133,8 @@ export interface SaleSummary {
 export interface SaleDetail extends SaleSummary {
   /** Only on the response that completed a sale with prepaid PC time: the PINs to print (0.20.8). */
   claimPins?: ClaimPin[];
+  /** Only on the response that completed a sale with an offer for a PC (0.36.0). */
+  offerStarts?: OfferStartResult[];
   items: SaleItemSummary[];
   payments: SalePaymentSummary[];
   refunds: RefundSummary[];

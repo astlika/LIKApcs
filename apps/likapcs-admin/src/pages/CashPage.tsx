@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { ArrowDownToLine, ArrowUpFromLine, Lock, LockOpen, Printer, Wallet } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -23,7 +24,10 @@ import { useAuth } from '../state/auth';
 import { useAppSettings } from '../state/app-settings';
 import { useToast } from '../state/toast';
 import { useShiftGuard } from '../state/shift-guard';
+import { useAwaitingPayment } from '../components/sessions/AwaitingPayment';
+import { awaitingAmountCents } from '../lib/pay-all';
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -622,10 +626,17 @@ function CloseShiftDialog({
   const { t } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
+  const { can } = useAuth();
+  const navigate = useNavigate();
   const [counted, setCounted] = useState('');
   const [notes, setNotes] = useState('');
   const cents = counted.trim() ? parseMoneyInput(counted) : null;
   const expected = shift.totals.expectedCashCents;
+  // 0.36.0: PC bills that still wait are named before the drawer is closed — they are money
+  // that has not reached it yet.
+  const waiting = useAwaitingPayment(can(PERMISSIONS.STATIONS_VIEW));
+  const openBills = waiting.data?.items ?? [];
+  const openBillsCents = openBills.reduce((acc, s) => acc + awaitingAmountCents(s), 0);
   const difference = cents === null ? null : cents - expected;
   const mutation = useMutation({
     mutationFn: () =>
@@ -666,6 +677,26 @@ function CloseShiftDialog({
           if (cents !== null && !mutation.isPending) mutation.mutate();
         }}
       >
+        {openBills.length > 0 && (
+          <Alert tone="warning">
+            <strong data-testid="close-open-bills">
+              {t('cash.openBills', { n: openBills.length, amount: fmt.money(openBillsCents) })}
+            </strong>
+            <div style={{ fontSize: 12, marginTop: 2 }}>{t('cash.openBillsHint')}</div>
+            <div style={{ marginTop: 6 }}>
+              <Button
+                size="sm"
+                type="button"
+                onClick={() => {
+                  onClose();
+                  navigate('/stations');
+                }}
+              >
+                {t('cash.openBillsGo')}
+              </Button>
+            </div>
+          </Alert>
+        )}
         <div className="row row--between">
           <span className="muted">{t('cash.expectedCash')}</span>
           <strong className="num">{fmt.money(expected)}</strong>

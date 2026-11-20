@@ -36,6 +36,23 @@ describe('awaitingAmountCents', () => {
   });
 });
 
+describe("awaitingAmountCents with the server's amount due (0.36.0)", () => {
+  it('counts only what is still owed for the time', () => {
+    // A paid PC with a drink on its bill: the paid hour is not owed again.
+    expect(
+      awaitingAmountCents(
+        bill('a', 's1', 'PC 1', { finalPriceCents: 120, dueCents: 0, openOrdersCents: 100 }),
+      ),
+    ).toBe(100);
+    // … and one with minutes added "to pay at the end".
+    expect(
+      awaitingAmountCents(
+        bill('a', 's1', 'PC 1', { finalPriceCents: 120, dueCents: 60, openOrdersCents: 100 }),
+      ),
+    ).toBe(160);
+  });
+});
+
 describe('multiBillPcs', () => {
   it('groups by PC and keeps only PCs with two or more bills', () => {
     const groups = multiBillPcs([

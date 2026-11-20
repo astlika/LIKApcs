@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Tag,
+  Tags,
   Trash2,
   Wifi,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ import {
   InternetAccessCodesDialog,
   InternetAccessLoadDialog,
 } from '../components/catalog/InternetAccess';
+import { OfferDialog, OffersCard, type OfferDraft } from '../components/catalog/Offers';
 import { useBarcodeScanner } from '../lib/scanner';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -98,11 +100,20 @@ export function ProductsPage() {
   // 0.34.0: internet access — the paste dialog (for a new or a given package) and one package's codes.
   const [accessLoad, setAccessLoad] = useState<{ productId?: string } | null>(null);
   const [accessCodes, setAccessCodes] = useState<ProductSummary | null>(null);
+  // 0.36.0: an offer being made or changed (from the offers list, or from a product's row).
+  const [offerDraft, setOfferDraft] = useState<OfferDraft | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // A scan on the list finds the product (exact barcode match in the search); while a dialog is
   // open the dialog owns the scanner.
   const dialogOpen = Boolean(
-    editing || adjusting || movementsFor || deleting || categoriesOpen || accessLoad || accessCodes,
+    editing ||
+    adjusting ||
+    movementsFor ||
+    deleting ||
+    categoriesOpen ||
+    accessLoad ||
+    accessCodes ||
+    offerDraft,
   );
   const onListScan = useCallback((code: string) => {
     setQ(code);
@@ -178,6 +189,7 @@ export function ProductsPage() {
           </>
         }
       />
+      <OffersCard canManage={canManage} onEdit={setOfferDraft} />
       <div className="toolbar">
         <Input
           ref={searchRef}
@@ -335,6 +347,19 @@ export function ProductsPage() {
                           <Wifi size={14} />
                         </Button>
                       )}
+                      {canManage && p.isActive && p.kind !== 'internet_access' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon
+                          onClick={() => setOfferDraft({ product: p })}
+                          aria-label={t('offers.makeFrom')}
+                          title={t('offers.makeFrom')}
+                          data-testid="product-make-offer"
+                        >
+                          <Tags size={14} />
+                        </Button>
+                      )}
                       {canAdjust && p.trackStock && p.isActive && p.kind !== 'internet_access' && (
                         <Button
                           size="sm"
@@ -418,6 +443,7 @@ export function ProductsPage() {
           onClose={() => setAccessLoad(null)}
         />
       )}
+      {offerDraft && <OfferDialog draft={offerDraft} onClose={() => setOfferDraft(null)} />}
     </>
   );
 }

@@ -1,6 +1,10 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import {
+  INTERNET_BAR_MAX,
   PERMISSIONS,
+  internetBarIds,
+  uuidSchema,
   internetAccessCheckSchema,
   internetAccessCodesQuerySchema,
   internetAccessLoadSchema,
@@ -22,9 +26,26 @@ export const internetAccessRoutes: FastifyPluginAsync = async (app) => {
   const view = { preHandler: app.requirePermission(PERMISSIONS.PRODUCTS_VIEW) };
   const manage = { preHandler: app.requirePermission(PERMISSIONS.PRODUCTS_MANAGE) };
 
-  app.get('/internet-access/packages', view, async () => ({
-    items: await services.internetAccess.listPackages(),
-  }));
+  app.get('/internet-access/packages', view, async () => {
+    const items = await services.internetAccess.listPackages();
+    // 0.36.0: which of them are on the quick bar (the owner's choice, or the first ones).
+    const bar = internetBarIds(
+      items.map((p) => ({ id: p.product.id, isActive: p.product.isActive })),
+      await services.settings.get('pos.internet_bar'),
+    );
+    return { items: items.map((p) => ({ ...p, inBar: bar.includes(p.product.id) })) };
+  });
+  /**
+   * 0.36.0: the packages on the quick bar of the POS and of the Stations page, in this order
+   * (at most `INTERNET_BAR_MAX`; an empty list = the first packages by themselves).
+   */
+  app.put('/internet-access/bar', manage, async (request) => {
+    const { productIds } = z
+      .object({ productIds: z.array(uuidSchema).max(INTERNET_BAR_MAX) })
+      .parse(request.body);
+    await services.settings.update({ 'pos.internet_bar': productIds }, actorOf(request));
+    return { productIds };
+  });
   /** What a paste would do, before anything is saved. */
   app.post('/internet-access/check', manage, async (request) =>
     services.internetAccess.check(internetAccessCheckSchema.parse(request.body).codes),

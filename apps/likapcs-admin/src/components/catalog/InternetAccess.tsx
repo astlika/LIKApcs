@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Plus, Trash2, Wifi } from 'lucide-react';
 import {
   ACCESS_CODES_MAX_PER_LOAD,
+  INTERNET_BAR_MAX,
   PERMISSIONS,
   internetPackageName,
   parseAccessCodes,
@@ -47,6 +48,7 @@ import {
   Pagination,
   Segmented,
   Select,
+  Switch,
   Textarea,
 } from '../ui/primitives';
 
@@ -503,6 +505,29 @@ export function InternetAccessCodesDialog({
   const { can } = useAuth();
   const packages = usePackages();
   const pkg = packages.data?.items.find((p) => p.product.id === product.id) ?? null;
+  // 0.36.0: the quick bar at the bottom of the POS and of the Stations page.
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const onBar = (packages.data?.items ?? []).filter((p) => p.inBar).map((p) => p.product.id);
+  const bar = useMutation({
+    mutationFn: (productIds: string[]) =>
+      api<{ productIds: string[] }>('/internet-access/bar', {
+        method: 'PUT',
+        body: { productIds },
+      }),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['internet-access'] });
+      toast.success(result.productIds.length ? t('internet.barSaved') : t('internet.barAuto'));
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric')),
+  });
+  const setOnBar = (on: boolean) => {
+    if (on && onBar.length >= INTERNET_BAR_MAX) {
+      toast.error(t('internet.barPinFull', { max: INTERNET_BAR_MAX }));
+      return;
+    }
+    bar.mutate(on ? [...onBar, product.id] : onBar.filter((id) => id !== product.id));
+  };
 
   const [tab, setTab] = useState<CodesTab>('available');
   const [q, setQ] = useState('');
@@ -569,6 +594,17 @@ export function InternetAccessCodesDialog({
           {pkg?.lastSoldAt && (
             <span className="faint">
               {t('internet.lastSold', { when: fmt.dateTime(pkg.lastSoldAt) })}
+            </span>
+          )}
+          {pkg && product.isActive && can(PERMISSIONS.PRODUCTS_MANAGE) && (
+            <span title={t('internet.barPinHint', { max: INTERNET_BAR_MAX })}>
+              <Switch
+                checked={!!pkg.inBar}
+                onChange={setOnBar}
+                disabled={bar.isPending}
+                label={t('internet.barPin')}
+                testId="internet-bar-pin"
+              />
             </span>
           )}
         </div>

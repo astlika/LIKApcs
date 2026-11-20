@@ -462,6 +462,12 @@ export function SaleDetailDialog({
                         {i.sku}
                       </span>
                     )}
+                    {/* 0.36.0: sold inside an offer — its price here is its share of the offer. */}
+                    {i.offer && (
+                      <div className="faint" style={{ fontSize: 12 }} data-testid="sale-offer">
+                        {t('offers.badge')}: {i.offer.name}
+                      </div>
+                    )}
                     {(i.accessCodes?.length ?? 0) > 0 && (
                       <div className="sale-codes" data-testid="sale-access-codes">
                         <Wifi size={12} style={{ verticalAlign: '-1px' }} />{' '}
@@ -698,6 +704,11 @@ function RefundDialog({ sale, onClose }: { sale: SaleDetail; onClose: () => void
                 <tr key={i.id}>
                   <td>
                     {i.description}
+                    {i.offer && (
+                      <div className="faint" style={{ fontSize: 12 }}>
+                        {t('offers.badge')}: {i.offer.name}
+                      </div>
+                    )}
                     {(i.accessCodes?.length ?? 0) > 0 && (
                       <div className="faint" style={{ fontSize: 12 }}>
                         {t('sales.refundCodeNote')}

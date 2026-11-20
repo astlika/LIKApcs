@@ -543,7 +543,9 @@ function sessionMoney(
 ): Pick<SessionView, 'paidCents' | 'owedCents'> {
   const b = session.billing;
   if (!b) return { paidCents: null, owedCents: null };
-  if (b.billingMode === 'prepaid') return { paidCents: b.paidCents, owedCents: null };
+  // 0.36.0: a paid session that took minutes "to pay at the end" shows that amount as owed.
+  if (b.billingMode === 'prepaid')
+    return { paidCents: b.paidCents, owedCents: (b.dueCents ?? 0) > 0 ? (b.dueCents ?? 0) : null };
   // End pay: a fixed amount, collected at the desk when the time ends (shown as "to pay").
   if (b.billingMode === 'endpay') return { paidCents: null, owedCents: b.dueCents ?? 0 };
   if (!b.terms) return { paidCents: null, owedCents: null };
@@ -551,7 +553,9 @@ function sessionMoney(
     session.status === 'paused' && session.pausedAt ? Date.parse(session.pausedAt) : serverNowMs;
   const since = Math.max(0, Math.round((reference - Date.parse(b.asOf)) / 1000));
   try {
-    return { paidCents: null, owedCents: priceForSeconds(b.billableSeconds + since, b.terms) };
+    // 0.36.0: open time that was partly paid while it runs owes the rest (`paidCents`).
+    const running = priceForSeconds(b.billableSeconds + since, b.terms);
+    return { paidCents: null, owedCents: Math.max(0, running - (b.paidCents ?? 0)) };
   } catch {
     return { paidCents: null, owedCents: null };
   }

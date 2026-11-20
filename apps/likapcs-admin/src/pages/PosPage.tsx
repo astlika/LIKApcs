@@ -30,6 +30,7 @@ import {
   X,
   Users,
   CalendarClock,
+  Tags,
   Wifi,
 } from 'lucide-react';
 import {
@@ -38,6 +39,7 @@ import {
   customerDiscountCents,
   type CategorySummary,
   type CustomerSummary,
+  type OfferSummary,
   type ProductLookupResponse,
   type ProductSummary,
   type SettingsMap,
@@ -63,6 +65,7 @@ import { OfflineQueueBar } from '../components/pos/OfflineQueueBar';
 import { printOfflineSlip } from '../lib/offline-receipt';
 import {
   addFreeItem,
+  addOfferItem,
   addTimeItem,
   addToCart,
   addToCartChecked,
@@ -76,6 +79,7 @@ import {
   type PcTarget,
   emptyCart,
   hasInternetAccess,
+  hasOffer,
   isInternetAccess,
   lineKey,
   lineName,
@@ -109,6 +113,15 @@ import {
   Kbd,
   Loading,
 } from '../components/ui/primitives';
+import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
+import { InternetBar } from '../components/pos/InternetBar';
+import {
+  OfferPcDialog,
+  announceOfferStarts,
+  offerContents,
+  refreshAfterOfferSale,
+  useOffers,
+} from '../components/pos/Offers';
 
 /** 0.27.4: the PCs the desk can put products on: running, paused, or ended and not yet paid. */
 async function fetchPcTargets(): Promise<PcTarget[]> {
@@ -182,6 +195,11 @@ export function PosPage() {
     quantityMilli: number;
   } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  // 0.36.0: offers. `offerPick`: the offer whose minutes still need a PC (or a name);
+  // `offersOnly`: the "Ofertat" chip — the grid shows the offers alone.
+  const [offerPick, setOfferPick] = useState<OfferSummary | null>(null);
+  const [offersOnly, setOffersOnly] = useState(false);
+  const offers = useOffers('active');
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
   // typed code) always has somewhere to go. Deferred: dialogs are still unmounting when called.
@@ -355,6 +373,24 @@ export function PosPage() {
     },
     [setCart, stockRefused],
   );
+  // 0.36.0: an offer goes in at its one price. With PC minutes it first asks who gets them.
+  const addOffer = useCallback(
+    (offer: OfferSummary) => {
+      // An offer is paid at the till: never on a staff purchase, never on a PC's bill.
+      if (latestCart.current.staff || latestCart.current.pc) {
+        toast.error(latestCart.current.staff ? t('offers.noStaff') : t('offers.noPcBill'));
+        focusSearch();
+        return;
+      }
+      if (offer.minutes > 0) {
+        setOfferPick(offer);
+        return;
+      }
+      setCart((c) => addOfferItem(c, { offer, taxRateBp: defaultTaxBp }));
+      focusSearch();
+    },
+    [defaultTaxBp, focusSearch, setCart, t, toast],
+  );
   const changeQuantity = useCallback(
     (key: string, quantityMilli: number) => {
       const checked = setQuantityChecked(latestCart.current, key, quantityMilli);
@@ -478,16 +514,25 @@ export function PosPage() {
       if (e.key === 'F2') {
         e.preventDefault();
         // F2 = customer (0.20.7). Nothing to pick on a staff purchase or while a dialog is open.
-        if (dialog || cart.staff) return;
+        if (dialog || offerPick || cart.staff) return;
         document.querySelector<HTMLInputElement>('#pos-cart-customer input')?.focus();
       } else if (e.key === 'F4') {
         e.preventDefault();
+        if (offerPick) return;
         if (cart.lines.length) setDialog('confirmNew');
         else resetCart();
       } else if (e.key === 'F7') {
         // Add to debt (0.20.8): the whole sale goes on the customer's tab, the payment opens on pay later.
         e.preventDefault();
-        if (cart.staff || !cart.lines.length || receipt || dialog || !customer || !canGiveDebt)
+        if (
+          cart.staff ||
+          !cart.lines.length ||
+          receipt ||
+          dialog ||
+          offerPick ||
+          !customer ||
+          !canGiveDebt
+        )
           return;
         setPayStart('credit');
         setDialog('payment');
@@ -500,7 +545,7 @@ export function PosPage() {
           if (value.trim()) return;
         }
         e.preventDefault();
-        if (cart.lines.length && !receipt && !dialog) {
+        if (cart.lines.length && !receipt && !dialog && !offerPick) {
           // The payment dialog mounts synchronously (discrete event): stop the same Enter from
           // reaching its own listener and completing the sale in one go.
           e.stopPropagation();
@@ -511,7 +556,7 @@ export function PosPage() {
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [cart.lines.length, cart.staff, receipt, dialog, resetCart, customer, canGiveDebt]);
+  }, [cart.lines.length, cart.staff, receipt, dialog, offerPick, resetCart, customer, canGiveDebt]);
 
   // Typed text confirmed with Enter (scanner bursts never get here — `useBarcodeScanner` takes
   // them first): a code is looked up exactly, otherwise the single visible match is added.
@@ -576,16 +621,28 @@ export function PosPage() {
   // (the server decides at payment time), the grid is only the browsing surface.
   const hideOut = settings.data?.['pos.hide_out_of_stock'] ?? true;
   const list = useMemo(() => {
+    // "Ofertat" alone: no product tiles.
+    if (offersOnly) return [];
     const items = products.data?.items ?? [];
     return hideOut
       ? items.filter((p) => !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0))
       : items;
-  }, [products.data, hideOut]);
+  }, [products.data, hideOut, offersOnly]);
+  // 0.36.0: the offers come first in the grid — under "All" and under "Ofertat", and by search.
+  const offerTiles = useMemo(() => {
+    if (cart.staff || cart.pc || (!offersOnly && categoryId !== null)) return [];
+    const wanted = gridSearch.toLowerCase();
+    return (offers.data ?? []).filter(
+      (o) => wanted === '' || o.name.toLowerCase().includes(wanted),
+    );
+  }, [offers.data, offersOnly, categoryId, gridSearch, cart.staff, cart.pc]);
 
   return (
     <div className="pos">
       <section className="pos__catalog">
         <OfflineQueueBar />
+        {/* 0.36.0: a PC bill that waits reaches the till here too, not only on the Stations page. */}
+        <AwaitingPaymentStrip testId="pos-awaiting" compact />
         <div className="pos__search">
           <ScanLine size={18} className="muted" />
           <input
@@ -613,11 +670,28 @@ export function PosPage() {
           <button
             type="button"
             className="chip"
-            aria-pressed={categoryId === null}
-            onClick={() => setCategoryId(null)}
+            aria-pressed={categoryId === null && !offersOnly}
+            onClick={() => {
+              setCategoryId(null);
+              setOffersOnly(false);
+            }}
           >
             {t('pos.allCategories')}
           </button>
+          {(offers.data?.length ?? 0) > 0 && !cart.staff && !cart.pc && (
+            <button
+              type="button"
+              className="chip chip--offers"
+              aria-pressed={offersOnly}
+              onClick={() => {
+                setCategoryId(null);
+                setOffersOnly(true);
+              }}
+              data-testid="pos-offers-chip"
+            >
+              <Tags size={13} /> {t('offers.chip')}
+            </button>
+          )}
           {(categories.data ?? [])
             .filter((c) => c.isActive)
             .map((c) => (
@@ -625,22 +699,62 @@ export function PosPage() {
                 key={c.id}
                 type="button"
                 className="chip"
-                aria-pressed={categoryId === c.id}
+                aria-pressed={categoryId === c.id && !offersOnly}
                 style={c.color ? { borderColor: c.color } : undefined}
-                onClick={() => setCategoryId(c.id)}
+                onClick={() => {
+                  setCategoryId(c.id);
+                  setOffersOnly(false);
+                }}
               >
                 {c.name}
               </button>
             ))}
         </div>
         {products.isLoading && <Loading />}
-        {products.isSuccess && list.length === 0 && (
+        {products.isSuccess && list.length === 0 && offerTiles.length === 0 && (
           <EmptyState
             icon={<ShoppingCart size={22} />}
             title={search ? t('pos.noMatches') : t('pos.noProducts')}
           />
         )}
         <div className="pos__grid">
+          {offerTiles.map((o) => (
+            <button
+              key={`offer:${o.id}`}
+              type="button"
+              className="tile tile--offer"
+              disabled={!o.available}
+              onClick={() => addOffer(o)}
+              data-testid="pos-offer-tile"
+            >
+              <div className="tile__head">
+                {o.items[0]?.imageUrl && (
+                  <div className="tile__image" aria-hidden>
+                    <img src={fileUrl(o.items[0].imageUrl) ?? undefined} alt="" loading="lazy" />
+                  </div>
+                )}
+                <div className="tile__name" title={`${o.name} — ${offerContents(o)}`}>
+                  <span className="tile__offer">
+                    <Tags size={11} /> {t('offers.badge')}
+                  </span>
+                  {o.name}
+                </div>
+              </div>
+              <div className="tile__meta">
+                <span className="num">
+                  {o.minutes === 0 && o.productsCents > o.priceCents && (
+                    <>
+                      <s className="faint">{fmt.money(o.productsCents)}</s>{' '}
+                    </>
+                  )}
+                  <strong>{fmt.money(o.priceCents)}</strong>
+                </span>
+                {!o.available && (
+                  <span className="tile__stock text-danger">{t('offers.unavailable')}</span>
+                )}
+              </div>
+            </button>
+          ))}
           {list.map((p) => {
             const out = p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0;
             return (
@@ -694,6 +808,8 @@ export function PosPage() {
             );
           })}
         </div>
+        {/* 0.36.0: the internet packages, always in sight under the products. */}
+        {!cart.staff && <InternetBar onPick={(pkg) => add(pkg.product)} />}
       </section>
 
       <aside
@@ -833,6 +949,15 @@ export function PosPage() {
                         <span className="text-success"> · {t('pos.promo')}</span>
                       )}
                   </div>
+                  {line.kind === 'offer' && (
+                    <div className="pos-line__note faint" data-testid="pos-line-offer">
+                      <Tags size={11} style={{ verticalAlign: '-1px' }} /> {t('offers.badge')}:{' '}
+                      {offerContents(line.offer)}
+                      {line.offer.minutes > 0 &&
+                        !line.stationId &&
+                        ` · ${t('offers.noPc')}${line.holderName ? ` (${line.holderName})` : ''}`}
+                    </div>
+                  )}
                   {line.kind === 'product' && isInternetAccess(line.product) && (
                     <div className="pos-line__note faint" data-testid="pos-line-internet">
                       <Wifi size={11} style={{ verticalAlign: '-1px' }} /> {t('pos.internetNote')}
@@ -840,7 +965,7 @@ export function PosPage() {
                   )}
                 </div>
                 <div className="pos-line__qty">
-                  {line.kind === 'time' ? (
+                  {line.kind === 'time' || line.kind === 'offer' ? (
                     <span className="faint num">1</span>
                   ) : (
                     <>
@@ -873,7 +998,7 @@ export function PosPage() {
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
-                  {canDiscount && !cart.staff && !cart.pc && (
+                  {canDiscount && !cart.staff && !cart.pc && line.kind !== 'offer' && (
                     <input
                       className="input pos-line__discount"
                       placeholder="−0.00"
@@ -954,14 +1079,17 @@ export function PosPage() {
                   disabled={
                     cart.lines.length === 0 ||
                     !!cart.staff ||
-                    cart.lines.some((l) => l.kind === 'time')
+                    cart.lines.some((l) => l.kind === 'time') ||
+                    hasOffer(cart)
                   }
                   title={
                     cart.staff
                       ? t('pos.staffNoPark')
                       : cart.lines.some((l) => l.kind === 'time')
                         ? t('pos.timeItemNotParkable')
-                        : undefined
+                        : hasOffer(cart)
+                          ? t('offers.notParkable')
+                          : undefined
                   }
                   loading={suspend.isPending}
                   onClick={() => suspend.mutate()}
@@ -1070,6 +1198,11 @@ export function PosPage() {
           onCompleted={(sale, receiptData) => {
             setDialog(null);
             setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // 0.36.0: an offer gave its minutes to a PC — say which, and refresh the PCs.
+            if (hasOffer(cart)) {
+              announceOfferStarts(sale.offerStarts, toast, t);
+              refreshAfterOfferSale(queryClient);
+            }
             // The customer's debt and balance moved: every view of them refetches.
             void queryClient.invalidateQueries({ queryKey: ['customers'] });
             // Customer display: "thank you" with what was paid / put on the tab.
@@ -1133,6 +1266,23 @@ export function PosPage() {
           onAdd={(item) => {
             setCart((c) => addFreeItem(c, { ...item, taxRateBp: defaultTaxBp }));
             setDialog(null);
+            focusSearch();
+          }}
+        />
+      )}
+      {offerPick && (
+        <OfferPcDialog
+          offer={offerPick}
+          customerName={customer?.name ?? null}
+          onClose={() => {
+            setOfferPick(null);
+            focusSearch();
+          }}
+          onPick={(target) => {
+            setCart((c) =>
+              addOfferItem(c, { offer: offerPick, ...target, taxRateBp: defaultTaxBp }),
+            );
+            setOfferPick(null);
             focusSearch();
           }}
         />
@@ -1261,6 +1411,7 @@ function displayUnit(line: CartLine, staff: boolean): number {
   if (line.kind === 'product')
     return staff ? line.product.purchaseCostCents : unitPriceOf(line.product);
   if (line.kind === 'time' && staff) return 0;
+  if (line.kind === 'offer') return line.offer.priceCents;
   return line.unitPriceCents;
 }
 

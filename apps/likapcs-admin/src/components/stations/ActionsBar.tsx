@@ -1,6 +1,9 @@
 /**
  * 0.33.0 — the action bar of the stations page. Only the actions that apply to the current
- * selection are shown (no "Stop (0)" buttons): the first four inline, the rest in "More".
+ * selection are shown (no "Stop (0)" buttons): the first ones inline, the rest in "More".
+ *
+ * 0.36.0: six inline instead of four. With four, "+ minutes" for several selected PCs sat behind
+ * "More" — after Stop, Payment, Wallpaper and "− minutes" — and read as "not possible".
  */
 import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
@@ -8,7 +11,7 @@ import { useI18n } from '../../i18n';
 import { Kbd } from '../ui/primitives';
 import type { StationAction, StationActionId } from './useStationActions';
 
-const INLINE = 4;
+const INLINE = 6;
 
 export function ActionsBar({
   actions,

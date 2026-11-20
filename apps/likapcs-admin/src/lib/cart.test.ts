@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ProductSummary } from '@likapcs/shared';
+import type { OfferSummary, ProductSummary } from '@likapcs/shared';
 import {
   addFreeItem,
+  addOfferItem,
+  hasOffer,
   pcBlocker,
   pcItemsFromCart,
   addTimeItem,
@@ -461,5 +463,112 @@ describe('internet access at the till (0.34.0)', () => {
     const cart = addToCart(emptyCart(), old as ProductSummary);
     expect(hasInternetAccess(cart)).toBe(false);
     expect(pcBlocker(cart)).toBeNull();
+  });
+});
+
+describe('offers at the till (0.36.0)', () => {
+  const offer = (over: Partial<OfferSummary> = {}): OfferSummary => ({
+    id: 'offer-1',
+    name: 'Coca-Cola + 60 min',
+    priceCents: 300,
+    minutes: 60,
+    isActive: true,
+    items: [
+      {
+        productId: 'cola',
+        name: 'Coca-Cola',
+        quantityMilli: 1000,
+        unitCode: 'pcs',
+        unitPriceCents: 150,
+        available: true,
+        imageUrl: null,
+      },
+    ],
+    productsCents: 150,
+    available: true,
+    createdAt: '2026-11-20T10:00:00.000Z',
+    updatedAt: '2026-11-20T10:00:00.000Z',
+    ...over,
+  });
+  let n = 0;
+  const key = () => `k${++n}`;
+
+  it('is one line at the offer price, sent as the offer and the PC that gets the minutes', () => {
+    const cart = addOfferItem(
+      emptyCart(),
+      { offer: offer(), stationId: 'st-5', stationCode: 'PC05', taxRateBp: 1800 },
+      key,
+    );
+    expect(cart.lines).toHaveLength(1);
+    expect(hasOffer(cart)).toBe(true);
+    expect(lineName(cart.lines[0]!)).toBe('Coca-Cola + 60 min · PC05');
+    expect(cartTotals(cart).totalCents).toBe(300);
+    expect(cartToRequest(cart).items).toEqual([{ offerId: 'offer-1', stationId: 'st-5' }]);
+  });
+
+  it('without a PC the minutes go to a name; an offer without minutes needs neither', () => {
+    const named = addOfferItem(
+      emptyCart(),
+      { offer: offer(), holderName: ' Arben ', taxRateBp: 1800 },
+      key,
+    );
+    expect(lineName(named.lines[0]!)).toBe('Coca-Cola + 60 min · Arben');
+    expect(cartToRequest(named).items).toEqual([{ offerId: 'offer-1', holderName: 'Arben' }]);
+
+    // Products only: a PC or a name given by mistake is dropped.
+    const plain = addOfferItem(
+      emptyCart(),
+      {
+        offer: offer({ id: 'offer-2', name: 'Dy pije', minutes: 0 }),
+        stationId: 'st-5',
+        stationCode: 'PC05',
+        holderName: 'Arben',
+        taxRateBp: 1800,
+      },
+      key,
+    );
+    expect(lineName(plain.lines[0]!)).toBe('Dy pije');
+    expect(cartToRequest(plain).items).toEqual([{ offerId: 'offer-2' }]);
+  });
+
+  it('the same offer twice is two lines: each can go to its own PC', () => {
+    let cart = addOfferItem(
+      emptyCart(),
+      { offer: offer(), stationId: 'st-5', stationCode: 'PC05', taxRateBp: 1800 },
+      key,
+    );
+    cart = addOfferItem(
+      cart,
+      { offer: offer(), stationId: 'st-6', stationCode: 'PC06', taxRateBp: 1800 },
+      key,
+    );
+    expect(cart.lines).toHaveLength(2);
+    expect(lineKey(cart.lines[0]!)).not.toBe(lineKey(cart.lines[1]!));
+    expect(cartTotals(cart).totalCents).toBe(600);
+    expect(cartToRequest(cart).items).toEqual([
+      { offerId: 'offer-1', stationId: 'st-5' },
+      { offerId: 'offer-1', stationId: 'st-6' },
+    ]);
+  });
+
+  it('takes no quantity and no line discount, sits beside products, and never goes to a PC bill', () => {
+    let cart = addToCart(emptyCart(), product({ id: 'cola' }));
+    cart = addOfferItem(cart, { offer: offer({ minutes: 0 }), taxRateBp: 1800 }, key);
+    const offerKey = lineKey(cart.lines[1]!);
+    expect(cartTotals(cart).totalCents).toBe(150 + 300);
+
+    cart = setQuantity(cart, offerKey, 3000);
+    cart = setLineDiscount(cart, offerKey, 100);
+    expect(cart.lines[1]).toMatchObject({ kind: 'offer', quantityMilli: 1000, discountCents: 0 });
+    expect(cartTotals(cart).totalCents).toBe(150 + 300);
+    expect(cartToRequest(cart).items).toEqual([
+      { productId: 'cola', quantityMilli: 1000, discountCents: 0 },
+      { offerId: 'offer-1' },
+    ]);
+
+    expect(pcBlocker(cart)).toBe('notPc');
+    const without = removeLine(cart, offerKey);
+    expect(hasOffer(without)).toBe(false);
+    expect(pcBlocker(without)).toBeNull();
   });
 });

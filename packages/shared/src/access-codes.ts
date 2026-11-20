@@ -72,3 +72,22 @@ export function internetPackageName(label: string): string {
   if (!text) return '';
   return /internet|wi-?fi/i.test(text) ? text : `Internet ${text}`;
 }
+
+/** 0.36.0: how many internet packages the quick bar shows — the view stays simple. */
+export const INTERNET_BAR_MAX = 4;
+
+/**
+ * 0.36.0: which packages are on the quick bar (POS and Stations). The owner's choice
+ * (`pos.internet_bar`, in that order) when it names packages that can be sold; otherwise the
+ * first ones of the list, so the bar works before anyone set it up. Never more than
+ * `INTERNET_BAR_MAX`, and only packages that are active.
+ */
+export function internetBarIds(
+  packages: readonly { id: string; isActive: boolean }[],
+  chosen: readonly string[],
+): string[] {
+  const active = packages.filter((p) => p.isActive);
+  const picked = chosen.filter((id) => active.some((p) => p.id === id));
+  const ids = picked.length > 0 ? picked : active.map((p) => p.id);
+  return [...new Set(ids)].slice(0, INTERNET_BAR_MAX);
+}

@@ -916,6 +916,44 @@ describe('internet access codes', () => {
     expect(await level(hour.id)).toBe(1);
   });
 
+  it('puts up to four packages on the quick bar; none chosen shows the first ones', async () => {
+    const onBar = async () =>
+      (
+        await call<{ items: InternetAccessPackageSummary[] }>(
+          cashier.token,
+          'GET',
+          '/internet-access/packages',
+        )
+      ).body.items;
+    const ids = (items: InternetAccessPackageSummary[]) =>
+      items.filter((p) => p.inBar).map((p) => p.product.id);
+    // Nothing chosen: the first active packages are on the bar by themselves.
+    const before = await onBar();
+    expect(ids(before)).toEqual(
+      before
+        .filter((p) => p.product.isActive)
+        .slice(0, 4)
+        .map((p) => p.product.id),
+    );
+    expect(ids(before).length).toBeGreaterThan(0);
+
+    // Who manages the products chooses; the cashier only sells from it.
+    const bar = (productIds: string[], token = owner.token) =>
+      call<{ productIds: string[] }>(token, 'PUT', '/internet-access/bar', { productIds });
+    expect((await bar([day.id], cashier.token)).status).toBe(403);
+    expect((await bar([day.id])).status).toBe(200);
+    expect(ids(await onBar())).toEqual([day.id]);
+    // A product that is not a package never shows there, and the bar holds four.
+    expect((await bar([cola.id, hour.id])).status).toBe(200);
+    expect(ids(await onBar())).toEqual([hour.id]);
+    expect((await bar([day.id, hour.id, cola.id, day.id, hour.id])).status).toBe(400);
+    // Cleared: by themselves again.
+    expect((await bar([])).status).toBe(200);
+    expect(ids(await onBar())).toEqual(ids(before));
+    // The list never carries a code, only how many are left.
+    expect(JSON.stringify(await onBar())).not.toMatch(/H1-0|D1-0/);
+  });
+
   it('archives a package instead of deleting it, and an archived one is not sold', async () => {
     const res = await call<{ archived: boolean }>(owner.token, 'DELETE', `/products/${day.id}`);
     expect(res.status).toBe(200);

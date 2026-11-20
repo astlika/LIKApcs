@@ -819,3 +819,50 @@ describe('spoken time warnings (0.35.0)', () => {
     expect(withAbsoluteWallpaper(old, 'http://192.168.1.10:4700').voice).toBeUndefined();
   });
 });
+
+describe('money on the PC when a bill is partly open (0.36.0)', () => {
+  const at = (billing: Record<string, unknown>, endsAt: string | null) =>
+    reduce(
+      applyWelcome(initialState, {
+        type: 'server.welcome',
+        serverTime: new Date(T0).toISOString(),
+        protocolVersion: 1,
+        station: { id: 's1', code: 'PC 01', name: 'PC 01' },
+        session: null,
+      } as unknown as ServerWelcomeToClient),
+      cmd({
+        command: 'session.start',
+        payload: {
+          sessionId: 'g9',
+          startedAt: new Date(T0).toISOString(),
+          endsAt,
+          billing: { billableSeconds: 0, asOf: new Date(T0).toISOString(), ...billing },
+        },
+      }),
+      T0,
+    ).state.session!;
+
+  it('a paid session shows what it owes for minutes added to pay at the end', () => {
+    const end = new Date(T0 + 7_200_000).toISOString();
+    const plain = at({ billingMode: 'prepaid', paidCents: 120, terms: null }, end);
+    expect(sessionView(plain, T0)).toMatchObject({ paidCents: 120, owedCents: null });
+    const added = at({ billingMode: 'prepaid', paidCents: 120, dueCents: 60, terms: null }, end);
+    expect(sessionView(added, T0)).toMatchObject({ paidCents: 120, owedCents: 60 });
+  });
+
+  it('open time takes what was already paid off its running amount', () => {
+    const terms = {
+      rateCentsPerHour: 120,
+      billingIncrementMinutes: 1,
+      minimumMinutes: 0,
+      minimumChargeCents: 0,
+      roundingMode: 'up',
+      roundingIncrementCents: 1,
+    };
+    const open = at({ billingMode: 'postpaid', paidCents: 60, terms }, null);
+    // One hour is 1.20 €, 0.60 € of it was paid while playing.
+    expect(sessionView(open, T0 + 3_600_000).owedCents).toBe(60);
+    // Never below zero right after the payment.
+    expect(sessionView(open, T0 + 600_000).owedCents).toBe(0);
+  });
+});

@@ -290,6 +290,11 @@ export const SETTING_SCHEMAS = {
   'pos.time_items': z.boolean(),
   /** Off by default: pay-later sales can be split into installments. */
   'pos.installments': z.boolean(),
+  /**
+   * 0.36.0: the internet packages on the quick bar at the bottom of the POS and of the Stations
+   * page (product ids, at most `INTERNET_BAR_MAX`). Empty = the first packages by themselves.
+   */
+  'pos.internet_bar': z.array(z.string().uuid()).max(4),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -418,6 +423,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.off_inventory_items': true,
   'pos.time_items': false,
   'pos.installments': true,
+  'pos.internet_bar': [],
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',

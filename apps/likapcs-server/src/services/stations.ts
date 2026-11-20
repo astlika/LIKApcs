@@ -59,6 +59,11 @@ interface StationRow {
   session_quoted_price_cents: string | number | null;
   session_billing_terms: Record<string, unknown> | null;
   session_rate_cents_per_hour: string | number | null;
+  /** 0.36.0: who sits there, and what the session still owes for its time. */
+  session_customer_id: string | null;
+  session_unpaid_cents: string | number | null;
+  session_paid_cents: string | number | null;
+  session_discount_cents: string | number | null;
   maintenance_until: Date | null;
   maintenance_by: string | null;
   maintenance_by_name: string | null;
@@ -103,6 +108,8 @@ const STATION_SELECT = `
          g.ends_at AS session_ends_at, g.paused_at AS session_paused_at, g.paused_by AS session_paused_by,
          g.total_paused_seconds AS session_total_paused_seconds, g.quoted_price_cents AS session_quoted_price_cents,
          g.billing_terms AS session_billing_terms, g.rate_cents_per_hour AS session_rate_cents_per_hour,
+         g.customer_id AS session_customer_id, g.unpaid_cents AS session_unpaid_cents,
+         g.paid_cents AS session_paid_cents, g.discount_cents AS session_discount_cents,
          s.maintenance_until, s.maintenance_by, s.maintenance_by_name,
          s.archived_at, s.archived_reason, ua.full_name AS archived_by_name,
          r.id AS request_id, r.kind AS request_kind, r.customer_id AS request_customer_id,
@@ -113,11 +120,16 @@ const STATION_SELECT = `
          (SELECT COUNT(*)::int FROM station_orders o WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_count,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.station_id = s.id AND o.status = 'accepted') AS orders_open_cents,
-         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid')
-           AND a.billed_at IS NULL AND a.status IN ('expired', 'completed')) AS awaiting_count,
-         (SELECT COALESCE(SUM(COALESCE(a.final_price_cents, a.quoted_price_cents, 0)), 0)::bigint FROM gaming_sessions a
-           WHERE a.station_id = s.id AND a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL
-           AND a.status IN ('expired', 'completed')) AS awaiting_cents,
+         -- 0.36.0: a paid session that ended with minutes added "to pay at the end" waits too, and
+         -- an open-time bill that was partly paid while it ran owes the rest.
+         (SELECT COUNT(*)::int FROM gaming_sessions a WHERE a.station_id = s.id AND a.status IN ('expired', 'completed')
+           AND ((a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL)
+             OR (a.billing_mode = 'prepaid' AND a.unpaid_cents > 0))) AS awaiting_count,
+         (SELECT COALESCE(SUM(CASE WHEN a.billing_mode = 'prepaid' THEN a.unpaid_cents
+                   ELSE GREATEST(COALESCE(a.final_price_cents, a.quoted_price_cents, 0) - a.paid_cents, 0) END), 0)::bigint
+            FROM gaming_sessions a WHERE a.station_id = s.id AND a.status IN ('expired', 'completed')
+           AND ((a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL)
+             OR (a.billing_mode = 'prepaid' AND a.unpaid_cents > 0))) AS awaiting_cents,
          s.badges,
          hold.reservation_id AS hold_reservation_id, hold.customer_name AS hold_customer_name,
          hold.starts_at AS hold_starts_at, hold.window_end AS hold_window_end,
@@ -159,7 +171,8 @@ const STATION_SELECT = `
     -- 0.33.1: unbilled = that ended session is still waiting for its payment.
     LEFT JOIN LATERAL (
       SELECT c2.name,
-             (g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid')) AS unbilled
+             ((g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid'))
+               OR (g2.billing_mode = 'prepaid' AND g2.unpaid_cents > 0)) AS unbilled
         FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
        WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
        ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1
@@ -190,8 +203,23 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
     minimumChargeCents: Number(t.minimumChargeCents ?? 0),
     roundingMode: t.roundingMode ?? 'up',
     roundingIncrementCents: Number(t.roundingIncrementCents ?? 1),
+    freeMinutes: Number(t.freeMinutes ?? 0),
   };
   const reference = row.session_paused_at ? row.session_paused_at.getTime() : now;
+  const running =
+    row.session_billing_mode === 'postpaid'
+      ? priceForSeconds(elapsed, terms)
+      : Number(row.session_quoted_price_cents ?? 0);
+  // The same rule as `timeDueCents` in sessions.ts, for a session that runs.
+  const dueCents =
+    row.session_billing_mode === 'prepaid'
+      ? Number(row.session_unpaid_cents ?? 0)
+      : row.session_billing_mode === 'endpay'
+        ? running
+        : Math.max(
+            0,
+            running - Number(row.session_discount_cents ?? 0) - Number(row.session_paid_cents ?? 0),
+          );
   return {
     id: row.session_id,
     customerName: row.session_customer_name,
@@ -207,10 +235,9 @@ function liveSessionOf(row: StationRow): ActiveSessionSummary | null {
       ? Math.max(0, Math.round((row.session_ends_at.getTime() - reference) / 1000))
       : null,
     // Prepaid: what was paid. End pay: what will be due. Postpaid: the running amount.
-    currentPriceCents:
-      row.session_billing_mode === 'postpaid'
-        ? priceForSeconds(elapsed, terms)
-        : Number(row.session_quoted_price_cents ?? 0),
+    currentPriceCents: running,
+    customerId: row.session_customer_id,
+    dueCents,
   };
 }
 

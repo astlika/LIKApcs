@@ -10,13 +10,16 @@ import {
   allocateProportionally,
   computeSale,
   customerDiscountCents,
+  offerLinePrice,
   refundAmountForQuantity,
+  shareOfferPrice,
   settlePayments,
   SaleMathError,
   type CreateSaleRequest,
   syncSaleItemSchema,
   type SyncSaleResult,
   type FreeSaleItemInput,
+  type OfferSaleItemInput,
   type ReceiptData,
   type SessionQuoteRequest,
   type SessionQuoteResponse,
@@ -68,6 +71,31 @@ interface TimeLine {
 type TimeLines = Map<number, TimeLine>;
 
 const isTimeItem = (i: SaleItemInput): i is TimeSaleItemInput => 'minutes' in i;
+const isOfferItem = (i: SaleItemInput): i is OfferSaleItemInput => 'offerId' in i;
+
+/**
+ * 0.36.0: a sale item as the sale is written. An offer of the request is replaced by its
+ * products and its PC time before anything is priced (`expandOffers`).
+ */
+type PlainSaleItem = Exclude<SaleItemInput, OfferSaleItemInput>;
+const isPlainItem = (i: SaleItemInput): i is PlainSaleItem => !isOfferItem(i);
+interface PlainSale extends Omit<SuspendSaleRequest, 'items'> {
+  items: PlainSaleItem[];
+}
+
+/** The offer a written line belongs to — by index of the plain items. */
+interface OfferLine {
+  offerId: string;
+  name: string;
+  /** 1, 2, … within the sale: the lines of one sold offer share it. */
+  group: number;
+  /** What all the lines of the group cost together. */
+  priceCents: number;
+}
+type OfferLines = Map<number, OfferLine>;
+
+/** The most lines a sale is written with once its offers are opened up. */
+const MAX_SALE_LINES = 400;
 
 /** Product ids of a sale request — off-inventory ("free") lines have none (0.19.0). */
 const productIdsOf = (items: readonly SaleItemInput[]): string[] =>
@@ -290,10 +318,14 @@ export class SalesService {
       refunded_milli: string;
       addons: { id: string }[];
       access_codes: string[] | null;
+      offer_id: string | null;
+      offer_name: string | null;
+      offer_group: number | null;
     }>(
       `SELECT i.id::text, i.line_no, i.product_id, i.gaming_session_id, i.description, p.sku, i.quantity_milli::text,
               i.unit_price_cents::text, i.discount_cents::text, i.tax_rate_bp, i.tax_cents::text,
               i.line_total_cents::text, i.refunded_milli::text, i.addons,
+              i.offer_id, i.offer_name, i.offer_group,
               (SELECT array_agg(c.code ORDER BY c.id) FROM internet_access_codes c
                 WHERE c.sale_item_id = i.id) AS access_codes
          FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
@@ -316,6 +348,40 @@ export class SalesService {
       refundedMilli: Number(i.refunded_milli),
       addonIds: (i.addons ?? []).map((a) => a.id),
       accessCodes: i.access_codes ?? [],
+      offer:
+        i.offer_group === null || i.offer_name === null
+          ? null
+          : { id: i.offer_id, name: i.offer_name, group: i.offer_group },
+    }));
+  }
+
+  /**
+   * 0.36.0: the PC minutes of this sale's offers that wait at their PC — sold for a PC, not used
+   * yet. The till gives them to the PC as soon as the sale is paid (see `routes/sales.ts`).
+   */
+  async offerCredits(
+    saleId: string,
+  ): Promise<{ creditId: string; stationId: string; stationCode: string; minutes: number }[]> {
+    const r = await this.pool.query<{
+      id: string;
+      station_id: string;
+      code: string;
+      minutes_remaining: number;
+    }>(
+      `SELECT c.id, c.station_id, s.code, c.minutes_remaining
+         FROM time_credits c
+         JOIN sale_items i ON i.id = c.sale_item_id
+         JOIN stations s ON s.id = c.station_id
+        WHERE c.sale_id = $1 AND i.offer_group IS NOT NULL
+          AND c.cancelled_at IS NULL AND c.minutes_remaining > 0
+        ORDER BY i.line_no`,
+      [saleId],
+    );
+    return r.rows.map((x) => ({
+      creditId: x.id,
+      stationId: x.station_id,
+      stationCode: x.code,
+      minutes: x.minutes_remaining,
     }));
   }
 
@@ -692,7 +758,16 @@ export class SalesService {
         code: 'TIME_NOT_PARKABLE',
       });
     }
+    // 0.36.0: nor an offer — it is resumed as products at their own prices, and its minutes are
+    // only given when the sale is paid.
+    if (input.items.some(isOfferItem)) {
+      throw conflict('An offer cannot be parked — complete the sale or remove the offer', {
+        code: 'OFFER_NOT_PARKABLE',
+      });
+    }
+    const given = input;
     return withTransaction(this.pool, async (client) => {
+      const input: PlainSale = { ...given, items: given.items.filter(isPlainItem) };
       const saleId = await this.insertSaleShell(client, input, actor, 'suspended');
       const products = await this.loadProducts(client, productIdsOf(input.items), false);
       const timeLines = await this.priceTimeLines(client, input.items, new Date());
@@ -1030,7 +1105,7 @@ export class SalesService {
    * customer record was set up, so no extra permission is required.
    */
   private compute(
-    input: SuspendSaleRequest,
+    input: PlainSale,
     products: Map<string, ProductForSale>,
     actor: SaleActor,
     defaultRate: number,
@@ -1038,6 +1113,7 @@ export class SalesService {
     fixedPrices: Map<string, number> | undefined,
     timeLines: TimeLines,
     staff = false,
+    offerLines: OfferLines = new Map(),
   ) {
     const hasDiscount = input.discountCents > 0 || input.items.some((i) => i.discountCents > 0);
     if (staff && hasDiscount) {
@@ -1096,6 +1172,32 @@ export class SalesService {
       };
     });
     try {
+      // 0.36.0: the lines of one offer together cost the offer's price. It is shared among them
+      // by what each costs outside the offer (its product price, the PC's quote for the time),
+      // so every line keeps its own tax rate, cost and report. The share is tax included.
+      const groups = new Map<number, number[]>();
+      for (const [idx, offer] of offerLines) {
+        const members = groups.get(offer.group) ?? [];
+        members.push(idx);
+        groups.set(offer.group, members);
+      }
+      if (groups.size > 0) {
+        const outside = computeSale(lines, 0).lines;
+        for (const members of groups.values()) {
+          const shares = shareOfferPrice(
+            offerLines.get(members[0]!)!.priceCents,
+            members.map((idx) => outside[idx]!.lineTotalCents),
+          );
+          for (const [k, idx] of members.entries()) {
+            const line = lines[idx]!;
+            lines[idx] = {
+              ...line,
+              ...offerLinePrice(shares[k]!, line.quantityMilli),
+              priceIncludesTax: true,
+            };
+          }
+        }
+      }
       let totals = computeSale(lines, input.discountCents);
       const memberDiscount = customer
         ? customerDiscountCents(totals.subtotalCents, customer.discountBp, input.discountCents)
@@ -1131,15 +1233,17 @@ export class SalesService {
   private async writeLines(
     client: DbClient,
     saleId: string,
-    input: SuspendSaleRequest,
+    input: PlainSale,
     products: Map<string, ProductForSale>,
     totals: ReturnType<typeof computeSale>,
     timeLines: TimeLines,
+    offerLines: OfferLines = new Map(),
   ): Promise<Map<number, number>> {
     const saleItemIds = new Map<number, number>();
     for (const [i, line] of totals.lines.entries()) {
       const item = input.items[i]!;
       const time = timeLines.get(i);
+      const offer = offerLines.get(i) ?? null;
       // Off-inventory and PC-time lines book no product and no cost: their margin is the whole price.
       const p = 'productId' in item ? products.get(item.productId)! : null;
       // Unit cost in mills; the sale's cost is the line's cost in mills, rounded to the cent.
@@ -1154,8 +1258,9 @@ export class SalesService {
           : (item as FreeSaleItemInput).description;
       const r = await client.query<{ id: string }>(
         `INSERT INTO sale_items (sale_id, line_no, product_id, description, quantity_milli, unit_price_cents, discount_cents,
-                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents, addons)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING id`,
+                                 tax_rate_bp, tax_cents, line_total_cents, cost_cents, addons,
+                                 offer_id, offer_name, offer_group)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15) RETURNING id`,
         [
           saleId,
           i + 1,
@@ -1169,11 +1274,103 @@ export class SalesService {
           line.lineTotalCents,
           multiplyMillsByQuantity(unitCostMills, line.quantityMilli),
           JSON.stringify(extras),
+          offer?.offerId ?? null,
+          offer?.name ?? null,
+          offer?.group ?? null,
         ],
       );
       saleItemIds.set(i, Number(r.rows[0]!.id));
     }
     return saleItemIds;
+  }
+
+  /**
+   * 0.36.0: opens up the offers of a request. Each offer is replaced, in its place, by one
+   * product item per product of the offer and one PC-time item for its minutes (for the PC the
+   * cashier chose, or for a name without a PC). `offerLines` says which of the resulting items
+   * belong to which sold offer and what the offer costs; `compute` prices them from that.
+   * Refused: an offer that is off the till, and an offer that has nothing left in it.
+   */
+  private async expandOffers(
+    client: DbClient,
+    items: readonly SaleItemInput[],
+    staff: boolean,
+  ): Promise<{ items: PlainSaleItem[]; offerLines: OfferLines }> {
+    const offerLines: OfferLines = new Map();
+    const ids = [...new Set(items.filter(isOfferItem).map((i) => i.offerId))].sort();
+    if (ids.length === 0) return { items: items.filter(isPlainItem), offerLines };
+    // A staff purchase is priced at cost: it takes stock items, never a priced bundle.
+    if (staff) throw badRequest('A staff purchase takes stock items only', { code: 'STAFF_ITEMS' });
+    const offers = await client.query<{
+      id: string;
+      name: string;
+      price_cents: string;
+      minutes: number;
+      is_active: boolean;
+    }>(
+      `SELECT id, name, price_cents::text, minutes, is_active FROM offers
+        WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`,
+      [ids],
+    );
+    const parts = await client.query<{
+      offer_id: string;
+      product_id: string;
+      quantity_milli: string;
+    }>(
+      `SELECT offer_id, product_id, quantity_milli::text FROM offer_items
+        WHERE offer_id = ANY($1::uuid[]) ORDER BY sort_order, product_id`,
+      [ids],
+    );
+    const byId = new Map(offers.rows.map((o) => [o.id, o]));
+    const out: PlainSaleItem[] = [];
+    let group = 0;
+    for (const item of items) {
+      if (!isOfferItem(item)) {
+        out.push(item);
+        continue;
+      }
+      const offer = byId.get(item.offerId);
+      if (!offer) throw notFound('Offer');
+      if (!offer.is_active)
+        throw conflict(`${offer.name} is not on sale any more`, {
+          code: 'OFFER_INACTIVE',
+          offerId: offer.id,
+        });
+      const own = parts.rows.filter((part) => part.offer_id === offer.id);
+      if (own.length === 0 && offer.minutes === 0)
+        throw conflict(`${offer.name} has nothing in it`, {
+          code: 'OFFER_EMPTY',
+          offerId: offer.id,
+        });
+      group += 1;
+      const line: OfferLine = {
+        offerId: offer.id,
+        name: offer.name,
+        group,
+        priceCents: Number(offer.price_cents),
+      };
+      for (const part of own) {
+        offerLines.set(out.length, line);
+        out.push({
+          productId: part.product_id,
+          quantityMilli: Number(part.quantity_milli),
+          discountCents: 0,
+          addonIds: [],
+        });
+      }
+      if (offer.minutes > 0) {
+        offerLines.set(out.length, line);
+        out.push({
+          ...(item.stationId ? { stationId: item.stationId } : {}),
+          ...(!item.stationId && item.holderName ? { holderName: item.holderName } : {}),
+          minutes: offer.minutes,
+          discountCents: 0,
+        });
+      }
+    }
+    if (out.length > MAX_SALE_LINES)
+      throw badRequest('This sale has too many lines', { code: 'TOO_MANY_LINES' });
+    return { items: out, offerLines };
   }
 
   /**
@@ -1225,7 +1422,7 @@ export class SalesService {
   private async fillAndComplete(
     client: DbClient,
     saleId: string,
-    input: SuspendSaleRequest,
+    given: SuspendSaleRequest,
     givenPayments: CreateSaleRequest['payments'],
     actor: SaleActor,
     fixedPrices?: Map<string, number>,
@@ -1235,6 +1432,9 @@ export class SalesService {
     /** 0.34.0: the till shows the internet access codes of this sale (see `createSaleSchema`). */
     showsAccessCodes = false,
   ): Promise<void> {
+    // 0.36.0: from here on an offer is its products and its PC time, like any other lines.
+    const { items, offerLines } = await this.expandOffers(client, given.items, staff);
+    const input: PlainSale = { ...given, items };
     const products = await this.loadProducts(client, productIdsOf(input.items), true);
     assertAccessCodeRules(input.items, products, { offline, showsAccessCodes });
     const timeLines = await this.priceTimeLines(client, input.items, new Date());
@@ -1259,6 +1459,7 @@ export class SalesService {
       fixedPrices,
       timeLines,
       staff,
+      offerLines,
     );
     // A staff purchase is settled by the server: the whole total on the `staff` tender (nothing
     // when it is free), so the drawer and the customer's tab are never touched.
@@ -1277,7 +1478,15 @@ export class SalesService {
       if (err instanceof SaleMathError) throw badRequest(err.message, { code: 'PAYMENT' });
       throw err;
     }
-    const saleItemIds = await this.writeLines(client, saleId, input, products, totals, timeLines);
+    const saleItemIds = await this.writeLines(
+      client,
+      saleId,
+      input,
+      products,
+      totals,
+      timeLines,
+      offerLines,
+    );
     // PC time sold: one credit per time line, redeemed at that PC later (0.19.0).
     // The name the minutes belong to: the one typed for the line, else the customer's, else "Klient".
     const customerName = input.customerId

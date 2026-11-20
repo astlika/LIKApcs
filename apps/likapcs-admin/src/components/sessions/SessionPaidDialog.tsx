@@ -20,7 +20,10 @@ export function SessionPaidDialog({ paid, onFinish }: { paid: SessionPaid; onFin
   const { t } = useI18n();
   const receipt = useQuery({
     queryKey: ['sessions', paid.sessionId, 'receipt', paid.payment.saleId],
-    queryFn: () => api<ReceiptData>(`/sessions/${paid.sessionId}/receipt`),
+    // 0.36.0: the receipt of the sale that was just paid. The session's own receipt is its first
+    // sale — after an extension, the products of a paid PC, or several PCs on one receipt, that
+    // is another one.
+    queryFn: () => api<ReceiptData>(`/sessions/by-sale/${paid.payment.saleId}/receipt`),
     staleTime: Infinity,
   });
   if (receipt.data) {

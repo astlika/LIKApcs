@@ -25,9 +25,12 @@ import {
   OctagonX,
   Pause,
   Play,
+  Banknote,
   Minus,
   Plus,
   Power,
+  Tags,
+  UserRound,
   RotateCcw,
   Square,
   Image as ImageIcon,
@@ -58,6 +61,7 @@ import { useEnterSubmits } from '../../lib/enter-submit';
 import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { clockLabel } from '../../lib/station-board';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
+import { awaitingAmountCents } from '../../lib/pay-all';
 import { planEach, planSplit } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
@@ -68,6 +72,9 @@ import { CustomerPicker } from '../customers/CustomerPicker';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { allocatePayments } from '../../lib/allocate-payments';
 import { BulkMinutesDialog } from '../sessions/BulkMinutesDialog';
+import { useAwaitingPayment } from '../sessions/AwaitingPayment';
+import { PaySessionsDialog } from '../sessions/PaySessionsDialog';
+import { SessionCustomerDialog } from '../sessions/SessionCustomer';
 import { BulkRemoveTimeDialog } from '../sessions/BulkRemoveTimeDialog';
 import { BulkSettleDialog } from '../sessions/BulkSettleDialog';
 import { BulkWallpaperDialog } from './BulkWallpaperDialog';
@@ -82,6 +89,7 @@ import {
   paidFrom,
   useNow,
 } from '../sessions/SessionPanel';
+import { OfferSellDialog, useOffers } from '../pos/Offers';
 import { Button, ConfirmDialog, Dialog, Field, Input, Kbd, Loading } from '../ui/primitives';
 
 export type StationActionId =
@@ -90,8 +98,11 @@ export type StationActionId =
   | 'pause'
   | 'resume'
   | 'extend'
+  | 'offer'
   | 'remove-time'
   | 'settle'
+  | 'pay'
+  | 'customer'
   | 'wallpaper'
   | 'gift'
   | 'pc-name'
@@ -144,6 +155,12 @@ type Flow =
   | { kind: 'bulk-remove-time' }
   | { kind: 'bulk-settle' }
   | { kind: 'bulk-wallpaper' }
+  /** 0.36.0: one receipt for these sessions (running or ended), at any time. */
+  | { kind: 'pay'; sessionIds: string[] }
+  /** 0.36.0: the registered customer of the running session(s). */
+  | { kind: 'customer' }
+  /** 0.36.0: an offer (products + minutes at one price) sold for this PC. */
+  | { kind: 'offer' }
   | { kind: 'power'; command: 'power.restart' | 'power.shutdown' }
   /** Money changed hands: change / receipt / Print / Finish, like the POS. */
   | { kind: 'paid'; paid: SessionPaid }
@@ -178,6 +195,9 @@ export function useStationActions(
   const queryClient = useQueryClient();
   const [flow, setFlow] = useState<Flow>(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
+  // 0.36.0: offers are sold from the PC too — the action shows once an offer is on sale.
+  const canSell = can(PERMISSIONS.POS_SELL);
+  const offerCount = (useOffers('active').data ?? []).filter((o) => o.minutes > 0).length;
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   const canDiscount = can(PERMISSIONS.POS_DISCOUNT);
   const canManageStations = can(PERMISSIONS.STATIONS_MANAGE);
@@ -229,10 +249,16 @@ export function useStationActions(
         'remove-time': t('sessions.timeRemoved'),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
-              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+              // What still waits at the desk: unpaid time and the products on the bill.
+              total: fmt.money(awaitingAmountCents(result.session)),
             })
           : t('sessions.ended', {
-              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+              // What was taken now (the receipt's total, products included) when there is one.
+              total: fmt.money(
+                result.payment?.totalCents ??
+                  result.session.finalPriceCents ??
+                  result.session.currentPriceCents,
+              ),
             }),
         cancel: t('sessions.cancelled'),
       };
@@ -366,6 +392,25 @@ export function useStationActions(
 
   const live = station?.activeSession ?? null;
   const online = !!station?.device?.online;
+  // 0.36.0 — "Paguaj": the sessions of the selection that can owe something — the running ones
+  // and the ended ones whose bill waits at the desk.
+  const waiting = useAwaitingPayment(canControl);
+  const payIds = useMemo(() => {
+    const stationIds = new Set(group.map((s) => s.id));
+    const running = group.flatMap((s) => (s.activeSession ? [s.activeSession.id] : []));
+    const ended = (waiting.data?.items ?? [])
+      .filter((x) => x.stationId && stationIds.has(x.stationId))
+      .map((x) => x.id);
+    return [...new Set([...running, ...ended])];
+  }, [group, waiting.data]);
+  /** Something is owed for sure (open time always is); otherwise the button says "nothing". */
+  const groupOwes = group.some(
+    (s) =>
+      s.awaitingPayment.count > 0 ||
+      s.orders.openCents > 0 ||
+      (!!s.activeSession &&
+        (s.activeSession.dueCents > 0 || s.activeSession.billingMode === 'postpaid')),
+  );
   const enabled = !!station?.isEnabled;
   const unlockable =
     online && !live && (station?.status === 'available' || station?.status === 'locked');
@@ -415,6 +460,45 @@ export function useStationActions(
           tone: 'danger',
           hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
+        // 0.36.0: what a cashier does all day comes first — these six are the inline buttons.
+        {
+          // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
+          // a per-PC outcome summary (stations without a live session are reported as skipped).
+          id: 'extend',
+          label: `${t('map.addTime')} (${n})`,
+          icon: Plus,
+          bar: true,
+          enabled: canControl && groupWithSession > 0,
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
+        {
+          // 0.36.0: one receipt for the selection, at any time; running sessions go on.
+          id: 'pay',
+          label: `${t('map.pay')} (${payIds.length})`,
+          icon: Banknote,
+          bar: true,
+          enabled: canControl && payIds.length > 0 && groupOwes,
+          tone: 'primary',
+          hint: payIds.length === 0 || !groupOwes ? t('map.payNothing') : undefined,
+        },
+        {
+          // 0.36.0: the registered customer for every running session of the selection.
+          id: 'customer',
+          label: `${t('map.customer')} (${groupWithSession})`,
+          icon: UserRound,
+          bar: true,
+          enabled: canControl && groupWithSession > 0,
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
+        {
+          // "Zbrit kohën" for the whole selection: same minutes off each running session.
+          id: 'remove-time',
+          label: `${t('sessions.removeTime')} (${groupWithSession})`,
+          icon: Minus,
+          bar: true,
+          enabled: canControl && groupWithSession > 0,
+          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
+        },
         {
           // 0.23.0: a fixed payment or a discount for the whole selection.
           id: 'settle',
@@ -436,25 +520,6 @@ export function useStationActions(
           icon: ImageIcon,
           bar: true,
           enabled: canManageStations && n > 0,
-        },
-        {
-          // "Zbrit kohën" for the whole selection: same minutes off each running session.
-          id: 'remove-time',
-          label: `${t('sessions.removeTime')} (${groupWithSession})`,
-          icon: Minus,
-          bar: true,
-          enabled: canControl && groupWithSession > 0,
-          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
-        },
-        {
-          // 0.18.0: "+ minutes" now works for the whole selection — one dialog, one server call,
-          // a per-PC outcome summary (stations without a live session are reported as skipped).
-          id: 'extend',
-          label: `${t('map.addTime')} (${n})`,
-          icon: Plus,
-          bar: true,
-          enabled: canControl && groupWithSession > 0,
-          hint: groupWithSession === 0 ? t('map.noneWithSession') : undefined,
         },
         {
           id: groupUnlockable ? 'unlock' : 'lock',
@@ -536,6 +601,39 @@ export function useStationActions(
         shortcut: 'Enter',
       },
       {
+        id: 'extend',
+        label: t('map.addTime'),
+        icon: Plus,
+        bar: true,
+        // Prepaid and end pay reserve time; open time (postpaid) runs until stopped.
+        enabled: canControl && !!live && live.billingMode !== 'postpaid',
+        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+      },
+      ...(canSell && canControl && offerCount > 0
+        ? [
+            {
+              // 0.36.0: an offer for this PC — it starts, or its session gets the minutes, when
+              // it is paid. Not on open time: that session takes no prepaid minutes.
+              id: 'offer' as const,
+              label: t('map.offer'),
+              icon: Tags,
+              bar: true,
+              enabled: enabled && live?.billingMode !== 'postpaid',
+              hint: live?.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+            },
+          ]
+        : []),
+      {
+        // 0.36.0: pay what this PC owes right now — the session goes on (open time can stop).
+        id: 'pay',
+        label: t('map.pay'),
+        icon: Banknote,
+        bar: !!live || payIds.length > 0,
+        enabled: canControl && payIds.length > 0 && groupOwes,
+        tone: 'primary',
+        hint: payIds.length === 0 || !groupOwes ? t('map.payNothing') : undefined,
+      },
+      {
         id: live?.status === 'paused' ? 'resume' : 'pause',
         label: live?.status === 'paused' ? t('sessions.resume') : t('sessions.pause'),
         icon: live?.status === 'paused' ? Play : Pause,
@@ -544,13 +642,12 @@ export function useStationActions(
         tone: 'warning',
       },
       {
-        id: 'extend',
-        label: t('map.addTime'),
-        icon: Plus,
-        bar: true,
-        // Prepaid and end pay reserve time; open time (postpaid) runs until stopped.
-        enabled: canControl && !!live && live.billingMode !== 'postpaid',
-        hint: live && live.billingMode === 'postpaid' ? t('map.addTimePostpaid') : undefined,
+        // 0.36.0: the registered customer of the running session (a debt needs a name).
+        id: 'customer',
+        label: t('map.customer'),
+        icon: UserRound,
+        bar: !!live,
+        enabled: canControl && !!live,
       },
       {
         // 0.20.11: the "−" beside "+ Add time" — minutes come off a running prepaid / end-pay session.
@@ -673,6 +770,8 @@ export function useStationActions(
     unlockable,
     wakeable,
     canControl,
+    canSell,
+    offerCount,
     canPower,
     canRemote,
     canGift,
@@ -688,6 +787,8 @@ export function useStationActions(
     groupWakeable,
     tasksPressed,
     groupTasksPressed,
+    payIds,
+    groupOwes,
   ]);
 
   const primary: StationActionId | null = !station
@@ -751,6 +852,15 @@ export function useStationActions(
         case 'pc-name':
           if (live) setFlow({ kind: 'pc-name', sessionId: live.id });
           break;
+        case 'pay':
+          if (payIds.length > 0) setFlow({ kind: 'pay', sessionIds: payIds });
+          break;
+        case 'customer':
+          setFlow({ kind: 'customer' });
+          break;
+        case 'offer':
+          setFlow({ kind: 'offer' });
+          break;
         case 'tasks':
           // No dialog: the list of programs is the owner's (Settings › Stations), the desk only
           // says "close them". Pressing it again simply runs it once more.
@@ -787,6 +897,7 @@ export function useStationActions(
       multi,
       onDetails,
       navigate,
+      payIds,
     ],
   );
 
@@ -812,6 +923,37 @@ export function useStationActions(
         />
       )}
       {flow.kind === 'paid' && <SessionPaidDialog paid={flow.paid} onFinish={close} />}
+      {flow.kind === 'pay' && (
+        <PaySessionsDialog
+          sessionIds={flow.sessionIds}
+          onClose={close}
+          onPaid={(paid) => {
+            setFlow({ kind: 'paid', paid });
+            refresh();
+          }}
+        />
+      )}
+      {flow.kind === 'customer' && (
+        <SessionCustomerDialog
+          targets={group.flatMap((s) =>
+            s.activeSession
+              ? [
+                  {
+                    sessionId: s.activeSession.id,
+                    code: s.code,
+                    customerId: s.activeSession.customerId,
+                    customerName: s.activeSession.customerName,
+                  },
+                ]
+              : [],
+          )}
+          onClose={close}
+          onDone={() => {
+            setFlow(null);
+            refresh();
+          }}
+        />
+      )}
       {flow.kind === 'end' && (
         <SessionFlow sessionId={flow.sessionId} onClose={close}>
           {(s, elapsed, livePrice) => (
@@ -931,6 +1073,20 @@ export function useStationActions(
             const skipped = result.skipped.length;
             if (applied === 0)
               toast.toast('info', t('map.bulkNone', { skipped, reason: t('map.bulkReasonFirst') }));
+            else if (
+              !gifted &&
+              result.applied.some((a) => (a.laterCents ?? 0) > 0) &&
+              result.totalCents === 0
+            )
+              // 0.36.0: nothing was paid now — the minutes wait on each PC's bill.
+              toast.success(
+                t('map.bulkLaterDone', {
+                  n: applied,
+                  amount: fmt.money(
+                    result.applied.reduce((acc, a) => acc + (a.laterCents ?? 0), 0),
+                  ),
+                }),
+              );
             else
               toast.success(
                 gifted
@@ -979,6 +1135,7 @@ export function useStationActions(
           }
         />
       )}
+      {flow.kind === 'offer' && <OfferSellDialog station={station} onClose={close} />}
       {flow.kind === 'message' && (
         <MessageDialog
           busy={command.isPending || commandMany.isPending}

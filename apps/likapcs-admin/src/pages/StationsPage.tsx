@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -69,6 +70,10 @@ import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcD
 import { QuickStartDialog, useStationActions } from '../components/stations/useStationActions';
 import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
 import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
+import { InternetBar } from '../components/pos/InternetBar';
+import { PaySessionsDialog } from '../components/sessions/PaySessionsDialog';
+import { CustomerBillDialog } from '../components/sessions/SessionCustomer';
+import { SessionPaidDialog, type SessionPaid } from '../components/sessions/SessionPaidDialog';
 import { storage } from '../lib/storage';
 import { BoardStatsBar, HoverInfo, ViewMenu } from '../components/stations/BoardHeader';
 import { ReservationsDialog } from '../components/stations/ReservationsDialog';
@@ -1036,6 +1041,8 @@ export function StationsPage() {
           onChanged={invalidate}
         />
       )}
+      {/* 0.36.0: the internet packages, sold from here without leaving the PCs. */}
+      <InternetBar pinned />
     </div>
   );
 }
@@ -1195,6 +1202,38 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
   const fmt = useFormat();
   const now = useNow();
   const live = station.activeSession;
+  // 0.36.0: the customer's name opens what they have open and what they owe; "pay" from there.
+  const [bill, setBill] = useState(false);
+  const [payIds, setPayIds] = useState<string[] | null>(null);
+  const [paid, setPaid] = useState<SessionPaid | null>(null);
+  // Shown whether or not the session still runs: a payment can be what ended it. In the body, not
+  // in the actions bar: the bar is its own layer, and the internet bar would cover the buttons.
+  const payment = createPortal(
+    <>
+      {bill && live?.customerId && (
+        <CustomerBillDialog
+          customerId={live.customerId}
+          onClose={() => setBill(false)}
+          onPay={(ids) => {
+            setBill(false);
+            setPayIds(ids);
+          }}
+        />
+      )}
+      {payIds && (
+        <PaySessionsDialog
+          sessionIds={payIds}
+          onClose={() => setPayIds(null)}
+          onPaid={(receipt) => {
+            setPayIds(null);
+            setPaid(receipt);
+          }}
+        />
+      )}
+      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+    </>,
+    document.body,
+  );
   if (!live) {
     return (
       <span className="map-actions__status">
@@ -1212,6 +1251,7 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
           </span>
         )}
         {station.device && <HardwareStrip device={station.device} />}
+        {payment}
       </span>
     );
   }
@@ -1237,8 +1277,26 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
           : `${t('sessions.elapsed')} ${formatHms(elapsed)}`}
       </span>
       <span className="num">{fmt.money(live.currentPriceCents)}</span>
-      {live.customerName && <span className="muted">{live.customerName}</span>}
+      {(live.dueCents ?? 0) + station.orders.openCents > 0 && (
+        <span className="due-pill" data-testid="selected-due">
+          {t('board.dueNow')} {fmt.money((live.dueCents ?? 0) + station.orders.openCents)}
+        </span>
+      )}
+      {live.customerId ? (
+        <button
+          type="button"
+          className="name-link"
+          onClick={() => setBill(true)}
+          title={t('customerBill.body')}
+          data-testid="selected-customer"
+        >
+          {live.customerName}
+        </button>
+      ) : (
+        live.customerName && <span className="muted">{live.customerName}</span>
+      )}
       {station.device && <HardwareStrip device={station.device} />}
+      {payment}
     </span>
   );
 }

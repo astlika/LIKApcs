@@ -8,7 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Hourglass, Wallet } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   PERMISSIONS,
   parseMoneyInput,
@@ -24,13 +24,13 @@ import { useEnterSubmits } from '../../lib/enter-submit';
 import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
 import {
-  allPcsBills,
   awaitingAmountCents,
   multiBillPcs,
-  pcGroups,
   payAllTotalCents,
   type PcBills,
 } from '../../lib/pay-all';
+import { beep, soundEnabled } from '../requests/requests';
+import { PaySessionsDialog } from './PaySessionsDialog';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
@@ -55,7 +55,50 @@ export function useAwaitingPayment(enabled = true) {
   });
 }
 
-export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string }) {
+/**
+ * 0.36.0: a bill that starts to wait is announced on every page — a beep and a note — so a PC
+ * that ends with something unpaid reaches whoever is at the till, wherever they are in the app.
+ * Bills that already waited when the app opened are not announced again. Renders nothing.
+ */
+export function AwaitingBillSignal() {
+  const { t } = useI18n();
+  const { can } = useAuth();
+  const fmt = useFormat();
+  const toast = useToast();
+  const list = useAwaitingPayment(can(PERMISSIONS.STATIONS_VIEW));
+  const known = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!list.data) return;
+    const ids = new Set(list.data.items.map((s) => s.id));
+    if (known.current) {
+      const fresh = list.data.items.filter(
+        (s) => !known.current!.has(s.id) && awaitingAmountCents(s) > 0,
+      );
+      if (fresh.length && soundEnabled()) beep();
+      for (const s of fresh) {
+        toast.toast(
+          'warning',
+          t('sessions.billWaiting', {
+            code: s.stationCode,
+            amount: fmt.money(awaitingAmountCents(s)),
+          }),
+          s.customerName ?? undefined,
+        );
+      }
+    }
+    known.current = ids;
+  }, [list.data, t, toast, fmt]);
+  return null;
+}
+
+export function AwaitingPaymentStrip({
+  testId = 'awaiting',
+  compact = false,
+}: {
+  testId?: string;
+  /** The POS: no explanation line, the chips only (0.36.0). */
+  compact?: boolean;
+}) {
   const { t } = useI18n();
   const { can } = useAuth();
   const fmt = useFormat();
@@ -63,7 +106,8 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   const canCollect = can(PERMISSIONS.STATIONS_CONTROL);
   const list = useAwaitingPayment(canView);
   const [collecting, setCollecting] = useState<SessionSummary | null>(null);
-  const [collectingAll, setCollectingAll] = useState<PcBills | null>(null);
+  /** 0.36.0: several bills are paid on ONE receipt (they used to get one receipt each). */
+  const [payingIds, setPayingIds] = useState<string[] | null>(null);
   /** Receipts to show, one "done" dialog after another (a pay-all step has one per bill). */
   const [paidQueue, setPaidQueue] = useState<SessionPaid[]>([]);
   const paid = paidQueue[0] ?? null;
@@ -76,7 +120,7 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
   return (
     <>
       <div
-        className="awaiting"
+        className={`awaiting ${compact ? 'awaiting--compact' : ''}`}
         role="region"
         aria-label={t('sessions.awaiting.title')}
         data-testid={testId}
@@ -88,15 +132,15 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
             {items.length}
           </span>
           <span className="muted num">· {fmt.money(total)}</span>
-          <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>
-          {canCollect && pcGroups(items).length >= 2 && (
+          {!compact && <span className="awaiting__hint muted">{t('sessions.awaiting.hint')}</span>}
+          {canCollect && items.length >= 2 && (
             <Button
               size="sm"
               variant="primary"
-              onClick={() => setCollectingAll(allPcsBills(items))}
+              onClick={() => setPayingIds(items.map((s) => s.id))}
               data-testid={`${testId}-collect-everything`}
             >
-              <Wallet size={13} /> {t('sessions.awaiting.collectEverything', { n: items.length })}
+              <Wallet size={13} /> {t('pay.payAll', { n: items.length })}
             </Button>
           )}
           {canCollect &&
@@ -104,7 +148,7 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
               <Button
                 key={group.stationId}
                 size="sm"
-                onClick={() => setCollectingAll(group)}
+                onClick={() => setPayingIds(group.bills.map((s) => s.id))}
                 data-testid={`${testId}-collect-all`}
               >
                 <Wallet size={13} />{' '}
@@ -139,13 +183,13 @@ export function AwaitingPaymentStrip({ testId = 'awaiting' }: { testId?: string 
           ))}
         </div>
       </div>
-      {collectingAll && (
-        <CollectStationDialog
-          group={collectingAll}
-          onClose={() => setCollectingAll(null)}
-          onPaid={(receipts) => {
-            setCollectingAll(null);
-            setPaidQueue(receipts);
+      {payingIds && (
+        <PaySessionsDialog
+          sessionIds={payingIds}
+          onClose={() => setPayingIds(null)}
+          onPaid={(receipt) => {
+            setPayingIds(null);
+            setPaidQueue([receipt]);
           }}
         />
       )}
@@ -300,9 +344,17 @@ export function CollectDialog({
   const queryClient = useQueryClient();
   // Fixed when the session ended: used time capped at the reservation, or the full reservation.
   // 0.28.0: a prepaid PC's time was paid at the start, so only its products are due.
+  // 0.36.0: the server says what is still owed for the time — minutes added "to pay at the end"
+  // of a paid session, the rest of an open-time bill that was partly paid while it ran, nothing
+  // for a cancelled session.
   const due =
-    session.billingMode === 'prepaid' ? 0 : (session.finalPriceCents ?? session.currentPriceCents);
-  const reserved = session.quotedPriceCents ?? due;
+    session.dueCents ??
+    (session.billingMode === 'prepaid'
+      ? 0
+      : (session.finalPriceCents ?? session.currentPriceCents));
+  // "Reserved" is the amount a pay-at-the-end session booked; it is shown struck through when
+  // stopping early made the bill smaller.
+  const reserved = session.billingMode === 'endpay' ? (session.quotedPriceCents ?? due) : due;
   const ordersCents = session.openOrdersCents;
   const [discount, setDiscount] = useState('');
   const [adding, setAdding] = useState(false);

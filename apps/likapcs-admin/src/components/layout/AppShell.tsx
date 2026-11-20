@@ -60,6 +60,7 @@ import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { CommandPalette } from './CommandPalette';
 import { LIKA_WEBSITE_URL } from '../../lib/desktop';
 import { RequestsBell } from '../requests/requests';
+import { AwaitingBillSignal } from '../sessions/AwaitingPayment';
 import { LiveSaleNotifier } from '../live/LiveSaleNotifier';
 import { ReservationAlerts } from '../stations/ReservationAlerts';
 import { usePendingOrders } from '../orders/orders';
@@ -462,6 +463,7 @@ export function AppShell() {
             <Search size={15} /> {t('topbar.search')} <Kbd>{t('topbar.searchHint')}</Kbd>
           </Button>
           <RequestsBell />
+          <AwaitingBillSignal />
           <LiveSaleNotifier />
           <ReservationAlerts />
 

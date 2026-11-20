@@ -5,10 +5,12 @@
  * 0.19.0: a line is a catalogue product (stock, tax and price from the product row), an
  * off-inventory "free" line (a name and a price typed at the till, default tax, no stock), or a
  * "time" line (prepaid PC minutes sold now — the server prices it and creates a credit for the PC).
+ * 0.36.0: or an "offer" line — products and PC minutes sold together at the offer's one price.
  */
 import {
   computeSale,
   customerDiscountCents,
+  type OfferSummary,
   type ProductAddonSummary,
   type ProductSummary,
   type SaleTotals,
@@ -55,7 +57,31 @@ export interface TimeLine {
   discountCents: number;
 }
 
-export type CartLine = ProductLine | FreeLine | TimeLine;
+/**
+ * 0.36.0: an offer — its products and its PC minutes at one price. One unit per line (each
+ * addition is its own line: two offers can go to two PCs). With PC minutes the line says who gets
+ * them: a PC (it starts, or its running session gets them, when the sale is paid), or a name
+ * without a PC (a PIN starts them at any PC). The server opens the offer up into its lines.
+ */
+export interface OfferLine {
+  kind: 'offer';
+  key: string;
+  offer: OfferSummary;
+  stationId: string | null;
+  stationCode: string | null;
+  /** The name the minutes belong to (sold without a PC). */
+  holderName: string | null;
+  /** Only for the tax preview: the server taxes each part of the offer at its own rate. */
+  taxRateBp: number;
+  quantityMilli: 1000;
+  /** An offer already is its price: it takes no line discount. */
+  discountCents: 0;
+}
+
+export type CartLine = ProductLine | FreeLine | TimeLine | OfferLine;
+
+/** Whether the cart holds an offer: such a sale needs the server and is never parked. */
+export const hasOffer = (cart: Cart): boolean => cart.lines.some((l) => l.kind === 'offer');
 
 export interface Cart {
   lines: CartLine[];
@@ -168,6 +194,10 @@ export const lineName = (l: CartLine): string => {
     return l.stationCode
       ? `${l.stationCode} · ${l.minutes} min`
       : `PC time · ${l.minutes} min${l.holderName ? ` · ${l.holderName}` : ''}`;
+  if (l.kind === 'offer') {
+    const who = l.stationCode ?? l.holderName;
+    return l.offer.minutes > 0 && who ? `${l.offer.name} · ${who}` : l.offer.name;
+  }
   return l.name;
 };
 
@@ -341,12 +371,42 @@ export function addTimeItem(
   return { ...cart, lines: [...cart.lines, line] };
 }
 
+/**
+ * Adds an offer (0.36.0): its own line at the offer's price. `stationId` / `holderName` say who
+ * gets its PC minutes; an offer without minutes needs neither.
+ */
+export function addOfferItem(
+  cart: Cart,
+  input: {
+    offer: OfferSummary;
+    stationId?: string | null;
+    stationCode?: string | null;
+    holderName?: string | null;
+    taxRateBp: number;
+  },
+  newKey: () => string = newRequestId,
+): Cart {
+  const timed = input.offer.minutes > 0;
+  const line: OfferLine = {
+    kind: 'offer',
+    key: `offer:${newKey()}`,
+    offer: input.offer,
+    stationId: timed ? (input.stationId ?? null) : null,
+    stationCode: timed ? (input.stationCode ?? null) : null,
+    holderName: timed && !input.stationId ? input.holderName?.trim() || null : null,
+    taxRateBp: input.taxRateBp,
+    quantityMilli: 1000,
+    discountCents: 0,
+  };
+  return { ...cart, lines: [...cart.lines, line] };
+}
+
 export function setQuantity(cart: Cart, key: string, quantityMilli: number): Cart {
   if (quantityMilli <= 0) return removeLine(cart, key);
   return {
     ...cart,
     lines: cart.lines.map((l) =>
-      lineKey(l) === key && l.kind !== 'time' ? { ...l, quantityMilli } : l,
+      lineKey(l) === key && l.kind !== 'time' && l.kind !== 'offer' ? { ...l, quantityMilli } : l,
     ),
   };
 }
@@ -355,7 +415,9 @@ export function setLineDiscount(cart: Cart, key: string, discountCents: number):
   return {
     ...cart,
     lines: cart.lines.map((l) =>
-      lineKey(l) === key ? { ...l, discountCents: Math.max(0, discountCents) } : l,
+      lineKey(l) === key && l.kind !== 'offer'
+        ? { ...l, discountCents: Math.max(0, discountCents) }
+        : l,
     ),
   };
 }
@@ -385,6 +447,16 @@ export function cartTotals(
 ): SaleTotals & { memberDiscount: boolean } {
   const staff = cart.staff === true;
   const lines = cart.lines.map((l) => {
+    if (l.kind === 'offer') {
+      // The offer's one price; the server shares it among the offer's own lines.
+      return {
+        unitPriceCents: l.offer.priceCents,
+        quantityMilli: l.quantityMilli,
+        discountCents: 0,
+        taxRateBp: l.taxRateBp,
+        priceIncludesTax: true,
+      };
+    }
     if (l.kind === 'free' || l.kind === 'time') {
       // Staff: PC time is free; a free item cannot be on a staff purchase (the toggle refuses it).
       const unit = staff && l.kind === 'time' ? 0 : l.unitPriceCents;
@@ -446,6 +518,13 @@ export function cartToRequest(cart: Cart) {
           ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
           minutes: l.minutes,
           discountCents: l.discountCents,
+        };
+      }
+      if (l.kind === 'offer') {
+        return {
+          offerId: l.offer.id,
+          ...(l.stationId ? { stationId: l.stationId } : {}),
+          ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
         };
       }
       return {

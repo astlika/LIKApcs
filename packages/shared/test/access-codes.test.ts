@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCESS_CODES_MAX_PER_LOAD,
+  INTERNET_BAR_MAX,
+  internetBarIds,
   internetPackageName,
   isAccessCode,
   parseAccessCodes,
@@ -174,5 +176,25 @@ describe('internet access request schemas', () => {
     expect(
       internetAccessRemoveSchema.safeParse({ productId, all: true, reason: 'x' }).success,
     ).toBe(false);
+  });
+});
+
+describe('internetBarIds', () => {
+  const packages = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, isActive: id !== 'c' }));
+
+  it('shows the first active packages when nothing was chosen', () => {
+    expect(internetBarIds(packages, [])).toEqual(['a', 'b', 'd', 'e']);
+    expect(internetBarIds([], [])).toEqual([]);
+  });
+
+  it('keeps the chosen order, and never more than the bar holds', () => {
+    expect(internetBarIds(packages, ['f', 'a'])).toEqual(['f', 'a']);
+    expect(internetBarIds(packages, ['f', 'e', 'd', 'b', 'a'])).toHaveLength(INTERNET_BAR_MAX);
+    expect(internetBarIds(packages, ['b', 'b', 'a'])).toEqual(['b', 'a']);
+  });
+
+  it('drops a package that was archived or removed, and falls back when none is left', () => {
+    expect(internetBarIds(packages, ['c', 'gone', 'e'])).toEqual(['e']);
+    expect(internetBarIds(packages, ['c', 'gone'])).toEqual(['a', 'b', 'd', 'e']);
   });
 });

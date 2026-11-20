@@ -224,6 +224,40 @@ to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind
   (`internet_access_stock_matches_codes`).
 - **inventory_movements.movement_type** gains `codes_loaded` and `codes_removed`.
 
+### Session bills in parts (0058–0061)
+
+- **0058** turned the stored `client.widget_hide_in_games` off once (0.35.1); **0059** turns it back
+  on once (0.35.3): with the widget left on the screen, games in exclusive fullscreen minimized.
+- The columns below come with **0060** and **0061** (0.36.0).
+- **gaming_sessions.unpaid_cents / unpaid_seconds** — a paid session's minutes that were added "to
+  pay at the end": the last `unpaid_seconds` of `planned_seconds`, worth `unpaid_cents`. They are
+  not part of `quoted_price_cents` (which stays "what was paid") and join it once paid.
+- **gaming_sessions.paid_cents** — an open-time session that was paid while it runs: the money
+  taken so far for its time; the final bill takes it off.
+- **pricing_rules.free_minutes** (0–60) — "up to N minutes free"; snapshotted into
+  `gaming_sessions.billing_terms`.
+- **gaming_sessions_billed_once** now reads `sale_id IS NULL OR billed_at IS NOT NULL`: a bill
+  that owes nothing is billed without a sale.
+- A sale can hold the lines of several sessions (`sale_items.gaming_session_id` per line); each of
+  those sessions points to it with `sale_id`.
+
+### Offers (0062)
+
+- **offers** — products and PC minutes sold together at one price: `name` (1–80 characters),
+  `price_cents` (for all of it, tax included), `minutes` (0–1440; 0 = products only), `is_active`
+  (false = not on the till), `created_by`, `created_at`, `updated_at`.
+- **offer_items** — the products of an offer: `offer_id`, `product_id` (primary key together: a
+  product is in an offer once), `quantity_milli`, `sort_order`. Both references cascade.
+- **sale_items.offer_id / offer_name / offer_group** — an offer is a recipe, not a product: a sale
+  holds one ordinary line per product of the offer and one PC-time line, so stock, cost, tax, the
+  time credit, refunds and reports treat them as any other line. Each such line remembers the
+  offer: `offer_name` as it was at the sale, `offer_group` (1, 2, … within the sale: the lines of
+  one sold offer share it) and `offer_id` (set to NULL when the offer is deleted — the name stays).
+  `sale_items_offer_whole`: name and group are set together.
+- The lines of one group together cost the offer's price: it is shared among them by what each
+  costs outside the offer (largest remainder), and a share that does not divide by the quantity
+  is written as a unit price rounded up with the few cents too many as the line's discount.
+
 ## Operations
 
 ```bash

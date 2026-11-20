@@ -1,8 +1,14 @@
 import type { SessionSummary } from '@likapcs/shared';
 
-/** What a waiting bill costs right now: the final or running price, plus open order lines. */
+/**
+ * What a waiting bill still costs: the time that is not paid yet, plus the open order lines.
+ * 0.36.0: the server says what is still owed for the time (`dueCents`). The old rule — the final
+ * or running price — counted the time of a PAID session again: a paid PC with one drink on its
+ * bill showed the paid hour plus the drink.
+ */
 export function awaitingAmountCents(s: SessionSummary): number {
-  return (s.finalPriceCents ?? s.currentPriceCents) + s.openOrdersCents;
+  const time = s.dueCents ?? s.finalPriceCents ?? s.currentPriceCents;
+  return time + s.openOrdersCents;
 }
 
 /**
