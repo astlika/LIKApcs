@@ -19,6 +19,7 @@ import {
   Play,
   Plus,
   Square,
+  Timer,
   Wallet,
   X,
   XCircle,
@@ -35,6 +36,7 @@ import {
   type SessionSummary,
   type StationPendingRequest,
   type StationSummary,
+  type TimeCreditSummary,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import {
@@ -45,6 +47,7 @@ import {
   sessionDueNow,
 } from '../../lib/session-time';
 import { awaitingAmountCents } from '../../lib/pay-all';
+import { creditHolder, groupCredits } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { useI18n } from '../../i18n';
@@ -1324,6 +1327,28 @@ export function ExtendSessionDialog({
     enabled: body !== null && !useGift,
   });
   const { customer, pickedId, setCustomer } = useSessionCustomer(session);
+  // 0.36.1: minutes already paid at the till that this PC can take — the minutes of an offer
+  // ("Coca-Cola + 60 min") sold with one click, or PC time sold for this PC. One click adds them;
+  // nothing is paid here. Always asked fresh: a credit is used once.
+  const credits = useQuery({
+    queryKey: ['time-credits', session.stationId, 'extend'],
+    queryFn: () =>
+      api<{ credits: TimeCreditSummary[] }>('/time-credits', {
+        query: { stationId: session.stationId },
+      }),
+    enabled: !request && session.billingMode !== 'postpaid',
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const paid = groupCredits(credits.data?.credits ?? []);
+  const addPaid = (credit: TimeCreditSummary) => {
+    if (busy) return;
+    onConfirm({
+      minutes: credit.minutesRemaining,
+      creditId: credit.id,
+      clientRequestId: requestId,
+    });
+  };
   // End pay: the added time goes on the bill collected at the end — nothing is paid now.
   const endpay = session.billingMode === 'endpay';
   // 0.36.0: a paid session can take the minutes "to pay at the end" too (the End Pay chip).
@@ -1383,6 +1408,37 @@ export function ExtendSessionDialog({
       }
     >
       <div className="stack">
+        {paid.length > 0 && !useGift && (
+          <div className="paid-credits" data-testid="session-extend-credits">
+            <span className="paid-credits__title">{t('sessions.paidCreditsTitle')}</span>
+            <div className="paid-credits__list">
+              {paid.map(({ credit: cr, count }) => (
+                <button
+                  key={cr.id}
+                  type="button"
+                  className="paid-credit"
+                  disabled={busy}
+                  onClick={() => addPaid(cr)}
+                  data-testid="session-extend-credit"
+                >
+                  <Timer size={18} />
+                  <span className="paid-credit__text">
+                    <strong>{cr.offerName ?? t('map.useCredit')}</strong>
+                    <span className="faint">
+                      {[
+                        `+${cr.minutesRemaining} min`,
+                        creditHolder(cr),
+                        count > 1 ? t('map.useCreditCount', { n: count }) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="chips">
           {(packages.data ?? []).map((p) => (
             <button

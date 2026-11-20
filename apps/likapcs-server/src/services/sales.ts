@@ -1249,10 +1249,14 @@ export class SalesService {
       // Unit cost in mills; the sale's cost is the line's cost in mills, rounded to the cent.
       const unitCostMills = p ? Number(p.average_cost_mills) || Number(p.purchase_cost_mills) : 0;
       const extras = p && 'addonIds' in item ? resolveAddons(p, item.addonIds) : [];
+      // 0.36.1: the minutes of an offer sold at the desk read "60 min PC" under the offer's name
+      // on the receipt, in any language; PC time sold on its own keeps its wording.
       const description = time
         ? time.stationCode
           ? `${time.stationCode} · ${time.minutes} min`
-          : `PC time · ${time.minutes} min${time.holderName ? ` · ${time.holderName}` : ''}`
+          : offer
+            ? `${time.minutes} min PC${time.holderName ? ` · ${time.holderName}` : ''}`
+            : `PC time · ${time.minutes} min${time.holderName ? ` · ${time.holderName}` : ''}`
         : p
           ? [p.name, ...extras.map((a) => a.name)].join(' + ')
           : (item as FreeSaleItemInput).description;
@@ -1287,7 +1291,8 @@ export class SalesService {
   /**
    * 0.36.0: opens up the offers of a request. Each offer is replaced, in its place, by one
    * product item per product of the offer and one PC-time item for its minutes (for the PC the
-   * cashier chose, or for a name without a PC). `offerLines` says which of the resulting items
+   * cashier chose, for a name without a PC, or — 0.36.1, neither given — for the desk to give to
+   * any PC). `offerLines` says which of the resulting items
    * belong to which sold offer and what the offer costs; `compute` prices them from that.
    * Refused: an offer that is off the till, and an offer that has nothing left in it.
    */
@@ -1497,15 +1502,23 @@ export class SalesService {
         ).rows[0]?.name ?? null)
       : null;
     for (const [idx, time] of timeLines) {
+      // 0.36.1: the minutes of an offer sold with one click — no PC, no name — wait at the desk
+      // as paid time for any PC. No PIN: the desk gives them when a PC is started or gets more
+      // time. They carry the customer's name when the sale has one.
+      const atDesk = time.stationId === null && offerLines.has(idx) && !time.holderName;
       const created = await this.timeCredits.create(client, {
         saleId,
         saleItemId: saleItemIds.get(idx)!,
         stationId: time.stationId,
-        holderName: time.stationId === null ? (time.holderName ?? customerName ?? 'Klient') : null,
+        holderName:
+          time.stationId === null
+            ? (time.holderName ?? customerName ?? (atDesk ? null : 'Klient'))
+            : null,
         customerId: input.customerId,
         minutes: time.minutes,
         priceCents: totals.lines[idx]!.lineTotalCents,
         actor,
+        pin: !atDesk,
       });
       if (created.pin !== null) {
         claimPins.push({

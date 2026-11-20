@@ -62,7 +62,7 @@ import { liveSessionPrice, projectSession } from '../../lib/session-time';
 import { clockLabel } from '../../lib/station-board';
 import { summarizeBulk, type BulkOutcome as BulkOutcomeOf } from '../../lib/map-selection';
 import { awaitingAmountCents } from '../../lib/pay-all';
-import { planEach, planSplit } from '../../lib/time-credit-assign';
+import { creditHolder, groupCredits, planEach, planSplit } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
@@ -1759,7 +1759,10 @@ function QuickStartBody({
                   <li key={a.target.id} data-testid="bulk-credit-row">
                     <span>{a.target.code}</span>
                     <strong>
-                      {[a.credit!.holderName, t('map.useCreditSub', { n: a.minutes })]
+                      {[
+                        a.credit!.offerName ?? a.credit!.holderName,
+                        t('map.useCreditSub', { n: a.minutes }),
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                     </strong>
@@ -1793,12 +1796,14 @@ function QuickStartBody({
         {bulk && covered.length > 0 && uncovered.length === 0 ? null : (
           <>
             <div className="start-grid">
+              {/* 0.36.1: minutes paid at the till come first — an offer under its own name, and
+                  the ones the desk cannot tell apart as one tile ("× 3"). */}
               {!bulk &&
-                (credits.data?.credits ?? []).map((cr) => (
+                groupCredits(credits.data?.credits ?? []).map(({ credit: cr, count }) => (
                   <button
                     key={cr.id}
                     type="button"
-                    className="start-tile"
+                    className="start-tile start-tile--paid"
                     disabled={start.isPending || quoting}
                     onClick={() =>
                       start.mutate({
@@ -1812,9 +1817,17 @@ function QuickStartBody({
                     data-testid="start-use-credit"
                   >
                     <Timer size={22} />
-                    <span className="start-tile__title">{t('map.useCredit')}</span>
+                    <span className="start-tile__title">{cr.offerName ?? t('map.useCredit')}</span>
                     <span className="start-tile__sub">
-                      {t('map.useCreditSub', { n: cr.minutesRemaining })}
+                      {[
+                        cr.offerName
+                          ? t('map.useCreditPaid', { n: cr.minutesRemaining })
+                          : t('map.useCreditSub', { n: cr.minutesRemaining }),
+                        creditHolder(cr),
+                        count > 1 ? t('map.useCreditCount', { n: count }) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   </button>
                 ))}

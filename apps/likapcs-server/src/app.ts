@@ -248,7 +248,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const catalog = new CatalogService(pool, settings, productImages);
   const internetAccess = new InternetAccessService(pool, catalog);
   // 0.36.0: offers (products + PC minutes at one price); the sales service sells them.
-  const offers = new OffersService(pool);
+  // 0.36.1: what an offer earns needs the price of its minutes outside it — the quote a sale
+  // asks for PC time sold without a PC.
+  const offers = new OffersService(
+    pool,
+    settings,
+    async (minutes) =>
+      (await sessions.quote({ stationId: '', billingMode: 'prepaid', minutes })).priceCents,
+  );
   const ads = new AdsService(
     pool,
     productImages,

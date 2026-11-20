@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-20
+
+### Changed
+
+- **Offers: "Shto ofertë" beside "Shto produkt", with the stock and the profit.** Admin › Products has the button "Shto ofertë" in the page header, next to "Shto produkt". The form opens with the list of products, each with what is in stock: one click chooses a product (typing narrows the list, and capitals or ë / ç do not matter — "cips" finds "Çips"), and the price is the next thing to type. It takes one product or several, the PC minutes and one price for all of it, and shows at once what one sale of the offer earns: the price without VAT, less what its products cost to buy (the average purchase cost, else the product's purchase cost) — with the VAT inside the price written beside it. A product with no purchase cost is named, because the profit counts it as free until the cost is set on the product; a price below the cost shows the loss in red. The "Ofertat" card lists for each offer how many the stock covers, the profit on one, how many times it was sold, the takings and the profit in all.
+- **Offers at the till: one click, no PC asked.** A click on the offer's tile puts it in the sale at its price; another click makes it two (− / + and a typed number work as for a product). The tile shows how many the stock covers and the till does not sell past it — the stock is shared with the same product sold on its own. Nothing is asked about a PC or a name and no PIN is printed. The receipt has one row for the offer with its count ("2 × 3.00") and what it holds under it.
+- **The paid minutes show where a PC is started.** After the sale the minutes wait at the desk as paid time for any PC. Stations › "Nis" shows them as the first tile, green, with the offer's name ("60 min · e paguar te arka", and how many wait): one click starts the PC with them and nothing is charged again. "Shto kohë" on a running paid or pay-at-the-end PC has them at the top: one click adds them. They carry the customer's name when the sale had one. A PC on open time cannot take them, and the phone app does not list them yet — they are given from the Admin.
+- Stations › "Ofertë" on a selected PC still sells an offer for that PC and starts it, as in 0.36.0.
+- API: `POST /offers/preview`; `stockUnits`, `profit` and `sold` on an offer, `stockMilli`, `stockLimited`, `taxRateBp` and `unitCostMills` on its items; an item `{ offerId }` alone on `POST /sales`; `offerName` on a time credit. No migration. See `docs/network-protocol.md`.
+
+### Fixed
+
+- **Product search: capitals and ç / ë no longer matter.** A product whose name has a capital Ç or Ë ("Çaj", "ÇOKOLLATË") was not found by typing its name — neither "çaj" nor "Çaj" — only by a part without that letter. The database folds the letters A–Z only, so the search now folds both sides itself: "caj", "çaj" and "ÇAJ" all find "Çaj", and "uje" finds "Ujë". This is the search of the POS, of the Products page and of the purchase form (`GET /products?q=`); the name, the SKU and the brand are searched this way, a barcode still has to match whole.
+
+### Removed
+
+- The POS window "Kush i merr minutat?" (which PC, or a name with a PIN): the till no longer asks. The "Ofertë e re" button inside the offers card became "Shto ofertë" in the page header, and the "Ofertat" card is not shown while there is no offer.
+
 ## [0.36.0] - 2026-11-20
 
 ### Added

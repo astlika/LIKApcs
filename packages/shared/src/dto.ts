@@ -1837,8 +1837,10 @@ export const timeSaleItemSchema = z.object({
  * server puts the offer's products and its PC time on the sale as lines of their own (stock, tax
  * and the time credit work as for any line) and shares the offer's price among them.
  * With PC time: `stationId` is the PC that gets the minutes — it starts, or its running session
- * gets them, as soon as the sale is paid. Without a PC the minutes belong to `holderName` and a
- * PIN starts them at any PC, as with `timeSaleItemSchema`.
+ * gets them, as soon as the sale is paid. Without a PC and with a `holderName` the minutes belong
+ * to that name and a PIN starts them at any PC, as with `timeSaleItemSchema`.
+ * 0.36.1: with neither (the till sells an offer with one click) the minutes wait at the desk as
+ * paid time for any PC — no PIN — and are given when a PC is started or gets more time.
  */
 export const offerSaleItemSchema = z.object({
   offerId: z.string().uuid(),
@@ -1865,6 +1867,11 @@ export interface TimeCreditSummary {
   stationId: string | null;
   stationCode: string | null;
   holderName: string | null;
+  /**
+   * 0.36.1: the offer these minutes were sold with ("Coca-Cola + 60 min"), so the desk knows
+   * them when a PC is started; null for PC time sold on its own.
+   */
+  offerName?: string | null;
   minutesTotal: number;
   minutesRemaining: number;
   saleId: string;

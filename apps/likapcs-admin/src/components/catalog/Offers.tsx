@@ -4,15 +4,22 @@
  * `OffersCard` lists the offers (on / off the till, change, delete); `OfferDialog` makes or
  * changes one in three fields: the products, the minutes, the price. Opened from a product
  * ("Bëje ofertë") it already holds that product — only the minutes and the price are left.
+ *
+ * 0.36.1: "Shto ofertë" sits in the page's header beside "Shto produkt". The form shows the stock
+ * of every product picked and, as the price is typed, what one sale of the offer earns (its price
+ * without VAT, less what the products cost to buy). The list shows the stock, the profit on one
+ * and what each offer has sold so far.
  */
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Tags, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Pencil, Tags, Trash2, X } from 'lucide-react';
+import { useRef, useState } from 'react';
 import {
   OFFER_MAX_PRODUCTS,
+  formatQuantity,
   multiplyByQuantity,
   offerDefaultName,
   parseMoneyInput,
+  type OfferPreview,
   type OfferSummary,
   type ProductSummary,
 } from '@likapcs/shared';
@@ -35,6 +42,8 @@ interface DraftItem {
   name: string;
   /** What one unit costs outside the offer, tax included. */
   unitPriceCents: number;
+  /** What is on the shelf now; null when the product does not count its stock. */
+  stockMilli: number | null;
   quantityText: string;
 }
 
@@ -56,20 +65,22 @@ function itemsOf(draft: OfferDraft): DraftItem[] {
       productId: i.productId,
       name: i.name,
       unitPriceCents: i.unitPriceCents,
+      stockMilli: i.stockMilli ?? null,
       quantityText: quantityText(i.quantityMilli),
     }));
-  return [
-    {
-      productId: draft.product.id,
-      name: draft.product.name,
-      unitPriceCents: unitPriceOf(draft.product),
-      quantityText: '1',
-    },
-  ];
+  return [draftItemOf(draft.product)];
 }
 
+const draftItemOf = (p: ProductSummary): DraftItem => ({
+  productId: p.id,
+  name: p.name,
+  unitPriceCents: unitPriceOf(p),
+  stockMilli: p.trackStock ? p.stockMilli : null,
+  quantityText: '1',
+});
+
 export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: () => void }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const fmt = useFormat();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -82,6 +93,7 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
   const [typedName, setTypedName] = useState<string | null>(editing ? editing.name : null);
   const [isActive, setIsActive] = useState(editing ? editing.isActive : true);
   const [error, setError] = useState<string | null>(null);
+  const priceRef = useRef<HTMLInputElement>(null);
 
   const minutes = minutesText.trim() === '' ? 0 : Number.parseInt(minutesText, 10);
   const minutesOk = Number.isInteger(minutes) && minutes >= 0 && minutes <= 1440;
@@ -97,6 +109,27 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
     (sum, i, k) => sum + multiplyByQuantity(i.unitPriceCents, quantities[k] ?? 1000),
     0,
   );
+  // 0.36.1: the server prices and costs the offer as it stands in the form — the same sums a
+  // sale will book — so the profit shown here is the profit the reports will show.
+  const priceOk = priceCents !== null && priceCents >= 0 && priceCents <= 100_000_000;
+  const previewBody =
+    minutesOk && quantitiesOk && (items.length > 0 || minutes > 0)
+      ? {
+          priceCents: priceOk ? priceCents : 0,
+          minutes,
+          items: items.map((i, k) => ({ productId: i.productId, quantityMilli: quantities[k]! })),
+        }
+      : null;
+  const preview = useQuery({
+    queryKey: [...OFFERS_KEY, 'preview', previewBody],
+    queryFn: () => api<OfferPreview>('/offers/preview', { method: 'POST', body: previewBody }),
+    enabled: previewBody !== null,
+    placeholderData: (prev) => prev,
+    staleTime: 5_000,
+  });
+  const figures = previewBody ? preview.data : undefined;
+  const profit = priceOk ? figures?.profit : undefined;
+  const separatelyCents = figures ? figures.productsCents + figures.timeCents : productsCents;
 
   const save = useMutation({
     mutationFn: () => {
@@ -139,10 +172,9 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
     if (items.some((i) => i.productId === p.id)) return setError(t('offers.productTwice'));
     if (items.length >= OFFER_MAX_PRODUCTS)
       return setError(t('offers.maxProducts', { n: OFFER_MAX_PRODUCTS }));
-    setItems((list) => [
-      ...list,
-      { productId: p.id, name: p.name, unitPriceCents: unitPriceOf(p), quantityText: '1' },
-    ]);
+    setItems((list) => [...list, draftItemOf(p)]);
+    // The product is chosen: the price is what is left to type.
+    if (!priceText.trim()) setTimeout(() => priceRef.current?.focus(), 0);
   };
 
   return (
@@ -175,7 +207,19 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
               {items.length === 0 && <span className="faint">{t('offers.noProducts')}</span>}
               {items.map((item, k) => (
                 <div key={item.productId} className="offer-item" data-testid="offer-form-item">
-                  <span className="offer-item__name">{item.name}</span>
+                  <span className="offer-item__name">
+                    {item.name}
+                    <span
+                      className={`offer-item__stock ${
+                        item.stockMilli !== null && item.stockMilli <= 0 ? 'text-danger' : 'faint'
+                      }`}
+                      data-testid="offer-form-stock"
+                    >
+                      {item.stockMilli === null
+                        ? t('offers.stockUntracked')
+                        : t('offers.stock', { n: formatQuantity(item.stockMilli, language) })}
+                    </span>
+                  </span>
                   <span className="faint num">{fmt.money(item.unitPriceCents)}</span>
                   <Input
                     value={item.quantityText}
@@ -210,6 +254,18 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
                   onPick={addProduct}
                   placeholder={t('offers.addProduct')}
                   autoFocus={items.length === 0}
+                  browse
+                  exclude={items.map((i) => i.productId)}
+                  keepFocus={false}
+                  meta={(p) => (
+                    <span
+                      className={`num ${p.trackStock && p.stockMilli <= 0 ? 'text-danger' : 'faint'}`}
+                    >
+                      {p.trackStock
+                        ? t('offers.stock', { n: formatQuantity(p.stockMilli, language) })
+                        : t('offers.stockUntracked')}
+                    </span>
+                  )}
                 />
               )}
             </div>
@@ -260,14 +316,15 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
         <Field
           label={t('offers.price')}
           hint={
-            items.length > 0
-              ? t('offers.priceHint', { amount: fmt.money(productsCents) })
+            separatelyCents > 0
+              ? t('offers.separately', { amount: fmt.money(separatelyCents) })
               : undefined
           }
         >
           {(id) => (
             <Input
               id={id}
+              ref={priceRef}
               inputMode="decimal"
               value={priceText}
               placeholder="0.00"
@@ -283,6 +340,38 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
             />
           )}
         </Field>
+        {profit && (
+          <div className="offer-profit" data-testid="offer-profit">
+            <div className="offer-profit__head">
+              <span className="muted">{t('offers.profitTitle')}</span>
+              <strong
+                className={`num offer-profit__value ${
+                  profit.profitCents >= 0 ? 'text-success' : 'text-danger'
+                }`}
+                data-testid="offer-profit-value"
+              >
+                {fmt.money(profit.profitCents)}
+              </strong>
+            </div>
+            <div className="muted offer-profit__line">
+              {profit.vatCents > 0
+                ? t('offers.profitBreakdownVat', {
+                    net: fmt.money(profit.netCents),
+                    cost: fmt.money(profit.costCents),
+                    vat: fmt.money(profit.vatCents),
+                  })
+                : t('offers.profitBreakdown', {
+                    net: fmt.money(profit.netCents),
+                    cost: fmt.money(profit.costCents),
+                  })}
+            </div>
+            {profit.missingCost.length > 0 && (
+              <div className="text-warning offer-profit__line" data-testid="offer-profit-nocost">
+                {t('offers.profitMissingCost', { names: profit.missingCost.join(', ') })}
+              </div>
+            )}
+          </div>
+        )}
         <Field label={t('offers.name')} hint={t('offers.nameHint')} error={error ?? undefined}>
           {(id) => (
             <Input
@@ -310,7 +399,11 @@ export function OfferDialog({ draft, onClose }: { draft: OfferDraft; onClose: ()
   );
 }
 
-/** The offers, above the products. Hidden for who may not manage them while there are none. */
+/**
+ * The offers, above the products: each with its stock, what one sale of it earns and what it has
+ * sold so far. Shown once there is an offer — a new one is added from the page's header
+ * ("Shto ofertë", beside "Shto produkt").
+ */
 export function OffersCard({
   canManage,
   onEdit,
@@ -345,7 +438,7 @@ export function OffersCard({
   });
 
   const list = offers.data ?? [];
-  if (list.length === 0 && !canManage) return null;
+  if (list.length === 0) return null;
   return (
     <section className="card offers-card" data-testid="offers-card">
       <header className="offers-card__head">
@@ -355,13 +448,7 @@ export function OffersCard({
           </h2>
           <span className="faint">{t('offers.hint')}</span>
         </div>
-        {canManage && (
-          <Button variant="primary" onClick={() => onEdit('new')} data-testid="offer-new">
-            <Plus size={14} /> {t('offers.add')}
-          </Button>
-        )}
       </header>
-      {offers.isSuccess && list.length === 0 && <p className="muted">{t('offers.empty')}</p>}
       {list.length > 0 && (
         <div className="offers-card__list">
           {list.map((o) => (
@@ -373,6 +460,50 @@ export function OffersCard({
               <div className="offers-card__text">
                 <strong>{o.name}</strong>
                 <span className="faint">{offerContents(o)}</span>
+                <span className="offers-card__figures" data-testid="offer-figures">
+                  {o.stockUnits !== null && o.stockUnits !== undefined && (
+                    <span
+                      className={o.stockUnits <= 0 ? 'text-danger' : undefined}
+                      data-testid="offer-stock"
+                    >
+                      {t('offers.stockUnits', { n: o.stockUnits })}
+                    </span>
+                  )}
+                  {o.profit && (
+                    <span
+                      className={o.profit.profitCents >= 0 ? 'text-success' : 'text-danger'}
+                      title={
+                        o.profit.missingCost.length > 0
+                          ? t('offers.profitMissingCost', {
+                              names: o.profit.missingCost.join(', '),
+                            })
+                          : undefined
+                      }
+                      data-testid="offer-profit-each"
+                    >
+                      {t('offers.profitEach', { amount: fmt.money(o.profit.profitCents) })}
+                      {o.profit.missingCost.length > 0 && ' *'}
+                    </span>
+                  )}
+                  {o.sold &&
+                    (o.sold.count > 0 ? (
+                      <>
+                        <span data-testid="offer-sold">
+                          {t('offers.soldCount', { n: o.sold.count })}
+                        </span>
+                        <span>
+                          {t('offers.soldRevenue', { amount: fmt.money(o.sold.revenueCents) })}
+                        </span>
+                        <strong data-testid="offer-sold-profit">
+                          {t('offers.soldProfit', { amount: fmt.money(o.sold.profitCents) })}
+                        </strong>
+                      </>
+                    ) : (
+                      <span className="faint" data-testid="offer-sold">
+                        {t('offers.soldNone')}
+                      </span>
+                    ))}
+                </span>
               </div>
               {o.isActive && !o.available && (
                 <Badge tone="warning">{t('offers.unavailable')}</Badge>

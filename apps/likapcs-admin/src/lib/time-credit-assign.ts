@@ -111,3 +111,39 @@ export function planSplit<T extends CreditTarget>(
   const total = shared.reduce((sum, c) => sum + c.minutesRemaining, 0);
   return { rows, minutesEach, leftoverMinutes: total - minutesEach * n };
 }
+
+// ─── 0.36.1: paid minutes the desk cannot tell apart are shown once ───────────
+
+/** Paid minutes as one choice in a start / "add time" window: the oldest of its kind, and how many wait. */
+export interface CreditGroup {
+  credit: TimeCreditSummary;
+  count: number;
+}
+
+/**
+ * Credits that look the same to the desk — the same PC (or any PC), the same offer, the same name
+ * and the same minutes — as one entry, in the order given (oldest first). Three offers sold at the
+ * till are one choice "× 3", and using it takes the oldest.
+ */
+export function groupCredits(credits: readonly TimeCreditSummary[]): CreditGroup[] {
+  const groups = new Map<string, CreditGroup>();
+  for (const credit of credits) {
+    if (credit.minutesRemaining <= 0) continue;
+    const key = [
+      credit.stationId ?? '',
+      credit.offerName ?? '',
+      credit.holderName ?? '',
+      credit.minutesRemaining,
+    ].join('\u0000');
+    const known = groups.get(key);
+    if (known) known.count += 1;
+    else groups.set(key, { credit, count: 1 });
+  }
+  return [...groups.values()];
+}
+
+/** The name a credit is shown under besides its minutes: whose it is, unless it is the generic one. */
+export function creditHolder(credit: Pick<TimeCreditSummary, 'holderName'>): string | null {
+  const name = credit.holderName?.trim() ?? '';
+  return name && name.toLowerCase() !== 'klient' ? name : null;
+}

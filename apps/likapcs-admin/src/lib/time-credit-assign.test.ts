@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { TimeCreditSummary } from '@likapcs/shared';
-import { assignCredits, planEach, planSplit } from './time-credit-assign';
+import {
+  assignCredits,
+  creditHolder,
+  groupCredits,
+  planEach,
+  planSplit,
+} from './time-credit-assign';
 
 const credit = (
   id: string,
@@ -93,5 +99,51 @@ describe('planEach and planSplit (0.33.4)', () => {
     expect(planSplit(pcs, [credit('z', 'pc1', 600)])).toBeNull();
     expect(planSplit(pcs, [credit('x', null, 2)])).toBeNull();
     expect(planSplit([], [credit('x', null, 60)])).toBeNull();
+  });
+});
+
+describe('groupCredits (0.36.1)', () => {
+  /** The minutes of an offer sold with one click: any PC, no name. */
+  const offerCredit = (id: string, offerName: string, minutes = 60): TimeCreditSummary => ({
+    ...credit(id, null, minutes),
+    holderName: null,
+    offerName,
+  });
+
+  it('shows the minutes of the same offer once, with how many wait, the oldest first', () => {
+    const groups = groupCredits([
+      offerCredit('a', 'Coca-Cola + 60 min'),
+      offerCredit('b', 'Coca-Cola + 60 min'),
+      offerCredit('c', 'Ujë + 30 min', 30),
+      offerCredit('d', 'Coca-Cola + 60 min'),
+    ]);
+    expect(groups.map((g) => [g.credit.id, g.count])).toEqual([
+      ['a', 3],
+      ['c', 1],
+    ]);
+  });
+
+  it('keeps apart what the desk can tell apart: the PC, the name, the minutes left', () => {
+    const named = { ...credit('n', null), holderName: 'Arben' };
+    const groups = groupCredits([
+      offerCredit('a', 'Coca-Cola + 60 min'),
+      offerCredit('b', 'Coca-Cola + 60 min', 45),
+      named,
+      credit('p', 'pc1'),
+      credit('q', 'pc1'),
+      { ...offerCredit('z', 'Coca-Cola + 60 min'), minutesRemaining: 0 },
+    ]);
+    expect(groups.map((g) => [g.credit.id, g.count])).toEqual([
+      ['a', 1],
+      ['b', 1],
+      ['n', 1],
+      ['p', 2],
+    ]);
+  });
+
+  it('names whose minutes they are, unless it is the generic name', () => {
+    expect(creditHolder({ holderName: 'Arben' })).toBe('Arben');
+    expect(creditHolder({ holderName: ' Klient ' })).toBeNull();
+    expect(creditHolder({ holderName: null })).toBeNull();
   });
 });

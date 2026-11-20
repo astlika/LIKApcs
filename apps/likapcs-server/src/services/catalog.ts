@@ -26,6 +26,7 @@ import { millsToCents } from '@likapcs/shared';
 export function unitMills(cents: number, mills?: number | null): number {
   return mills ?? cents * 10;
 }
+import { foldText, sqlFold } from '../db/fold.js';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { type AppError, badRequest, conflict, notFound } from '../errors.js';
@@ -338,9 +339,12 @@ export class CatalogService {
       where.push(`p.kind = $${values.length}`);
     }
     if (query.q) {
-      values.push(`%${query.q.toLowerCase()}%`, query.q);
+      // 0.36.1: capitals and accents do not matter — "caj", "çaj" and "ÇAJ" find "Çaj" (the
+      // database folds A–Z only, so both sides are folded the same way; see `db/fold.ts`).
+      values.push(`%${foldText(query.q)}%`, query.q);
+      const typed = `$${values.length - 1}`;
       where.push(
-        `(lower(p.name) LIKE $${values.length - 1} OR lower(p.sku) LIKE $${values.length - 1} OR lower(COALESCE(p.brand, '')) LIKE $${values.length - 1}
+        `(${sqlFold('p.name')} LIKE ${typed} OR ${sqlFold('p.sku')} LIKE ${typed} OR ${sqlFold("COALESCE(p.brand, '')")} LIKE ${typed}
           OR EXISTS (SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode = $${values.length}))`,
       );
     }

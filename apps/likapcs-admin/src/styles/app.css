@@ -8029,3 +8029,97 @@ button.ads-album .ads-album__meta {
   width: 64px;
   text-align: right;
 }
+
+/* 0.36.1 — offers: the stock of a product in the form, what one sale earns, what an offer sold. */
+.offer-item__name {
+  display: flex;
+  flex-direction: column;
+  white-space: normal;
+}
+.offer-item__stock {
+  font-weight: 400;
+  font-size: 12px;
+}
+.offer-profit {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+.offer-profit__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.offer-profit__value {
+  font-size: 20px;
+}
+.offer-profit__line {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.offers-card__figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.offers-card__figures strong {
+  color: var(--text);
+}
+/* Minutes paid at the till: the first tiles of the start window, and one click in "add time". */
+.start-tile--paid {
+  border-color: var(--success);
+  background: var(--success-soft);
+  text-align: center;
+}
+.paid-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+}
+.paid-credits__title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.paid-credits__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.paid-credit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.paid-credit:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--success);
+}
+.paid-credit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.paid-credit__text {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}

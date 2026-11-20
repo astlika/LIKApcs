@@ -253,6 +253,12 @@ opens a `pending` run, later events update it; `none`/`unavailable` close it qui
 | `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                                      |
 | `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                                  |
 
+**Search (0.36.1).** `GET /products?q=` does not mind capitals or accents: the name, the SKU and
+the brand are compared with accents taken off and in lower case on both sides ("caj", "çaj" and
+"ÇAJ" find "Çaj"; "uje" finds "Ujë"), a barcode has to match whole. The database is created with
+the C locale, where `lower()` and `ILIKE` fold A–Z only, so the folding is done with `translate()`
+over a fixed table of accented Latin letters (`db/fold.ts`) — no collation is involved.
+
 ### Ads — customer-screen slideshow & promo prices (0.7.0; `products.view` to read, `products.manage` to change)
 
 The owner curates what the locked gaming PCs show (Admin › Ads). `product` ads point at a product
@@ -1104,6 +1110,10 @@ them (setting `pos.internet_bar`; empty = the first packages by themselves).
 An offer is a recipe kept by the server: some products, some PC minutes, one price
 ("Coca-Cola + 60 min" for 3.00). Selling it writes ordinary sale lines.
 
+0.36.1 (no migration): the offer says what is in stock for it, what one sale of it earns and what
+it has sold so far; the till sells it with one click, without a PC — the minutes wait at the desk
+as paid time for any PC.
+
 **Managing offers**
 
 - `GET /offers` (`pos.sell` or `products.view`; `?active=true` for the till) →
@@ -1112,6 +1122,26 @@ An offer is a recipe kept by the server: some products, some PC minutes, one pri
   one unit costs outside the offer right now —, `available`, `imageUrl`), `productsCents` (its
   products outside the offer; PC time is not counted, its price depends on the PC) and
   `available` (every product of it can be sold right now).
+- 0.36.1 — each item also has `stockMilli` (null when the product does not count its stock),
+  `stockLimited` (counted and not allowed below zero: the till never sells past it), `taxRateBp`
+  and `unitCostMills` (what one unit costs to buy: the average purchase cost, else the product's
+  purchase cost; 0 when none is recorded). The offer also has `stockUnits`, `profit` and `sold`;
+  the last two are null for a user with neither `products.manage` nor `reports.view`:
+  - `stockUnits` — how many times the stock covers it now (the product that runs out first
+    decides); null when none of its products counts its stock.
+  - `profit` — what ONE sale earns: `{ netCents, vatCents, costCents, profitCents, missingCost[] }`.
+    The price is shared among the products and the PC time as a sale shares it; the VAT is taken
+    out of each share at its own rate (PC time at the business default); `costCents` is what the
+    products cost to buy (PC time costs nothing); `profitCents = netCents − costCents`.
+    `missingCost` names the products with no purchase cost: the profit counts them as free.
+  - `sold` — `{ count, revenueCents, profitCents }` from the sale lines of the offer: `count` is
+    how many were sold and not refunded whole; `revenueCents` is what was paid after sale
+    discounts and refunds; `profitCents` is that without VAT, less the cost booked on the lines
+    (goods a refund put back on the shelf are taken off).
+- `POST /offers/preview` (`products.manage`) `{ priceCents?, minutes?, items? }` — the offer in the
+  form, before it is saved → `{ items, productsCents, timeCents, stockUnits, profit }`
+  (`timeCents`: what the minutes cost outside the offer right now; 0 without a price rule).
+  Nothing is written. 404 for a product that does not exist.
 - `POST /offers`, `PUT /offers/:id` (`products.manage`) take the whole offer:
   `{ name, priceCents, minutes, items: [{ productId, quantityMilli }], isActive }`. At least one
   product or some minutes; at most ten products, each once; ordinary products only
@@ -1125,7 +1155,16 @@ An offer is a recipe kept by the server: some products, some PC minutes, one pri
   minutes, one PC-time line for `stationId` — or, without a PC, for `holderName` (answered with a
   PIN in `claimPins`, as for PC time sold at the till). Each line carries
   `offer: { id, name, group }`; a receipt shows the lines of one `group` as one row
-  (`receiptRows` in `@likapcs/shared`).
+  (`receiptRows` in `@likapcs/shared`; since 0.36.1 the same offer bought several times with the
+  same content is one row with its count).
+- 0.36.1 — `{ offerId }` alone, with neither a PC nor a name, is what the till sends (one item
+  per unit sold). The minutes become a paid time credit for ANY PC, without a PIN: no PC starts,
+  `claimPins` and `offerStarts` are absent. The credit carries the offer's name and, when the
+  sale has a customer, the customer's name. `GET /time-credits[?stationId=]` lists it with
+  `stationId: null`, `holderName` (null without a customer) and `offerName`; the desk uses it as
+  any credit — `POST /sessions { stationId, billingMode: "prepaid", minutes, creditId }` starts a
+  PC with it and `POST /sessions/:id/extend { minutes, creditId }` adds it to a running paid or
+  pay-at-the-end session. Nothing is charged again. It cannot be claimed at a PC (no PIN).
 - The lines together cost `priceCents`, shared by what each costs outside the offer. A customer's
   default discount and a discount on the whole sale apply on top, as for any line.
 - After the sale is committed the minutes are given to the PC: a free PC starts a prepaid session

@@ -265,7 +265,14 @@ describe('offers: products and PC minutes at one price', () => {
     expect(sale.body.items.map((i) => i.offer?.group)).toEqual([1, 1, 2, 2]);
     expect(sale.body.offerStarts?.map((s) => s.result)).toEqual(['started', 'extended']);
     expect(await live(c.id)).toMatchObject({ plannedSeconds: 7200 });
-    expect(receiptRows(sale.body.items).map((r) => r.lineTotalCents)).toEqual([600, 600]);
+    // 0.36.1: the same offer for the same PC twice is one receipt row with its count.
+    expect(
+      receiptRows(sale.body.items).map((r) => [
+        r.quantityMilli,
+        r.unitPriceCents,
+        r.lineTotalCents,
+      ]),
+    ).toEqual([[2000, 600, 1200]]);
   });
 
   it('a PC on open time keeps the minutes as its paid credit', async () => {

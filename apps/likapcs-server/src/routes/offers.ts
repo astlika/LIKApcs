@@ -1,12 +1,21 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { PERMISSIONS, offerActiveSchema, offerInputSchema, uuidSchema } from '@likapcs/shared';
+import {
+  PERMISSIONS,
+  offerActiveSchema,
+  offerInputSchema,
+  offerPreviewSchema,
+  uuidSchema,
+} from '@likapcs/shared';
 import { forbidden, unauthorized } from '../errors.js';
 
 /**
  * Offers (0.36.0): products and PC minutes sold together at one price. Whoever sells at the till
  * or sees the products sees the offers; making, changing and deleting one needs products.manage.
  * Selling an offer is a normal POS sale (`POST /sales` with an `offerId` item).
+ *
+ * 0.36.1: what an offer earns and what it has sold (`profit`, `sold`) go only to who may manage
+ * the products or see the reports; everyone else gets them as null.
  */
 export const offerRoutes: FastifyPluginAsync = async (app) => {
   const { services } = app;
@@ -26,11 +35,24 @@ export const offerRoutes: FastifyPluginAsync = async (app) => {
   };
   const manage = { preHandler: app.requirePermission(PERMISSIONS.PRODUCTS_MANAGE) };
 
+  const seesMoney = (request: FastifyRequest): boolean => {
+    const { permissions } = request.auth!;
+    return (
+      permissions.has(PERMISSIONS.PRODUCTS_MANAGE) || permissions.has(PERMISSIONS.REPORTS_VIEW)
+    );
+  };
+
   /** `?active=true`: only the offers on the till (what the POS shows). */
   app.get('/offers', view, async (request) => {
     const { active } = z.object({ active: z.coerce.boolean().optional() }).parse(request.query);
-    return { items: await services.offers.list({ activeOnly: active === true }) };
+    return {
+      items: await services.offers.list({ activeOnly: active === true, money: seesMoney(request) }),
+    };
   });
+  /** 0.36.1: the offer in the form — its stock, what its parts cost and what one sale earns. */
+  app.post('/offers/preview', manage, async (request) =>
+    services.offers.preview(offerPreviewSchema.parse(request.body)),
+  );
   app.post('/offers', manage, async (request, reply) =>
     reply
       .code(201)

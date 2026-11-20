@@ -181,6 +181,12 @@ export function ProductsPage() {
                 <Wifi size={14} /> {t('internet.add')}
               </Button>
             )}
+            {/* 0.36.1: an offer is added here, beside "Shto produkt". */}
+            {canManage && (
+              <Button onClick={() => setOfferDraft('new')} data-testid="offer-new">
+                <Tags size={14} /> {t('offers.add')}
+              </Button>
+            )}
             {canManage && (
               <Button variant="primary" onClick={() => setEditing('new')}>
                 <Plus size={14} /> {t('products.add')}

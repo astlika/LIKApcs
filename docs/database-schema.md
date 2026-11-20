@@ -257,6 +257,13 @@ to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind
 - The lines of one group together cost the offer's price: it is shared among them by what each
   costs outside the offer (largest remainder), and a share that does not divide by the quantity
   is written as a unit price rounded up with the few cents too many as the line's discount.
+- 0.36.1 (no migration) — the minutes of an offer sold at the till without a PC and without a
+  name are a **time_credits** row with `station_id` NULL and `pin_hash` NULL: paid time for any
+  PC that only the desk can give (a PIN lookup needs `pin_hash`). `holder_name` is the sale's
+  customer, or NULL. Its offer is read through `sale_item_id` → `sale_items.offer_name`.
+- 0.36.1 — what an offer has sold is not stored: it is summed from the `sale_items` that carry
+  its `offer_id` (completed and refunded sales), with `refund_items` taken off. Deleting an offer
+  sets `offer_id` to NULL on those lines, so its figures go with it; the sales themselves stay.
 
 ## Operations
 

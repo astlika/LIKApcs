@@ -3,15 +3,15 @@
  * ("Coca-Cola + 60 min").
  *
  * - `useOffers`: the offers on sale (the POS tiles, the Stations action).
- * - `OfferPcDialog`: the POS asks who gets the minutes of an offer — a PC, or a name without one.
  * - `OfferSellDialog`: the Stations page sells an offer for the selected PC right there.
  * - `announceOfferStarts`: says what happened to the minutes once the sale was paid.
+ * - `announceOfferWaiting` (0.36.1): the POS sells an offer with one click — its minutes wait at
+ *   the desk as paid time and are given when a PC is started or gets more time.
  *
- * The server opens an offer up into its products and its PC time and gives the minutes to the PC
- * itself; nothing here decides a price.
+ * The server opens an offer up into its products and its PC time; nothing here decides a price.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Tags, UserRound } from 'lucide-react';
+import { Tags } from 'lucide-react';
 import { useState } from 'react';
 import {
   PERMISSIONS,
@@ -30,7 +30,7 @@ import { useAuth } from '../../state/auth';
 import { useShiftGuard } from '../../state/shift-guard';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
-import { Button, Dialog, Field, Input, Kbd, Loading } from '../ui/primitives';
+import { Button, Dialog, Kbd, Loading } from '../ui/primitives';
 import { SaleDoneDialog } from './SaleDoneDialog';
 
 export const OFFERS_KEY = ['offers'] as const;
@@ -98,121 +98,25 @@ export function refreshAfterOfferSale(queryClient: ReturnType<typeof useQueryCli
   for (const key of AFTER_OFFER_SALE) void queryClient.invalidateQueries({ queryKey: [...key] });
 }
 
-/** Whether a PC can take prepaid minutes now: enabled, and not running on open time. */
-function pcState(s: StationSummary): 'free' | 'running' | 'open' | 'off' {
-  if (!s.isEnabled) return 'off';
-  if (!s.activeSession) return 'free';
-  return s.activeSession.billingMode === 'postpaid' ? 'open' : 'running';
-}
-
-export interface OfferTarget {
-  stationId: string | null;
-  stationCode: string | null;
-  holderName: string | null;
-}
-
 /**
- * The POS: who gets the minutes of this offer. A click on a PC adds the offer for it; without a
- * PC the minutes are sold to a name (the customer's, or typed; empty means "Klient") and a PIN
- * starts them at any PC — the same as PC time sold at the till.
+ * 0.36.1: an offer is sold with one click and nothing is asked. Its PC minutes wait at the desk
+ * as paid time: say so once the sale is paid, so the cashier knows where they went.
  */
-export function OfferPcDialog({
-  offer,
-  customerName,
-  onClose,
-  onPick,
-}: {
-  offer: OfferSummary;
-  customerName?: string | null;
-  onClose: () => void;
-  onPick: (target: OfferTarget) => void;
-}) {
-  const { t } = useI18n();
-  const { can } = useAuth();
-  const [nameText, setNameText] = useState(customerName ?? '');
-  const stations = useQuery({
-    queryKey: ['stations', 'offer-pick'],
-    queryFn: () => api<StationSummary[]>('/stations', { query: { includeArchived: false } }),
-    enabled: can(PERMISSIONS.STATIONS_VIEW),
-    staleTime: 5_000,
-  });
-  const list = (stations.data ?? []).filter((s) => !s.archived).sort((a, b) => a.number - b.number);
-  const addNoPc = () =>
-    onPick({ stationId: null, stationCode: null, holderName: nameText.trim() || null });
-
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      size="md"
-      title={t('offers.pcTitle')}
-      description={t('offers.pcBody', { name: offer.name, minutes: offer.minutes })}
-      footer={
-        <Button onClick={onClose}>
-          {t('common.cancel')} <Kbd>Esc</Kbd>
-        </Button>
-      }
-    >
-      <div className="stack" data-testid="offer-pc">
-        {stations.isLoading && <Loading />}
-        {list.length > 0 && (
-          <div className="offer-pcs" role="group" aria-label={t('offers.pcTitle')}>
-            {list.map((s) => {
-              const state = pcState(s);
-              const blocked = state === 'off' || state === 'open';
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  className="offer-pc"
-                  data-state={state}
-                  disabled={blocked}
-                  title={state === 'open' ? t('offers.pcOpenTimeHint') : undefined}
-                  onClick={() => onPick({ stationId: s.id, stationCode: s.code, holderName: null })}
-                  data-testid="offer-pc-item"
-                >
-                  <strong>{s.name}</strong>
-                  <span className="offer-pc__state">
-                    {state === 'free'
-                      ? t('offers.pcFree')
-                      : state === 'running'
-                        ? (s.activeSession?.customerName ?? t('offers.pcRunning'))
-                        : state === 'open'
-                          ? t('offers.pcOpenTime')
-                          : t('offers.pcOff')}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <div className="offer-nopc">
-          <Field label={t('offers.noPc')} hint={t('offers.noPcHint')}>
-            {(id) => (
-              <div className="row" style={{ gap: 8 }}>
-                <Input
-                  id={id}
-                  value={nameText}
-                  maxLength={80}
-                  placeholder={t('offers.holderPlaceholder')}
-                  onChange={(e) => setNameText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return;
-                    e.preventDefault();
-                    // An empty field: a stray Enter never sells the minutes without a PC.
-                    if (nameText.trim()) addNoPc();
-                  }}
-                  data-testid="offer-pc-name"
-                />
-                <Button onClick={addNoPc} data-testid="offer-pc-none">
-                  <UserRound size={14} /> {t('offers.addNoPc')}
-                </Button>
-              </div>
-            )}
-          </Field>
-        </div>
-      </div>
-    </Dialog>
+export function announceOfferWaiting(
+  lines: readonly { offer: Pick<OfferSummary, 'minutes'>; quantityMilli: number }[],
+  toast: Toasts,
+  t: Translate,
+): void {
+  const timed = lines.filter((l) => l.offer.minutes > 0);
+  if (timed.length === 0) return;
+  const count = timed.reduce((n, l) => n + Math.round(l.quantityMilli / 1000), 0);
+  const first = timed[0]!.offer.minutes;
+  const sameMinutes = timed.every((l) => l.offer.minutes === first);
+  toast.success(
+    count === 1 || sameMinutes
+      ? t(count === 1 ? 'offers.waitingOne' : 'offers.waitingMany', { minutes: first, n: count })
+      : t('offers.waitingMixed', { n: count }),
+    t('offers.waitingHint'),
   );
 }
 
