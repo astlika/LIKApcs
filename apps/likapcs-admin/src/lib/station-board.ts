@@ -180,14 +180,23 @@ export function countdownLabel(totalSeconds: number): string {
   return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
 }
 
+/** 0.37.0: one formatter per time zone, kept — the board asks for every tile, every second. */
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /** HH:mm in the business time zone (the "Filloi: 16:20" and "Për: 20:00" labels). */
 export function clockLabel(iso: string, timeZone?: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone,
-  }).format(new Date(iso));
+  const key = timeZone ?? '';
+  let formatter = clockFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone,
+    });
+    clockFormatters.set(key, formatter);
+  }
+  return formatter.format(new Date(iso));
 }
 
 /** The header figures. Counts are PCs; revenue and units come from the day's dashboard figures. */

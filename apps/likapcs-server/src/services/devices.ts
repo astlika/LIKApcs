@@ -38,7 +38,31 @@ export interface AuthenticatedDevice {
 const DEVICE_COLUMNS =
   'id, station_id, machine_id, hostname, os_info, app_version, status, registered_at, approved_at, last_seen_at, last_ip, hardware';
 
+/**
+ * 0.37.0: how often a connected PC is written to the database. A PC says "I am here" every 10
+ * seconds; before, each of those was two writes (its row in station_devices, and a new row in
+ * station_heartbeats that nothing read) — with 20 PCs, 4 writes a second for as long as the shop
+ * is open, on the same disk the till and the Stations page read from. Who is online, and each
+ * PC's load, live in memory (the hub); the database only needs to know when a PC was last seen.
+ */
+export const DEVICE_TOUCH_INTERVAL_MS = 60_000;
+/** One kept sample of a PC's load (station_heartbeats) per this long. */
+export const HEARTBEAT_SAMPLE_INTERVAL_MS = 5 * 60_000;
+
+/** What the last write for a connected PC said — a change is written at once. */
+interface DeviceTouch {
+  at: number;
+  sampledAt: number;
+  ip: string | null;
+  appVersion: string;
+  locked: boolean | null;
+  sessionId: string | null;
+}
+
 export class DevicesService {
+  /** Connected PCs: when each was last written to the database, and with what. */
+  private readonly touched = new Map<string, DeviceTouch>();
+
   constructor(
     private readonly pool: DbPool,
     private readonly hub: RealtimeHub,
@@ -56,7 +80,8 @@ export class DevicesService {
       status: row.status,
       registeredAt: row.registered_at.toISOString(),
       approvedAt: row.approved_at?.toISOString() ?? null,
-      lastSeenAt: row.last_seen_at?.toISOString() ?? null,
+      // A connected PC was seen at its last heartbeat (the database is written once a minute).
+      lastSeenAt: (this.hub.lastSeen(row.id) ?? row.last_seen_at)?.toISOString() ?? null,
       lastIp: row.last_ip,
       online: this.hub.isDeviceOnline(row.id),
       hardware: row.hardware,
@@ -409,6 +434,12 @@ export class DevicesService {
   }
 
   // ─── Telemetry ───────────────────────────────────────────────────────────────
+  /**
+   * A heartbeat of a connected PC. The first one after it connects is written; after that the
+   * database is written when something changed (address, version, locked, session) or once a
+   * minute, and a sample of the load is kept every five minutes. `deviceGone` writes the exact
+   * time of the last heartbeat when the PC disconnects.
+   */
   async recordHeartbeat(
     deviceId: string,
     stationId: string,
@@ -419,26 +450,66 @@ export class DevicesService {
       metrics: Record<string, unknown> | null;
       sessionId: string | null;
     },
+    now: number = Date.now(),
   ): Promise<void> {
+    const last = this.touched.get(deviceId);
+    const changed =
+      !last ||
+      last.ip !== data.ip ||
+      last.appVersion !== data.appVersion ||
+      last.locked !== data.locked ||
+      last.sessionId !== data.sessionId;
+    const touch = changed || now - last.at >= DEVICE_TOUCH_INTERVAL_MS;
+    const sample = changed || now - last.sampledAt >= HEARTBEAT_SAMPLE_INTERVAL_MS;
+    if (!touch && !sample) return;
+    // Remembered before the writes: the next heartbeat must not repeat them while they run.
+    this.touched.set(deviceId, {
+      at: touch ? now : last.at,
+      sampledAt: sample ? now : last.sampledAt,
+      ip: data.ip,
+      appVersion: data.appVersion,
+      locked: data.locked,
+      sessionId: data.sessionId,
+    });
+    if (touch) {
+      await this.pool.query(
+        `UPDATE station_devices SET last_seen_at = $5, last_ip = $2, app_version = $3, last_heartbeat = $4::jsonb WHERE id = $1`,
+        [
+          deviceId,
+          data.ip,
+          data.appVersion,
+          JSON.stringify({ locked: data.locked, metrics: data.metrics, sessionId: data.sessionId }),
+          new Date(now),
+        ],
+      );
+    }
+    if (sample) {
+      await this.pool.query(
+        'INSERT INTO station_heartbeats (device_id, station_id, received_at, app_version, session_id, locked, metrics) VALUES ($1, $2, $7, $3, $4, $5, $6::jsonb)',
+        [
+          deviceId,
+          stationId,
+          data.appVersion,
+          data.sessionId,
+          data.locked,
+          data.metrics ? JSON.stringify(data.metrics) : null,
+          new Date(now),
+        ],
+      );
+    }
+  }
+
+  /**
+   * The PC disconnected (or stopped answering): "last seen" is the time of its last heartbeat,
+   * which the once-a-minute write may not have reached yet. Its next connection starts afresh.
+   */
+  async deviceGone(deviceId: string, lastHeartbeatAt: Date | null): Promise<void> {
+    const last = this.touched.get(deviceId);
+    this.touched.delete(deviceId);
+    if (!last || !lastHeartbeatAt || lastHeartbeatAt.getTime() <= last.at) return;
     await this.pool.query(
-      `UPDATE station_devices SET last_seen_at = now(), last_ip = $2, app_version = $3, last_heartbeat = $4::jsonb WHERE id = $1`,
-      [
-        deviceId,
-        data.ip,
-        data.appVersion,
-        JSON.stringify({ locked: data.locked, metrics: data.metrics, sessionId: data.sessionId }),
-      ],
-    );
-    await this.pool.query(
-      'INSERT INTO station_heartbeats (device_id, station_id, app_version, session_id, locked, metrics) VALUES ($1, $2, $3, $4, $5, $6::jsonb)',
-      [
-        deviceId,
-        stationId,
-        data.appVersion,
-        data.sessionId,
-        data.locked,
-        data.metrics ? JSON.stringify(data.metrics) : null,
-      ],
+      'UPDATE station_devices SET last_seen_at = $2 WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < $2)',
+      [deviceId, lastHeartbeatAt],
     );
   }
 

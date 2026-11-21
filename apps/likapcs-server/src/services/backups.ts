@@ -96,6 +96,13 @@ const SKIP_ON_RESTORE = new Set(['schema_migrations']);
  */
 const PRESERVE_CURRENT = new Set(['backup_history']);
 /**
+ * 0.37.0: tables whose rows are not brought back from an archive. The heartbeats of the PCs are
+ * load samples nothing reads; an archive made before 0.37.0 can hold millions of them (every PC
+ * wrote one every 10 seconds and they were never cleaned), and restoring them would put that
+ * weight straight back. The table itself stays, empty.
+ */
+const NOT_RESTORED = new Set(['station_heartbeats']);
+/**
  * Factory reset keeps the system's own configuration: migration bookkeeping, and the access roles
  * and permission catalogue that first-run setup needs. Every other table is erased.
  */
@@ -742,7 +749,7 @@ export class BackupService {
         );
         const archived = new Set(manifest.tables.map((t) => t.name));
         for (const table of ordered) {
-          if (PRESERVE_CURRENT.has(table)) continue;
+          if (PRESERVE_CURRENT.has(table) || NOT_RESTORED.has(table)) continue;
           if (!archived.has(table)) {
             this.options.log?.info({ table }, 'table missing from backup — left empty');
             continue;

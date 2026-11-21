@@ -6,6 +6,7 @@ import {
   PERMISSIONS,
   PRODUCT_IMAGE_MAX_BYTES,
   PRODUCT_IMAGE_TYPES,
+  PRODUCT_THUMB_MAX_BYTES,
   categorySchema,
   inventoryMovementsQuerySchema,
   productAddonsSchema,
@@ -152,6 +153,37 @@ export const catalogRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/products/:id/image', manage, async (request) =>
     services.catalog.clearProductImage(idParams.parse(request.params).id, actorOf(request)),
   );
+
+  /**
+   * 0.37.0: the small copy of a product picture, for tiles and lists. The Admin makes it (when a
+   * picture is set, and in the background for the pictures that were there before) and sends it
+   * here with `?of=<file name of the picture>`; 409 `IMAGE_CHANGED` when the product shows
+   * another picture by now.
+   */
+  app.put(
+    '/products/:id/image/thumb',
+    { ...manage, bodyLimit: PRODUCT_THUMB_MAX_BYTES },
+    async (request) => {
+      const { id } = idParams.parse(request.params);
+      const { of } = z.object({ of: z.string().min(1).max(64) }).parse(request.query);
+      const body = request.body as NodeJS.ReadableStream | undefined;
+      if (!body || typeof (body as { pipe?: unknown }).pipe !== 'function') {
+        throw new AppError(
+          415,
+          'unsupported_media_type',
+          `Send the picture as one of: ${PRODUCT_IMAGE_TYPES.join(', ')}`,
+        );
+      }
+      const fileName = await services.catalog.images.saveStream(
+        body as unknown as Readable,
+        PRODUCT_THUMB_MAX_BYTES,
+      );
+      return services.catalog.setProductThumb(id, of, fileName);
+    },
+  );
+  app.get('/catalog/product-thumbs/missing', manage, async () => ({
+    items: await services.catalog.productsMissingThumb(),
+  }));
 
   /**
    * Public, read-only: pictures are shown in `<img>` tags (POS tiles, product list) where no

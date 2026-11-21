@@ -297,6 +297,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     schemaVersion: () => app.schemaVersion,
     startedAt: () => app.startedAt,
     onlineDeviceIds: () => hub.onlineDeviceIds(),
+    deviceLastSeen: (deviceId) => hub.lastSeen(deviceId),
     feedBaseUrl: options.updateFeedBaseUrl ?? config.updateFeedBaseUrl ?? undefined,
     log: app.log,
   });
@@ -462,9 +463,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   // Presence → station status broadcasts
   hub.on('device.online', (presence) => void stations.broadcastStation(presence.stationId));
-  hub.on('device.offline', ({ stationId, deviceId, reason }) => {
+  hub.on('device.offline', ({ stationId, deviceId, reason, lastHeartbeatAt }) => {
     app.log.info({ deviceId, reason }, 'device offline');
     void stations.broadcastStation(stationId);
+    // 0.37.0: a connected PC is written to the database once a minute; when it goes, its exact
+    // "last seen" is.
+    void devices
+      .deviceGone(deviceId, lastHeartbeatAt ?? null)
+      .catch((err: unknown) => app.log.warn({ err, deviceId }, 'could not record last seen'));
   });
 
   // Background maintenance
@@ -472,6 +478,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   let dailyTimer: NodeJS.Timeout | null = null;
   let sessionTimer: NodeJS.Timeout | null = null;
   let backupTimer: NodeJS.Timeout | null = null;
+  let firstCleanUp: NodeJS.Timeout | null = null;
   app.addHook('onReady', async () => {
     // Version bookkeeping + optional start-up check of the release feed (never blocks start-up).
     void updates
@@ -507,20 +514,24 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         .sweep()
         .catch((err: unknown) => app.log.error({ err }, 'reservation sweep failed'));
     }, 5_000);
-    dailyTimer = setInterval(
-      () => {
-        void Promise.all([devices.pruneHeartbeats(7), auth.revokeExpiredSessions()]).catch(
-          (err: unknown) => app.log.error({ err }, 'maintenance job failed'),
-        );
-      },
-      24 * 3600 * 1000,
-    );
+    // 0.37.0: the clean-up used to run only after 24 hours without a restart — a main PC that is
+    // switched off every night never got there, and the heartbeat table grew without end. It now
+    // runs a minute after start-up (start-up itself stays quick) and every 6 hours after that.
+    const cleanUp = () => {
+      void Promise.all([devices.pruneHeartbeats(7), auth.revokeExpiredSessions()]).catch(
+        (err: unknown) => app.log.error({ err }, 'maintenance job failed'),
+      );
+    };
+    firstCleanUp = setTimeout(cleanUp, 60_000);
+    firstCleanUp.unref();
+    dailyTimer = setInterval(cleanUp, 6 * 3600 * 1000);
   });
   app.addHook('onClose', async () => {
     if (sweepTimer) clearInterval(sweepTimer);
     if (dailyTimer) clearInterval(dailyTimer);
     if (sessionTimer) clearInterval(sessionTimer);
     if (backupTimer) clearInterval(backupTimer);
+    if (firstCleanUp) clearTimeout(firstCleanUp);
     hub.closeAll(WS_CLOSE_CODES.SERVER_SHUTDOWN, 'server shutting down');
   });
 

@@ -508,8 +508,10 @@ function MenuEditor() {
                           {p.imageUrl ? (
                             <img
                               className="menu-editor__thumb"
-                              src={fileUrl(p.imageUrl) ?? ''}
+                              src={fileUrl(p.imageThumbUrl ?? p.imageUrl) ?? ''}
                               alt=""
+                              loading="lazy"
+                              decoding="async"
                             />
                           ) : (
                             <span className="menu-editor__thumb menu-editor__thumb--blank" />

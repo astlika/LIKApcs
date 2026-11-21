@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-21
+
+### Changed
+
+- **Speed on a small main PC.** Nothing works differently; the screens that stay open all day (Stations, the till) cost far less. Measured in the test set-up with a database grown to about a year of use (29,000 sessions, 61,000 sales) — not on a real shop PC:
+  - **Stations and the dashboard figures no longer read the whole history.** For every PC the Stations list asked "which ended sessions still wait for their money" by reading every session there ever was, twice; the figures above the board did the same. Both were asked on every switch to Stations (F9) and after every event from a PC. With new indexes the list answers in 7 ms instead of 430 ms and the figures in 23 ms instead of 436 ms; the list of bills waiting at the desk in 11 ms instead of 44 ms; the Sales list in 8 ms instead of 62 ms for one day, and in 80 ms instead of 1.3 s for all dates.
+  - **The PCs' heartbeats no longer fill the database.** Every PC wrote a row every 10 seconds that nothing ever read. They were meant to be kept for 7 days, but the clean-up only ran after the server had been up for 24 hours without a restart — on a main PC that is switched off at night it never ran, so the table and every backup (which copies it) only grew: about 3 MB for every hour that 24 PCs are on. The update empties it once (in the test set-up the database went from 941 MB to 292 MB and a backup from 8.8 s to 4.8 s). From now on a connected PC is written when something about it changes and otherwise once a minute, one load sample is kept every five minutes, and the clean-up runs a minute after start-up and every 6 hours. A restore of an older backup does not bring the old heartbeats back. "Last seen" and the online state are unchanged.
+  - **Product pictures have a small copy for the tiles.** The till shows a picture 48 px wide but had to decode the full one (800 px, or as large as a link gave) for every tile: with 120 products, opening the till for the first time cost about a second of processor time, most of it pictures. Each picture now gets a copy 160 px wide, and the till, the Products list, the PC-menu editor and the ads product browser show that one (the first opening of the till: 0.97 s → 0.31 s of processor time). The copies of the pictures that are already there are made by the Admin in the background, starting 15 seconds after it opens, one at a time while the PC is idle — an account that may manage products has to be signed in for that. A new picture gets its copy when the product is saved. Until a copy exists the full picture is shown, as before.
+  - **The top bar asks only whether a shift is open.** It asked for the whole shift every half minute and after every sale or session event — with every movement of the shift in it, 600 kB once the shift has 2,000 movements. Idle on Stations, the Admin now takes 94 kB a minute from the server instead of 1.3 MB.
+  - **A burst of events refreshes each list once.** One action at the desk arrives as several events, and ten PCs switched on together as ten; each event restarted the same requests, and the server answered all of them for nothing. The refreshes are now gathered for 0.2 s.
+  - The till and the Stations page ask for the offers without the profit and the "sold so far" figures, which they never showed (the Products page still gets them).
+  - The embedded PostgreSQL starts with `jit=off`.
+- API: `GET /cash/status?brief=true`; `GET /offers?money=false`; `imageThumbUrl` on a product and on an offer's items; `PUT /products/:id/image/thumb?of=`; `GET /catalog/product-thumbs/missing`. See `docs/network-protocol.md`.
+- Migration `0063_speed.sql`: indexes on `gaming_sessions`, `sales`, `sale_items` and `time_credits`; `products.image_thumb_path` / `image_thumb_of`; empties `station_heartbeats`.
+
 ## [0.36.1] - 2026-11-20
 
 ### Changed

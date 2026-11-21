@@ -172,19 +172,30 @@ export interface LocalClock {
 
 const WEEKDAYS: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
 
+/** 0.37.0: one formatter per time zone, kept (the session clock asks every second). */
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+function clockFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = clockFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      weekday: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    clockFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 /** Local date/time components of `at` in `timeZone` (IANA name), computed with Intl only. */
 export function localClock(at: Date | string | number, timeZone: string): LocalClock {
   const date = new Date(at);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).formatToParts(date);
+  const parts = clockFormatter(timeZone).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const hour = Number(get('hour')) % 24;
   return {

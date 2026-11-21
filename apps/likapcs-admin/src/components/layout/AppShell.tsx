@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3,
   ChevronLeft,
@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 import {
   PERMISSIONS,
-  type CashStatusResponse,
+  type CashStatusBrief,
   type DebtsOverview,
   type HealthResponse,
   type PermissionCode,
@@ -48,6 +48,7 @@ import {
 } from '@likapcs/shared';
 import { api } from '../../lib/api';
 import { storage } from '../../lib/storage';
+import { backfillThumbs } from '../../lib/thumbs';
 import { useAdminSocket } from '../../lib/ws';
 import { publishLiveStatus } from '../../lib/live-status';
 import { flushOfflineQueue, getOfflineSnapshot } from '../../lib/offline-sales';
@@ -142,12 +143,27 @@ export function AppShell() {
     enabled: can(PERMISSIONS.CUSTOMERS_VIEW),
     refetchInterval: 60_000,
   });
+  // 0.37.0: only "is a shift open?" — the full status carries every movement of the shift
+  // (hundreds of kB on a busy day) and this is asked every half minute and after every sale.
   const cashStatus = useQuery({
-    queryKey: ['cash', 'status'],
-    queryFn: () => api<CashStatusResponse>('/cash/status'),
+    queryKey: ['cash', 'status', 'brief'],
+    queryFn: () => api<CashStatusBrief>('/cash/status', { query: { brief: true } }),
     enabled: can(PERMISSIONS.CASH_VIEW),
     refetchInterval: 30_000,
   });
+  // 0.37.0: small copies of the product pictures, for the tiles (see lib/thumbs). Made in the
+  // background: a while after start-up, then now and then for pictures that arrived since.
+  const queryClient = useQueryClient();
+  const canManageProducts = can(PERMISSIONS.PRODUCTS_MANAGE);
+  useEffect(() => {
+    if (!canManageProducts) return;
+    const first = window.setTimeout(() => void backfillThumbs(queryClient), 15_000);
+    const later = window.setInterval(() => void backfillThumbs(queryClient), 10 * 60_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(later);
+    };
+  }, [canManageProducts, queryClient]);
 
   // F9 flips between the two operational screens from anywhere (the POS draft survives the trip,
   // see PosCartProvider). Only offered to users who may open both.

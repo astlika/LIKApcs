@@ -58,7 +58,9 @@ async function readLimited(stream: Readable, limit: number): Promise<Buffer> {
       throw new AppError(
         413,
         'payload_too_large',
-        `Image larger than ${Math.round(limit / 1024 / 1024)} MB`,
+        limit >= 1024 * 1024
+          ? `Image larger than ${Math.round(limit / 1024 / 1024)} MB`
+          : `Image larger than ${Math.round(limit / 1024)} kB`,
       );
     }
     chunks.push(buf);
@@ -110,6 +112,7 @@ export class ProductImageStore {
     if (data.length > PRODUCT_IMAGE_MAX_BYTES) {
       throw new AppError(413, 'payload_too_large', 'Image larger than 5 MB');
     }
+
     const kind = detectImageKind(data.subarray(0, 16));
     if (!kind) throw badRequest('Unsupported image format (use JPEG, PNG, WebP or GIF)');
     await fsp.mkdir(this.dir, { recursive: true });

@@ -523,10 +523,17 @@ export class SessionsService {
       where.push(
         // The same rule as `awaitingPayment` in mapRow (0.36.0: unpaid added minutes, and the
         // products of any ended session — a cancelled one too).
-        `((g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed'))
-           OR (g.billing_mode = 'prepaid' AND g.status IN ('expired', 'completed') AND g.unpaid_cents > 0)
-           OR (g.status IN ('expired', 'completed', 'cancelled')
-               AND EXISTS (SELECT 1 FROM station_orders o WHERE o.session_id = g.id AND o.status = 'accepted')))`,
+        // 0.37.0: the same sessions, found through the index of the waiting ones
+        // (gaming_sessions_station_awaiting_idx) and the open orders instead of reading every
+        // session there ever was: this list is asked for all day by the Stations page and the till.
+        `g.id IN (
+           SELECT a.id FROM gaming_sessions a
+            WHERE a.status IN ('expired', 'completed')
+              AND ((a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL)
+                OR (a.billing_mode = 'prepaid' AND a.unpaid_cents > 0))
+           UNION
+           SELECT o.session_id FROM station_orders o JOIN gaming_sessions a ON a.id = o.session_id
+            WHERE o.status = 'accepted' AND a.status IN ('expired', 'completed', 'cancelled'))`,
       );
     if (query.from) {
       params.push(query.from);

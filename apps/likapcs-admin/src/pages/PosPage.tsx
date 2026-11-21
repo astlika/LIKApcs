@@ -723,7 +723,12 @@ export function PosPage() {
               <div className="tile__head">
                 {o.items[0]?.imageUrl && (
                   <div className="tile__image" aria-hidden>
-                    <img src={fileUrl(o.items[0].imageUrl) ?? undefined} alt="" loading="lazy" />
+                    <img
+                      src={fileUrl(o.items[0].imageThumbUrl ?? o.items[0].imageUrl) ?? undefined}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
                   </div>
                 )}
                 <div className="tile__name" title={`${o.name} — ${offerContents(o)}`}>
@@ -775,7 +780,13 @@ export function PosPage() {
                 <div className="tile__head">
                   {p.imageUrl && (
                     <div className="tile__image" aria-hidden>
-                      <img src={fileUrl(p.imageUrl) ?? undefined} alt="" loading="lazy" />
+                      {/* 0.37.0: the small copy when there is one (see lib/thumbs). */}
+                      <img
+                        src={fileUrl(p.imageThumbUrl ?? p.imageUrl) ?? undefined}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                      />
                     </div>
                   )}
                   <div className="tile__name" title={p.name}>

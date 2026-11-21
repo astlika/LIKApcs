@@ -32,6 +32,7 @@ import {
   type TaxCategorySummary,
 } from '@likapcs/shared';
 import { api, apiUpload, ApiError, fieldError } from '../lib/api';
+import { backfillThumbs } from '../lib/thumbs';
 import { useOpenParam } from '../lib/open-param';
 import {
   ProductImageField,
@@ -260,7 +261,7 @@ export function ProductsPage() {
                 <tr key={p.id} className={p.isActive ? '' : 'row--muted'}>
                   <td>
                     <div className="row" style={{ gap: 10 }}>
-                      <ProductThumb url={p.imageUrl} name={p.name} />
+                      <ProductThumb url={p.imageUrl} thumb={p.imageThumbUrl} name={p.name} />
                       <div>
                         <div className="row" style={{ gap: 8 }}>
                           <strong>{p.name}</strong>
@@ -656,6 +657,8 @@ function ProductDialog({
     onSuccess: () => {
       toast.success(t('products.saved'));
       invalidate();
+      // 0.37.0: a new picture gets its small copy for the tiles right away (see lib/thumbs).
+      if (pendingImage && pendingImage.kind !== 'remove') void backfillThumbs(queryClient);
       onClose();
     },
     onError: (err) => {

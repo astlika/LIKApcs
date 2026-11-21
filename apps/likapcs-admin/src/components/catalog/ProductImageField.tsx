@@ -162,17 +162,22 @@ export function ProductImageField({
   );
 }
 
-/** Small rounded thumbnail used in lists; falls back to a neutral placeholder. */
+/**
+ * Small rounded thumbnail used in lists; falls back to a neutral placeholder.
+ * `thumb` (0.37.0): the small copy of the picture, shown instead of the full one when it exists.
+ */
 export function ProductThumb({
   url,
+  thumb,
   size = 36,
   name,
 }: {
   url: string | null;
+  thumb?: string | null;
   size?: number;
   name?: string;
 }) {
-  const src = fileUrl(url);
+  const src = fileUrl(thumb ?? url);
   return (
     <span
       className="product-thumb"
@@ -180,7 +185,11 @@ export function ProductThumb({
       role={src ? 'img' : undefined}
       aria-label={src ? name : undefined}
     >
-      {src ? <img src={src} alt="" loading="lazy" /> : <ImageIcon size={Math.round(size * 0.45)} />}
+      {src ? (
+        <img src={src} alt="" loading="lazy" decoding="async" />
+      ) : (
+        <ImageIcon size={Math.round(size * 0.45)} />
+      )}
     </span>
   );
 }

@@ -174,7 +174,10 @@ const STATION_SELECT = `
              ((g2.billed_at IS NULL AND g2.billing_mode IN ('endpay', 'postpaid'))
                OR (g2.billing_mode = 'prepaid' AND g2.unpaid_cents > 0)) AS unbilled
         FROM gaming_sessions g2 JOIN customers c2 ON c2.id = g2.customer_id
+       -- 0.37.0: "customer_id IS NOT NULL" changes nothing (the join already needs a customer);
+       -- it lets the index gaming_sessions_station_last_customer_idx answer this directly.
        WHERE g2.station_id = s.id AND g2.status IN ('expired', 'completed')
+         AND g2.customer_id IS NOT NULL
        ORDER BY g2.ended_at DESC NULLS LAST LIMIT 1
     ) lc ON TRUE`;
 
@@ -274,7 +277,9 @@ export class StationsService {
           status: row.device_status ?? 'approved',
           registeredAt: row.device_registered_at?.toISOString() ?? row.created_at.toISOString(),
           approvedAt: row.device_approved_at?.toISOString() ?? null,
-          lastSeenAt: row.device_last_seen_at?.toISOString() ?? null,
+          // A connected PC was seen at its last heartbeat (the database is written once a minute).
+          lastSeenAt:
+            (this.hub.lastSeen(row.device_id) ?? row.device_last_seen_at)?.toISOString() ?? null,
           lastIp: row.device_last_ip,
           online,
           hardware: row.device_hardware,
@@ -437,11 +442,7 @@ export class StationsService {
   }
 
   /** 0.32.0: the staff's manual badges for a PC (V.I.P, tournament, premium, birthday). */
-  async setBadges(
-    id: string,
-    badges: StationBadge[],
-    actor: AuditActor,
-  ): Promise<StationSummary> {
+  async setBadges(id: string, badges: StationBadge[], actor: AuditActor): Promise<StationSummary> {
     const unique = [...new Set(badges)];
     await withTransaction(this.pool, async (client) => {
       const updated = await client.query(

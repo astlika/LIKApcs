@@ -14,6 +14,7 @@ import type {
   ProductListQuery,
   ProductLookupResponse,
   ProductSummary,
+  ProductThumbMissing,
   StockAdjustmentInput,
   TaxCategoryInput,
   TaxCategorySummary,
@@ -64,6 +65,8 @@ interface ProductRow {
   description: string | null;
   storage_location: string | null;
   image_path: string | null;
+  /** The small copy of the picture — null unless it was made from the current picture. */
+  image_thumb_path: string | null;
   is_active: boolean;
   client_menu: boolean;
   client_menu_order: number;
@@ -85,7 +88,9 @@ const PRODUCT_SELECT = `
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.purchase_cost_mills, p.average_cost_mills, p.selling_price_mills,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
-         p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
+         p.storage_location, p.image_path,
+         CASE WHEN p.image_thumb_of = p.image_path THEN p.image_thumb_path END AS image_thumb_path,
+         p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
          p.parent_id, pp.name AS parent_name, p.variant_label,
          (SELECT count(*) FROM products v WHERE v.parent_id = p.id)::text AS variant_count,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
@@ -299,6 +304,7 @@ export class CatalogService {
       variantLabel: row.variant_label,
       variantCount: Number(row.variant_count),
       imageUrl: ProductImageStore.urlFor(row.image_path),
+      imageThumbUrl: ProductImageStore.urlFor(row.image_thumb_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
         barcode: b.barcode,
@@ -649,8 +655,11 @@ export class CatalogService {
   /** Replaces the product picture with an already stored file; the previous file is removed. */
   async setProductImage(id: string, fileName: string, actor: AuditActor): Promise<ProductSummary> {
     const previous = await withTransaction(this.pool, async (client) => {
-      const r = await client.query<{ image_path: string | null }>(
-        'UPDATE products SET image_path = $2 WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        `UPDATE products SET image_path = $2, image_thumb_path = NULL, image_thumb_of = NULL
+          WHERE id = $1
+      RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path,
+                (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
         [id, fileName],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -660,19 +669,24 @@ export class CatalogService {
         entityId: id,
         details: { file: fileName },
       });
-      return r.rows[0]!.image_path;
+      return r.rows[0]!;
     }).catch(async (err: unknown) => {
       await this.images.remove(fileName); // the file was stored before the row update failed
       throw err;
     });
-    if (previous && previous !== fileName) await this.images.remove(previous);
+    if (previous.image_path && previous.image_path !== fileName)
+      await this.images.remove(previous.image_path);
+    await this.images.remove(previous.image_thumb_path);
     return this.getProduct(id);
   }
 
   async clearProductImage(id: string, actor: AuditActor): Promise<ProductSummary> {
     const previous = await withTransaction(this.pool, async (client) => {
-      const r = await client.query<{ image_path: string | null }>(
-        'UPDATE products SET image_path = NULL WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        `UPDATE products SET image_path = NULL, image_thumb_path = NULL, image_thumb_of = NULL
+          WHERE id = $1
+      RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path,
+                (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
         [id],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -681,10 +695,59 @@ export class CatalogService {
         entityType: 'product',
         entityId: id,
       });
-      return r.rows[0]!.image_path;
+      return r.rows[0]!;
     });
-    await this.images.remove(previous);
+    await this.images.remove(previous.image_path);
+    await this.images.remove(previous.image_thumb_path);
     return this.getProduct(id);
+  }
+
+  /**
+   * 0.37.0: stores the small copy of a product's picture (the Admin makes it — the server has no
+   * picture library). `of` is the picture it was made from: when the product shows another one by
+   * now, the copy is dropped and the answer is a conflict. No audit entry: nothing the owner
+   * decides changes, the same picture is only shown from a smaller file.
+   */
+  async setProductThumb(id: string, of: string, fileName: string): Promise<ProductSummary> {
+    let previous: string | null;
+    try {
+      const r = await this.pool.query<{ image_thumb_path: string | null }>(
+        `UPDATE products SET image_thumb_path = $3, image_thumb_of = $2
+          WHERE id = $1 AND image_path = $2
+      RETURNING (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
+        [id, of, fileName],
+      );
+      if (!r.rowCount) {
+        await this.getProduct(id); // 404 when the product is gone
+        throw conflict('The product shows another picture now', { code: 'IMAGE_CHANGED' });
+      }
+      previous = r.rows[0]!.image_thumb_path;
+    } catch (err) {
+      await this.images.remove(fileName);
+      throw err;
+    }
+    if (previous && previous !== fileName) await this.images.remove(previous);
+    return this.getProduct(id);
+  }
+
+  /**
+   * 0.37.0: pictures that still have no small copy (the Admin makes them in the background, a
+   * few at a time). Animated pictures are left out: a copy would freeze them.
+   */
+  async productsMissingThumb(limit = 500): Promise<ProductThumbMissing[]> {
+    const r = await this.pool.query<{ id: string; image_path: string }>(
+      `SELECT id, image_path FROM products
+        WHERE image_path IS NOT NULL AND image_path NOT LIKE '%.gif'
+          AND (image_thumb_path IS NULL OR image_thumb_of IS DISTINCT FROM image_path)
+        ORDER BY is_active DESC, name
+        LIMIT $1`,
+      [limit],
+    );
+    return r.rows.map((row) => ({
+      id: row.id,
+      image: row.image_path,
+      imageUrl: ProductImageStore.urlFor(row.image_path)!,
+    }));
   }
 
   /**
@@ -695,13 +758,14 @@ export class CatalogService {
   async deleteProduct(id: string, actor: AuditActor): Promise<{ archived: boolean }> {
     const result = await this.deleteProductRow(id, actor);
     if (result.imagePath) await this.images.remove(result.imagePath);
+    if (result.thumbPath) await this.images.remove(result.thumbPath);
     return { archived: result.archived };
   }
 
   private async deleteProductRow(
     id: string,
     actor: AuditActor,
-  ): Promise<{ archived: boolean; imagePath: string | null }> {
+  ): Promise<{ archived: boolean; imagePath: string | null; thumbPath?: string | null }> {
     return withTransaction(this.pool, async (client) => {
       const used = await client.query(
         `SELECT 1 FROM sale_items WHERE product_id = $1
@@ -728,8 +792,8 @@ export class CatalogService {
         throw conflict('This product has variants — archive it instead of deleting it', {
           code: 'HAS_VARIANTS',
         });
-      const r = await client.query<{ image_path: string | null }>(
-        'DELETE FROM products WHERE id = $1 RETURNING image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        'DELETE FROM products WHERE id = $1 RETURNING image_path, image_thumb_path',
         [id],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -738,7 +802,11 @@ export class CatalogService {
         entityType: 'product',
         entityId: id,
       });
-      return { archived: false, imagePath: r.rows[0]!.image_path };
+      return {
+        archived: false,
+        imagePath: r.rows[0]!.image_path,
+        thumbPath: r.rows[0]!.image_thumb_path,
+      };
     });
   }
 

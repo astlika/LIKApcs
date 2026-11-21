@@ -93,8 +93,12 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   the PC that registered), `token_collected_at` (token delivered exactly once), `approved_by`,
   `revoked_by`, `last_seen_at`, `last_ip`. A partial unique index guarantees **at most one approved
   device per station**.
-- **station_heartbeats** — append-only telemetry (`metrics jsonb`, `locked`, `session_id`), pruned
-  after 7 days.
+- **station_heartbeats** — append-only load samples of the PCs (`metrics jsonb`, `locked`,
+  `session_id`). Nothing reads them back. Since 0.37.0 a connected PC leaves one when something
+  about it changes and otherwise every five minutes (before: every 10 seconds); rows older than 7
+  days are deleted a minute after start-up and every 6 hours. A restore does not bring the rows of
+  an archive back. What "last seen" shows is `station_devices.last_seen_at`, written when the PC's
+  state changes, once a minute while it stays connected, and when it disconnects.
 - **station_connection_logs** — connected / disconnected / replaced / rejected / timeout / error
   events shown in the station detail dialog.
 
@@ -104,6 +108,8 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   average, used for COGS snapshots), `stock_milli`, `min_stock_milli`, `allow_negative_stock`,
   `track_stock`, `tax_category_id`, `unit_code`, `image_path` (0011 — immutable file name of the
   product picture in `<dataDir>/uploads/products`; the file itself is not stored in the database).
+  `image_thumb_path` / `image_thumb_of` (0063) — the small copy of that picture for tiles and
+  lists, see _Speed on a small main PC_.
 - **product_barcodes** — many barcodes per product (unique globally), `quantity_milli` for pack/case
   barcodes (a 6-pack barcode sells 6.000 units).
 - **inventory_movements** — every change with `movement_type` (purchase_receipt, purchase_return,
@@ -264,6 +270,34 @@ to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind
 - 0.36.1 — what an offer has sold is not stored: it is summed from the `sale_items` that carry
   its `offer_id` (completed and refunded sales), with `refund_items` taken off. Deleting an offer
   sets `offer_id` to NULL on those lines, so its figures go with it; the sales themselves stay.
+
+### Speed on a small main PC (0063)
+
+0.37.0 changes no rule of the business; it makes the questions the open screens ask all day cost
+the same after a year of history as on the first day.
+
+- **gaming_sessions** — three indexes:
+  - `gaming_sessions_station_awaiting_idx (station_id)`, partial: ended sessions whose bill still
+    waits (`status IN ('expired', 'completed')` and unbilled end-pay / open time, or prepaid with
+    `unpaid_cents > 0`). The Stations list asks this for every PC, and the list of sessions
+    waiting for their money starts from it. The predicate must stay word for word the one in
+    `STATION_SELECT` (`services/stations.ts`), or the planner stops using the index.
+  - `gaming_sessions_station_last_customer_idx (station_id, ended_at DESC NULLS LAST)`, partial
+    (`status IN ('expired', 'completed') AND customer_id IS NOT NULL`): the customer of a PC's
+    last ended session.
+  - `gaming_sessions_station_started_idx (station_id, started_at DESC)`: the sessions of one PC.
+- **time_credits** — `time_credits_sale_idx (sale_id)`, partial (`sale_id IS NOT NULL`): the Sales
+  list sums the PC minutes sold on each sale.
+- **sales** — `sales_when_idx ((COALESCE(completed_at, created_at)) DESC)`: the order of the
+  Sales list.
+- **sale_items** — `sale_items_offer_idx (offer_id)`, partial: what an offer has sold.
+- **products.image_thumb_path / image_thumb_of** — the small copy of the product picture (longest
+  side 160 px) that tiles and lists show, and the picture (`image_path`) it was made from. The
+  copy counts only while `image_thumb_of = image_path`; setting or removing the picture clears
+  both. The Admin makes the copies (the server has no picture library): right after a picture is
+  saved, and in the background for pictures without one. Animated GIFs get none.
+- **station_heartbeats** is emptied by the migration (see the table's entry above for why it had
+  grown without limit).
 
 ## Operations
 

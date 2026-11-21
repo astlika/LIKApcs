@@ -249,6 +249,8 @@ opens a `pending` run, later events update it; `none`/`unavailable` close it qui
 | `PUT /products/:id/image`                                              | `products.manage`; raw body with `content-type: image/png\|jpeg\|webp\|gif` (≤ 5 MB, format sniffed from the bytes). Replaces and deletes the previous file → `ProductSummary` with the new `imageUrl`                                                                   |
 | `POST /products/:id/image/from-url`                                    | `{url}` — the **server** downloads the picture (http/https only, ≤ 5 MB, 10 s, private/loopback addresses refused) so the Admin never embeds third-party URLs                                                                                                            |
 | `DELETE /products/:id/image`                                           | removes the file → `imageUrl: null`. Deleting a never-sold product also deletes its picture file                                                                                                                                                                         |
+| `PUT /products/:id/image/thumb?of=<file>`                              | 0.37.0, `products.manage`; raw picture body (≤ 256 kB): the small copy (longest side 160 px) that tiles and lists show. `of`: file name of the picture it was made from; `409 IMAGE_CHANGED` if the product shows another one now → `ProductSummary`                     |
+| `GET /catalog/product-thumbs/missing`                                  | 0.37.0, `products.manage` → `{items: [{id, image, imageUrl}]}`: pictures without a small copy (at most 500; animated GIFs get none). The Admin makes the copies                                                                                                          |
 | `GET /files/products/:name`                                            | **public, no token** (POS tiles, future kiosk screens): immutable file names (`<24 hex>.<ext>`), `Cache-Control: public, max-age=31536000, immutable`. Files live in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are **not** part of database backups        |
 | `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                                      |
 | `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                                  |
@@ -258,6 +260,15 @@ the brand are compared with accents taken off and in lower case on both sides ("
 "ÇAJ" find "Çaj"; "uje" finds "Ujë"), a barcode has to match whole. The database is created with
 the C locale, where `lower()` and `ILIKE` fold A–Z only, so the folding is done with `translate()`
 over a fixed table of accented Latin letters (`db/fold.ts`) — no collation is involved.
+
+**Small copies of the pictures (0.37.0, migration 0063).** A product picture is up to 800 px (more
+when it came from a link) and a tile shows it 48 px wide; decoding the full picture for every
+tile was most of what opening the till cost on a slow PC. `ProductSummary.imageThumbUrl` (and
+`imageThumbUrl` on an offer's items) is a copy 160 px on its longest side, or null while there
+is none — show `imageUrl` then. The server has no picture library, so the Admin makes the copies
+and sends them with `PUT /products/:id/image/thumb?of=<file>`: right after a picture is saved,
+and in the background for the ones listed by `GET /catalog/product-thumbs/missing`. A copy
+belongs to the picture named in `of`; setting or removing the picture drops it.
 
 ### Ads — customer-screen slideshow & promo prices (0.7.0; `products.view` to read, `products.manage` to change)
 
@@ -352,7 +363,7 @@ balance is short, `403 wallet_disabled` when `wallet.enabled` is off. `wallet` m
 
 | Route                         | Body / query                                             | Result                                                                                                                                                                                                                                 |
 | ----------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /cash/status`            | —                                                        | `{registers, current: CashShiftDetail \| null, requireOpenShift, differenceWarningCents}` — polled by the Admin top-bar pill; `current` is the open shift of the default register                                                      |
+| `GET /cash/status`            | `?brief=true` (0.37.0)                                   | `{registers, current: CashShiftDetail \| null, requireOpenShift, differenceWarningCents}` — `current` is the open shift of the default register. `?brief=true`: without its `totals` and `movements` (what the top-bar pill polls)     |
 | `GET /cash/registers`         | —                                                        | active registers (`0009` seeds _Main register_)                                                                                                                                                                                        |
 | `POST /cash/shifts/open`      | `{registerId?, openingCents, notes?}`                    | `201 CashShiftDetail`; `409 CONFLICT` when the register already has an open shift                                                                                                                                                      |
 | `POST /cash/shifts/:id/close` | `{countedCashCents, notes?}`                             | closes the shift: `expected_cash_cents` is computed from the ledger inside the same transaction, `difference_cents = counted − expected`; audited                                                                                      |
@@ -891,6 +902,12 @@ server closes the socket (`timeout` in the connection log) and the station turns
 connection from the same device replaces the old one (`4004`), so a flapping Wi-Fi link never leaves
 two live sockets.
 
+0.37.0 — every heartbeat is answered and updates the PC's state in memory (online, load, locked),
+but not every one is written to the database: `station_devices.last_seen_at` is written on the
+first heartbeat of a connection, when the address, version, `locked` or `sessionId` changes, once
+a minute otherwise, and when the PC disconnects. The `lastSeenAt` of a connected PC in
+`StationSummary.device` / `StationDeviceSummary` is the time of its last heartbeat.
+
 ## 5. Registration flow (end-to-end)
 
 ```
@@ -1116,8 +1133,9 @@ as paid time for any PC.
 
 **Managing offers**
 
-- `GET /offers` (`pos.sell` or `products.view`; `?active=true` for the till) →
-  `{ items: OfferSummary[] }`. An `OfferSummary` has `id`, `name`, `priceCents`, `minutes`,
+- `GET /offers` (`pos.sell` or `products.view`; `?active=true` for the till; 0.37.0
+  `?money=false`: `profit` and `sold` come as null and are not worked out — the till and the
+  Stations page ask this way) → `{ items: OfferSummary[] }`. An `OfferSummary` has `id`, `name`, `priceCents`, `minutes`,
   `isActive`, `items[]` (`productId`, `name`, `quantityMilli`, `unitCode`, `unitPriceCents` — what
   one unit costs outside the offer right now —, `available`, `imageUrl`), `productsCents` (its
   products outside the offer; PC time is not counted, its price depends on the PC) and

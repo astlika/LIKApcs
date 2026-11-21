@@ -44,7 +44,9 @@ export function useOffers(scope: 'active' | 'all' = 'active') {
     queryFn: async () =>
       (
         await api<{ items: OfferSummary[] }>('/offers', {
-          query: scope === 'active' ? { active: true } : {},
+          // 0.37.0: the till and the Stations page show neither the profit nor what an offer has
+          // sold — they ask without them (the server then skips reading the offers' sale lines).
+          query: scope === 'active' ? { active: true, money: false } : {},
         })
       ).items,
     enabled: allowed,

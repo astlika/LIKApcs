@@ -1501,6 +1501,11 @@ export interface ProductSummary {
   variantCount: number;
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
+  /**
+   * 0.37.0: a small copy of the picture (longest side `PRODUCT_THUMB_SIDE`) for tiles and lists,
+   * or null while none has been made. Missing from an older server: show `imageUrl` then.
+   */
+  imageThumbUrl?: string | null;
   barcodes: ProductBarcodeSummary[];
   /** 0.19.1: extras with their own price (see `productAddonsSchema`). */
   addons: ProductAddonSummary[];
@@ -1516,6 +1521,20 @@ export type ProductImageFromUrlInput = z.infer<typeof productImageFromUrlSchema>
 
 export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+/**
+ * 0.37.0: the small copy of a product picture. The till shows a picture 48 px wide; this size
+ * stays sharp on a dense screen and still decodes in a fraction of a millisecond.
+ */
+export const PRODUCT_THUMB_SIDE = 160;
+export const PRODUCT_THUMB_MAX_BYTES = 256 * 1024;
+
+/** 0.37.0: a product whose picture has no small copy yet (`GET /catalog/product-thumbs/missing`). */
+export interface ProductThumbMissing {
+  id: string;
+  /** The picture's file name — sent back with the small copy, so a replaced picture is noticed. */
+  image: string;
+  imageUrl: string;
+}
 
 /** 0.23.0: which wallpaper a bulk upload sets. The desktop one must be JPEG or PNG (Windows). */
 export const WALLPAPER_KINDS = ['lock', 'desktop'] as const;
@@ -2283,6 +2302,18 @@ export interface CashStatusResponse {
   current: CashShiftDetail | null;
   requireOpenShift: boolean;
   /** Closing differences above this (absolute, cents) are flagged in the UI and audit log. */
+  differenceWarningCents: number;
+}
+
+/**
+ * 0.37.0: `GET /cash/status?brief=true` — whether a shift is open, without its totals and its
+ * list of movements. What the top bar asks every half minute (the full answer carries every
+ * movement of the shift, which is hundreds of kB on a busy day).
+ */
+export interface CashStatusBrief {
+  registers: CashRegisterSummary[];
+  current: CashShiftSummary | null;
+  requireOpenShift: boolean;
   differenceWarningCents: number;
 }
 

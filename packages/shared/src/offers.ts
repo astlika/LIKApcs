@@ -90,6 +90,8 @@ export interface OfferItemSummary {
   /** The product can be sold in this quantity now: active, and in stock when its stock may not go below zero. */
   available: boolean;
   imageUrl: string | null;
+  /** 0.37.0: the small copy of the picture, for the tile (see `ProductSummary.imageThumbUrl`). */
+  imageThumbUrl?: string | null;
   /** 0.36.1: what is on the shelf now; null when the product does not count its stock. */
   stockMilli: number | null;
   /** 0.36.1: the stock is counted and may not go below zero — the till never sells past it. */

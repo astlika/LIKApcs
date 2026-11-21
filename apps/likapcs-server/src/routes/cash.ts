@@ -23,7 +23,13 @@ export const cashRoutes: FastifyPluginAsync = async (app) => {
   const openClose = { preHandler: app.requirePermission(PERMISSIONS.CASH_OPEN_CLOSE) };
   const move = { preHandler: app.requirePermission(PERMISSIONS.CASH_MOVE) };
 
-  app.get('/cash/status', view, async () => services.cash.status());
+  /** 0.37.0 `?brief=true`: only whether a shift is open (no totals, no movements). */
+  app.get('/cash/status', view, async (request) => {
+    const { brief } = z
+      .object({ brief: z.enum(['true', 'false']).optional() })
+      .parse(request.query);
+    return brief === 'true' ? services.cash.statusBrief() : services.cash.status();
+  });
   app.get('/cash/shifts', view, async (request) =>
     services.cash.listShifts(cashShiftListQuerySchema.parse(request.query)),
   );

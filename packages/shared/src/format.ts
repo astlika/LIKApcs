@@ -21,6 +21,29 @@ interface DateParts {
   second: number;
 }
 
+/**
+ * 0.37.0: one formatter per time zone, kept. Making one costs about as much as sixty uses of it,
+ * and a screen full of times (the Stations board redraws every second) made a new one for each.
+ */
+const partsFormatters = new Map<string, Intl.DateTimeFormat>();
+function partsFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = partsFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    partsFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function getParts(date: Date, timeZone?: string): DateParts {
   if (!timeZone) {
     return {
@@ -32,16 +55,7 @@ function getParts(date: Date, timeZone?: string): DateParts {
       second: date.getSeconds(),
     };
   }
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  const formatter = partsFormatter(timeZone);
   const map: Record<string, string> = {};
   for (const part of formatter.formatToParts(date)) map[part.type] = part.value;
   return {

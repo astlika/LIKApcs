@@ -59,6 +59,7 @@ interface ProductPartRow {
   average_cost_mills: string;
   purchase_cost_mills: string;
   image_path: string | null;
+  image_thumb_path: string | null;
 }
 
 interface OfferItemRow extends ProductPartRow {
@@ -71,7 +72,8 @@ const PRODUCT_PART_SQL = `p.id AS product_id, p.name, p.unit_code,
               p.selling_price_cents::text, ${ACTIVE_PROMO_SQL('p')}::text AS promo_price_cents,
               p.price_includes_tax, tc.rate_bp AS tax_rate_bp,
               p.is_active, p.track_stock, p.allow_negative_stock, p.stock_milli::text,
-              p.average_cost_mills::text, p.purchase_cost_mills::text, p.image_path`;
+              p.average_cost_mills::text, p.purchase_cost_mills::text, p.image_path,
+              CASE WHEN p.image_thumb_of = p.image_path THEN p.image_thumb_path END AS image_thumb_path`;
 
 /**
  * One product of an offer as the till and the form see it. `defaultTaxBp`: the business default
@@ -94,6 +96,7 @@ function itemOf(
     unitPriceCents: row.price_includes_tax ? price : addExclusiveTax(price, taxRateBp).gross,
     available: row.is_active && (!stockLimited || stockMilli >= quantityMilli),
     imageUrl: ProductImageStore.urlFor(row.image_path),
+    imageThumbUrl: ProductImageStore.urlFor(row.image_thumb_path),
     stockMilli: row.track_stock ? stockMilli : null,
     stockLimited,
     taxRateBp,

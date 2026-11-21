@@ -42,11 +42,24 @@ export const offerRoutes: FastifyPluginAsync = async (app) => {
     );
   };
 
-  /** `?active=true`: only the offers on the till (what the POS shows). */
+  /**
+   * `?active=true`: only the offers on the till (what the POS shows).
+   * 0.37.0 `?money=false`: without `profit` and `sold` (both null). The till and the Stations page
+   * ask this way — they show neither, and working out what every offer has sold reads all of its
+   * sale lines, every minute, on the screens that stay open all day.
+   */
   app.get('/offers', view, async (request) => {
-    const { active } = z.object({ active: z.coerce.boolean().optional() }).parse(request.query);
+    const { active, money } = z
+      .object({
+        active: z.coerce.boolean().optional(),
+        money: z.enum(['true', 'false']).optional(),
+      })
+      .parse(request.query);
     return {
-      items: await services.offers.list({ activeOnly: active === true, money: seesMoney(request) }),
+      items: await services.offers.list({
+        activeOnly: active === true,
+        money: money !== 'false' && seesMoney(request),
+      }),
     };
   });
   /** 0.36.1: the offer in the form — its stock, what its parts cost and what one sale earns. */
