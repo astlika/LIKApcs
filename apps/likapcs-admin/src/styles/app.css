@@ -8123,3 +8123,173 @@ button.ads-album .ads-album__meta {
   flex-direction: column;
   font-size: 13px;
 }
+
+/* ─── Backup file / restore from a backup (0.38.0) ────────────────────────── */
+.job-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+.job-progress__top {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.job-progress__percent {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  min-width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+.job-progress__phase {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.job-progress__note {
+  font-size: 12.5px;
+}
+.progress--lg {
+  height: 14px;
+}
+.progress--lg .progress__bar {
+  transition: width 0.35s ease;
+}
+.job-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.job-fact {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.job-fact__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.job-fact__value {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 2px;
+}
+.job-fact__sub {
+  font-size: 12px;
+}
+.job-where {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.job-where > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.job-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.job-detail {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.job-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.job-pick:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.job-pick > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.job-pick .faint {
+  font-size: 12.5px;
+}
+/* The first-run screen holds two cards: they sit together in the middle instead of sharing the
+   height of the window, and the screen scrolls when a small window cannot show both. */
+.auth--stack {
+  align-content: safe center;
+  row-gap: 12px;
+  overflow-y: auto;
+}
+.restore-entry {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.restore-entry:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.restore-entry__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.restore-entry__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  min-width: 0;
+}
+.restore-entry__text strong {
+  font-size: 14.5px;
+}
+.auth__restore {
+  display: flex;
+  justify-content: center;
+}

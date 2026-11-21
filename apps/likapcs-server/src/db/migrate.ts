@@ -120,6 +120,14 @@ export async function runMigrations(
   pool: DbPool,
   dir: string,
   logger: MigrateLogger = { info: () => {}, error: () => {} },
+  options: {
+    /**
+     * Stop after this version (0.38.0). Used to rebuild the schema an older backup was taken
+     * with: the data is loaded into it, and the remaining migrations then run over that data,
+     * exactly as an update of the program would have.
+     */
+    upTo?: number;
+  } = {},
 ): Promise<{ applied: MigrationFile[]; currentVersion: number }> {
   const lockClient = await pool.connect();
   try {
@@ -127,6 +135,7 @@ export async function runMigrations(
     const status = await getMigrationStatus(pool, dir);
     const appliedNow: MigrationFile[] = [];
     for (const migration of status.pending) {
+      if (options.upTo !== undefined && migration.version > options.upTo) break;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');

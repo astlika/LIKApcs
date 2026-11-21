@@ -1,5 +1,29 @@
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-21
+
+### Added
+
+- **Backup file: everything in one file, loaded on any PC.** Admin › Kopjet rezervë has the button **Backup file**. It makes one file with everything the program has — every table (products, stock, sales, invoices, the till, customers, offers, users with their passwords, settings, the gaming PCs) and every uploaded file (product pictures, wallpapers, ad videos, voice files). Where the window can show a "save as" dialog the place is chosen first (a USB stick, another disk); the file is written there, then read back from that disk and compared with the original, byte for byte by its checksum. Elsewhere, or when the copy fails, «Shkarko skedarin» saves it as an ordinary download. The file can have a password of its own, typed twice; without one it is locked with this PC's backup password when one is set, and otherwise not locked. A running session does not stop a backup.
+- **«Rikthe nga kopja (backup)» when the program opens.** A button with an icon in three places, all with the same window:
+  - on the **first screen of a new installation** (above the USB import): choose the file, type its password if it has one — no account is needed, the installation is empty. Afterwards the accounts of the old PC sign in;
+  - on the **login screen**, under «Hyr»: the same, and the owner's user name and password are asked once, because the data of this PC is replaced (a safety copy of it is made first, as before);
+  - on the Backups page («Rikthe nga skedari», and «Rikthe» on every row of the list): with the signed-in user's own password.
+  The window says "not a LIKApcs backup" for any other file before anything is sent, and shows the password field only for a file that has one.
+- **A loading bar with a percentage** for making the file and for bringing it back, with the step in words under it («Po kopjohet baza e të dhënave», «Po paketohet në një skedar», «Po shpaketohet», «Po rikthehet baza e të dhënave», «Po kontrollohen lidhjet mes të dhënave» …). One bar covers the whole of it: sending the file and restoring it, or making the file, saving it and reading it back. The share of each step follows the sizes involved, so the bar moves evenly whether the shop has gigabytes of videos or years of sales. Measured in the test set-up with a 292 MB database (733,000 rows) and 297 MB of pictures and videos, on a 2-core machine — not on a real shop PC: the file (319 MB) is made, saved and read back in about 20 s; a new installation is restored from it in 18–21 s; the number never stood still for more than 1.6 s. After that restore 67 of the 72 tables had exactly the same rows as on the old PC and all 242 files the same bytes; the other five tables are the ones a restore and the sign-in after it write to themselves (the audit log, the login sessions, the time of the last login, the list of backups, the bookkeeping of the updates).
+- **The new PC takes the old one's place.** A restore of a file from another installation takes over its identity, and the gaming PCs come back with their approval: PCs that find the main PC by themselves connect to the new one without being approved again. The program must be switched off on the old PC — two main PCs with the same identity on one network would both answer. A gaming PC whose server address was typed by hand needs the new address, unless the new main PC gets the old one's IP address. (The older «Eksporto në USB» transfer is unchanged: it still sends the gaming PCs to be approved again.)
+- API: `POST /backups/file`, `GET /backups/jobs/:id` (no sign-in), `POST /backups/:id/download-ticket`, `GET /backups/:id/download?ticket=`, `POST /backups/:id/restore-job`, `POST /system/restore/upload` and `POST /system/restore` (only while no user exists); header `x-archive-password-utf8`. No migration. See `docs/backups.md` and `docs/network-protocol.md`.
+
+### Changed
+
+- **A backup is checked before it counts as made.** The list inside every archive now has the checksum of every table and of every uploaded file, and the finished archive is read back against it: an archive that misses anything is deleted and the backup fails, instead of the gap being found on the day of a restore. This holds for the daily backup, «Bëj kopje tani» and the safety copies too.
+- **A restore checks everything before it changes anything.** Every table and every file of the archive is compared with that list first; a file that was cut short on a bad USB stick, or changed, is refused with nothing touched. While restoring, the number of rows of every table and the number of files must come out as listed. An archive from before this version has no such list: it restores as before, checked by sizes and counts, and the result says so.
+- **A backup from an older version opens on a newer one.** Until now an archive could only be restored on exactly the version that made it ("install the matching version first"). It is now brought up to the running version the way an update would have done it, in a scratch database, and only then restored. An archive from a **newer** version is still refused: update the program on that PC first.
+- Packing a large backup no longer holds the server. The archive was compressed on the server's main thread, so an answer to the till could wait for seconds while a big backup was made (the daily one too); it is now compressed beside it.
+- Uploading an archive: the limit is 64 GB instead of 4 GB; a name that is already taken gets `-2`, `-3` instead of an error; the file picker also shows archives with a password (`.enc`).
+- The report inside every archive (`report.txt`) says how the file is brought back.
+- The first screen of a new installation keeps its two cards together in the middle and scrolls on a small window.
+
 ## [0.37.0] - 2026-11-21
 
 ### Changed

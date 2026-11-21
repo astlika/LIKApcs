@@ -155,6 +155,12 @@ export interface BuildAppOptions {
   controlToken?: string | null;
   /** Stable installation id (embedded runtime); reported by /system/health and /system/network. */
   installationId?: string | null;
+  /**
+   * 0.38.0: called after a backup of ANOTHER installation was restored, with that installation's
+   * id. The caller stores it (config.json, LAN discovery); from then on this server answers as
+   * that installation, so the gaming PCs paired with it find this PC by themselves.
+   */
+  adoptInstallationId?: (installationId: string) => void | Promise<void>;
   requestShutdown?: (reason: string) => void;
   /** Set to false in tests to drive the session clock manually. */
   sessionTicker?: boolean;
@@ -273,10 +279,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const reports = new ReportsService(pool, cash, settings);
   const live = new LiveService(pool, settings, cash, reports);
   const purchasing = new PurchasingService(pool, cash);
+  // 0.38.0: the id can change while the server runs (a restore of another installation's backup).
+  let installationId = options.installationId ?? null;
   const backups = new BackupService(pool, config.backupDir, settings, {
     schemaVersion: () => app.schemaVersion,
     uploadDir: config.uploadDir,
     keyFile: path.join(config.dataDir, 'backup-keys.json'),
+    migrationsDir: config.migrationsDir,
+    installationId: () => installationId,
+    adoptInstallationId: async (id) => {
+      await options.adoptInstallationId?.(id);
+      installationId = id;
+    },
     wipeUploads: async () => {
       for (const dir of ['wallpapers', 'products', 'videos', 'voice']) {
         const target = path.join(config.uploadDir, dir);
@@ -351,7 +365,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
-  app.decorate('installationId', options.installationId ?? null);
+  app.decorate('installationId', { getter: () => installationId });
   app.decorate('control', {
     token: options.controlToken ?? null,
     requestShutdown: options.requestShutdown ?? (() => undefined),

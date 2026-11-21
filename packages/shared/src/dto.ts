@@ -3299,12 +3299,37 @@ export interface BackupManifest {
   schemaVersion: number;
   businessName: string | null;
   kind: BackupKind;
-  tables: { name: string; rows: number; bytes: number }[];
+  /** `sha256` (0.38.0): checksum of the table's CSV, so a restore can prove the table is whole. */
+  tables: { name: string; rows: number; bytes: number; sha256?: string }[];
   /**
    * Uploaded files in the archive's `uploads/` folder (product pictures, wallpapers, ad videos).
    * Absent or null in archives taken before this was added.
    */
   uploads?: { files: number; bytes: number } | null;
+  /**
+   * 0.38.0: every uploaded file with its size and checksum (path relative to `uploads/`, with
+   * forward slashes). A backup is read back against this list before it counts as written, and a
+   * restore checks it before anything is changed. Absent in older archives.
+   */
+  files?: { path: string; bytes: number; sha256: string }[];
+  /**
+   * 0.38.0: the installation the archive was taken on. A restore makes this server that
+   * installation, so the gaming PCs that were paired with it connect again by themselves.
+   */
+  installationId?: string | null;
+}
+
+/** What an archive holds, in the numbers shown to the owner (0.38.0). */
+export interface BackupContents {
+  createdAt: string;
+  serverVersion: string;
+  schemaVersion: number;
+  businessName: string | null;
+  tables: number;
+  rows: number;
+  /** Uploaded files (pictures, wallpapers, videos, voice clips) and their total size. */
+  files: number;
+  fileBytes: number;
 }
 
 export interface BackupSummary {
@@ -3412,6 +3437,107 @@ export interface RestoreResult {
   durationMs: number;
   /** True when the caller's session survived (its user exists in the restored data). */
   sessionKept: boolean;
+  /** 0.38.0: uploaded files (pictures, wallpapers, videos) put back, and their total size. */
+  filesRestored: number;
+  fileBytesRestored: number;
+  /**
+   * 0.38.0: true when every table and every file was checked against the list inside the archive
+   * (row counts and checksums). False for an archive made before 0.38.0, which has no such list:
+   * it is restored the same way, only the proof is weaker (row counts and the number of files).
+   */
+  verified: boolean;
+  /** 0.38.0: the LIKApcs version and schema the archive was made with. */
+  archiveVersion: string;
+  archiveSchemaVersion: number;
+  /** 0.38.0: true when the archive was older than this server and was brought up to it first. */
+  upgraded: boolean;
+  /** 0.38.0: true when this server took over the identity of the installation in the archive. */
+  identityAdopted: boolean;
+}
+
+// ─── Backup file with progress (0.38.0) ──────────────────────────────────────
+
+/** The steps of a long backup or restore, in the order they are shown to the owner. */
+export const BACKUP_JOB_PHASES = [
+  'starting',
+  // making a backup
+  'database',
+  'files',
+  'packing',
+  'verifying',
+  'encrypting',
+  'finishing',
+  // restoring one
+  'checking',
+  'decrypting',
+  'unpacking',
+  'upgrading',
+  'safety_copy',
+  'restoring_database',
+  'checking_references',
+  'restoring_files',
+] as const;
+export type BackupJobPhase = (typeof BACKUP_JOB_PHASES)[number];
+
+/** Result of «Backup file»: the archive, what it holds, and whether it was read back whole. */
+export interface BackupFileResult {
+  backup: BackupSummary;
+  contents: BackupContents;
+  /** True once the finished archive was read back and every table and file matched. */
+  verified: boolean;
+  /** Folder on the main PC where the archive is kept as well. */
+  directory: string;
+}
+
+/**
+ * A long backup or restore running on the server. Read with `GET /backups/jobs/:id`, which needs
+ * no sign-in (the id is the key) and never touches the database, so it answers while a restore
+ * holds every table.
+ */
+export interface BackupJobStatus {
+  id: string;
+  kind: 'backup' | 'restore';
+  state: 'running' | 'succeeded' | 'failed';
+  /** 0–100; never goes backwards. 100 only when `state` is `succeeded`. */
+  percent: number;
+  phase: BackupJobPhase;
+  /** Position inside the phase (table 12 of 71, file 120 of 243); null when it is not counted. */
+  current: number | null;
+  total: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: { code: string; message: string } | null;
+  backup: BackupFileResult | null;
+  restore: RestoreResult | null;
+}
+
+export interface BackupJobStarted {
+  jobId: string;
+}
+
+/** «Backup file»: an optional password of its own for this one file. */
+export const backupFileSchema = z.object({
+  password: z.string().min(4).max(200).optional(),
+});
+export type BackupFileRequest = z.infer<typeof backupFileSchema>;
+
+/** Restore on a fresh installation (no user yet): the uploaded archive and, if it has one, its password. */
+export const freshRestoreSchema = z.object({
+  backupId: z.string().uuid(),
+  archivePassword: z.string().min(1).max(200).optional(),
+});
+export type FreshRestoreRequest = z.infer<typeof freshRestoreSchema>;
+
+/** An archive that was just uploaded: its row in the list and what it holds. */
+export interface BackupUploadResult {
+  backup: BackupSummary;
+  contents: BackupContents;
+}
+
+/** A short-lived key that lets a plain link download one archive (a link cannot send the sign-in). */
+export interface BackupDownloadTicket {
+  ticket: string;
+  expiresAt: string;
 }
 
 export const backupUploadQuerySchema = z.object({

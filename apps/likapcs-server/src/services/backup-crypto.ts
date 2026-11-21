@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { once } from 'node:events';
+import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 export const ENCRYPTED_MAGIC = Buffer.from('LKPBENC1', 'ascii');
@@ -40,6 +41,21 @@ export class ArchiveCryptoError extends Error {
 
 export function deriveKey(password: string, salt: Buffer): Buffer {
   return crypto.scryptSync(password, salt, KEY_BYTES, SCRYPT_OPTIONS);
+}
+
+/** A fresh key-derivation salt, for a file that gets a password of its own (0.38.0). */
+export function newSalt(): Buffer {
+  return crypto.randomBytes(SALT_BYTES);
+}
+
+/** Passes the data through and reports how many bytes went by (for progress bars). */
+function meter(onBytes?: (bytes: number) => void): Transform {
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      onBytes?.(chunk.length);
+      callback(null, chunk);
+    },
+  });
 }
 
 /** True when the file starts with the encrypted-archive magic. */
@@ -88,43 +104,48 @@ export async function encryptFile(
   dst: string,
   key: Buffer,
   salt: Buffer,
+  onBytes?: (bytes: number) => void,
 ): Promise<void> {
   const iv = crypto.randomBytes(IV_BYTES);
   const cipher = crypto.createCipheriv(CIPHER, key, iv, { authTagLength: TAG_BYTES });
-  await pipeline(fs.createReadStream(src), cipher, async (source: AsyncIterable<Buffer>) => {
-    const out = fs.createWriteStream(dst);
-    try {
-      out.write(Buffer.concat([ENCRYPTED_MAGIC, salt, iv]));
-      for await (const chunk of source) {
-        if (!out.write(chunk)) await once(out, 'drain');
+  await pipeline(
+    fs.createReadStream(src),
+    meter(onBytes),
+    cipher,
+    async (source: AsyncIterable<Buffer>) => {
+      const out = fs.createWriteStream(dst);
+      try {
+        out.write(Buffer.concat([ENCRYPTED_MAGIC, salt, iv]));
+        for await (const chunk of source) {
+          if (!out.write(chunk)) await once(out, 'drain');
+        }
+        // The source has ended, so the cipher is finalised and the tag is available.
+        await new Promise<void>((resolve, reject) => {
+          out.end(cipher.getAuthTag(), (err?: Error | null) => (err ? reject(err) : resolve()));
+        });
+      } catch (err) {
+        out.destroy();
+        throw err;
       }
-      // The source has ended, so the cipher is finalised and the tag is available.
-      await new Promise<void>((resolve, reject) => {
-        out.end(cipher.getAuthTag(), (err?: Error | null) => (err ? reject(err) : resolve()));
-      });
-    } catch (err) {
-      out.destroy();
-      throw err;
-    }
-  });
+    },
+  );
 }
 
 /** Decrypts `src` into `dst`. Throws ArchiveCryptoError('wrong_password') when the key does not match. */
-export async function decryptFile(src: string, dst: string, key: Buffer): Promise<void> {
+export async function decryptFile(
+  src: string,
+  dst: string,
+  key: Buffer,
+  onBytes?: (bytes: number) => void,
+): Promise<void> {
   const { iv, size } = await readEncryptedHeader(src);
-  const fh = await fsp.open(src, 'r');
-  let tag: Buffer;
-  try {
-    tag = Buffer.alloc(TAG_BYTES);
-    await fh.read(tag, 0, TAG_BYTES, size - TAG_BYTES);
-  } finally {
-    await fh.close();
-  }
+  const tag = await readTag(src, size);
   const decipher = crypto.createDecipheriv(CIPHER, key, iv, { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tag);
   try {
     await pipeline(
       fs.createReadStream(src, { start: HEADER_BYTES, end: size - TAG_BYTES - 1 }),
+      meter(onBytes),
       decipher,
       fs.createWriteStream(dst),
     );
@@ -135,6 +156,38 @@ export async function decryptFile(src: string, dst: string, key: Buffer): Promis
       `The backup could not be opened with this password (${err instanceof Error ? err.message : 'authentication failed'})`,
     );
   }
+}
+
+async function readTag(file: string, size: number): Promise<Buffer> {
+  const fh = await fsp.open(file, 'r');
+  try {
+    const tag = Buffer.alloc(TAG_BYTES);
+    await fh.read(tag, 0, TAG_BYTES, size - TAG_BYTES);
+    return tag;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The plain bytes of an encrypted file as a stream, without writing them anywhere (0.38.0). Used
+ * to look at the first entry of an archive (its manifest) and stop: a large encrypted file is
+ * then not decrypted in full only to be identified. The reader is expected to stop early, so the
+ * authentication tag is only checked when the stream is read to its end.
+ */
+export async function decryptedStream(file: string, key: Buffer): Promise<Readable> {
+  const { iv, size } = await readEncryptedHeader(file);
+  const decipher = crypto.createDecipheriv(CIPHER, key, iv, { authTagLength: TAG_BYTES });
+  decipher.setAuthTag(await readTag(file, size));
+  const source = fs.createReadStream(file, { start: HEADER_BYTES, end: size - TAG_BYTES - 1 });
+  source.on('error', (err) => decipher.destroy(err));
+  decipher.on('close', () => source.destroy());
+  return source.pipe(decipher);
+}
+
+/** Size of the plain archive inside an encrypted file. */
+export function plainSizeOf(encryptedSize: number): number {
+  return Math.max(0, encryptedSize - HEADER_BYTES - TAG_BYTES);
 }
 
 // ─── Key ring ───────────────────────────────────────────────────────────────

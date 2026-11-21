@@ -765,7 +765,8 @@ export const sq: Dictionary = {
   },
   pricing: {
     freeMinutes: 'Falas deri në (minuta)',
-    freeMinutesHint: 'P.sh. 3: seanca që zgjat deri në 3 minuta nuk paguhet; po i kaloi, paguhet e gjithë koha nga minuta e parë. 0 = e fikur. Vlen për kohën e matur (kohë e hapur, ose «Pagesë në fund» e ndalur herët), jo për minutat e blera paraprakisht.',
+    freeMinutesHint:
+      'P.sh. 3: seanca që zgjat deri në 3 minuta nuk paguhet; po i kaloi, paguhet e gjithë koha nga minuta e parë. 0 = e fikur. Vlen për kohën e matur (kohë e hapur, ose «Pagesë në fund» e ndalur herët), jo për minutat e blera paraprakisht.',
     freeShort: '{n} min falas',
     title: 'Çmimet',
     subtitle: 'Tarifat për orë, happy hour dhe paketat e parapaguara për stacionet e lojërave.',
@@ -840,7 +841,8 @@ export const sq: Dictionary = {
     offlinePending: 'Shitje offline në pritje për t’u dërguar: {count}',
     offlineFailedUnknown: 'Refuzuar nga serveri',
     offlineRemove: 'Hiq nga lista',
-    offlineSaved: 'Shitja u ruajt offline me numrin {number}. Do të dërgohet kur të rilidhet serveri.',
+    offlineSaved:
+      'Shitja u ruajt offline me numrin {number}. Do të dërgohet kur të rilidhet serveri.',
     offlineNoDevice: 'Vendosni numrin e kësaj PC-je para shitjes offline.',
     offlineNoCustomer: 'Shitja offline nuk lejon klient me borxh apo pagesë më vonë.',
     offlineItems: 'Shitja offline pranon vetëm produkte.',
@@ -1517,7 +1519,8 @@ export const sq: Dictionary = {
     cancelConfirm: 'Anulo rezervimin',
     cancelled: 'Rezervimi u anulua',
     conflictTitle: '{code} është i rezervuar',
-    conflictBody: 'Ky PC është i mbajtur për {name} në orën {time} (toleranca {minutes} min). Ta nisim sesionin gjithsesi?',
+    conflictBody:
+      'Ky PC është i mbajtur për {name} në orën {time} (toleranca {minutes} min). Ta nisim sesionin gjithsesi?',
     conflictConfirm: 'Nise gjithsesi',
     arrivalTitle: 'Rezervimi i {name} · {time}',
     arrivalHint: 'Këto PC nisin si ardhje e rezervimit.',
@@ -1556,7 +1559,8 @@ export const sq: Dictionary = {
     pay: 'Paguaj',
     payNothing: 'Asgjë për të paguar',
     customer: 'Klienti',
-    bulkLaterHint: 'Asgjë nuk paguhet tani: minutat shkojnë në faturën e çdo PC-je dhe dalin për arkëtim kur mbaron seanca.',
+    bulkLaterHint:
+      'Asgjë nuk paguhet tani: minutat shkojnë në faturën e çdo PC-je dhe dalin për arkëtim kur mbaron seanca.',
     bulkCustomerHint: 'Borxhi shkon në emrin që zgjedh këtu; çdo PC merr kuponin e vet.',
     bulkLaterDone: '{n} PC morën minutat · {amount} paguhen në fund',
     useCredit: 'Përdor kohën e PC-së (e paguar te arka)',
@@ -2277,7 +2281,8 @@ export const sq: Dictionary = {
   },
   cash: {
     openBills: '{n} fatura PC-sh të papaguara · {amount}',
-    openBillsHint: 'Arkëtoji ose vëri në borxh para se ta mbyllësh arkën; përndryshe mbeten të hapura.',
+    openBillsHint:
+      'Arkëtoji ose vëri në borxh para se ta mbyllësh arkën; përndryshe mbeten të hapura.',
     openBillsGo: 'Hap faturat',
     title: 'Arka',
     subtitleRequired:
@@ -2704,9 +2709,129 @@ export const sq: Dictionary = {
     hint: 'Fatura e paguar ndryshon në çmimin e ri. Diferenca kthehet nga arka (para në dorë) ose terminali (kartë), ose mblidhet nëse çmimi i ri është më i lartë.',
     noShift: 'Hapeni turnin e arkës së pari, për të kthyer ose mbledhur para.',
   },
+  backupFile: {
+    title: 'Backup file: gjithçka në një skedar',
+    open: 'Backup file',
+    openHint: 'Një skedar me gjithçka, për ta ruajtur në USB ose për ta hapur në një PC tjetër',
+    intro:
+      'Bëhet një skedar i vetëm me gjithçka që ka ky program. Ruajeni ku të doni (USB, disk tjetër) dhe hapeni në çdo PC me «Rikthe nga kopja».',
+    holdsData: 'Produktet, stoku, shitjet, faturat, arka, klientët, ofertat, raportet',
+    holdsFiles: 'Fotot e produkteve, sfondet, videot e reklamave, zërat',
+    holdsPcs: 'Përdoruesit me fjalëkalimet e tyre, cilësimet dhe PC-të e lojës',
+    password: 'Fjalëkalim për këtë skedar',
+    passwordHint: 'Pa fjalëkalim, kushdo që e ka skedarin mund t’i lexojë të dhënat.',
+    passwordHintLocked: 'Nëse e lini bosh, skedari kyçet me fjalëkalimin e kopjeve të kësaj PC-je.',
+    passwordShort: 'Të paktën 4 karaktere',
+    passwordRepeat: 'Përsëriteni fjalëkalimin',
+    passwordDiffers: 'Fjalëkalimet nuk përputhen',
+    passwordWarning: 'Shkruajeni këtë fjalëkalim diku. Pa të, skedari nuk hapet më nga askush.',
+    startChoose: 'Zgjidh ku të ruhet dhe fillo',
+    start: 'Bëj kopjen',
+    keepOpen: 'Mos e mbyllni programin dhe mos e fikni PC-në derisa të përfundojë.',
+    phase: {
+      starting: 'Po fillon…',
+      database: 'Po kopjohet baza e të dhënave',
+      files: 'Po kopjohen fotot dhe videot',
+      packing: 'Po paketohet në një skedar',
+      verifying: 'Po kontrollohet skedari i bërë',
+      encrypting: 'Po kyçet me fjalëkalim',
+      finishing: 'Po përfundon',
+      checking: 'Po kontrollohet skedari',
+      decrypting: 'Po hapet me fjalëkalim',
+      unpacking: 'Po shpaketohet',
+      upgrading: 'Po përshtatet në versionin e tanishëm',
+      safety_copy: 'Po bëhet kopje sigurie e të dhënave të tanishme',
+      restoring_database: 'Po rikthehet baza e të dhënave',
+      checking_references: 'Po kontrollohen lidhjet mes të dhënave',
+      restoring_files: 'Po rikthehen fotot dhe videot',
+      uploading: 'Po dërgohet skedari',
+      saving: 'Po ruhet në vendin që zgjodhët',
+      checking_copy: 'Po lexohet prapë kopja e ruajtur',
+    },
+    doneVerified: 'Kopja u bë. Skedari u lexua prapë: çdo tabelë dhe çdo foto përputhet.',
+    done: 'Kopja u bë.',
+    factData: 'Rreshta të dhënash',
+    factTables: '{n} tabela',
+    factFiles: 'Foto, video, zëra',
+    factSize: 'Madhësia e skedarit',
+    factLocked: 'me fjalëkalim',
+    factOpen: 'pa fjalëkalim',
+    savedAs: 'U ruajt: {name}',
+    savedChecked: 'Kopja e ruajtur u lexua prapë nga disku dhe është e njëjtë me origjinalin.',
+    savedSize: 'Kopja e ruajtur ka madhësinë e saktë.',
+    copyMismatch:
+      'Kopja në vendin që zgjodhët nuk doli e njëjtë me origjinalin (disku ose USB-ja mund të ketë problem). Mos e përdorni atë skedar. Origjinali është i saktë në këtë PC: shkarkojeni përsëri.',
+    copyFailed:
+      'Skedari nuk u ruajt dot në vendin që zgjodhët ({reason}). Origjinali është i saktë në këtë PC: shkarkojeni përsëri.',
+    download: 'Shkarko skedarin',
+    downloadHint: 'Ruhet te dosja «Shkarkimet» (Downloads).',
+    alsoHere: 'Skedari gjendet edhe në këtë PC, në dosjen:',
+    howToRestore:
+      'Për ta kthyer: në PC-në tjetër instaloni LIKApcs, hapeni dhe shtypni «Rikthe nga kopja» në ekranin e parë.',
+    errAccountPassword: 'Fjalëkalimi juaj nuk është i saktë.',
+    errLogin: 'Emri i përdoruesit ose fjalëkalimi nuk është i saktë.',
+    errLocked: 'Llogaria është bllokuar përkohësisht. Provoni pak më vonë.',
+    errNotOwner: 'Kjo llogari nuk ka të drejtë për kopjet. Përdorni llogarinë e pronarit.',
+    errFilePasswordNeeded: 'Ky skedar ka fjalëkalim. Shkruajeni dhe provoni përsëri.',
+    errFilePasswordWrong: 'Fjalëkalimi i skedarit nuk është i saktë.',
+    errNewer:
+      'Ky skedar është bërë me një version më të ri të LIKApcs. Përditësojeni programin në këtë PC dhe provoni përsëri.',
+    errDamaged: 'Skedari është i dëmtuar ose i paplotë. Asgjë nuk u ndryshua.',
+    errUpgrade:
+      'Skedari është i një versioni të vjetër dhe nuk u përshtat dot. Asgjë nuk u ndryshua.',
+    errSpace: 'Nuk ka vend të mjaftueshëm në disk.',
+    errBusy: 'Një kopje ose rikthim tjetër është duke u bërë. Prisni të përfundojë.',
+    errNotFresh: 'Ky program ka tashmë përdorues. Përdorni «Rikthe nga kopja» në ekranin e hyrjes.',
+    errFilesIncomplete:
+      'Të dhënat u rikthyen, por disa foto ose video nuk u vendosën dot. Bëjeni rikthimin edhe një herë.',
+    errTooLarge: 'Skedari është më i madh se kufiri i lejuar.',
+    errLost:
+      'Serveri nuk po përgjigjet më. Mos e fikni PC-në; hapeni programin pas pak dhe shikoni te Kopjet rezervë.',
+  },
+  restoreFile: {
+    title: 'Rikthe nga kopja',
+    entry: 'Rikthe nga kopja (backup)',
+    entryHint:
+      'Keni një skedar kopjeje? Kthejeni këtu gjithçka: produktet, shitjet, klientët, fotot.',
+    open: 'Rikthe nga skedari',
+    intro:
+      'Zgjidhni skedarin e kopjes (nga USB ose nga çdo dosje). Gjithçka që është në të kthehet ashtu siç ishte.',
+    introListed: 'Kthehet gjithçka që është në këtë kopje, ashtu siç ishte.',
+    pick: 'Zgjidh skedarin e kopjes',
+    pickHint: 'Skedari që u bë me «Backup file»',
+    notABackup:
+      'Ky nuk është skedar kopjeje i LIKApcs. Zgjidhni skedarin që u bë me «Backup file».',
+    filePassword: 'Fjalëkalimi i skedarit',
+    filePasswordHint:
+      'Fjalëkalimi që vendosët kur e bëtë kopjen (ose kodi 4-shifror i transferimit).',
+    filePasswordHintKnown:
+      'Fjalëkalimi që vendosët kur e bëtë kopjen. Lëreni bosh nëse kopja u bë në këtë PC pa fjalëkalim të veçantë.',
+    ownerNeeded: 'Për siguri, rikthimi kërkon llogarinë e pronarit të këtij programi.',
+    replaces:
+      'Të gjitha të dhënat e tanishme të këtij programi zëvendësohen me ato të kopjes. Para kësaj bëhet vetë një kopje sigurie e tyre.',
+    acknowledge: 'E kuptoj që të dhënat e tanishme zëvendësohen',
+    freshNote: 'Pas rikthimit hyni me llogarinë që kishit në PC-në e vjetër.',
+    start: 'Rikthe',
+    keepOpen: 'Mos e mbyllni programin dhe mos e fikni PC-në derisa të përfundojë.',
+    done: 'U rikthye gjithçka.',
+    factTime: 'Kohëzgjatja',
+    factSafety: 'kopja e sigurisë u bë',
+    factEmpty: 'pa kopje sigurie',
+    verified: 'Çdo tabelë dhe çdo skedar u kontrollua me listën brenda kopjes: asgjë nuk mungon.',
+    verifiedCounts:
+      'Kjo kopje është bërë me një version më të vjetër, pa listë kontrolli: u kontrollua numri i rreshtave të çdo tabele dhe numri i skedarëve.',
+    upgraded: 'Kopja ishte e versionit {version}. U përshtat në versionin e tanishëm.',
+    adopted:
+      'Ky PC tani zë vendin e PC-së së vjetër: PC-të e lojës lidhen vetë, pa i miratuar përsëri. Mos e mbani programin të hapur në PC-në e vjetër në të njëjtin rrjet.',
+    afterLogin: 'Tani hyni me llogarinë që ishte në kopje.',
+    afterKept: 'Programi ringarkohet me të dhënat e rikthyera.',
+    toLogin: 'Vazhdo te hyrja',
+    reload: 'Vazhdo',
+  },
   backups: {
     netCardTitle: 'Serveri dhe rrjeti',
-    netHelp: 'Adresat dhe portet ku përgjigjet ky server. Përdorni një nga këto adresa te aplikacioni i telefonit (ose Admin) në një pajisje tjetër. Adresat lokale gjenden automatikisht; adresat e Tailscale i shkruani ju: IPv4, IPv6 ose emrin MagicDNS.',
+    netHelp:
+      'Adresat dhe portet ku përgjigjet ky server. Përdorni një nga këto adresa te aplikacioni i telefonit (ose Admin) në një pajisje tjetër. Adresat lokale gjenden automatikisht; adresat e Tailscale i shkruani ju: IPv4, IPv6 ose emrin MagicDNS.',
     netListening: 'Dëgjon në portin {port}',
     netVersion: 'Versioni',
     netProtocol: 'Protokolli',
@@ -2728,7 +2853,8 @@ export const sq: Dictionary = {
     netRemove: 'Hiq adresën',
     netSaved: 'Adresat u ruajtën',
     netNone: 'Ende nuk ka adresa të shkruara me dorë.',
-    netRestartNote: 'Adresat lokale ndryshojnë kur ndryshon rrjeti. Porti i ri hyn në fuqi pasi serveri të rinisë.',
+    netRestartNote:
+      'Adresat lokale ndryshojnë kur ndryshon rrjeti. Porti i ri hyn në fuqi pasi serveri të rinisë.',
     encCardTitle: 'Enkriptimi dhe kopja jashtë kësaj PC-je',
     encOn: 'E enkriptuar me fjalëkalim',
     encOff: 'Ende pa enkriptim',
@@ -3457,7 +3583,8 @@ export const sq: Dictionary = {
   reports: {
     summary: {
       hint: 'Çdo shifër vjen nga të njëjtat raporte si faqet e detajuara.',
-      incomplete: 'Disa të dhëna mungojnë (kosto ose humbje pa çmim). Fitimi mund të jetë i pasaktë.',
+      incomplete:
+        'Disa të dhëna mungojnë (kosto ose humbje pa çmim). Fitimi mund të jetë i pasaktë.',
       turnover: 'Qarkullimi (me TVSH)',
       turnoverSub: '{count} shitje',
       netProfit: 'Fitimi neto',
@@ -3554,7 +3681,12 @@ export const sq: Dictionary = {
       moneyHint: 'Shpenzimet dhe çdo turn arke.',
     },
     viewLabel: 'Raporti',
-    view: { sales: 'Shitjet', profit: 'Fitimi dhe shpenzimet', summary: 'Përmbledhja', staff: 'Punonjësit' },
+    view: {
+      sales: 'Shitjet',
+      profit: 'Fitimi dhe shpenzimet',
+      summary: 'Përmbledhja',
+      staff: 'Punonjësit',
+    },
     profit: {
       result: 'Fitimi neto',
       resultHint:
@@ -3655,7 +3787,8 @@ export const sq: Dictionary = {
   },
   live: {
     title: 'Live tracking',
-    subtitle: 'Çfarë po ndodh sot në dyqan, live. Çdo shifër vjen nga i njëjti raport si faqet e tjera.',
+    subtitle:
+      'Çfarë po ndodh sot në dyqan, live. Çdo shifër vjen nga i njëjti raport si faqet e tjera.',
     updated: 'Përditësuar',
     drawer: 'Arka',
     drawerClosed: 'Asnjë turn nuk është hapur',

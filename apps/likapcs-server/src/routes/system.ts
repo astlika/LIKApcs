@@ -14,7 +14,10 @@ import {
   factoryResetSchema,
   type FactoryResetResult,
   backupUploadQuerySchema,
+  freshRestoreSchema,
   transferRestoreSchema,
+  type BackupJobStarted,
+  type BackupUploadResult,
   buildServerEndpoints,
   normalizeRemoteAddress,
   REMOTE_ADDRESS_MAX_COUNT,
@@ -26,6 +29,7 @@ import { lanAddresses } from '../discovery.js';
 import { SERVER_VERSION } from '../version.js';
 import { withTransaction } from '../db/pool.js';
 import type { Readable } from 'node:stream';
+import { archivePasswordHeader, BACKUP_UPLOAD_LIMIT_BYTES } from './backups.js';
 
 export const systemRoutes: FastifyPluginAsync = async (app) => {
   const { pool, services, startedAt } = app;
@@ -242,6 +246,16 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       throw conflict('This installation already has users. Use Backups → USB transfer instead.');
     }
   };
+  /** The same door for «Restore from a backup» (0.38.0), with an answer the screens can tell apart. */
+  const assertNoUsersYet = async () => {
+    if ((await services.users.count()) > 0) {
+      throw new AppError(
+        409,
+        'NOT_FRESH_INSTALL',
+        'This installation already has users. Sign in as the owner and restore from Backups.',
+      );
+    }
+  };
 
   app.post(
     '/system/transfer/upload',
@@ -287,6 +301,58 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
         archivePassword: body.code,
         transfer: true,
       });
+    },
+  );
+
+  /**
+   * «Restore from a backup» on a FRESH installation (0.38.0): the first screen of a new main PC.
+   * Any backup file of this program is taken: the plain ones, the ones with a password, and the
+   * older USB transfers (their 4-digit code is the password). Unlike a USB transfer, the gaming
+   * PCs are not sent away: this server takes the place of the installation in the file, so they
+   * connect again by themselves. Refused as soon as the system has a user.
+   */
+  app.post(
+    '/system/restore/upload',
+    {
+      bodyLimit: BACKUP_UPLOAD_LIMIT_BYTES,
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply): Promise<BackupUploadResult> => {
+      await assertNoUsersYet();
+      const { fileName } = backupUploadQuerySchema.parse(request.query);
+      const body = request.body as NodeJS.ReadableStream | undefined;
+      if (!body || typeof (body as { pipe?: unknown }).pipe !== 'function') {
+        throw new AppError(
+          415,
+          'unsupported_media_type',
+          'Send the backup file as application/octet-stream',
+        );
+      }
+      const archivePassword = archivePasswordHeader(request);
+      const result = await services.backups.importArchive(
+        body as unknown as Readable,
+        fileName,
+        { label: 'restore', ip: request.ip },
+        archivePassword,
+      );
+      return reply.code(201).send(result);
+    },
+  );
+
+  app.post(
+    '/system/restore',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply): Promise<BackupJobStarted> => {
+      await assertNoUsersYet();
+      const body = freshRestoreSchema.parse(request.body);
+      await services.backups.inspect(body.backupId, body.archivePassword);
+      const job = services.backups.startRestoreJob({
+        id: body.backupId,
+        actor: { label: 'restore', ip: request.ip },
+        sessionId: null,
+        archivePassword: body.archivePassword,
+      });
+      return reply.code(202).send({ jobId: job.id });
     },
   );
 

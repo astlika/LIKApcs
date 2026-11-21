@@ -587,13 +587,45 @@ previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD H
 | --------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /backups`              | `?includeDeleted&limit`                            | `{directory, schemaVersion, schedule{enabled, time, keepCount, nextRunAt}, items[BackupSummary]}`                                                                                                                          |
 | `POST /backups`             | `{}`                                               | `201` — writes a `manual` archive (consistent snapshot of every table) and records it                                                                                                                                      |
-| `POST /backups/upload`      | `?fileName=` + raw `application/octet-stream` body | `201` — stores a copied archive in the backup folder after validating its manifest; `400` for anything that is not a LIKApcs archive, `409` if the name exists                                                             |
+| `POST /backups/upload`      | `?fileName=` + raw `application/octet-stream` body | `201` — stores a copied archive (≤ 64 GB) after validating its manifest; `400` for anything that is not a LIKApcs archive; a taken name gets `-2`, `-3`; password of an `.enc` file: see below                             |
 | `GET /backups/:id`          | —                                                  | one summary                                                                                                                                                                                                                |
-| `GET /backups/:id/download` | —                                                  | the archive (`application/gzip`, `content-disposition: attachment`)                                                                                                                                                        |
+| `GET /backups/:id/download` | — or `?ticket=`                                    | the archive (`application/gzip`, `content-disposition: attachment`); with a ticket no sign-in is needed (`403 TICKET_INVALID`)                                                                                             |
 | `DELETE /backups/:id`       | —                                                  | removes the file, marks the history row `deleted`                                                                                                                                                                          |
-| `POST /backups/:id/restore` | `{password, confirm: true}`                        | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 SCHEMA_MISMATCH` for another schema version; `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`) |
+| `POST /backups/:id/restore` | `{password, confirm: true, archivePassword?}`      | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 ARCHIVE_NEWER` (archive of a newer version); `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`) |
 
 Admin WebSocket event `system.restored` follows a successful restore; Admin apps reload every view.
+
+#### Backup file and restore with a percentage (0.38.0)
+
+Long operations run as a **job**: the call answers `202 {jobId}` at once and the job is read with
+`GET /backups/jobs/:id`. That route needs **no sign-in** (the id is the key) and never touches the
+database, so it answers while a restore holds every table — a signed-in request waits until the
+restore's transaction ends.
+
+| Route                               | Body / query                                  | Result                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /backups/file`                | `{password?}` (≥ 4 characters)                | `202 {jobId}` — one archive with every table and every uploaded file, read back against its own manifest before it counts as written. With `password` the file is encrypted with it (else with this PC's backup password, when one is set). `409 BACKUP_BUSY` while another runs                                                                                           |
+| `GET /backups/jobs/:id`             | — (no sign-in)                                | `BackupJobStatus`: `{id, kind: 'backup' \| 'restore', state: 'running' \| 'succeeded' \| 'failed', percent, phase, current, total, startedAt, finishedAt, error{code, message}, backup{backup, contents, verified, directory}, restore: RestoreResult}`. `percent` never goes backwards and is 100 only on success. Kept for one hour (the last 20 jobs); `404` afterwards |
+| `POST /backups/:id/download-ticket` | `{}`                                          | `{ticket, expiresAt}` — valid 10 minutes for `GET /backups/:id/download?ticket=` of that archive only, so a browser can save the file as an ordinary download                                                                                                                                                                                                              |
+| `POST /backups/:id/restore-job`     | `{password, confirm: true, archivePassword?}` | `202 {jobId}`. Refused at once, before any work: `403 PASSWORD_MISMATCH`, `400 ARCHIVE_PASSWORD_REQUIRED`, `403 ARCHIVE_PASSWORD_WRONG`, `409 ARCHIVE_NEWER`, `409 BACKUP_BUSY`                                                                                                                                                                                            |
+| `POST /system/restore/upload`       | `?fileName=` + raw body (no sign-in)          | `201 {backup, contents}` — **only while no user exists** (`409 NOT_FRESH_INSTALL` otherwise): the first screen of a new installation sends the backup file here                                                                                                                                                                                                            |
+| `POST /system/restore`              | `{backupId, archivePassword?}` (no sign-in)   | `202 {jobId}` — restores that archive on the empty installation. Refused at once: `400 ARCHIVE_PASSWORD_REQUIRED`, `403 ARCHIVE_PASSWORD_WRONG`, `409 ARCHIVE_NEWER`, `409 BACKUP_BUSY`; `409 NOT_FRESH_INSTALL` once a user exists                                                                                                                                        |
+
+The password of an encrypted archive is sent with an upload in the header `x-archive-password-utf8`
+(percent-encoded UTF-8; a header cannot carry every letter as it is) or, for older callers, in
+`x-archive-password`.
+
+Phases of a backup job: `database`, `files`, `packing`, `verifying`, `encrypting` (only with a
+password), `finishing`. Phases of a restore job: `checking`, `decrypting` (only for an `.enc` file),
+`unpacking`, `upgrading` (only for an archive of an older version), `safety_copy`,
+`restoring_database`, `checking_references`, `restoring_files`. A failed job carries one of:
+`ARCHIVE_INCOMPLETE` (a table or a file is missing or was changed — nothing was restored),
+`ARCHIVE_UPGRADE_FAILED`, `NOT_ENOUGH_SPACE`, `RESTORE_FILES_INCOMPLETE`.
+
+`RestoreResult` adds `filesRestored`, `fileBytesRestored`, `verified` (every table and file matched
+its checksum; `false` for an archive from before 0.38.0, which lists sizes only), `archiveVersion`,
+`archiveSchemaVersion`, `upgraded` and `identityAdopted` (the server took over the installation id of
+the archive, so the gaming PCs of the old main PC connect to this one without a new approval).
 
 ### Updates (`updates.manage`; the events route only needs a signed-in user)
 
