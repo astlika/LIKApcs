@@ -25,7 +25,8 @@ import com.likapcs.live.core.Texts
 /**
  * The engine's hands on the phone: system notifications (one channel per kind, so the owner can
  * set sound and importance for each in the phone's settings), the permanent notification with the
- * day's figures, and the short wake lock that lets a message be handled while the screen is off.
+ * day's figures, the short wake lock that lets a message be handled while the screen is off, and
+ * the alarm for the engine's appointments with the clock.
  */
 class Notifier(private val app: Context, private val store: Store) : Host {
     /** The open screen, when there is one. Called on the engine's thread. */
@@ -101,12 +102,26 @@ class Notifier(private val app: Context, private val store: Store) : Host {
                 channel(
                     Category.ALERTS.id, NotificationManager.IMPORTANCE_HIGH,
                     x.t("Gjëra për t'u parë", "Things to look at"),
-                    x.t("Rimbursime, anulime, ndryshime çmimi, minuta falas, hyrje të dështuara.", "Refunds, voids, price changes, free minutes, failed sign-ins."),
+                    x.t(
+                        "Rimbursime, anulime, zbritje, shitje nën kosto, ndryshime çmimi, minuta falas, PC e fikur gjatë seancës, hyrje të dështuara.",
+                        "Refunds, voids, discounts, sales below cost, price changes, free minutes, a PC that went off during a session, failed sign-ins.",
+                    ),
                 ),
                 channel(
                     Category.PCS.id, NotificationManager.IMPORTANCE_DEFAULT,
                     x.t("Kompjuterët", "The PCs"),
-                    x.t("Sesione, kërkesa dhe porosi nga PC-të, rezervime.", "Sessions, requests and orders from the PCs, reservations."),
+                    x.t(
+                        "Seanca që nisin, zgjaten e mbarojnë, koha që po mbaron, kërkesa dhe porosi nga PC-të, rezervime.",
+                        "Sessions that start, are extended and end, time running out, requests and orders from the PCs, reservations.",
+                    ),
+                ),
+                channel(
+                    Category.POWER.id, NotificationManager.IMPORTANCE_DEFAULT,
+                    x.t("Ndezja dhe fikja e PC-ve", "PCs on and off"),
+                    x.t(
+                        "Kush i ndezi PC-të, cilat u ndezën ose u fikën, fikje dhe rinisje nga Admini.",
+                        "Who switched the PCs on, which came on or went off, shut-downs and restarts from the Admin.",
+                    ),
                 ),
                 channel(
                     Category.MONEY.id, NotificationManager.IMPORTANCE_DEFAULT,
@@ -129,6 +144,22 @@ class Notifier(private val app: Context, private val store: Store) : Host {
                     x.t("Cilësime, kopje rezervë, pajisje.", "Settings, backups, devices."),
                 ),
                 channel(
+                    Category.DAY.id, NotificationManager.IMPORTANCE_DEFAULT,
+                    x.t("Dita", "The day"),
+                    x.t(
+                        "Qarkullimi që kalon një shumë, përmbledhja e ditës, borxhet që skadojnë sot.",
+                        "Turnover passing an amount, the summary of the day, debts due today.",
+                    ),
+                ),
+                channel(
+                    QUIET_CHANNEL, NotificationManager.IMPORTANCE_LOW,
+                    x.t("Pa zë", "Silent"),
+                    x.t(
+                        "Njoftimet gjatë orëve të qeta, dhe ato që vetëm plotësojnë një njoftim të mëparshëm.",
+                        "Notifications during quiet hours, and those that only add to an earlier one.",
+                    ),
+                ),
+                channel(
                     Category.CONNECTION.id, NotificationManager.IMPORTANCE_DEFAULT,
                     x.t("Lidhja me serverin", "The link to the server"),
                     x.t("Kur lidhja mungon gjatë ose duhet hyrë përsëri.", "When the link is down for long or a new sign-in is needed."),
@@ -142,8 +173,23 @@ class Notifier(private val app: Context, private val store: Store) : Host {
     override fun post(note: Note) {
         try {
             if (channelsLang != texts().lang) createChannels()
-            val notification = Notification.Builder(app, note.category.id)
+            val tag = note.category.id
+            val id = note.key.hashCode()
+            // Sound belongs to the channel, so a message that must make none goes through the
+            // silent channel. It keeps its kind as its tag: it is still found, replaced and
+            // removed as one of that kind.
+            var channel = tag
+            var once = false
+            if (note.silent) {
+                channel = quiet(tag) ?: return
+            } else if (note.update) {
+                // It takes the place of the one on the screen without ringing again. When the
+                // owner swiped that one away, the fuller one comes back, quietly.
+                if (shown(tag, id)) once = true else channel = quiet(tag) ?: return
+            }
+            val notification = Notification.Builder(app, channel)
                 .setSmallIcon(R.drawable.ic_stat_live)
+                .setOnlyAlertOnce(once)
                 .setColor(ACCENT)
                 .setContentTitle(note.title)
                 .setContentText(note.text)
@@ -154,7 +200,7 @@ class Notifier(private val app: Context, private val store: Store) : Host {
                 .setCategory(if (note.category == Category.CONNECTION) Notification.CATEGORY_STATUS else Notification.CATEGORY_EVENT)
                 .setContentIntent(open(note.tab))
                 .build()
-            manager.notify(note.category.id, note.key.hashCode(), notification)
+            manager.notify(tag, id, notification)
             trim()
         } catch (e: Exception) {
             Log.w(TAG, "notification not shown: ${e.message}")
@@ -200,6 +246,10 @@ class Notifier(private val app: Context, private val store: Store) : Host {
         } catch (e: Exception) {
             Log.w(TAG, "wake lock: ${e.message}")
         }
+    }
+
+    override fun wakeAt(epochMs: Long) {
+        Alarms.at(app, epochMs)
     }
 
     override fun log(line: String) {
@@ -327,6 +377,15 @@ class Notifier(private val app: Context, private val store: Store) : Host {
         for (old in shown.take(maxOf(0, shown.size - MAX_SHOWN))) manager.cancel(old.tag, old.id)
     }
 
+    /**
+     * The silent channel for a message of this kind. Null when the owner blocked the kind's own
+     * channel in the phone's settings: then it is not shown at any hour.
+     */
+    private fun quiet(kind: String): String? =
+        if (manager.getNotificationChannel(kind)?.importance == NotificationManager.IMPORTANCE_NONE) null else QUIET_CHANNEL
+
+    private fun shown(tag: String, id: Int): Boolean = manager.activeNotifications.any { it.tag == tag && it.id == id }
+
     /** The notes this class posted: tagged with their kind (not the permanent one, not the system's bundle header). */
     private fun notes() = manager.activeNotifications.filter { shown ->
         shown.tag != null && Category.of(shown.tag) != null && (shown.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0
@@ -335,6 +394,9 @@ class Notifier(private val app: Context, private val store: Store) : Host {
     companion object {
         const val TAG = "likalive"
         const val STATUS_CHANNEL = "status"
+
+        /** For messages that must not make a sound: quiet hours, and additions to an earlier message. */
+        const val QUIET_CHANNEL = "quiet"
         const val STATUS_ID = 1
         private const val STATUS_GROUP = "likalive.status"
         private const val MAX_SHOWN = 24

@@ -36,6 +36,8 @@ import { TimeCreditsService } from './services/time-credits.js';
 import { CashService } from './services/cash.js';
 import { ExpensesService } from './services/expenses.js';
 import { StaffPurchasesService } from './services/staff-purchases.js';
+import { InternetAccessService } from './services/internet-access.js';
+import { OffersService } from './services/offers.js';
 import { CustomersService } from './services/customers.js';
 import { DebtsService } from './services/debts.js';
 import { StatementService } from './services/statement.js';
@@ -50,6 +52,8 @@ import { InvoiceService } from './services/invoices.js';
 import { cashRoutes } from './routes/cash.js';
 import { expenseRoutes } from './routes/expenses.js';
 import { staffPurchaseRoutes } from './routes/staff-purchases.js';
+import { internetAccessRoutes } from './routes/internet-access.js';
+import { offerRoutes } from './routes/offers.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { liveRoutes } from './routes/live.js';
@@ -68,6 +72,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { stationRoutes } from './routes/stations.js';
 import { reservationRoutes } from './routes/reservations.js';
 import { looksRoutes } from './routes/looks.js';
+import { voiceRoutes } from './routes/voice.js';
 import { lanUpdateRoutes } from './routes/lan-updates.js';
 import { systemRoutes } from './routes/system.js';
 import { userRoutes } from './routes/users.js';
@@ -82,6 +87,7 @@ import { SettingsService } from './services/settings.js';
 import { ReservationsService } from './services/reservations.js';
 import { StationsService } from './services/stations.js';
 import { LooksService } from './services/looks.js';
+import { VoiceClipStore, VoiceService } from './services/voice.js';
 import { UsersService } from './services/users.js';
 
 export interface Services {
@@ -89,6 +95,8 @@ export interface Services {
   pricing: PricingService;
   sessions: SessionsService;
   catalog: CatalogService;
+  internetAccess: InternetAccessService;
+  offers: OffersService;
   ads: AdsService;
   maintenance: MaintenanceService;
   sales: SalesService;
@@ -112,6 +120,7 @@ export interface Services {
   userPreferences: UserPreferencesService;
   stations: StationsService;
   looks: LooksService;
+  voice: VoiceService;
   devices: DevicesService;
   audit: AuditQueryService;
   search: SearchService;
@@ -192,6 +201,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     stations,
     new ProductImageStore(path.join(config.uploadDir, 'wallpapers')),
   );
+  // 0.35.0: the owner's own recordings for the spoken time warnings on the PCs.
+  const voice = new VoiceService(
+    settings,
+    new VoiceClipStore(path.join(config.uploadDir, 'voice')),
+  );
   // Archive / delete take the PC off the station: StationsService asks DevicesService to revoke.
   stations.useRevokeDevice((deviceId, actor) => devices.revoke(deviceId, actor));
   const audit = new AuditQueryService(pool);
@@ -232,6 +246,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   const productImages = new ProductImageStore(path.join(config.uploadDir, 'products'));
   const catalog = new CatalogService(pool, settings, productImages);
+  const internetAccess = new InternetAccessService(pool, catalog);
+  // 0.36.0: offers (products + PC minutes at one price); the sales service sells them.
+  // 0.36.1: what an offer earns needs the price of its minutes outside it — the quote a sale
+  // asks for PC time sold without a PC.
+  const offers = new OffersService(
+    pool,
+    settings,
+    async (minutes) =>
+      (await sessions.quote({ stationId: '', billingMode: 'prepaid', minutes })).priceCents,
+  );
   const ads = new AdsService(
     pool,
     productImages,
@@ -254,7 +278,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     uploadDir: config.uploadDir,
     keyFile: path.join(config.dataDir, 'backup-keys.json'),
     wipeUploads: async () => {
-      for (const dir of ['wallpapers', 'products', 'videos']) {
+      for (const dir of ['wallpapers', 'products', 'videos', 'voice']) {
         const target = path.join(config.uploadDir, dir);
         await fsp.rm(target, { recursive: true, force: true });
         await fsp.mkdir(target, { recursive: true });
@@ -273,6 +297,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     schemaVersion: () => app.schemaVersion,
     startedAt: () => app.startedAt,
     onlineDeviceIds: () => hub.onlineDeviceIds(),
+    deviceLastSeen: (deviceId) => hub.lastSeen(deviceId),
     feedBaseUrl: options.updateFeedBaseUrl ?? config.updateFeedBaseUrl ?? undefined,
     log: app.log,
   });
@@ -300,6 +325,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     pricing,
     sessions,
     catalog,
+    internetAccess,
+    offers,
     ads,
     sales,
     timeCredits,
@@ -320,6 +347,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     requests,
     orders,
     looks,
+    voice,
   });
   app.decorate('schemaVersion', migrationStatus.currentVersion);
   app.decorate('startedAt', new Date());
@@ -380,12 +408,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(settingsRoutes);
       await api.register(stationRoutes);
       await api.register(looksRoutes);
+      await api.register(voiceRoutes);
       await api.register(lanUpdateRoutes);
       await api.register(pricingRoutes);
       await api.register(sessionRoutes);
       await api.register(requestRoutes);
       await api.register(orderRoutes);
       await api.register(catalogRoutes);
+      await api.register(internetAccessRoutes);
+      await api.register(offerRoutes);
       await api.register(adsRoutes);
       await api.register(salesRoutes);
       await api.register(cashRoutes);
@@ -432,9 +463,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   // Presence → station status broadcasts
   hub.on('device.online', (presence) => void stations.broadcastStation(presence.stationId));
-  hub.on('device.offline', ({ stationId, deviceId, reason }) => {
+  hub.on('device.offline', ({ stationId, deviceId, reason, lastHeartbeatAt }) => {
     app.log.info({ deviceId, reason }, 'device offline');
     void stations.broadcastStation(stationId);
+    // 0.37.0: a connected PC is written to the database once a minute; when it goes, its exact
+    // "last seen" is.
+    void devices
+      .deviceGone(deviceId, lastHeartbeatAt ?? null)
+      .catch((err: unknown) => app.log.warn({ err, deviceId }, 'could not record last seen'));
   });
 
   // Background maintenance
@@ -442,6 +478,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   let dailyTimer: NodeJS.Timeout | null = null;
   let sessionTimer: NodeJS.Timeout | null = null;
   let backupTimer: NodeJS.Timeout | null = null;
+  let firstCleanUp: NodeJS.Timeout | null = null;
   app.addHook('onReady', async () => {
     // Version bookkeeping + optional start-up check of the release feed (never blocks start-up).
     void updates
@@ -477,20 +514,24 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         .sweep()
         .catch((err: unknown) => app.log.error({ err }, 'reservation sweep failed'));
     }, 5_000);
-    dailyTimer = setInterval(
-      () => {
-        void Promise.all([devices.pruneHeartbeats(7), auth.revokeExpiredSessions()]).catch(
-          (err: unknown) => app.log.error({ err }, 'maintenance job failed'),
-        );
-      },
-      24 * 3600 * 1000,
-    );
+    // 0.37.0: the clean-up used to run only after 24 hours without a restart — a main PC that is
+    // switched off every night never got there, and the heartbeat table grew without end. It now
+    // runs a minute after start-up (start-up itself stays quick) and every 6 hours after that.
+    const cleanUp = () => {
+      void Promise.all([devices.pruneHeartbeats(7), auth.revokeExpiredSessions()]).catch(
+        (err: unknown) => app.log.error({ err }, 'maintenance job failed'),
+      );
+    };
+    firstCleanUp = setTimeout(cleanUp, 60_000);
+    firstCleanUp.unref();
+    dailyTimer = setInterval(cleanUp, 6 * 3600 * 1000);
   });
   app.addHook('onClose', async () => {
     if (sweepTimer) clearInterval(sweepTimer);
     if (dailyTimer) clearInterval(dailyTimer);
     if (sessionTimer) clearInterval(sessionTimer);
     if (backupTimer) clearInterval(backupTimer);
+    if (firstCleanUp) clearTimeout(firstCleanUp);
     hub.closeAll(WS_CLOSE_CODES.SERVER_SHUTDOWN, 'server shutting down');
   });
 

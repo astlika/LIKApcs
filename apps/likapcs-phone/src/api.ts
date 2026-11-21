@@ -3,6 +3,7 @@
  * /api). The token lives in localStorage on this phone and is sent as a Bearer token.
  */
 import { apiOrigin, isNative } from './native';
+import { translate } from './i18n';
 
 const TOKEN_KEY = 'likapcs-phone-token';
 
@@ -11,6 +12,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** The server's `error.details` (for example `{ code: 'INSUFFICIENT_STOCK', productName }`). */
+    readonly details: unknown = null,
   ) {
     super(message);
   }
@@ -53,12 +56,18 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     data = null;
   }
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+    const err = (data as { error?: { code?: string; message?: string; details?: unknown } } | null)
+      ?.error;
     if (res.status === 401 && token && path !== '/auth/phone-login') {
       clearToken();
       window.dispatchEvent(new Event(SESSION_LOST));
     }
-    throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? `Gabim ${res.status}`);
+    throw new ApiError(
+      res.status,
+      err?.code ?? 'error',
+      err?.message ?? `Gabim ${res.status}`,
+      err?.details ?? null,
+    );
   }
   return data as T;
 }
@@ -68,9 +77,36 @@ export function errorText(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 403) return 'Nuk keni leje për këtë veprim.';
     if (err.code === 'network') return err.message;
-    return err.message;
+    return businessText(err) ?? err.message;
   }
   return 'Diçka shkoi keq. Provoni përsëri.';
+}
+
+/** Refusals the server names with a code, said in the phone's language (0.34.0). */
+function businessText(err: ApiError): string | null {
+  const d = (err.details ?? {}) as { code?: string; productName?: string; availableMilli?: number };
+  const name = d.productName ?? '';
+  switch (d.code) {
+    case 'INSUFFICIENT_STOCK': {
+      const left = Math.max(0, Math.floor(Number(d.availableMilli ?? 0) / 1000));
+      return left > 0
+        ? translate('Nuk mjafton stoku për {name}: kanë mbetur {n}.', { name, n: left })
+        : translate('{name} nuk ka më stok.', { name });
+    }
+    case 'INTERNET_ACCESS_STOCK':
+      return translate(
+        'Stoku i {name} janë kodet e lira. Kodet shtohen te Admin › Produktet › Shto internet access.',
+        { name },
+      );
+    case 'INTERNET_ACCESS_TILL_ONLY':
+      return translate('{name} shitet vetëm si shitje e rregullt: kodi jepet kur paguhet.', { name });
+    case 'ACCESS_CODES_NOT_SHOWN':
+      return translate('Ky version nuk i shfaq kodet e internetit. Rifreskoni aplikacionin.');
+    case 'ACCESS_CODES_WHOLE':
+      return translate('Interneti shitet me copë: një kod për secilën.');
+    default:
+      return null;
+  }
 }
 
 /** Money in euro cents → "12.50 €". */

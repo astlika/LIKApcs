@@ -2,7 +2,8 @@
  * Printable receipt (58/80 mm thermal layout). Rendered on screen in the receipt dialog and
  * printed through the browser/WebView print pipeline (`@media print` hides everything else).
  */
-import type { ReceiptData } from '@likapcs/shared';
+import { Fragment } from 'react';
+import { receiptRows, type ReceiptData } from '@likapcs/shared';
 import { useFormat } from '../../lib/format';
 import { useI18n } from '../../i18n';
 
@@ -58,20 +59,31 @@ export function Receipt({ data }: { data: ReceiptData }) {
           </tr>
         </thead>
         <tbody>
-          {sale.items.map((i) => (
-            <tr key={i.id}>
-              <td>
-                {i.description}
-                {i.discountCents > 0 && (
-                  <div className="receipt__line-note">
-                    −{fmt.money(i.discountCents)} {t('receipt.discount').toLowerCase()}
-                  </div>
-                )}
-              </td>
-              <td className="right">{qty(i.quantityMilli)}</td>
-              <td className="right">{fmt.money(i.unitPriceCents)}</td>
-              <td className="right">{fmt.money(i.lineTotalCents)}</td>
-            </tr>
+          {/* 0.36.0: the lines of one offer are one row — its name and its price, with what it holds. */}
+          {receiptRows(sale.items).map((i) => (
+            <Fragment key={i.key}>
+              <tr>
+                <td>
+                  {i.description}
+                  {i.discountCents > 0 && (
+                    <div className="receipt__line-note">
+                      −{fmt.money(i.discountCents)} {t('receipt.discount').toLowerCase()}
+                    </div>
+                  )}
+                </td>
+                <td className="right">{qty(i.quantityMilli)}</td>
+                <td className="right">{fmt.money(i.unitPriceCents)}</td>
+                <td className="right">{fmt.money(i.lineTotalCents)}</td>
+              </tr>
+              {/* What the offer holds, on the receipt's whole width (never squeezes the columns). */}
+              {i.parts.length > 0 && (
+                <tr className="receipt__parts">
+                  <td colSpan={4} className="receipt__line-note" data-testid="receipt-offer-parts">
+                    {i.parts.join(' · ')}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -126,6 +138,24 @@ export function Receipt({ data }: { data: ReceiptData }) {
           </div>
         )}
       </div>
+      {sale.items.some((i) => (i.accessCodes?.length ?? 0) > 0) && (
+        <div className="receipt__codes" data-testid="receipt-access-codes">
+          {sale.items
+            .filter((i) => (i.accessCodes?.length ?? 0) > 0)
+            .map((i) => (
+              <div key={i.id} className="receipt__codes-line">
+                <div className="receipt__codes-name">
+                  {t('receipt.accessCode', { name: i.description })}
+                </div>
+                {i.accessCodes.map((code) => (
+                  <div key={code} className="receipt__code">
+                    {code}
+                  </div>
+                ))}
+              </div>
+            ))}
+        </div>
+      )}
       {data.claimPins && data.claimPins.length > 0 && (
         <div className="receipt__totals" data-testid="receipt-claim-pins">
           {data.claimPins.map((p) => (

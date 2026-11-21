@@ -33,6 +33,11 @@ export interface UpdatesServiceOptions {
   schemaVersion: () => number;
   startedAt: () => Date;
   onlineDeviceIds: () => Set<string>;
+  /**
+   * 0.37.0: when a connected PC was last heard from (null when it is not connected). The
+   * database is written once a minute for a connected PC, so its own value can be that old.
+   */
+  deviceLastSeen?: (deviceId: string) => Date | null;
   /** Base URL of the release feed (no trailing slash). Overridden in tests. */
   feedBaseUrl?: string;
   fetchTimeoutMs?: number;
@@ -276,7 +281,7 @@ export class UpdatesService {
       hostname: d.hostname,
       appVersion: d.app_version,
       online: online.has(d.id),
-      lastSeenAt: d.last_seen_at?.toISOString() ?? null,
+      lastSeenAt: (this.options.deviceLastSeen?.(d.id) ?? d.last_seen_at)?.toISOString() ?? null,
       state: versionState(d.app_version, target),
       lastUpdate: d.last_status
         ? {

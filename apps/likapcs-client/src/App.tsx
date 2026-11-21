@@ -217,7 +217,9 @@ export function App() {
   useEffect(() => {
     void setWidgetLayout(widgetSize, widgetPosition, widgetStyle);
   }, [widgetSize, widgetPosition, widgetStyle]);
-  // 0.19.7: hide the widget while a fullscreen game runs (default on).
+  // 0.19.7: hide the widget while a fullscreen game runs. On until the server says otherwise
+  // (0.35.3, as up to 0.34.0): with the widget left on the screen, games in exclusive fullscreen
+  // lost the screen and minimized.
   const hideInGames = snap.state.display?.widgetHideInGames ?? true;
   useEffect(() => {
     void setWidgetHideInGames(hideInGames);

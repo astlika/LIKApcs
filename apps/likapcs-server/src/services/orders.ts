@@ -30,7 +30,7 @@ import {
   type OrderItemSummary,
   ORDER_MAX_QUANTITY,
 } from '@likapcs/shared';
-import type { ServerOrderUpdate } from '@likapcs/shared';
+import type { ProductKind, ServerOrderUpdate } from '@likapcs/shared';
 import { millsToCents } from '@likapcs/shared';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
@@ -38,6 +38,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.j
 import type { RealtimeHub } from '../realtime/hub.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ACTIVE_PROMO_SQL } from './ads.js';
+import { internetAccessTillOnly } from './catalog.js';
 import type { AuthenticatedDevice } from './devices.js';
 import { ProductImageStore } from './product-images.js';
 import type { SaleActor, SalesService } from './sales.js';
@@ -171,13 +172,14 @@ interface MenuProductRow {
   purchase_cost_mills: string | number;
   is_active: boolean;
   client_menu: boolean;
+  kind: ProductKind;
 }
 
 const MENU_SELECT = `
   SELECT p.id, p.name, p.category_id, c.name AS category_name, c.color AS category_color, p.selling_price_cents,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents, p.image_path, p.stock_milli, p.track_stock,
          p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents, p.average_cost_mills, p.purchase_cost_mills,
-                p.is_active, p.client_menu
+                p.is_active, p.client_menu, p.kind
     FROM products p LEFT JOIN categories c ON c.id = p.category_id`;
 
 const available = (p: MenuProductRow) =>
@@ -282,7 +284,12 @@ export class OrdersService implements SessionOrdersHook {
       const lines: { product: MenuProductRow; quantityMilli: number }[] = [];
       for (const item of input.items) {
         const product = byId.get(item.productId);
-        if (!product || !product.client_menu || !product.is_active)
+        if (
+          !product ||
+          !product.client_menu ||
+          !product.is_active ||
+          product.kind === 'internet_access'
+        )
           throw new AppError(409, 'not_on_menu', 'This product is no longer on the menu', {
             productId: item.productId,
           });
@@ -541,6 +548,9 @@ export class OrdersService implements SessionOrdersHook {
           throw new AppError(409, 'not_available', 'This product is not available', {
             productId: item.productId,
           });
+        // 0.34.0: a PC's bill is paid later, and an internet code is only handed over on payment.
+        if (product.kind === 'internet_access')
+          throw internetAccessTillOnly(product.id, product.name);
         if (!available(product))
           throw new AppError(409, 'out_of_stock', `${product.name} is out of stock`, {
             productId: item.productId,
@@ -873,6 +883,8 @@ export class OrdersService implements SessionOrdersHook {
         clientRequestId: `order:${row.id}`,
         staff: false,
         payments: total > 0 ? payments : [],
+        // An order never holds internet access (see `addToSession`), so there is no code to show.
+        accessCodes: false,
       },
       actor,
       { fixedPrices: new Map(row.items.map((i) => [i.product_id, Number(i.unit_price_cents)])) },

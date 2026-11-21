@@ -5,6 +5,7 @@ import {
   localClock,
   priceForSeconds,
   quotePrepaidMinutes,
+  unpaidTimeDueCents,
   ruleAppliesAt,
   selectPricingRule,
   type PricingRuleLike,
@@ -168,5 +169,84 @@ describe('pricing rule selection', () => {
       ruleAppliesAt({ ...happyHour, isActive: false }, localClock('2026-10-09T13:00:00Z', tz)),
     ).toBe(false);
     expect(selectPricingRule([], 'st-1', localClock(Date.now(), tz))).toBeNull();
+  });
+});
+
+describe('free minutes (0.36.0)', () => {
+  const terms = {
+    rateCentsPerHour: 120,
+    billingIncrementMinutes: 1,
+    minimumMinutes: 0,
+    minimumChargeCents: 50,
+    roundingMode: 'up' as const,
+    roundingIncrementCents: 1,
+    freeMinutes: 3,
+  };
+
+  it('costs nothing up to the free minutes and the whole time one second later', () => {
+    expect(priceForSeconds(0, terms)).toBe(0);
+    expect(priceForSeconds(179, terms)).toBe(0);
+    expect(priceForSeconds(180, terms)).toBe(0);
+    // 181 s is 4 started minutes at 2 cents a minute: 8 cents, lifted to the minimum charge.
+    expect(priceForSeconds(181, terms)).toBe(50);
+    expect(priceForSeconds(3600, terms)).toBe(120);
+  });
+
+  it('changes nothing when it is off or absent', () => {
+    const { freeMinutes: _off, ...plain } = terms;
+    expect(priceForSeconds(0, plain)).toBe(50);
+    expect(priceForSeconds(60, plain)).toBe(50);
+    expect(priceForSeconds(60, { ...terms, freeMinutes: 0 })).toBe(50);
+  });
+
+  it('never makes bought minutes free', () => {
+    expect(quotePrepaidMinutes(2, terms)).toBe(50);
+    expect(quotePrepaidMinutes(60, terms)).toBe(120);
+  });
+});
+
+describe('unpaidTimeDueCents (0.36.0)', () => {
+  const terms = {
+    rateCentsPerHour: 120,
+    billingIncrementMinutes: 1,
+    minimumMinutes: 0,
+    minimumChargeCents: 0,
+    roundingMode: 'up' as const,
+    roundingIncrementCents: 1,
+    freeMinutes: 3,
+  };
+  // One paid hour, one more hour added to pay at the end (120 cents).
+  const bill = { plannedSeconds: 7200, unpaidSeconds: 3600, unpaidCents: 120, terms };
+
+  it('owes everything when the time ran out', () => {
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 7200 })).toBe(120);
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 9000 })).toBe(120);
+  });
+
+  it('owes nothing when stopped inside the paid time', () => {
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 1800 })).toBe(0);
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 3600 })).toBe(0);
+  });
+
+  it('owes the time used beyond the paid part, without free minutes', () => {
+    // 2 minutes into the added hour: 4 cents — the free minutes belong to the start only.
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 3720 })).toBe(4);
+    expect(unpaidTimeDueCents({ ...bill, usedSeconds: 5400 })).toBe(60);
+  });
+
+  it('leaves the minimums to the paid part', () => {
+    const withMinimum = {
+      ...bill,
+      terms: { ...terms, minimumChargeCents: 500, minimumMinutes: 30 },
+    };
+    expect(unpaidTimeDueCents({ ...withMinimum, usedSeconds: 3720 })).toBe(4);
+  });
+
+  it('never owes more than was added, and nothing when nothing was added', () => {
+    const dear = { ...bill, terms: { ...terms, rateCentsPerHour: 6000 } };
+    expect(unpaidTimeDueCents({ ...dear, usedSeconds: 3720 })).toBe(120);
+    expect(
+      unpaidTimeDueCents({ ...bill, unpaidCents: 0, unpaidSeconds: 0, usedSeconds: 7200 }),
+    ).toBe(0);
   });
 });

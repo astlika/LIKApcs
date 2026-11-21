@@ -5,10 +5,14 @@
  * 0.19.0: a line is a catalogue product (stock, tax and price from the product row), an
  * off-inventory "free" line (a name and a price typed at the till, default tax, no stock), or a
  * "time" line (prepaid PC minutes sold now — the server prices it and creates a credit for the PC).
+ * 0.36.0: or an "offer" line — products and PC minutes sold together at the offer's one price.
+ * 0.36.1: an offer goes in with one click, like a product: the same offer again raises the
+ * quantity of its line, and the stock rule counts what the offers in the cart take.
  */
 import {
   computeSale,
   customerDiscountCents,
+  type OfferSummary,
   type ProductAddonSummary,
   type ProductSummary,
   type SaleTotals,
@@ -55,7 +59,31 @@ export interface TimeLine {
   discountCents: number;
 }
 
-export type CartLine = ProductLine | FreeLine | TimeLine;
+/** The most of one offer a sale holds (each unit is opened up into its own lines by the server). */
+export const OFFER_MAX_UNITS = 50;
+
+/**
+ * 0.36.0: an offer — its products and its PC minutes at one price. The server opens the offer
+ * up into its lines.
+ * 0.36.1: one line per offer, in whole units; nothing is asked at the till. The PC minutes of an
+ * offer wait at the desk as paid time and are given when a PC is started or gets more time.
+ */
+export interface OfferLine {
+  kind: 'offer';
+  key: string;
+  offer: OfferSummary;
+  /** Only for the tax preview: the server taxes each part of the offer at its own rate. */
+  taxRateBp: number;
+  /** Whole units only (1000 = one offer). */
+  quantityMilli: number;
+  /** An offer already is its price: it takes no line discount. */
+  discountCents: 0;
+}
+
+export type CartLine = ProductLine | FreeLine | TimeLine | OfferLine;
+
+/** Whether the cart holds an offer: such a sale needs the server and is never parked. */
+export const hasOffer = (cart: Cart): boolean => cart.lines.some((l) => l.kind === 'offer');
 
 export interface Cart {
   lines: CartLine[];
@@ -83,9 +111,24 @@ export interface PcTarget {
   billed: boolean;
 }
 
+/**
+ * 0.34.0: an internet access package — each unit sold hands out one of its codes, when the sale
+ * is paid at the till. (A product saved before 0.34.0 has no `kind`: it is an ordinary product.)
+ */
+export const isInternetAccess = (product: Pick<ProductSummary, 'kind'>): boolean =>
+  product.kind === 'internet_access';
+
+/** Whether the cart holds internet access: such a sale needs the server, and never goes to a PC. */
+export const hasInternetAccess = (cart: Cart): boolean =>
+  cart.lines.some((l) => l.kind === 'product' && isInternetAccess(l.product));
+
 /** Why the cart cannot go to a PC's bill as it is (null: it can). */
-export function pcBlocker(cart: Cart): 'notPc' | 'addons' | 'whole' | 'discount' | null {
+export function pcBlocker(
+  cart: Cart,
+): 'notPc' | 'internet' | 'addons' | 'whole' | 'discount' | null {
   if (cart.lines.some((l) => l.kind !== 'product')) return 'notPc';
+  // A PC's bill is paid later; an internet code is handed over when the sale is paid.
+  if (hasInternetAccess(cart)) return 'internet';
   if (cart.lines.some((l) => l.kind === 'product' && l.addonIds.length > 0)) return 'addons';
   if (cart.lines.some((l) => l.kind === 'product' && l.quantityMilli % 1000 !== 0)) return 'whole';
   if (cart.discountCents > 0 || cart.lines.some((l) => l.kind === 'product' && l.discountCents > 0))
@@ -153,6 +196,7 @@ export const lineName = (l: CartLine): string => {
     return l.stationCode
       ? `${l.stationCode} · ${l.minutes} min`
       : `PC time · ${l.minutes} min${l.holderName ? ` · ${l.holderName}` : ''}`;
+  if (l.kind === 'offer') return l.offer.name;
   return l.name;
 };
 
@@ -200,15 +244,26 @@ export function stockLimitMilli(product: StockFields): number | null {
   return Math.max(0, product.stockMilli);
 }
 
-/** Units of a product already in the cart: every line of it, with or without extras. */
-export function cartQuantityOf(cart: Cart, productId: string, exceptKey?: string): number {
-  return cart.lines.reduce(
-    (sum, l) =>
-      l.kind === 'product' && l.product.id === productId && lineKey(l) !== exceptKey
-        ? sum + l.quantityMilli
-        : sum,
+/** What one offer line takes of a product (milli-units): its quantity in the offer × the units. */
+function offerLineTakes(line: OfferLine, productId: string): number {
+  const units = line.quantityMilli / 1000;
+  return line.offer.items.reduce(
+    (sum, i) => (i.productId === productId ? sum + Math.round(i.quantityMilli * units) : sum),
     0,
   );
+}
+
+/**
+ * Units of a product already in the cart: every line of it, with or without extras, and
+ * (0.36.1) what the offers in the cart take of it.
+ */
+export function cartQuantityOf(cart: Cart, productId: string, exceptKey?: string): number {
+  return cart.lines.reduce((sum, l) => {
+    if (lineKey(l) === exceptKey) return sum;
+    if (l.kind === 'product') return l.product.id === productId ? sum + l.quantityMilli : sum;
+    if (l.kind === 'offer') return sum + offerLineTakes(l, productId);
+    return sum;
+  }, 0);
 }
 
 /** Why an addition was refused or cut: the product and what the stock still allows in total. */
@@ -257,6 +312,11 @@ export function setQuantityChecked(
   quantityMilli: number,
 ): { cart: Cart; refused: StockRefusal | null } {
   const line = cart.lines.find((l) => lineKey(l) === key);
+  // 0.34.0: internet access is sold by the piece — one code each — so a typed 1.5 becomes 2.
+  if (line && line.kind === 'product' && isInternetAccess(line.product) && quantityMilli > 0) {
+    quantityMilli = Math.max(1000, Math.round(quantityMilli / 1000) * 1000);
+  }
+  if (line && line.kind === 'offer') return setOfferQuantityChecked(cart, line, quantityMilli);
   if (!line || line.kind !== 'product' || quantityMilli <= line.quantityMilli) {
     return { cart: setQuantity(cart, key, quantityMilli), refused: null };
   }
@@ -322,13 +382,116 @@ export function addTimeItem(
   return { ...cart, lines: [...cart.lines, line] };
 }
 
+const offerKey = (offerId: string): string => `offer:${offerId}`;
+
+/**
+ * Adds one offer (0.36.0) at the offer's price. 0.36.1: nothing is asked — the same offer again
+ * raises the quantity of its line, and the line follows the offer as it is now.
+ */
+export function addOfferItem(cart: Cart, input: { offer: OfferSummary; taxRateBp: number }): Cart {
+  const key = offerKey(input.offer.id);
+  const idx = cart.lines.findIndex((l) => l.kind === 'offer' && l.key === key);
+  if (idx < 0) {
+    const line: OfferLine = {
+      kind: 'offer',
+      key,
+      offer: input.offer,
+      taxRateBp: input.taxRateBp,
+      quantityMilli: 1000,
+      discountCents: 0,
+    };
+    return { ...cart, lines: [...cart.lines, line] };
+  }
+  const lines = cart.lines.slice();
+  const line = lines[idx] as OfferLine;
+  lines[idx] = {
+    ...line,
+    offer: input.offer,
+    quantityMilli: Math.min(OFFER_MAX_UNITS * 1000, line.quantityMilli + 1000),
+  };
+  return { ...cart, lines };
+}
+
+/**
+ * The most units of an offer the cart may hold, counting everything else in the cart that takes
+ * the same products: `units` (never above `OFFER_MAX_UNITS`) and, when the stock is what limits
+ * it, the product that runs out first.
+ */
+function offerUnitsAllowed(
+  cart: Cart,
+  offer: OfferSummary,
+  exceptKey?: string,
+): { units: number; refusal: StockRefusal | null } {
+  let units = OFFER_MAX_UNITS;
+  let refusal: StockRefusal | null = null;
+  for (const item of offer.items) {
+    if (!item.stockLimited || item.stockMilli === null || item.quantityMilli <= 0) continue;
+    const limit = Math.max(0, item.stockMilli);
+    const left = Math.max(0, limit - cartQuantityOf(cart, item.productId, exceptKey));
+    const covered = Math.floor(left / item.quantityMilli);
+    if (covered < units) {
+      units = covered;
+      refusal = { productName: item.name, stockMilli: limit, allowedMilli: left };
+    }
+  }
+  return { units, refusal };
+}
+
+/**
+ * `addOfferItem` with the stock rule (0.36.1): one more offer is refused whole when a product of
+ * it would pass its stock — counting the other lines of the cart that take the same product.
+ * At `OFFER_MAX_UNITS` the cart simply stays as it is.
+ */
+export function addOfferChecked(
+  cart: Cart,
+  input: { offer: OfferSummary; taxRateBp: number },
+): { cart: Cart; refused: StockRefusal | null } {
+  const key = offerKey(input.offer.id);
+  const held = cart.lines.find((l) => l.kind === 'offer' && l.key === key);
+  const units = held ? held.quantityMilli / 1000 : 0;
+  if (units >= OFFER_MAX_UNITS) return { cart, refused: null };
+  // What the stock allows for this offer in all, the line it already has left aside.
+  const allowed = offerUnitsAllowed(cart, input.offer, key);
+  if (allowed.refusal && units + 1 > allowed.units) return { cart, refused: allowed.refusal };
+  return { cart: addOfferItem(cart, input), refused: null };
+}
+
+/** A typed or stepped quantity of an offer line: whole units, never past the stock. */
+function setOfferQuantityChecked(
+  cart: Cart,
+  line: OfferLine,
+  quantityMilli: number,
+): { cart: Cart; refused: StockRefusal | null } {
+  if (quantityMilli <= 0) return { cart: removeLine(cart, line.key), refused: null };
+  const wanted = Math.min(OFFER_MAX_UNITS, Math.max(1, Math.round(quantityMilli / 1000)));
+  const held = line.quantityMilli / 1000;
+  if (wanted <= held) return { cart: setQuantity(cart, line.key, wanted * 1000), refused: null };
+  const allowed = offerUnitsAllowed(cart, line.offer, line.key);
+  if (!allowed.refusal || wanted <= allowed.units)
+    return { cart: setQuantity(cart, line.key, wanted * 1000), refused: null };
+  // Never raise above what the stock allows; keep what the line has when even that is more.
+  const next = Math.max(allowed.units, held);
+  return {
+    cart: next === held ? cart : setQuantity(cart, line.key, next * 1000),
+    refused: allowed.refusal,
+  };
+}
+
 export function setQuantity(cart: Cart, key: string, quantityMilli: number): Cart {
   if (quantityMilli <= 0) return removeLine(cart, key);
   return {
     ...cart,
-    lines: cart.lines.map((l) =>
-      lineKey(l) === key && l.kind !== 'time' ? { ...l, quantityMilli } : l,
-    ),
+    lines: cart.lines.map((l) => {
+      if (lineKey(l) !== key || l.kind === 'time') return l;
+      // An offer is sold whole: 1, 2, 3 …
+      if (l.kind === 'offer')
+        return {
+          ...l,
+          quantityMilli:
+            Math.min(OFFER_MAX_UNITS, Math.max(1, Math.round(quantityMilli / 1000))) * 1000,
+        };
+      return { ...l, quantityMilli };
+    }),
   };
 }
 
@@ -336,7 +499,9 @@ export function setLineDiscount(cart: Cart, key: string, discountCents: number):
   return {
     ...cart,
     lines: cart.lines.map((l) =>
-      lineKey(l) === key ? { ...l, discountCents: Math.max(0, discountCents) } : l,
+      lineKey(l) === key && l.kind !== 'offer'
+        ? { ...l, discountCents: Math.max(0, discountCents) }
+        : l,
     ),
   };
 }
@@ -366,6 +531,16 @@ export function cartTotals(
 ): SaleTotals & { memberDiscount: boolean } {
   const staff = cart.staff === true;
   const lines = cart.lines.map((l) => {
+    if (l.kind === 'offer') {
+      // The offer's one price; the server shares it among the offer's own lines.
+      return {
+        unitPriceCents: l.offer.priceCents,
+        quantityMilli: l.quantityMilli,
+        discountCents: 0,
+        taxRateBp: l.taxRateBp,
+        priceIncludesTax: true,
+      };
+    }
     if (l.kind === 'free' || l.kind === 'time') {
       // Staff: PC time is free; a free item cannot be on a staff purchase (the toggle refuses it).
       const unit = staff && l.kind === 'time' ? 0 : l.unitPriceCents;
@@ -409,32 +584,51 @@ export function cartItemCount(cart: Cart): number {
   return cart.lines.reduce((n, l) => n + l.quantityMilli, 0) / 1000;
 }
 
+/** One item of a sale request, as the cart sends it (`saleItemInputSchema`). */
+export type CartRequestItem =
+  | { productId: string; quantityMilli: number; discountCents: number; addonIds?: string[] }
+  | { stationId?: string; holderName?: string; minutes: number; discountCents: number }
+  | { offerId: string }
+  | { description: string; unitPriceCents: number; quantityMilli: number; discountCents: number };
+
 /** Request body for POST /sales or /sales/suspend (payments added by the caller). */
 export function cartToRequest(cart: Cart) {
   return {
-    items: cart.lines.map((l) => {
+    items: cart.lines.flatMap((l): CartRequestItem[] => {
       if (l.kind === 'product') {
-        return {
-          productId: l.product.id,
-          quantityMilli: l.quantityMilli,
-          discountCents: l.discountCents,
-          ...(l.addonIds.length > 0 ? { addonIds: l.addonIds } : {}),
-        };
+        return [
+          {
+            productId: l.product.id,
+            quantityMilli: l.quantityMilli,
+            discountCents: l.discountCents,
+            ...(l.addonIds.length > 0 ? { addonIds: l.addonIds } : {}),
+          },
+        ];
       }
       if (l.kind === 'time') {
-        return {
-          ...(l.stationId ? { stationId: l.stationId } : {}),
-          ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
-          minutes: l.minutes,
-          discountCents: l.discountCents,
-        };
+        return [
+          {
+            ...(l.stationId ? { stationId: l.stationId } : {}),
+            ...(!l.stationId && l.holderName ? { holderName: l.holderName } : {}),
+            minutes: l.minutes,
+            discountCents: l.discountCents,
+          },
+        ];
       }
-      return {
-        description: l.name,
-        unitPriceCents: l.unitPriceCents,
-        quantityMilli: l.quantityMilli,
-        discountCents: l.discountCents,
-      };
+      if (l.kind === 'offer') {
+        // One item per unit: the server opens each sold offer up into lines of its own. Without
+        // a PC and without a name its minutes wait at the desk as paid time (0.36.1).
+        const units = Math.max(1, Math.round(l.quantityMilli / 1000));
+        return Array.from({ length: units }, () => ({ offerId: l.offer.id }));
+      }
+      return [
+        {
+          description: l.name,
+          unitPriceCents: l.unitPriceCents,
+          quantityMilli: l.quantityMilli,
+          discountCents: l.discountCents,
+        },
+      ];
     }),
     discountCents: cart.discountCents,
     customerId: cart.customerId,

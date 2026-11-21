@@ -150,6 +150,14 @@ function StationListRow({ station, fetchedAt, selected, handlers }: Item) {
       </span>
       <span role="cell" className="num">
         {view.totalCents > 0 ? fmt.money(view.totalCents) : '—'}
+        {view.dueCents > 0 && (
+          <>
+            {' '}
+            <span className="due-pill" title={t('board.dueNow')} data-testid="pc-due">
+              {fmt.money(view.dueCents)}
+            </span>
+          </>
+        )}
       </span>
       <span role="cell">
         <BadgePills badges={view.badges} compact />
@@ -257,6 +265,11 @@ function StationCard({ station, fetchedAt, selected, handlers }: Item) {
       </ul>
       <footer className="pcd__foot">
         <BadgePills badges={view.badges} compact />
+        {view.dueCents > 0 && (
+          <span className="due-pill" title={t('board.dueNow')} data-testid="pc-due">
+            {fmt.money(view.dueCents)}
+          </span>
+        )}
         <strong className="num">{fmt.money(view.totalCents)}</strong>
       </footer>
     </article>

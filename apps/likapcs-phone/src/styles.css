@@ -695,3 +695,21 @@ input, button, select { font-family: inherit; }
 /* ── POS: most used order, low stock tile note, savings row ── */
 .tile__note--low { color: var(--warn, #f5b942); font-weight: 700; }
 .total-row--save { color: var(--ok, #3ddc97); }
+
+/* 0.34.0: internet access — the code a sale hands out, in large type */
+.tile__note--wifi { color: var(--accent); font-weight: 700; }
+.code-block {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px; margin-top: 10px;
+  border-radius: 14px; border: 2px solid var(--accent); background: var(--input-bg);
+}
+.code-big {
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace; font-size: 1.9rem; font-weight: 800;
+  letter-spacing: 0.04em; line-height: 1.2; word-break: break-all; user-select: all; -webkit-user-select: all;
+  color: var(--text);
+}
+.codes-banner {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%;
+  padding: 12px 14px; border-radius: 14px; border: 2px solid var(--accent);
+  background: var(--input-bg); color: var(--text); font-size: 0.95rem; text-align: left;
+}
+.codes-banner strong { color: var(--accent); white-space: nowrap; }

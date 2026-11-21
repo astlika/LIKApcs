@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import type { ClientDisplayConfig } from './protocol.js';
 import { validateEndTasks } from './end-tasks.js';
+import {
+  VOICE_CUSTOM_MAX,
+  VOICE_FILE_PATTERN,
+  VOICE_LANGUAGES,
+  VOICE_SLOT_PATTERN,
+  voiceFileUrl,
+} from './voice.js';
 
 /**
  * Application settings stored in the `settings` table (one row per key, JSON value).
@@ -208,6 +215,22 @@ export const SETTING_SCHEMAS = {
   'client.widget_hide_in_games': z.boolean(),
   /** The Windows keys do nothing while a Steam game runs in front (so a press cannot close it). */
   'client.block_win_in_games': z.boolean(),
+  /** 0.35.0: spoken time warnings on the PC ("Edhe 5 minuta"), see voice.ts. */
+  'client.voice_enabled': z.boolean(),
+  'client.voice_language': z.enum(VOICE_LANGUAGES),
+  /** 0–100; 0 is silence. */
+  'client.voice_volume': z.number().int().min(0).max(100),
+  /** A short attention chime before the voice. */
+  'client.voice_chime': z.boolean(),
+  /** slot (`5`, `1`, `up` …) → the owner's own recording; written by the upload routes. */
+  'client.voice_custom': z
+    .record(
+      z.string().regex(VOICE_SLOT_PATTERN),
+      z.object({ file: z.string().regex(VOICE_FILE_PATTERN), name: z.string().max(120) }),
+    )
+    .refine((v) => Object.keys(v).length <= VOICE_CUSTOM_MAX, {
+      message: `At most ${VOICE_CUSTOM_MAX} recordings`,
+    }),
   /** Lock screen title: the brand ("LIKApcs") or the station code ("PC 01"). */
   'client.lock_title': z.enum(CLIENT_LOCK_TITLES),
   /** Lock-screen slideshow of in-stock products with photos. */
@@ -267,6 +290,11 @@ export const SETTING_SCHEMAS = {
   'pos.time_items': z.boolean(),
   /** Off by default: pay-later sales can be split into installments. */
   'pos.installments': z.boolean(),
+  /**
+   * 0.36.0: the internet packages on the quick bar at the bottom of the POS and of the Stations
+   * page (product ids, at most `INTERNET_BAR_MAX`). Empty = the first packages by themselves.
+   */
+  'pos.internet_bar': z.array(z.string().uuid()).max(4),
 
   /** Default payment term for invoices (0 = due on issue). */
   'printing.invoice_due_days': z.number().int().min(0).max(365),
@@ -353,8 +381,15 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'client.widget_style': 'detailed',
   'client.widget_theme': 'indigo',
   'client.widget_show_payment': true,
+  // 0.35.3: on again, as up to 0.34.0. A widget left on the screen cost games in exclusive
+  // fullscreen their screen (they minimized); the voice says the time during a game.
   'client.widget_hide_in_games': true,
   'client.block_win_in_games': true,
+  'client.voice_enabled': true,
+  'client.voice_language': 'sq',
+  'client.voice_volume': 100,
+  'client.voice_chime': true,
+  'client.voice_custom': {},
   'client.lock_title': 'brand',
   'client.ads_enabled': false,
   'client.ads_layout': 'card',
@@ -388,6 +423,7 @@ export const SETTING_DEFAULTS: SettingsMap = {
   'pos.off_inventory_items': true,
   'pos.time_items': false,
   'pos.installments': true,
+  'pos.internet_bar': [],
 
   'printing.invoice_due_days': 0,
   'printing.invoice_bank_details': '',
@@ -506,6 +542,11 @@ export const CLIENT_DISPLAY_SETTING_KEYS: readonly SettingKey[] = [
   'client.widget_show_payment',
   'client.widget_hide_in_games',
   'client.block_win_in_games',
+  'client.voice_enabled',
+  'client.voice_language',
+  'client.voice_volume',
+  'client.voice_chime',
+  'client.voice_custom',
   'client.lock_title',
   'client.ads_enabled',
   'client.ads_layout',
@@ -544,6 +585,18 @@ export function clientDisplayFromSettings(settings: SettingsMap): ClientDisplayC
     widgetShowPayment: settings['client.widget_show_payment'],
     widgetHideInGames: settings['client.widget_hide_in_games'],
     blockWinInGames: settings['client.block_win_in_games'],
+    voice: {
+      enabled: settings['client.voice_enabled'],
+      language: settings['client.voice_language'],
+      volume: settings['client.voice_volume'],
+      chime: settings['client.voice_chime'],
+      custom: Object.fromEntries(
+        Object.entries(settings['client.voice_custom']).map(([slot, clip]) => [
+          slot,
+          voiceFileUrl(clip.file),
+        ]),
+      ),
+    },
     lockTitle: settings['client.lock_title'],
     currency: settings['locale.currency'],
     staffLoginUsername: settings['client.staff_login_username'],

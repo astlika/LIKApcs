@@ -2221,7 +2221,7 @@ function ProductBrowserDialog({
             {shown.map((p) => {
               const already = advertised.has(p.id);
               const on = pickedSet.has(p.id);
-              const src = fileUrl(p.imageUrl);
+              const src = fileUrl(p.imageThumbUrl ?? p.imageUrl);
               return (
                 <li key={p.id}>
                   <button
@@ -2238,7 +2238,11 @@ function ProductBrowserDialog({
                       {on && <Check size={14} />}
                     </span>
                     <span className="ads-browser__thumb">
-                      {src ? <img src={src} alt="" draggable={false} /> : <Package size={16} />}
+                      {src ? (
+                        <img src={src} alt="" draggable={false} loading="lazy" decoding="async" />
+                      ) : (
+                        <Package size={16} />
+                      )}
                     </span>
                     <span className="ads-browser__main">
                       <span className="ads-browser__name">{p.name}</span>

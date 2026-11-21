@@ -10,6 +10,8 @@ import {
   isProtectedProcess,
   normalizeExeName,
   priceForSeconds,
+  VOICE_SLOT_UP,
+  voiceSlotOfMinutes,
   type ClientDisplayConfig,
   type ClientSessionBilling,
   type ServerCommand,
@@ -171,6 +173,8 @@ export type Effect =
   | { type: 'wol_configure' }
   /** End Task (0.17.0): close these programs (owner's list only), then report the outcome. */
   | { type: 'end_tasks'; exes: string[]; skipped: string[] }
+  /** 0.35.0: say an announcement — minutes left (`5`, `1` …) or `up` (see shared/voice.ts). */
+  | { type: 'voice'; slot: string }
   | {
       type: 'event';
       event: 'locked' | 'unlocked' | 'maintenance_ended';
@@ -247,6 +251,20 @@ export function withAbsoluteWallpaper(
     ...display,
     wallpaperUrl: absolute(display.wallpaperUrl),
     desktopWallpaperUrl: absolute(display.desktopWallpaperUrl ?? null),
+    // 0.35.0: the owner's own voice recordings live on the server too.
+    ...(display.voice
+      ? {
+          voice: {
+            ...display.voice,
+            custom: Object.fromEntries(
+              Object.entries(display.voice.custom ?? {}).map(([slot, url]) => [
+                slot,
+                absolute(url) ?? url,
+              ]),
+            ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -404,19 +422,29 @@ export function reduce(
     case 'session.end':
       return {
         state: { ...state, mode: 'locked', session: null, celebration: null },
-        effects: [{ type: 'event', event: 'locked', payload: { sessionId: str(p.sessionId) } }],
+        effects: [
+          { type: 'event', event: 'locked', payload: { sessionId: str(p.sessionId) } },
+          // 0.35.0: the time ran out → "Koha juaj mbaroi". Not when staff end the session, and
+          // not twice: when the PC noticed the end itself, the session is already gone here.
+          ...(state.session && str(p.reason) === 'expired'
+            ? [{ type: 'voice' as const, slot: VOICE_SLOT_UP }]
+            : []),
+        ],
         ok: true,
       };
     case 'message.show': {
       const text = str(p.text);
       if (!text) return { state, effects: [], ok: false, error: 'text missing' };
       const seconds = Math.min(600, Math.max(3, num(p.durationSeconds) ?? 20));
+      // 0.35.0: a time warning also names the minutes, so the PC can say them.
+      const announce = p.announce as { minutes?: unknown } | null | undefined;
+      const slot = voiceSlotOfMinutes(num(announce?.minutes) ?? Number.NaN);
       return {
         state: {
           ...state,
           notice: { id: command.commandId, text, untilServerMs: serverNowMs + seconds * 1000 },
         },
-        effects: [],
+        effects: slot ? [{ type: 'voice', slot }] : [],
         ok: true,
       };
     }
@@ -515,7 +543,9 @@ function sessionMoney(
 ): Pick<SessionView, 'paidCents' | 'owedCents'> {
   const b = session.billing;
   if (!b) return { paidCents: null, owedCents: null };
-  if (b.billingMode === 'prepaid') return { paidCents: b.paidCents, owedCents: null };
+  // 0.36.0: a paid session that took minutes "to pay at the end" shows that amount as owed.
+  if (b.billingMode === 'prepaid')
+    return { paidCents: b.paidCents, owedCents: (b.dueCents ?? 0) > 0 ? (b.dueCents ?? 0) : null };
   // End pay: a fixed amount, collected at the desk when the time ends (shown as "to pay").
   if (b.billingMode === 'endpay') return { paidCents: null, owedCents: b.dueCents ?? 0 };
   if (!b.terms) return { paidCents: null, owedCents: null };
@@ -523,7 +553,9 @@ function sessionMoney(
     session.status === 'paused' && session.pausedAt ? Date.parse(session.pausedAt) : serverNowMs;
   const since = Math.max(0, Math.round((reference - Date.parse(b.asOf)) / 1000));
   try {
-    return { paidCents: null, owedCents: priceForSeconds(b.billableSeconds + since, b.terms) };
+    // 0.36.0: open time that was partly paid while it runs owes the rest (`paidCents`).
+    const running = priceForSeconds(b.billableSeconds + since, b.terms);
+    return { paidCents: null, owedCents: Math.max(0, running - (b.paidCents ?? 0)) };
   } catch {
     return { paidCents: null, owedCents: null };
   }

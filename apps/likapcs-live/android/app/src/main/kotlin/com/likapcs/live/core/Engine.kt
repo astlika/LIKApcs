@@ -10,6 +10,7 @@ import kotlinx.serialization.json.putJsonArray
 import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
+import java.time.ZoneId
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -33,6 +34,12 @@ object Keys {
     const val AUDIT_SEEN = "audit.seen"
     const val AUDIT_AT = "audit.at"
     const val SUMMARY = "summary"
+
+    /** How far the server's clock is ahead of this phone's (ms). */
+    const val SKEW = "clock.skew"
+
+    /** The shop's time zone, as set on the server (e.g. `Europe/Belgrade`). */
+    const val ZONE = "shop.zone"
 
     fun category(c: Category) = "cat.${c.id}"
 }
@@ -69,6 +76,38 @@ class Engine(
     val lookup = Lookup { path -> get(path)?.takeIf { it.ok }?.let { parseJson(it.body) } }
     val describer = Describer(lookup) { texts() }
 
+    /** The finer switches and the few numbers and hours the owner can set (1.1). */
+    val options = Options(store)
+
+    /** PCs coming on and going off, sessions about to end or out of time. */
+    private val pcs = PcWatch(
+        store = store,
+        options = options,
+        texts = { texts() },
+        post = { post(it) },
+        wants = { wants(it) },
+        // Without a link nothing is asked: a try would only hold this thread until it times out.
+        fetch = { path -> if (current.conn == Conn.ONLINE) get(path)?.takeIf { it.ok }?.let { parseJson(it.body) } else null },
+        baseline = { store.get(Keys.BASELINE)?.toLongOrNull() ?: 0 },
+        skew = { skew() },
+        fresh = { linkFresh() },
+    )
+
+    /** The messages that come from the clock: summary of the day, debts due, reservations, no sales. */
+    private val daily = Daily(
+        store = store,
+        options = options,
+        texts = { texts() },
+        post = { post(it) },
+        wants = { wants(it) },
+        fetch = { path -> get(path)?.takeIf { it.ok }?.let { parseJson(it.body) } },
+        refresh = { refreshSnapshot() },
+        can = { can(it) },
+        online = { current.conn == Conn.ONLINE },
+        zone = { shopZone() },
+        skew = { skew() },
+    )
+
     @Volatile private var current = EngineState()
     @Volatile private var lastEventAt = 0L
     @Volatile private var cachedTexts: Texts? = null
@@ -84,6 +123,11 @@ class Engine(
     private var snapshotTask: ScheduledFuture<*>? = null
     private var auditTask: ScheduledFuture<*>? = null
     private var outageTask: ScheduledFuture<*>? = null
+    private var clockTask: ScheduledFuture<*>? = null
+    private var ticker: ScheduledFuture<*>? = null
+
+    /** The moment the phone was last asked to wake the engine at (`Host.wakeAt`); 0: none. */
+    private var wakeAtSet = 0L
     private var outageNoted = false
     private var lastPongAt = 0L
     private var lastAuditPollAt = 0L
@@ -91,12 +135,37 @@ class Engine(
     /** A wake-up asked whether the link is alive: its answer starts the catch-up reads. */
     private var catchUpOnPong = false
 
+    /** The clock was looked at while nothing was known about the link: its answer looks again. */
+    private var tickOnPong = false
+    private var pingSentAt = 0L
+    private var probeAt = 0L
+
+    /** How far the server's clock is ahead of this phone's (ms): a session ends by the server's clock. */
+    private var skewMs = 0L
+    private var skewLoaded = false
+    private var cachedZone: ZoneId? = null
+
     private var loaded = false
     private val seenSales = LinkedHashSet<String>()
     private val seenAudit = LinkedHashSet<Long>()
 
+    /** Rows of one kind by one person that follow each other closely: told as one growing message. */
+    private class Batch(val key: String, val startedAt: Long) {
+        val items = LinkedHashSet<String>()
+        var lastAt = startedAt
+
+        /** True once a message for this batch is out: the next one takes its place. */
+        var out = false
+    }
+
+    private val batches = HashMap<String, Batch>()
+
     /** Sales announced a moment ago: an audit row that came with one of them stays quiet. */
-    private class RecentSale(val cashier: String, val at: Long, val totalCents: Long, val lineCents: List<Long>)
+    private class RecentSale(
+        val cashier: String, val at: Long, val totalCents: Long, val lineCents: List<Long>,
+        /** The discount on the whole sale that its message told of; 0 when there was none. */
+        val discountCents: Long,
+    )
 
     private val recentSales = ArrayDeque<RecentSale>()
 
@@ -120,9 +189,13 @@ class Engine(
 
     fun enabled(category: Category): Boolean = store.get(Keys.category(category)) != "0"
 
+    /** Would a message of this topic be shown? Its kind and the topic itself must both be on. */
+    fun wants(topic: Topic): Boolean = enabled(topic.category) && options.on(topic)
+
     /** Starts (or keeps) the link. Safe to call again and again. */
     fun start() = exec.execute {
         running = true
+        if (ticker == null) ticker = exec.scheduleWithFixedDelay({ tick() }, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS)
         if (current.conn != Conn.CONNECTING && current.conn != Conn.ONLINE) {
             attempt = 0
             connect()
@@ -142,27 +215,24 @@ class Engine(
     fun wake(reason: String) = exec.execute {
         if (!running) return@execute
         host.stayAwake(if (current.conn == Conn.ONLINE) PONG_WAIT_MS + 2_000 else 12_000)
+        // What is due by the clock is looked at first. (What must be certain of the server's
+        // word — a session about to end may have been extended — waits for its answer: `tick`.)
+        tick()
         when (current.conn) {
             Conn.ONLINE -> {
                 // Is the link still alive? Only its answer tells. What the server did not push
                 // is read after that answer (see `server.pong`): on a dead link those reads
-                // would only block this thread until they time out.
-                val sentAt = System.currentTimeMillis()
-                catchUpOnPong = true
-                ping()
-                exec.schedule({
-                    if (current.conn == Conn.ONLINE && lastPongAt < sentAt) {
-                        host.log("no answer to ping after $reason: reconnecting")
-                        socket?.abort()
-                    }
-                }, PONG_WAIT_MS, TimeUnit.MILLISECONDS)
+                // would only block this thread until they time out. An appointment with the
+                // clock is not a reason for those reads: the periodic alarm does them.
+                if (reason != WAKE_CLOCK) catchUpOnPong = true
+                probe(reason)
             }
             Conn.OFFLINE -> {
                 // The timers stand still while the phone sleeps: the clock decides here.
                 if (!outageNoted && System.currentTimeMillis() - current.since >= outageMs) noteOutage(current.since)
                 // A new network or an opened app is a reason to try eagerly again. The periodic
                 // alarm is not: while the server stays away it makes one try and lets the phone sleep.
-                if (reason != WAKE_ALARM) attempt = 0
+                if (reason != WAKE_ALARM && reason != WAKE_CLOCK) attempt = 0
                 connect()
             }
             else -> Unit
@@ -185,17 +255,26 @@ class Engine(
         seenAudit.clear()
         recentSales.clear()
         sessionStatus.clear()
+        batches.clear()
         lookup.clear()
         loaded = true
         for (key in listOf(Keys.SALES_SEEN, Keys.AUDIT_FLOOR, Keys.AUDIT_SEEN, Keys.AUDIT_AT, Keys.SUMMARY)) store.put(key, null)
         store.put(Keys.BASELINE, baselineMs.toString())
+        skewMs = 0
+        skewLoaded = true
+        store.put(Keys.SKEW, null)
+        pcs.reset()
+        daily.reset()
         setConn(Conn.STOPPED, null)
     }
 
-    /** The language or the categories changed: show the day's figures again in the new wording. */
-    fun optionsChanged() = exec.execute {
+    /** The language, the kinds or an option changed: show the day's figures again in the new wording. */
+    fun optionsChanged(moved: List<String> = emptyList()) = exec.execute {
         cachedTexts = null
+        moved.forEach { daily.hourMoved(it) }
         parseObject(store.get(Keys.SUMMARY))?.let { host.summary(summaryFromJson(it)) }
+        // An hour that was moved may be due now, or need a new wake-up.
+        if (running) tick()
     }
 
     /** GET on an API path with the stored sign-in. Null: the server could not be reached. */
@@ -292,6 +371,14 @@ class Engine(
         snapshotTask?.cancel(false)
         auditTask?.cancel(false)
         outageTask?.cancel(false)
+        clockTask?.cancel(false)
+        ticker?.cancel(false)
+        clockTask = null
+        ticker = null
+        if (wakeAtSet != 0L) {
+            wakeAtSet = 0
+            host.wakeAt(0)
+        }
         retry = null
         pinger = null
         poller = null
@@ -310,10 +397,16 @@ class Engine(
             "server.welcome" -> onWelcome(message)
             "server.pong" -> {
                 lastPongAt = System.currentTimeMillis()
+                serverClock(message.str("serverTime"), pingSentAt)
+                if (tickOnPong) {
+                    tickOnPong = false
+                    tick()
+                }
                 if (catchUpOnPong) {
                     catchUpOnPong = false
                     scheduleSnapshot(0)
                     scheduleAudit(200, urgent = true)
+                    exec.execute { refreshStations() }
                 }
             }
             "server.event" -> onEvent(message.str("event") ?: "", message.obj("payload"))
@@ -332,21 +425,78 @@ class Engine(
             outageNoted = false
         }
         current = current.copy(serverVersion = message.str("serverVersion"))
+        tickOnPong = false
+        serverClock(message.str("serverTime"), 0)
         setConn(Conn.ONLINE, null)
         pinger?.cancel(false)
         pinger = exec.scheduleWithFixedDelay({ ping() }, PING_MS, PING_MS, TimeUnit.MILLISECONDS)
         poller?.cancel(false)
         poller = exec.scheduleWithFixedDelay({ scheduleAudit(0, urgent = true) }, pollMs, pollMs, TimeUnit.MILLISECONDS)
         refreshMe()
+        refreshShop()
         // Sales first: an audit row that came with a sale must find that sale already announced.
         refreshSnapshot()
         pollAudit()
+        refreshStations(afterGap = true)
+        tick()
         host.changed("all")
     }
 
     private fun ping() {
         val s = socket ?: return
+        pingSentAt = System.currentTimeMillis()
         if (!s.send("""{"type":"admin.ping"}""")) s.abort()
+    }
+
+    /** Asks the server whether the link is alive; without an answer in time the link is built again. */
+    private fun probe(reason: String) {
+        val sentAt = System.currentTimeMillis()
+        // One question at a time is enough.
+        if (sentAt - probeAt in 0 until 2_000) return
+        probeAt = sentAt
+        host.stayAwake(PONG_WAIT_MS + 2_000)
+        ping()
+        exec.schedule({
+            if (current.conn == Conn.ONLINE && lastPongAt < sentAt) {
+                host.log("no answer to ping after $reason: reconnecting")
+                socket?.abort()
+            }
+        }, PONG_WAIT_MS, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * True while the link is known to be alive right now: the server was heard from within the
+     * last half minute. After the phone slept that is not so, and what this app knows about the
+     * running sessions may be old.
+     */
+    private fun linkFresh(): Boolean =
+        current.conn == Conn.ONLINE && System.currentTimeMillis() - lastEventAt in 0..LINK_FRESH_MS
+
+    private fun skew(): Long {
+        if (!skewLoaded) {
+            skewLoaded = true
+            skewMs = store.get(Keys.SKEW)?.toLongOrNull() ?: 0
+        }
+        return skewMs
+    }
+
+    /**
+     * The server said what time it has. `askedAt`: when the question went out (0: it was not
+     * asked, the server said it on its own).
+     */
+    private fun serverClock(iso: String?, askedAt: Long) {
+        val server = Texts.parseTime(iso) ?: return
+        val now = System.currentTimeMillis()
+        val trip = if (askedAt > 0) now - askedAt else 0
+        // A slow answer says little about the clock.
+        if (trip < 0 || trip > 3_000) return
+        val measured = server - (now - trip / 2)
+        // Under a second and a half it is the network's delay, not the clocks.
+        val value = if (kotlin.math.abs(measured) < 1_500) 0 else measured
+        if (kotlin.math.abs(value - skew()) < 500) return
+        host.log("the server's clock is ${value / 1000} s ahead of this phone's")
+        skewMs = value
+        store.put(Keys.SKEW, if (value == 0L) null else value.toString())
     }
 
     private fun onEnd(code: Int, reason: String, status: Int) {
@@ -417,7 +567,7 @@ class Engine(
         host.summary(null)
         setConn(Conn.UNAUTHORIZED, "unauthorized")
         val x = texts()
-        host.post(
+        deliver(
             Note(
                 key = "conn:signin",
                 category = Category.CONNECTION,
@@ -444,6 +594,7 @@ class Engine(
         when (event) {
             "live.sale" -> {
                 payload?.let { announceSale(it) }
+                daily.sale(Texts.parseTime(payload.str("completedAt")) ?: System.currentTimeMillis())
                 scheduleSnapshot(700)
                 scheduleAudit(900, urgent = true)
                 host.changed("sales")
@@ -454,9 +605,30 @@ class Engine(
                 host.changed("sales")
             }
             "session.changed" -> {
-                lookup.rememberSession(payload.str("id"), payload.str("stationCode"))
-                if (!can(AUDIT_VIEW)) payload?.let { sessionFallback(it) }
+                lookup.rememberSession(payload)
+                if (payload != null) {
+                    // Time that runs out is in no audit row: only this event tells of it.
+                    pcs.session(payload)
+                    if (!can(AUDIT_VIEW)) sessionFallback(payload)
+                    reschedule()
+                }
                 scheduleAudit(600, urgent = true)
+                host.changed("activity")
+            }
+            "station.changed" -> {
+                if (payload != null) {
+                    lookup.rememberStation(payload.str("id"), payload.str("code"))
+                    pcs.station(payload)
+                    reschedule()
+                }
+                // A PC's status is chatter for the audit log: such reads are kept apart.
+                scheduleAudit(800, urgent = false)
+                host.changed("pcs")
+            }
+            "reservation.changed" -> {
+                daily.reservationsChanged()
+                scheduleAudit(800, urgent = true)
+                exec.execute { tick() }
                 host.changed("activity")
             }
             "staff.login" -> {
@@ -495,6 +667,7 @@ class Engine(
                 store.put(Keys.AUDIT_AT, null)
                 seenAudit.clear()
                 lookup.clear()
+                batches.clear()
                 val x = texts()
                 post(Note("restored:${System.currentTimeMillis()}", Category.ALERTS,
                     x.t("Të dhënat u rikthyen nga një kopje rezervë", "Data restored from a backup"),
@@ -502,16 +675,17 @@ class Engine(
                     System.currentTimeMillis()))
                 scheduleSnapshot(1500)
                 scheduleAudit(1500, urgent = true)
+                exec.schedule({ refreshStations() }, 2_000, TimeUnit.MILLISECONDS)
                 host.changed("all")
             }
             "permissions.changed" -> {
                 refreshMe()
                 scheduleAudit(800, urgent = true)
             }
-            // Requests, orders, reservations, PCs, devices: the audit log tells what happened.
+            // Requests, orders, devices: the audit log tells what happened.
             else -> {
-                scheduleAudit(800, urgent = event != "station.changed" && event != "device.changed")
-                if (event != "station.changed") host.changed("activity")
+                scheduleAudit(800, urgent = event != "device.changed")
+                host.changed("activity")
             }
         }
     }
@@ -530,18 +704,23 @@ class Engine(
         val pc = s.str("stationCode") ?: "PC"
         val who = s.str("pcLabel") ?: s.str("customerName")
         val title = when (status) {
-            "active" -> if (previous == "paused") x.t("$pc: sesioni vazhdoi", "$pc: session resumed") else x.t("$pc: sesion i ri", "$pc: session started")
-            "paused" -> x.t("$pc: sesioni u pauzua", "$pc: session paused")
-            "completed" -> x.t("$pc: sesioni mbaroi", "$pc: session ended")
-            "cancelled" -> x.t("$pc: sesioni u anulua", "$pc: session cancelled")
-            "expired" -> x.t("$pc: koha mbaroi", "$pc: time is up")
+            "active" -> if (previous == "paused") x.t("$pc: seanca vazhdoi", "$pc: session resumed") else x.t("$pc: seanca nisi", "$pc: session started")
+            "paused" -> x.t("$pc: seanca u pauzua", "$pc: session paused")
+            "completed" -> x.t("$pc: seanca mbaroi", "$pc: session ended")
+            "cancelled" -> x.t("$pc: seanca u anulua", "$pc: session cancelled")
+            // "expired" (time ran out) is told by the PC watch, for every account.
             else -> return
         }
         val text = when (status) {
             "completed" -> x.money(s.long("finalPriceCents") ?: s.long("currentPriceCents"))
             else -> who ?: ""
         }
-        post(Note("session:$id:$status", if (status == "cancelled") Category.ALERTS else Category.PCS, title, text, System.currentTimeMillis()))
+        val topic = when (status) {
+            "active" -> if (previous == "paused") null else Topic.PC_SESSION
+            "completed" -> Topic.PC_ENDED
+            else -> null
+        }
+        post(Note("session:$id:$status", if (status == "cancelled") Category.ALERTS else Category.PCS, title, text, System.currentTimeMillis(), topic = topic))
     }
 
     // ─── Sales ──────────────────────────────────────────────────────────────────────────────
@@ -556,18 +735,30 @@ class Engine(
         if (at < baseline) return
         // A session that ended with nothing to pay is not a sale worth a message.
         if ((sale.long("totalCents") ?: 0) == 0L) return
-        val note = describer.sale(sale) ?: return
-        if (enabled(Category.SALES)) {
+        // Sold under its cost, with a discount, or above the owner's amount: told as a thing to
+        // look at, in place of the plain sale message. (A loss stays a loss whatever costs are
+        // missing: a cost that is not recorded counts as nothing.)
+        val total = sale.long("totalCents") ?: 0
+        val discount = describer.saleDiscount(sale)
+        val alert = when {
+            describer.saleProfit(sale) < 0 && wants(Topic.SALE_BELOW_COST) -> describer.saleAlert(sale, Topic.SALE_BELOW_COST)
+            discount > 0 && wants(Topic.SALE_DISCOUNT) -> describer.saleAlert(sale, Topic.SALE_DISCOUNT)
+            total >= options.bigSaleCents && wants(Topic.SALE_BIG) -> describer.saleAlert(sale, Topic.SALE_BIG)
+            else -> null
+        }
+        val note = alert ?: (if (enabled(Category.SALES)) describer.sale(sale) else null)
+        if (note != null) {
             recentSales.addLast(
                 RecentSale(
                     cashier = sale.str("cashierName") ?: "",
                     at = at,
                     totalCents = sale.long("totalCents") ?: 0,
                     lineCents = sale.arr("items").objects().mapNotNull { it.long("lineTotalCents") },
+                    discountCents = discount,
                 ),
             )
             while (recentSales.size > 60) recentSales.removeFirst()
-            host.post(note)
+            deliver(note)
         }
     }
 
@@ -577,10 +768,10 @@ class Engine(
     }
 
     /** Today's figures (for the permanent notification) and the sales the socket did not deliver. */
-    private fun refreshSnapshot() {
-        val result = get("/live/snapshot") ?: return
-        if (!result.ok) return
-        val snap = result.json() ?: return
+    private fun refreshSnapshot(): JsonObject? {
+        val result = get("/live/snapshot") ?: return null
+        if (!result.ok) return null
+        val snap = result.json() ?: return null
         for (s in snap.arr("staff").objects()) lookup.rememberUser(s.str("userId"), s.str("name"))
 
         val feed = snap.arr("feed").objects()
@@ -616,6 +807,65 @@ class Engine(
         val summary = summaryJson(snap)
         store.put(Keys.SUMMARY, summary.toString())
         host.summary(summaryFromJson(summary))
+        daily.snapshot(snap)
+        return snap
+    }
+
+    // ─── The PCs and the clock ──────────────────────────────────────────────────────────────
+
+    /** The full list of PCs: which are on, and the sessions running on them. */
+    private fun refreshStations(afterGap: Boolean = false) {
+        if (current.conn != Conn.ONLINE || !can(Daily.STATIONS_VIEW)) return
+        val result = get("/stations") ?: return
+        if (!result.ok) return
+        val list = (parseJson(result.body) as? JsonArray).objects()
+        for (s in list) lookup.rememberStation(s.str("id"), s.str("code"))
+        pcs.sync(list, afterGap)
+        reschedule()
+    }
+
+    /** Says what is due by the clock, and sets the next wake-up. */
+    private fun tick() {
+        if (!running || !signedIn()) return
+        if (current.conn == Conn.ONLINE && !linkFresh()) {
+            // The phone slept, or the link died without a word: what is known about the sessions
+            // may be old. The server is asked first; its answer (or the new link) looks again.
+            tickOnPong = true
+            probe("clock")
+        }
+        try {
+            pcs.tick()
+            daily.tick()
+        } catch (e: Exception) {
+            host.log("clock: ${e.message}")
+        }
+        reschedule()
+    }
+
+    /**
+     * The next moment something is due by the clock. Close ones are waited for awake; for the
+     * rest the phone is asked to wake the engine then, since its timers stand still while it sleeps.
+     */
+    private fun reschedule() {
+        val now = System.currentTimeMillis()
+        val next = listOf(pcs.nextDue(now), daily.nextDue(now)).filter { it > now }.minOrNull() ?: 0L
+        clockTask?.cancel(false)
+        clockTask = null
+        if (next == 0L) {
+            if (wakeAtSet != 0L) {
+                wakeAtSet = 0
+                host.wakeAt(0)
+            }
+            return
+        }
+        val delay = next - now
+        clockTask = exec.schedule({ tick() }, delay + 50, TimeUnit.MILLISECONDS)
+        if (delay <= AWAKE_WAIT_MS) {
+            host.stayAwake(delay + 3_000)
+        } else if (wakeAtSet != next) {
+            wakeAtSet = next
+            host.wakeAt(next)
+        }
     }
 
     private fun summaryJson(snap: JsonObject): JsonObject = buildJsonObject {
@@ -709,6 +959,7 @@ class Engine(
             if (entry.str("action") == "session.start") {
                 lookup.rememberSession(entry.str("entityId"), entry.obj("details").str("stationCode"))
             }
+            if (entry.str("action")?.startsWith("reservation.") == true) daily.reservationsChanged()
         }
         trim(seenAudit, 600)
         store.put(Keys.AUDIT_SEEN, buildJsonArray { seenAudit.forEach { add(JsonPrimitive(it)) } }.toString())
@@ -716,9 +967,16 @@ class Engine(
 
         // A session start, an extension or a payment is announced as the sale it made. The sale
         // may still be on its way: reading the day's feed now announces it before these rows.
-        if (enabled(Category.SALES) && fresh.any { it.str("action") in Describer.SALE_ACTIONS && !cameWithSale(it) }) refreshSnapshot()
-        val notes = fresh.mapNotNull { entry -> if (cameWithSale(entry)) null else describer.auditNote(entry) }
-            .filter { enabled(it.category) }
+        if (fresh.any { pairsWithSale(it) && !cameWithSale(it) }) refreshSnapshot()
+        val notes = ArrayList<Note>()
+        for (entry in fresh) {
+            if (cameWithSale(entry)) continue
+            val note = auditNote(entry) ?: continue
+            if (!enabled(note.category) || note.topic?.let { options.on(it) } == false) continue
+            // A batch that grew within this read is one message: its newest wording.
+            notes.removeAll { it.key == note.key }
+            notes += note
+        }
         if (notes.size > FLOOD) {
             // A long gap: every alert, the newest few of the rest, and one line for the remainder.
             val alerts = notes.filter { it.category == Category.ALERTS }.takeLast(FLOOD)
@@ -727,17 +985,46 @@ class Engine(
             val hidden = notes.size - shown.size
             val x = texts()
             if (hidden > 0 && enabled(Category.CONNECTION)) {
-                host.post(Note("audit-more:${System.currentTimeMillis()}", Category.CONNECTION,
+                deliver(Note("audit-more:${System.currentTimeMillis()}", Category.CONNECTION,
                     if (beyond) x.t("Më shumë se $hidden ndryshime të tjera ndërkohë", "More than $hidden other changes meanwhile")
                     else x.t("Edhe $hidden ndryshime ndërkohë", "$hidden more changes meanwhile"),
                     x.t("Hapni aplikacionin për t'i parë të gjitha te Aktiviteti.", "Open the app to see them all under Activity."),
                     System.currentTimeMillis()))
             }
-            shown.sortedBy { it.at }.forEach { host.post(it) }
+            shown.sortedBy { it.at }.forEach { deliver(it) }
+            shown.forEach { note -> batches.values.firstOrNull { it.key == note.key }?.out = true }
         } else {
-            notes.forEach { host.post(it) }
+            notes.forEach { deliver(it) }
+            notes.forEach { note -> batches.values.firstOrNull { it.key == note.key }?.out = true }
         }
         host.changed("activity")
+    }
+
+    /**
+     * One audit row as a message. Rows of the same kind by the same person that follow each
+     * other within a short time (the Admin shutting down one PC after the other) share one
+     * message, which is replaced as it grows: "Arta e fiku PC 01" becomes "Arta fiku 12 PC".
+     */
+    private fun auditNote(entry: JsonObject): Note? {
+        val id = entry.long("id") ?: return null
+        val d = describer.audit(entry)
+        if (!d.notify) return null
+        val at = Texts.parseTime(entry.str("occurredAt")) ?: System.currentTimeMillis()
+        val group = d.group
+        val item = d.item
+        val many = d.many
+        if (group == null || item == null || many == null) {
+            return Note("audit:$id", d.category, d.title, d.text, at, tab = "activity", topic = d.topic)
+        }
+        val open = batches[group]?.takeIf { at - it.lastAt <= BATCH_GAP_MS && at - it.startedAt <= BATCH_MAX_MS && at >= it.lastAt - BATCH_GAP_MS }
+        val batch = open ?: Batch("audit:$id", at).also { batches[group] = it }
+        if (batches.size > 40) batches.entries.removeIf { it.value !== batch && at - it.value.lastAt > BATCH_MAX_MS }
+        batch.items += item
+        if (at > batch.lastAt) batch.lastAt = at
+        val update = batch.out
+        if (batch.items.size == 1) return Note(batch.key, d.category, d.title, d.text, at, tab = "activity", topic = d.topic, update = update)
+        val (title, text) = many(batch.items.toList())
+        return Note(batch.key, d.category, title, text, at, tab = "activity", topic = d.topic, update = update)
     }
 
     /**
@@ -747,9 +1034,16 @@ class Engine(
      */
     private fun cameWithSale(entry: JsonObject): Boolean {
         val action = entry.str("action")
-        if (action !in Describer.SALE_ACTIONS) return false
+        if (!pairsWithSale(entry)) return false
         val at = Texts.parseTime(entry.str("occurredAt")) ?: return false
         val details = entry.obj("details")
+        val discount = details.long("discountCents") ?: 0
+        if (discount > 0 && (action == "sale.completed" || action == "session.collect")) {
+            // A row that is there for the discount's sake: quiet only when the sale's own
+            // message already told of that discount.
+            val who = describer.actor(entry)
+            return recentSales.any { it.cashier == who && Math.abs(it.at - at) <= SALE_PAIR_MS && it.discountCents == discount }
+        }
         val amount: Long? = when (action) {
             "session.start", "session.extend" -> details.long("priceCents") ?: 0
             "session.collect" -> details.long("amountCents")
@@ -765,6 +1059,13 @@ class Engine(
         }
     }
 
+    /** Is this a row that a sale's own message may already have covered? */
+    private fun pairsWithSale(entry: JsonObject): Boolean {
+        val action = entry.str("action")
+        if (action in Describer.SALE_ACTIONS) return true
+        return action == "sale.completed" && (entry.obj("details").long("discountCents") ?: 0) > 0
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────────────────────
 
     /** Reads the account again: its permissions can change while the app runs. */
@@ -775,8 +1076,43 @@ class Engine(
         if (me.str("id") != null) store.put(Keys.USER, me.toString())
     }
 
+    /** Reads the shop's time zone: the day and its hours are the shop's, wherever the phone is. */
+    private fun refreshShop() {
+        val result = get("/settings/public") ?: return
+        if (!result.ok) return
+        val zone = result.json().str("locale.timezone")?.takeIf { validZone(it) } ?: return
+        if (zone != store.get(Keys.ZONE)) store.put(Keys.ZONE, zone)
+    }
+
+    /**
+     * The shop's time zone: the day's figures, the hour of the summary and of the debts and the
+     * working hours follow the shop's clock. Until the server has said it: this phone's own.
+     */
+    fun shopZone(): ZoneId {
+        val id = store.get(Keys.ZONE) ?: return ZoneId.systemDefault()
+        cachedZone?.let { if (it.id == id) return it }
+        return try {
+            ZoneId.of(id).also { cachedZone = it }
+        } catch (e: Exception) {
+            ZoneId.systemDefault()
+        }
+    }
+
+    /** Shows a message when its kind (and its topic, when it has one) is switched on. */
     private fun post(note: Note) {
-        if (enabled(note.category)) host.post(note)
+        if (!enabled(note.category)) return
+        if (note.topic != null && !options.on(note.topic)) return
+        deliver(note)
+    }
+
+    /**
+     * During the owner's quiet hours a message is still shown, but makes no sound. Those hours
+     * are the phone's own (the owner's night), not the shop's.
+     */
+    private fun deliver(note: Note) {
+        val quiet = options.quietAt(System.currentTimeMillis(), ZoneId.systemDefault()) &&
+            !(note.category == Category.ALERTS && options.quietAlerts)
+        host.post(if (quiet) note.copy(silent = true) else note)
     }
 
     private fun load() {
@@ -811,6 +1147,19 @@ class Engine(
         /** `wake` reason of the periodic alarm. */
         const val WAKE_ALARM = "alarm"
 
+        fun validZone(id: String): Boolean = try {
+            ZoneId.of(id)
+            true
+        } catch (e: Exception) {
+            false
+        }
+
+        /** `wake` reason of the engine's own appointment with the clock (`Host.wakeAt`). */
+        const val WAKE_CLOCK = "clock"
+
+        /** The link counts as alive this long after the last word from the server (pings go every 25 s). */
+        private const val LINK_FRESH_MS = 35_000L
+
         private const val PING_MS = 25_000L
         private const val PONG_WAIT_MS = 8_000L
         private const val CONNECT_TIMEOUT_MS = 8_000
@@ -826,6 +1175,18 @@ class Engine(
         private const val MAX_PAGES = 5
         private const val OVERLAP_MS = 120_000L
         private const val SALE_PAIR_MS = 2_000L
+
+        /** The clock is looked at this often while the phone is awake. */
+        private const val TICK_MS = 20_000L
+
+        /** Something due within this time is waited for awake instead of asking for a wake-up. */
+        private const val AWAKE_WAIT_MS = 40_000L
+
+        /** Rows of one kind by one person this close together are one message… */
+        private const val BATCH_GAP_MS = 90_000L
+
+        /** …which does not keep growing longer than this. */
+        private const val BATCH_MAX_MS = 10 * 60_000L
 
         /** More new notes than this at once (after a long gap) are summed up instead of listed. */
         private const val FLOOD = 8

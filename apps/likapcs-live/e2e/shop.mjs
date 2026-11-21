@@ -6,7 +6,16 @@
 // Commands: setup · sale [n] · credit-sale · refund · session-start <pc> [min] · session-open <pc> ·
 // session-extend <pc> <min> · session-gift <pc> <min> · session-end <pc> · session-cancel <pc> ·
 // expense [cents] · cash-in [cents] · cash-out [cents] · stock [delta] · price [cents] · bad-login · debt-pay ·
+// discount-sale · loss-sale · big-sale · debt-due-today · reservation [minutes] ·
+// pc-on <pc> · pc-off <pc> · pc-wake <pc> · pc-wake-all · pc-shutdown <pc> · pc-restart <pc> ·
 // day (a little of everything, with pauses)
+//
+// The pc-* commands play a gaming PC: `pc-on` holds a client connection open for as long as this
+// process lives (the checks import the commands and keep running; from a shell use `pcs`).
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const BASE = process.env.LIKAPCS_URL ?? 'http://127.0.0.1:4700/api/v1';
 const PASSWORD = process.env.LIKAPCS_PASSWORD ?? 'Owner12345';
 
@@ -49,6 +58,124 @@ async function station(number, token) {
   return s;
 }
 
+// ─── A pretend gaming PC ──────────────────────────────────────────────────────────────────
+// Registers like the real client program, is approved for its station, and then holds the client
+// WebSocket open: for the server that PC is switched on. Closing the socket is the PC going off.
+const WS_BASE = BASE.replace(/^http/, 'ws').replace(/\/api\/v1$/, '');
+const PC_FILE = path.join(
+  os.tmpdir(),
+  `likalive-pcs-${Buffer.from(BASE).toString('hex').slice(0, 24)}.json`,
+);
+/** PC number → { socket, beat } of the PCs that are "on" in this process. */
+const running = new Map();
+const mac = (n) => `08:BF:B8:00:00:${String(Number(n)).padStart(2, '0')}`;
+
+function savedPcs() {
+  try {
+    return JSON.parse(fs.readFileSync(PC_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** The device token of PC `n`: paired once, then kept in a file for the next run. */
+async function pcToken(n) {
+  const t = await as('owner');
+  const s = await station(n, t);
+  const saved = savedPcs();
+  const known = saved[s.id];
+  if (known && s.device?.id === known.deviceId && s.device.status === 'approved') return known;
+  // A device from an earlier run whose token is gone: it gives way to a new one.
+  if (s.device) await call('POST', `/devices/${s.device.id}/revoke`, {}, t).catch(() => undefined);
+  const machineId = `likalive-test-${s.number}-${Math.random().toString(36).slice(2, 10)}`;
+  const registrationSecret = `${requestId()}-${requestId()}-${requestId()}`;
+  const { version } = await call('GET', '/system/health');
+  const reg = await call('POST', '/client/register', {
+    machineId,
+    hostname: `PC-${String(s.number).padStart(2, '0')}`,
+    osInfo: 'Windows 11 (test)',
+    appVersion: version,
+    registrationSecret,
+  });
+  await call('POST', `/devices/${reg.registrationId}/approve`, { stationId: s.id }, t);
+  const poll = await call(
+    'GET',
+    `/client/registration/${reg.registrationId}?secret=${registrationSecret}`,
+  );
+  if (!poll.deviceToken) throw new Error(`no device token for ${s.code}: ${JSON.stringify(poll)}`);
+  const entry = { deviceId: reg.registrationId, token: poll.deviceToken, machineId, version };
+  fs.writeFileSync(PC_FILE, JSON.stringify({ ...saved, [s.id]: entry }));
+  return entry;
+}
+
+/** Switches the pretend PC on: connects, says hello, answers the server's commands. */
+async function pcOn(n) {
+  const number = Number(n);
+  if (running.has(number)) return;
+  const { token, machineId, version } = await pcToken(number);
+  const socket = new WebSocket(`${WS_BASE}/ws/client`);
+  const pc = { socket, beat: null };
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`PC ${number}: no welcome`)), 8000);
+    socket.addEventListener('open', () =>
+      socket.send(
+        JSON.stringify({
+          type: 'client.hello',
+          token,
+          appVersion: version,
+          protocolVersion: 1,
+          machineId,
+          hardware: {
+            cpu: 'Test CPU',
+            gpus: [],
+            network: [
+              { name: 'Ethernet', mac: mac(number), ipv4: null, up: true, wakeOnMagicPacket: true },
+            ],
+            fastStartup: false,
+          },
+        }),
+      ),
+    );
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data));
+      if (message.type === 'server.welcome') {
+        clearTimeout(timer);
+        resolve();
+      } else if (message.type === 'server.command') {
+        // The real client confirms a command before it acts on it.
+        socket.send(JSON.stringify({ type: 'client.ack', commandId: message.commandId, ok: true }));
+        if (message.command === 'power.shutdown') setTimeout(() => pcOff(number), 300);
+        if (message.command === 'power.restart') {
+          setTimeout(() => pcOff(number), 300);
+          setTimeout(() => pcOn(number).catch(() => undefined), 4000);
+        }
+      }
+    });
+    socket.addEventListener('close', () => {
+      clearTimeout(timer);
+      if (running.get(number) === pc) running.delete(number);
+      clearInterval(pc.beat);
+      reject(new Error(`PC ${number}: connection closed`));
+    });
+    socket.addEventListener('error', () => undefined);
+  });
+  pc.beat = setInterval(() => {
+    if (socket.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify({ type: 'client.heartbeat', ts: new Date().toISOString() }));
+  }, 8000);
+  running.set(number, pc);
+}
+
+function pcOff(n) {
+  const pc = running.get(Number(n));
+  if (!pc) return;
+  running.delete(Number(n));
+  clearInterval(pc.beat);
+  pc.socket.close();
+}
+
+const COSTED = 'Red Bull 0.25l';
+
 const commands = {
   /** What the repo's seed leaves out: an hourly price, so sessions can be started (2.00 € an hour). */
   async setup() {
@@ -58,6 +185,24 @@ const commands = {
       await call('POST', '/pricing/rules', { name: 'Standard', rateCentsPerHour: 200 }, t);
       console.log('pricing rule created');
     } else console.log('pricing rule exists');
+    // One product whose cost is on record (the seeded ones have none), so that a sale can be
+    // seen to lose money.
+    if (!(await products(t)).some((p) => p.name === COSTED)) {
+      await call(
+        'POST',
+        '/products',
+        {
+          name: COSTED,
+          sellingPriceCents: 250,
+          purchaseCostCents: 140,
+          unitCode: 'pc',
+          trackStock: false,
+          priceIncludesTax: true,
+        },
+        t,
+      );
+      console.log('product with a cost created');
+    }
   },
 
   /** Two colas and a bag of crisps, paid in cash, sold by the cashier. */
@@ -307,6 +452,179 @@ const commands = {
     console.log('debt paid', amount);
   },
 
+  /** Two colas with one euro off the total, sold by the cashier. */
+  async 'discount-sale'() {
+    const t = await as('owner');
+    const list = await products(t);
+    const cola = list.find((p) => p.name.startsWith('Coca'));
+    const total = cola.sellingPriceCents * 2 - 100;
+    const sale = await call(
+      'POST',
+      '/sales',
+      {
+        items: [{ productId: cola.id, quantityMilli: 2000 }],
+        discountCents: 100,
+        payments: [{ method: 'cash', amountCents: total }],
+        clientRequestId: requestId(),
+      },
+      t,
+    );
+    console.log('sale with a discount', sale.receiptNo, sale.totalCents);
+  },
+
+  /** A can that cost 1.40 € let go for 1.00 €: sold at a loss. */
+  async 'loss-sale'() {
+    const t = await as('owner');
+    const list = await products(t);
+    const item = list.find((p) => p.name === COSTED);
+    const sale = await call(
+      'POST',
+      '/sales',
+      {
+        items: [{ productId: item.id, quantityMilli: 1000 }],
+        discountCents: item.sellingPriceCents - 100,
+        payments: [{ method: 'cash', amountCents: 100 }],
+        clientRequestId: requestId(),
+      },
+      t,
+    );
+    console.log('sale below cost', sale.receiptNo, sale.totalCents);
+  },
+
+  /** Forty colas at once. */
+  async 'big-sale'(quantity = 40) {
+    const t = await as('kasjere');
+    const list = await products(t);
+    const cola = list.find((p) => p.name.startsWith('Coca'));
+    const total = cola.sellingPriceCents * Number(quantity);
+    const sale = await call(
+      'POST',
+      '/sales',
+      {
+        items: [{ productId: cola.id, quantityMilli: Number(quantity) * 1000 }],
+        payments: [{ method: 'cash', amountCents: total }],
+        clientRequestId: requestId(),
+      },
+      t,
+    );
+    console.log('big sale', sale.receiptNo, sale.totalCents);
+  },
+
+  /** A sale on the customer's tab that has to be paid back today. */
+  async 'debt-due-today'() {
+    const t = await as('owner');
+    const list = await products(t);
+    const item = list.find((p) => p.name.startsWith('Sandui'));
+    const customers = await call('GET', '/customers?pageSize=5', undefined, t);
+    const customer = (customers.items ?? customers)[0];
+    const sale = await call(
+      'POST',
+      '/sales',
+      {
+        items: [{ productId: item.id, quantityMilli: 1000 }],
+        customerId: customer.id,
+        payments: [
+          {
+            method: 'credit',
+            amountCents: item.sellingPriceCents,
+            dueDate: new Date().toLocaleDateString('sv-SE'),
+          },
+        ],
+        clientRequestId: requestId(),
+      },
+      t,
+    );
+    console.log('debt due today', sale.receiptNo, sale.totalCents, customer.name);
+  },
+
+  /** A reservation of PC 5 and PC 6 that starts in `minutes`, with its reminder `remind` minutes before. */
+  async reservation(minutes = 20, remind = 15) {
+    const t = await as('owner');
+    const a = await station(5, t);
+    const b = await station(6, t);
+    const r = await call(
+      'POST',
+      '/reservations',
+      {
+        stationIds: [a.id, b.id],
+        startsAt: new Date(Date.now() + Number(minutes) * 60_000).toISOString(),
+        remindMinutes: Number(remind),
+        customerName: 'Driton',
+        phone: '044 123 456',
+      },
+      t,
+    );
+    console.log('reservation', r.id, r.startsAt);
+    return r;
+  },
+
+  async 'reservation-cancel'(id) {
+    await call('POST', `/reservations/${id}/cancel`, {}, await as('owner'));
+    console.log('reservation cancelled', id);
+  },
+
+  /**
+   * Makes sure the server knows these PCs as real ones: each gets a client paired, which is on
+   * for a moment so its network card is on record (without one the server refuses to wake it).
+   */
+  async 'pc-pair'(...numbers) {
+    for (const n of numbers.length ? numbers : [1, 2, 3, 5]) {
+      await pcOn(n);
+      pcOff(n);
+    }
+    await sleep(300);
+    console.log('PCs paired', numbers.join(' '));
+  },
+
+  /** The pretend PC is switched on (it connects to the server like the real client program). */
+  async 'pc-on'(pc = 1) {
+    await pcOn(pc);
+    console.log('PC on', pc);
+  },
+
+  /** …and off: its connection ends. */
+  async 'pc-off'(pc = 1) {
+    pcOff(pc);
+    console.log('PC off', pc);
+  },
+
+  /** "Ndiz" in the Admin: the wake signal for one PC that is off. */
+  async 'pc-wake'(pc = 1) {
+    const t = await as('owner');
+    const s = await station(pc, t);
+    await call('POST', `/stations/${s.id}/wake`, {}, t);
+    console.log('wake sent to', s.code);
+  },
+
+  /** "Ndiz të gjitha". */
+  async 'pc-wake-all'() {
+    const r = await call('POST', '/stations/wake-all', {}, await as('owner'));
+    console.log('wake sent to', r.sent.length, 'PCs; skipped', r.skipped.length);
+  },
+
+  /** "Fik PC-në" in the Admin. */
+  async 'pc-shutdown'(pc = 1) {
+    const t = await as('owner');
+    const s = await station(pc, t);
+    const r = await call('POST', `/stations/${s.id}/command`, { command: 'power.shutdown' }, t);
+    console.log('shutdown', s.code, r.ok);
+  },
+
+  /** "Rinis PC-në". */
+  async 'pc-restart'(pc = 1) {
+    const t = await as('owner');
+    const s = await station(pc, t);
+    const r = await call('POST', `/stations/${s.id}/command`, { command: 'power.restart' }, t);
+    console.log('restart', s.code, r.ok);
+  },
+
+  /** From a shell: keeps the listed pretend PCs on until Ctrl+C, e.g. `node shop.mjs pcs 1 2 3`. */
+  async pcs(...numbers) {
+    for (const n of numbers.length ? numbers : [1, 2, 3]) await commands['pc-on'](n);
+    console.log('PCs are on; Ctrl+C switches them off');
+    await new Promise(() => undefined);
+  },
+
   /** A little of everything, a few seconds apart. */
   async day(pause = 2500) {
     const steps = [
@@ -342,7 +660,12 @@ const commands = {
   },
 };
 
-export { commands, call, as, sleep };
+/** Every pretend PC of this process goes off (the checks call it when they finish). */
+function allPcsOff() {
+  for (const n of [...running.keys()]) pcOff(n);
+}
+
+export { commands, call, as, sleep, station, allPcsOff };
 
 // Run as a command line tool only when started directly (the checks import the commands).
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

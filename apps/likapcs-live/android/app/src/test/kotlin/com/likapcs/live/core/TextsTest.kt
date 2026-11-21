@@ -40,6 +40,10 @@ class TextsTest {
         assertEquals("42 min", sq.duration(2520))
         assertEquals("1 h 05 min", sq.duration(3900))
         assertEquals("0 min", sq.duration(-10))
+        // Less than a minute is said so, not "0 min".
+        assertEquals("nën 1 min", sq.duration(40))
+        assertEquals("under 1 min", Texts("en").duration(59))
+        assertEquals("1 min", sq.duration(60))
     }
 
     @Test

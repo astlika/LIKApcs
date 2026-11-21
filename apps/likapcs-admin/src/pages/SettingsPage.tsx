@@ -192,6 +192,7 @@ import {
 import { ClientScreenPreview } from '../components/settings/ClientScreenPreview';
 import { LayoutPresetsCard } from '../components/settings/LayoutPresetsCard';
 import { ScreenViewsCard } from '../components/settings/ScreenViewsCard';
+import { VoiceCard } from '../components/settings/VoiceCard';
 import { WidgetDesignPicker } from '../components/settings/WidgetMock';
 import { UpdatePanel } from '../components/UpdatePanel';
 import { LocalServerPanel } from '../components/LocalServerPanel';
@@ -860,6 +861,7 @@ export function SettingsPage() {
                 onChange={(v) => !ro && set('client.lock_title', v)}
               />
             </Card>
+            <VoiceCard current={current} set={set} readOnly={ro} />
             <ScreenViewsCard canManage={canManage} onApply={applyLayout} />
             <LayoutPresetsCard canManage={canManage} layout={currentLayout} onApply={applyLayout} />
             <Card

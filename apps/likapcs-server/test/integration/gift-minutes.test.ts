@@ -384,7 +384,8 @@ describe('gift minutes & bulk +minutes', () => {
     });
     expect(paid.status).toBe(200);
     expect(paid.body.applied).toEqual([
-      { stationId: h.id, code: h.code, minutes: 15, priceCents: 0 },
+      // 0.36.0: `laterCents` says what joined the PC's bill instead of being paid now.
+      { stationId: h.id, code: h.code, minutes: 15, priceCents: 0, laterCents: 150 },
     ]);
     expect(paid.body.totalCents).toBe(0);
     expect(await salesCount()).toBe(salesBefore);

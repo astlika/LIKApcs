@@ -93,8 +93,12 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   the PC that registered), `token_collected_at` (token delivered exactly once), `approved_by`,
   `revoked_by`, `last_seen_at`, `last_ip`. A partial unique index guarantees **at most one approved
   device per station**.
-- **station_heartbeats** — append-only telemetry (`metrics jsonb`, `locked`, `session_id`), pruned
-  after 7 days.
+- **station_heartbeats** — append-only load samples of the PCs (`metrics jsonb`, `locked`,
+  `session_id`). Nothing reads them back. Since 0.37.0 a connected PC leaves one when something
+  about it changes and otherwise every five minutes (before: every 10 seconds); rows older than 7
+  days are deleted a minute after start-up and every 6 hours. A restore does not bring the rows of
+  an archive back. What "last seen" shows is `station_devices.last_seen_at`, written when the PC's
+  state changes, once a minute while it stays connected, and when it disconnects.
 - **station_connection_logs** — connected / disconnected / replaced / rejected / timeout / error
   events shown in the station detail dialog.
 
@@ -104,6 +108,8 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   average, used for COGS snapshots), `stock_milli`, `min_stock_milli`, `allow_negative_stock`,
   `track_stock`, `tax_category_id`, `unit_code`, `image_path` (0011 — immutable file name of the
   product picture in `<dataDir>/uploads/products`; the file itself is not stored in the database).
+  `image_thumb_path` / `image_thumb_of` (0063) — the small copy of that picture for tiles and
+  lists, see _Speed on a small main PC_.
 - **product_barcodes** — many barcodes per product (unique globally), `quantity_milli` for pack/case
   barcodes (a 6-pack barcode sells 6.000 units).
 - **inventory_movements** — every change with `movement_type` (purchase_receipt, purchase_return,
@@ -210,6 +216,88 @@ to `partially_refunded` / `refunded`. SKUs come from `document_sequences` (`kind
 - Receipt numbers come from `document_sequences` (`R-<year>-000001`, atomic
   `INSERT … ON CONFLICT DO UPDATE … RETURNING`). `shift_id` stays NULL until the cash-shift module
   (Phase 5) attaches sessions to open shifts.
+
+### Internet access codes (0057)
+
+- **products.kind** — `standard` or `internet_access`. A package must be tracked, never negative,
+  unit `pc`, no parent and not on the PC menu (`products_internet_access_shape`).
+- **internet_access_codes** — one row per code: `product_id`, `code` (case-sensitive), `batch_id`
+  (one paste = one batch), `status` (`available` / `sold`), `created_by/at`, and — once sold —
+  `sale_id`, `sale_item_id`, `sold_by`, `sold_at`. A code waits to be sold in one place only
+  (partial unique index on `code` where `status = 'available'`).
+- Triggers: a sold code cannot be changed or deleted; codes belong to a package only; the stock
+  of a package and the number of its unused codes must be equal when a transaction ends
+  (`internet_access_stock_matches_codes`).
+- **inventory_movements.movement_type** gains `codes_loaded` and `codes_removed`.
+
+### Session bills in parts (0058–0061)
+
+- **0058** turned the stored `client.widget_hide_in_games` off once (0.35.1); **0059** turns it back
+  on once (0.35.3): with the widget left on the screen, games in exclusive fullscreen minimized.
+- The columns below come with **0060** and **0061** (0.36.0).
+- **gaming_sessions.unpaid_cents / unpaid_seconds** — a paid session's minutes that were added "to
+  pay at the end": the last `unpaid_seconds` of `planned_seconds`, worth `unpaid_cents`. They are
+  not part of `quoted_price_cents` (which stays "what was paid") and join it once paid.
+- **gaming_sessions.paid_cents** — an open-time session that was paid while it runs: the money
+  taken so far for its time; the final bill takes it off.
+- **pricing_rules.free_minutes** (0–60) — "up to N minutes free"; snapshotted into
+  `gaming_sessions.billing_terms`.
+- **gaming_sessions_billed_once** now reads `sale_id IS NULL OR billed_at IS NOT NULL`: a bill
+  that owes nothing is billed without a sale.
+- A sale can hold the lines of several sessions (`sale_items.gaming_session_id` per line); each of
+  those sessions points to it with `sale_id`.
+
+### Offers (0062)
+
+- **offers** — products and PC minutes sold together at one price: `name` (1–80 characters),
+  `price_cents` (for all of it, tax included), `minutes` (0–1440; 0 = products only), `is_active`
+  (false = not on the till), `created_by`, `created_at`, `updated_at`.
+- **offer_items** — the products of an offer: `offer_id`, `product_id` (primary key together: a
+  product is in an offer once), `quantity_milli`, `sort_order`. Both references cascade.
+- **sale_items.offer_id / offer_name / offer_group** — an offer is a recipe, not a product: a sale
+  holds one ordinary line per product of the offer and one PC-time line, so stock, cost, tax, the
+  time credit, refunds and reports treat them as any other line. Each such line remembers the
+  offer: `offer_name` as it was at the sale, `offer_group` (1, 2, … within the sale: the lines of
+  one sold offer share it) and `offer_id` (set to NULL when the offer is deleted — the name stays).
+  `sale_items_offer_whole`: name and group are set together.
+- The lines of one group together cost the offer's price: it is shared among them by what each
+  costs outside the offer (largest remainder), and a share that does not divide by the quantity
+  is written as a unit price rounded up with the few cents too many as the line's discount.
+- 0.36.1 (no migration) — the minutes of an offer sold at the till without a PC and without a
+  name are a **time_credits** row with `station_id` NULL and `pin_hash` NULL: paid time for any
+  PC that only the desk can give (a PIN lookup needs `pin_hash`). `holder_name` is the sale's
+  customer, or NULL. Its offer is read through `sale_item_id` → `sale_items.offer_name`.
+- 0.36.1 — what an offer has sold is not stored: it is summed from the `sale_items` that carry
+  its `offer_id` (completed and refunded sales), with `refund_items` taken off. Deleting an offer
+  sets `offer_id` to NULL on those lines, so its figures go with it; the sales themselves stay.
+
+### Speed on a small main PC (0063)
+
+0.37.0 changes no rule of the business; it makes the questions the open screens ask all day cost
+the same after a year of history as on the first day.
+
+- **gaming_sessions** — three indexes:
+  - `gaming_sessions_station_awaiting_idx (station_id)`, partial: ended sessions whose bill still
+    waits (`status IN ('expired', 'completed')` and unbilled end-pay / open time, or prepaid with
+    `unpaid_cents > 0`). The Stations list asks this for every PC, and the list of sessions
+    waiting for their money starts from it. The predicate must stay word for word the one in
+    `STATION_SELECT` (`services/stations.ts`), or the planner stops using the index.
+  - `gaming_sessions_station_last_customer_idx (station_id, ended_at DESC NULLS LAST)`, partial
+    (`status IN ('expired', 'completed') AND customer_id IS NOT NULL`): the customer of a PC's
+    last ended session.
+  - `gaming_sessions_station_started_idx (station_id, started_at DESC)`: the sessions of one PC.
+- **time_credits** — `time_credits_sale_idx (sale_id)`, partial (`sale_id IS NOT NULL`): the Sales
+  list sums the PC minutes sold on each sale.
+- **sales** — `sales_when_idx ((COALESCE(completed_at, created_at)) DESC)`: the order of the
+  Sales list.
+- **sale_items** — `sale_items_offer_idx (offer_id)`, partial: what an offer has sold.
+- **products.image_thumb_path / image_thumb_of** — the small copy of the product picture (longest
+  side 160 px) that tiles and lists show, and the picture (`image_path`) it was made from. The
+  copy counts only while `image_thumb_of = image_path`; setting or removing the picture clears
+  both. The Admin makes the copies (the server has no picture library): right after a picture is
+  saved, and in the background for pictures without one. Animated GIFs get none.
+- **station_heartbeats** is emptied by the migration (see the table's entry above for why it had
+  grown without limit).
 
 ## Operations
 

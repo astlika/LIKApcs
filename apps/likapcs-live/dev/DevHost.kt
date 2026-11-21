@@ -68,7 +68,7 @@ class DevShell : Shell {
     lateinit var engine: Engine
     lateinit var host: DevHostImpl
 
-    override fun appVersion() = "1.0.0-dev"
+    override fun appVersion() = "1.1.0-dev"
     override fun notifications() = notifications
     override fun batteryFree() = battery
     override fun device(): JsonObject = buildJsonObject {
@@ -97,6 +97,9 @@ class DevHostImpl : Host {
     val listeners = CopyOnWriteArrayList<LinkedBlockingQueue<String>>()
     @Volatile var summary: Summary? = null
     lateinit var bridge: Bridge
+    lateinit var engine: Engine
+    private val timer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dev-wake").apply { isDaemon = true } }
+    private var wakeTask: java.util.concurrent.ScheduledFuture<*>? = null
 
     private fun emit(event: String, data: String) {
         val frame = "event: $event\ndata: $data\n\n"
@@ -106,8 +109,11 @@ class DevHostImpl : Host {
     fun emitState() = emit("state", bridge.state().toString())
 
     override fun post(note: Note) {
+        // The same key again takes the place of the message already shown, as on the phone.
+        notes.removeIf { it.key == note.key }
         notes += note
-        println("[note] ${note.category.id.padEnd(10)} | ${note.title} | ${note.text}")
+        val marks = listOfNotNull(note.topic?.id, if (note.update) "update" else null, if (note.silent) "silent" else null)
+        println("[note] ${note.category.id.padEnd(10)} | ${note.title} | ${note.text}${if (marks.isEmpty()) "" else "  (${marks.joinToString(", ")})"}")
         emit("note", noteJson(note).toString())
     }
 
@@ -131,6 +137,18 @@ class DevHostImpl : Host {
 
     override fun changed(kind: String) = emit("changed", """{"kind":"$kind"}""")
     override fun stayAwake(ms: Long) = Unit
+
+    /** What the phone's alarm does: a timer that wakes the engine at the asked moment. */
+    override fun wakeAt(epochMs: Long) {
+        synchronized(timer) {
+            wakeTask?.cancel(false)
+            wakeTask = null
+            if (epochMs <= 0) return
+            println("[wake-at] ${java.time.Instant.ofEpochMilli(epochMs)}")
+            wakeTask = timer.schedule({ engine.wake(Engine.WAKE_CLOCK) }, maxOf(0, epochMs - System.currentTimeMillis()), TimeUnit.MILLISECONDS)
+        }
+    }
+
     override fun log(line: String) = println("[log] $line")
 
     fun noteJson(n: Note) = buildJsonObject {
@@ -140,6 +158,9 @@ class DevHostImpl : Host {
         put("text", n.text)
         put("at", n.at)
         put("tab", n.tab)
+        put("topic", n.topic?.id)
+        put("update", n.update)
+        put("silent", n.silent)
     }
 }
 
@@ -159,6 +180,7 @@ fun main(args: Array<String>) {
     shell.engine = engine
     shell.host = host
     host.bridge = bridge
+    host.engine = engine
     if (engine.signedIn()) shell.startMonitoring()
 
     val www = args.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { File(it).canonicalFile }

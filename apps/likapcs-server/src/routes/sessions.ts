@@ -17,6 +17,9 @@ import {
   sessionListQuerySchema,
   sessionQuoteSchema,
   renameSessionPcSchema,
+  paySessionsQuoteSchema,
+  paySessionsSchema,
+  sessionCustomerSchema,
   startSessionSchema,
   uuidSchema,
 } from '@likapcs/shared';
@@ -93,6 +96,22 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
     const { saleId } = z.object({ saleId: uuidSchema }).parse(request.params);
     return { link: await services.sessions.saleLink(saleId) };
   });
+  /**
+   * 0.36.0: the receipt of a sale that billed PC sessions — the one that was just paid, which is
+   * not always the session's own first sale (an extension, the products of a paid PC, several PCs
+   * on one receipt). Like `/sessions/:id/receipt` it needs stations.control only; a sale without
+   * a PC on it is not answered here.
+   */
+  app.get('/sessions/by-sale/:saleId/receipt', control, async (request) => {
+    const { saleId } = z.object({ saleId: uuidSchema }).parse(request.params);
+    if (!(await services.sessions.saleHasSessions(saleId))) throw notFound('Session bill');
+    return services.sales.receipt(saleId, actorOf(request), false);
+  });
+  /** 0.36.0: what a customer has on the PCs right now and has not paid: time and products. */
+  app.get('/sessions/open-bills', view, async (request) => {
+    const { customerId } = z.object({ customerId: uuidSchema }).parse(request.query);
+    return services.sessions.openBillsOfCustomer(customerId);
+  });
   app.post('/sessions/bulk-remove-time', control, async (request) =>
     services.sessions.bulkRemoveTime(bulkRemoveTimeSchema.parse(request.body), actorOf(request)),
   );
@@ -153,6 +172,24 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   );
   /** End pay (0.14.0): "Collect" in the awaiting-payment strip — takes the money for an ended
    * pay-at-the-end session (time + open orders on the bill), exactly once. */
+  /**
+   * 0.36.0 — one receipt for one or several PCs, at any time (running or ended). The quote shows
+   * what each PC owes right now; the payment sends its `asOf` back, so the amounts match.
+   */
+  app.post('/sessions/pay/quote', control, async (request) =>
+    services.sessions.payQuote(paySessionsQuoteSchema.parse(request.body)),
+  );
+  app.post('/sessions/pay', control, async (request) =>
+    sold(services.sessions.pay(paySessionsSchema.parse(request.body), actorOf(request))),
+  );
+  /** 0.36.0: the registered customer (or a typed name) of a session, set while it runs. */
+  app.patch('/sessions/:id/customer', control, async (request) =>
+    services.sessions.setCustomer(
+      idParams.parse(request.params).id,
+      sessionCustomerSchema.parse(request.body),
+      actorOf(request),
+    ),
+  );
   app.post('/sessions/:id/collect', control, async (request) =>
     sold(
       services.sessions.collect(

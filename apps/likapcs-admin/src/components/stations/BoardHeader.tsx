@@ -198,6 +198,14 @@ export function HoverInfo({
         <span>{t('board.total')}</span>
         <strong className="num">{fmt.money(view.totalCents)}</strong>
       </div>
+      {view.dueCents > 0 && (
+        <div className="hover-info__total" data-testid="hover-due">
+          <span>{t('board.dueNow')}</span>
+          <strong className="num">
+            <span className="due-pill">{fmt.money(view.dueCents)}</span>
+          </strong>
+        </div>
+      )}
     </div>
   );
 }

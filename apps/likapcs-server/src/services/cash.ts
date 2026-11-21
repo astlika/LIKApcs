@@ -21,6 +21,7 @@ import type {
   CashShiftListQuery,
   CashShiftSummary,
   CashShiftTotals,
+  CashStatusBrief,
   CashStatusResponse,
   CloseShiftRequest,
   OpenShiftRequest,
@@ -150,6 +151,28 @@ export class CashService {
     const registers = await this.registers();
     const main = registers.find((r) => r.isActive) ?? registers[0] ?? null;
     const current = main?.openShiftId ? await this.getShift(main.openShiftId) : null;
+    return {
+      registers,
+      current,
+      requireOpenShift: await this.settings.get('cash.require_open_shift'),
+      differenceWarningCents: await this.settings.get('cash.difference_warning_cents'),
+    };
+  }
+
+  /**
+   * 0.37.0: the same answer without the shift's totals and movements — what the top bar needs
+   * ("is a shift open?"). The full status reads and sends every movement of the shift.
+   */
+  async statusBrief(): Promise<CashStatusBrief> {
+    const registers = await this.registers();
+    const main = registers.find((r) => r.isActive) ?? registers[0] ?? null;
+    let current: CashShiftSummary | null = null;
+    if (main?.openShiftId) {
+      const r = await this.pool.query<ShiftRow>(`${SHIFT_SELECT} WHERE cs.id = $1`, [
+        main.openShiftId,
+      ]);
+      current = r.rows[0] ? toShift(r.rows[0]) : null;
+    }
     return {
       registers,
       current,

@@ -179,8 +179,12 @@ app.ts               composition root; index.ts = process entry; cli.ts = migrat
 - Station status is derived on read: `disabled` → `offline` (no connected device) → `available` →
   `occupied/paused/locked` (Phase 3 sessions). Admin screens receive `station.changed` /
   `device.changed` events and refetch; they also poll every 20 s as a safety net.
-- Heartbeats are recorded in `station_heartbeats` (pruned after 7 days) so "last seen" survives a
-  restart.
+- Who is online, and each PC's load, live in memory (the hub). The database keeps when a PC was
+  last seen (`station_devices.last_seen_at`), so "last seen" survives a restart: written on the
+  first heartbeat of a connection, when the PC's state changes (locked, session, address,
+  version), once a minute while it stays connected and when it disconnects — not on each of the
+  heartbeats that arrive every 10 seconds (0.37.0). A load sample goes to `station_heartbeats`
+  every five minutes (rows older than 7 days are deleted at start-up and every 6 hours).
 - Grace periods: when a client disconnects during a session, the session keeps running on the
   server for `stations.session_grace_seconds`; staff are alerted and billing is never computed by the
   client (Phase 3).

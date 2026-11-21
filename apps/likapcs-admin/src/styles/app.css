@@ -2413,6 +2413,10 @@ body:has(.pos) .toasts {
   font-size: 10px;
   color: #555;
 }
+/* 0.36.0: what an offer holds, under its row. */
+.receipt__items .receipt__parts td {
+  padding-top: 0;
+}
 .receipt__totals {
   border-top: 1px dashed #999;
   margin-top: 6px;
@@ -7418,4 +7422,704 @@ button.ads-album .ads-album__meta {
   max-width: none;
   padding-right: 0;
   border-right: 0;
+}
+
+/* ─── Internet access (0.34.0): Wi-Fi codes sold as products ─────────────────── */
+.access-intro {
+  margin: 0;
+  font-size: 13px;
+}
+.access-package {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+.access-package .faint {
+  font-size: 12px;
+}
+.access-new {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+}
+.access-quick {
+  margin-top: -2px;
+}
+.access-codes__input {
+  min-height: 140px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.access-summary {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.access-summary__count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+.access-summary__count strong {
+  font-size: 18px;
+}
+.access-summary__count .mono {
+  font-size: 12px;
+  word-break: break-all;
+}
+.access-summary__result {
+  font-weight: 600;
+}
+.access-summary .checkbox {
+  margin-top: 8px;
+}
+.access-order-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.access-code-cell {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  user-select: all;
+  word-break: break-all;
+}
+/* The till: a Wi-Fi mark on the tile, the code in large type once the sale is paid. */
+.pos-line__note {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile__wifi {
+  margin-right: 4px;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+.pos-codes {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pos-codes__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.pos-codes__line {
+  display: grid;
+  gap: 4px;
+}
+.pos-codes__name {
+  font-size: 13px;
+  color: var(--text-muted, var(--muted));
+}
+.pos-codes__code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input, var(--surface));
+  border: 1px solid var(--border);
+}
+.access-code {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  user-select: all;
+  word-break: break-all;
+}
+.pos-codes__hint {
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+}
+.sale-codes {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+}
+.sale-codes__code {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--text);
+  font-weight: 600;
+  user-select: all;
+}
+/* The printed receipt: the code stands on its own, large enough to be typed from paper. */
+.receipt__codes {
+  border-top: 1px dashed #999;
+  margin-top: 6px;
+  padding-top: 6px;
+  text-align: center;
+}
+.receipt__codes-line + .receipt__codes-line {
+  margin-top: 6px;
+}
+.receipt__codes-name {
+  font-size: 11px;
+}
+.receipt__code {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+}
+
+/* 0.35.0 — Settings › Client screen: spoken time warnings. */
+.voice-volume {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.voice-rows__title {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.voice-rows__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.voice-rows {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.voice-row:last-child {
+  border-bottom: 0;
+}
+.voice-row[data-unused='true'] {
+  opacity: 0.75;
+}
+.voice-row__plays {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.voice-row__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-row__actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+@media (max-width: 860px) {
+  .voice-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .voice-row__actions {
+    justify-content: flex-start;
+  }
+}
+
+/* ─── 0.36.0: one receipt for several PCs, the customer's bill, the internet bar ─────────── */
+.pay-bills {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.pay-bill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+.pay-bill__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.pay-bill__code {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pay-bill__who {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.pay-bill__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.pay-bill__state[data-state='stop'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.pay-bill__state[data-state='run'] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.pay-bill__amount {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.pay-bill__lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.pay-bill__lines b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pay-stop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pay-stop > span {
+  display: grid;
+  gap: 2px;
+}
+.pay-stop .faint {
+  font-size: 12px;
+}
+.customer-bill__totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.customer-bill__totals > div {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 8px 12px;
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+.customer-bill__totals strong {
+  font-size: 18px;
+}
+.customer-bill__totals > div[data-warn] strong {
+  color: var(--warning);
+}
+.customer-bill__heading {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+/* The waiting bills on the POS: the chips only, one line high when it fits. */
+.awaiting--compact {
+  padding: 6px 10px;
+  gap: 6px;
+  flex: none;
+}
+.awaiting--compact .awaiting__chips {
+  max-height: 84px;
+  overflow-y: auto;
+}
+/* What a PC still owes, on its tile and in its panel. */
+.due-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-soft);
+  white-space: nowrap;
+}
+.name-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-text);
+  cursor: pointer;
+  text-align: left;
+}
+.name-link:hover {
+  text-decoration: underline;
+}
+/* The internet packages, always in sight at the bottom. */
+.inet-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  min-width: 0;
+  overflow-x: auto;
+}
+.inet-bar--pinned {
+  position: sticky;
+  bottom: 12px;
+  /* The page keeps 40px of padding under its content; the bar sits in it. */
+  margin-top: auto;
+  margin-bottom: -28px;
+  z-index: 5;
+  box-shadow: var(--shadow-2);
+}
+.inet-bar__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.inet-bar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.inet-bar__item:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.inet-bar__item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.inet-bar__name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inet-qty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── 0.36.0: offers (products + PC minutes at one price) ───────────────────── */
+/* The POS tile of an offer: the same tile, marked so it is not taken for a product. */
+.tile--offer {
+  --tile-accent: var(--warning);
+  background: linear-gradient(180deg, var(--warning-soft), var(--bg-surface) 70%);
+}
+.tile__offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.chip--offers {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: var(--warning);
+}
+/* "Who gets the minutes": the PCs as large buttons, free ones first to the eye. */
+.offer-pcs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+.offer-pc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.offer-pc[data-state='running'] {
+  border-left-color: var(--accent);
+}
+.offer-pc[data-state='open'],
+.offer-pc[data-state='off'] {
+  border-left-color: var(--border-strong);
+}
+.offer-pc:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.offer-pc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.offer-pc__state {
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.offer-nopc {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+/* The Stations page: the offers to pick from, one row each. */
+.offer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.offer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.offer-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.offer-row[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.offer-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.offer-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+}
+/* The Products page: the offers above the products. */
+.offers-card {
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.offers-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.offers-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+}
+.offers-card__list {
+  display: flex;
+  flex-direction: column;
+}
+.offers-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.offers-card__row--off .offers-card__text,
+.offers-card__row--off .offers-card__price {
+  opacity: 0.55;
+}
+.offers-card__text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+}
+.offers-card__price {
+  min-width: 72px;
+  text-align: right;
+}
+/* The offer form: one product per row — name, its own price, how many. */
+.offer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.offer-item__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.offer-item__qty {
+  width: 64px;
+  text-align: right;
+}
+
+/* 0.36.1 — offers: the stock of a product in the form, what one sale earns, what an offer sold. */
+.offer-item__name {
+  display: flex;
+  flex-direction: column;
+  white-space: normal;
+}
+.offer-item__stock {
+  font-weight: 400;
+  font-size: 12px;
+}
+.offer-profit {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+.offer-profit__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.offer-profit__value {
+  font-size: 20px;
+}
+.offer-profit__line {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.offers-card__figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.offers-card__figures strong {
+  color: var(--text);
+}
+/* Minutes paid at the till: the first tiles of the start window, and one click in "add time". */
+.start-tile--paid {
+  border-color: var(--success);
+  background: var(--success-soft);
+  text-align: center;
+}
+.paid-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+}
+.paid-credits__title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.paid-credits__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.paid-credit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.paid-credit:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--success);
+}
+.paid-credit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.paid-credit__text {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
 }

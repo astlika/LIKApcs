@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PROTOCOL_VERSION, type LiveSale, type ServerToAdminMessage } from '@likapcs/shared';
 import { getToken, websocketUrl } from './api';
 import { emitLiveSale } from './live';
+import { createRefreshQueue } from './live-refresh';
 
 export type LiveStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
@@ -11,7 +12,8 @@ export const PERMISSIONS_CHANGED_EVENT = 'likapcs:permissions-changed';
 
 /**
  * Maintains the /ws/admin connection while the user is signed in. Server events invalidate the
- * relevant React Query caches so every screen refreshes without polling.
+ * relevant React Query caches so every screen refreshes without polling. 0.37.0: the lists to
+ * refresh are gathered for a moment, so a burst of events refreshes each once (lib/live-refresh).
  */
 export function useAdminSocket(enabled: boolean): LiveStatus {
   const [status, setStatus] = useState<LiveStatus>('disconnected');
@@ -27,6 +29,10 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
     let closedByUs = false;
     let timer: number | null = null;
     let ping: number | null = null;
+    const queue = createRefreshQueue((queryKey) => {
+      void queryClient.invalidateQueries({ queryKey });
+    });
+    const refresh = queue.add;
 
     const connect = () => {
       const token = getToken();
@@ -61,62 +67,48 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
           switch (message.event) {
             case 'station.changed':
             case 'session.changed':
-              void queryClient.invalidateQueries({ queryKey: ['stations'] });
-              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-              // Session bills land in the cash drawer.
-              void queryClient.invalidateQueries({ queryKey: ['cash'] });
-              // An end-pay session ended / was collected: the "to collect" strip follows.
-              void queryClient.invalidateQueries({ queryKey: ['sessions', 'awaiting-payment'] });
+              // `cash`: session bills land in the cash drawer. `awaiting-payment`: an end-pay
+              // session ended / was collected — the "to collect" strip follows.
+              refresh(['stations'], ['dashboard'], ['cash'], ['sessions', 'awaiting-payment']);
               break;
             case 'device.registered':
             case 'device.changed':
-              void queryClient.invalidateQueries({ queryKey: ['devices'] });
-              void queryClient.invalidateQueries({ queryKey: ['stations'] });
-              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              refresh(['devices'], ['stations'], ['dashboard']);
               break;
             case 'system.restored':
               // A backup was restored on the server: every cached view is stale.
+              queue.clear();
               void queryClient.invalidateQueries();
               break;
             case 'request.changed':
               // A customer asked for time / staff answered: bell, PC tile and detail refresh.
-              void queryClient.invalidateQueries({ queryKey: ['session-requests'] });
-              void queryClient.invalidateQueries({ queryKey: ['stations'] });
+              refresh(['session-requests'], ['stations']);
               break;
             case 'order.changed':
               // Drinks / snacks ordered from a PC, or decided: bell, orders page, PC tile, session.
-              void queryClient.invalidateQueries({ queryKey: ['orders'] });
-              void queryClient.invalidateQueries({ queryKey: ['stations'] });
-              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+              refresh(['orders'], ['stations'], ['sessions']);
               break;
             case 'reports.changed':
               // Money or stock moved: the summary, the staff report, the drawer and the dashboard follow.
-              void queryClient.invalidateQueries({ queryKey: ['reports'] });
-              void queryClient.invalidateQueries({ queryKey: ['cash'] });
-              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-              void queryClient.invalidateQueries({ queryKey: ['live'] });
+              refresh(['reports'], ['cash'], ['dashboard'], ['live']);
               break;
             case 'reservation.changed':
               // 0.32.0: a PC reservation was booked, changed, cancelled or finished: the board follows.
-              void queryClient.invalidateQueries({ queryKey: ['reservations'] });
-              void queryClient.invalidateQueries({ queryKey: ['stations'] });
-              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              refresh(['reservations'], ['stations'], ['dashboard']);
               break;
             case 'live.sale':
               // 0.31.0: a sale for the live tracking page. Only admins with live.view get it.
-              void queryClient.invalidateQueries({ queryKey: ['live'] });
+              refresh(['live']);
               emitLiveSale(message.payload as LiveSale);
               break;
             case 'ads.changed':
               // A slide / album / promo changed: the ads page and the customer display follow.
-              void queryClient.invalidateQueries({ queryKey: ['ads'] });
-              void queryClient.invalidateQueries({ queryKey: ['display', 'feed'] });
-              void queryClient.invalidateQueries({ queryKey: ['products'] });
+              refresh(['ads'], ['display', 'feed'], ['products']);
               break;
             case 'permissions.changed':
               // A role was edited: the auth provider re-reads /auth/me so the navigation,
               // buttons and the home page follow the new permissions immediately.
-              void queryClient.invalidateQueries({ queryKey: ['roles'] });
+              refresh(['roles']);
               window.dispatchEvent(new Event(PERMISSIONS_CHANGED_EVENT));
               break;
             default:
@@ -145,6 +137,7 @@ export function useAdminSocket(enabled: boolean): LiveStatus {
       closedByUs = true;
       if (timer) window.clearTimeout(timer);
       if (ping) window.clearInterval(ping);
+      queue.stop();
       socket?.close();
     };
   }, [enabled, queryClient]);
