@@ -52,8 +52,12 @@ export const DATA_EXPORT_KEEP_MS = 60 * 60 * 1000;
 /** How often the removal of a folder is tried again later (every half minute). */
 const REMOVE_ATTEMPTS = 10;
 const KEEP_COUNT = 3;
-/** Version of the layout of the file itself (stated inside it). */
-const FILE_FORMAT_VERSION = 1;
+/**
+ * Version of the layout of the file itself (stated inside it).
+ *   2 (0.39.1): «Sipas produktit» lists every product, with margin and stock; the new table
+ *     «Stoku tani sipas produktit»; the stock state in words; «Gjendja tani» counts by it.
+ */
+const FILE_FORMAT_VERSION = 2;
 /**
  * Share of the loading bar: counting the rows, the summary, the tables, closing the files. The
  * summary's share inside the middle part follows the size of the data (see `summaryUnits`).

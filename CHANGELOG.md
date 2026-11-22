@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## [0.39.1] - 2026-11-22
+
+### Changed
+
+- **«Skedar për AI»: every product with its stock, its sales and its profit.** The file did hold the stock, but only in the list of products at its very end — an AI that stops reading earlier never reached it, and with «Vetëm përmbledhjet» it was not there at all; the table by product named only what had sold; and nowhere did it say in words whether a product is in stock. Now the summary on top — which is in every file, whatever is ticked — has both:
+  - **«Stoku tani sipas produktit»** (new): every active product with **«Ka stok»**, **«Stok i ulët»**, **«Pa stok»** or **«Stoku nuk ndiqet»**, the stock, the minimum, what it sold in the period, the cost, the price and the value of the stock. The products out of stock come first, then those low on stock. A product archived with goods still on the shelf is listed and marked. «Stoku nuk ndiqet» means «Ndiq stokun» is switched off on the product, so the program has no number for it.
+  - **«Sipas produktit»**: now a row for **every** active product — one that did not sell stands there with zeros, so "what did X sell?" always has an answer, and so has "what does not sell?". New columns: the bills it is on, the **gross margin**, the **profit per unit**, the quantity returned, the last sale in the period, the **stock now** with its state, and a warning where sale lines have no cost (the profit then comes out too high).
+  - **«Sipas kategorisë»** also gives the VAT, the cost, the gross profit and the margin of each category — the sum of its products.
+  - **«Gjendja tani»** counts the products by state: in stock, low on stock, out of stock, not tracked — they add up to the active products.
+  - The list of products at the end names the stock state too. Product names are in the order a person looks for them («Ç» after «C»).
+- "Low stock" follows the rule of the Products page (stock not more than the minimum); the file only tells «Pa stok» apart from «Stok i ulët». Until now «Gjendja tani» counted "below the minimum" by a rule of its own.
+- The layout version stated in the file is `2`. With 120 products the summaries alone grow from 0.04 MB to 0.07 MB (JSON) and from 0.03 MB to 0.05 MB (text).
+- No migration. See `docs/data-file.md`, "The products".
+
 ## [0.39.0] - 2026-11-22
 
 ### Added
@@ -15,7 +29,7 @@
 - **A permission of its own**, `reports.export_all` («Skedar për AI»): the owner and the admin role have it, anyone else only when it is given under Employees. Every file made is written to the action log.
 - **The file sees one moment.** Everything is read in one read-only snapshot, the summaries included, so the totals on top are exactly the sum of the rows below, and a sale made while the file is written is in neither. Every table is counted first and read afterwards; if the two numbers differ the file is not handed over. The shop keeps working meanwhile.
 - The server's copy of the files is deleted when the window closes, after an hour at the latest, and when the server starts; at most three are kept. They are not part of a backup.
-- Measured in the test set-up (2 processor cores; not on a shop PC) on a large test database: the whole history — 254,557 rows, of them 60,791 sales and 28,816 PC sessions — is written in 6 to 9 s (the test machine's speed varied) as 52.8 MB of JSON and 35.5 MB of text; one busy day (about 2,000 sales) in under a second as 1.9 MB and 1.2 MB; the summaries of a month alone in about a second as 0.04 MB. The bar never stood still for longer than a second. While the whole history was written, the server answered another request (the till's top bar, the product list) in under 0.1 s at the slowest. A cancel stopped the job within 0.2 s.
+- Measured in the test set-up (2 processor cores; not on a shop PC) on a large test database: the whole history — 254,557 rows, of them 60,791 sales and 28,816 PC sessions — is written in 6 to 9 s (the test machine's speed varied) as 52.8 MB of JSON and 35.5 MB of text; one busy day (about 2,000 sales) in under a second as 1.9 MB and 1.2 MB; the summaries of a month alone in about a second as 0.04 MB. The bar stood still for 1.3 s at the longest. While the whole history was written, the server answered another request (the till's top bar, the product list) in under 0.1 s at the slowest. A cancel stopped the job within 0.2 s.
 - API: `POST /reports/data-file`, `GET /reports/data-file/jobs/:id`, `POST /reports/data-file/:id/:format/download-ticket`, `GET /reports/data-file/:id/:format/download`, `DELETE /reports/data-file/:id`. Migration `0064_data_export_permission.sql` (the permission only; no table changes). See `docs/data-file.md` and `docs/network-protocol.md`.
 
 ## [0.38.0] - 2026-11-21

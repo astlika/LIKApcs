@@ -106,6 +106,23 @@ export function lineText(
   return description;
 }
 
+/**
+ * Whether a product is in stock, in the program's own terms: «Pa stok» is nothing left (0 or
+ * below); «Stok i ulët» is something left but not more than the minimum set on the product —
+ * the Products page counts both of these as low stock; «Ka stok» is the rest. A product sold
+ * without counting its stock has no state.
+ */
+export type StockStatus = 'in' | 'low' | 'out' | 'untracked';
+export function stockStatus(product: {
+  track_stock: boolean;
+  stock_milli: number;
+  min_stock_milli: number;
+}): StockStatus {
+  if (!product.track_stock) return 'untracked';
+  if (product.stock_milli <= 0) return 'out';
+  return product.stock_milli <= product.min_stock_milli ? 'low' : 'in';
+}
+
 const positive = (n: number | null | undefined): number | null => (n && n > 0 ? n : null);
 const nonZero = (n: number | null | undefined): number | null => (n ? n : null);
 const onlyTrue = (b: boolean | null | undefined): boolean | null => (b ? true : null);
@@ -1895,8 +1912,8 @@ const products = define<ProductRow>({
     return {
       title: l('Produktet (gjendja tani)', 'Products (as they are now)'),
       note: l(
-        'Çmimi i shitjes, kostoja dhe stoku i sotëm. Vlera e stokut = stoku × kostoja mesatare.',
-        "Today's selling price, cost and stock. Stock value = stock × average cost.",
+        'Çmimi i shitjes, kostoja dhe stoku i sotëm. Vlera e stokut = stoku × kostoja mesatare. «Pa stok» = s’ka mbetur asgjë; «Stok i ulët» = ka, por jo më shumë se stoku minimal.',
+        'Today\'s selling price, cost and stock. Stock value = stock × average cost. "Out of stock" = nothing left; "Low stock" = some left, but not more than the minimum stock.',
       ),
       columns: [
         { label: l('Produkti', 'Product'), get: (r) => r.name },
@@ -1912,6 +1929,10 @@ const products = define<ProductRow>({
           label: l('Stoku', 'Stock'),
           kind: 'qty',
           get: (r) => (r.track_stock ? r.stock_milli : null),
+        },
+        {
+          label: l('Gjendja e stokut', 'Stock state'),
+          get: (r) => w('stockStatus', stockStatus(r)),
         },
         {
           label: l('Vlera e stokut', 'Stock value'),
@@ -1962,12 +1983,6 @@ const products = define<ProductRow>({
           get: (r) => (r.unit_code === 'pc' ? null : r.unit_code),
         },
         { label: l('Furnitori', 'Supplier'), optional: true, get: (r) => r.supplier },
-        {
-          label: l('Stoku nuk ndiqet', 'Stock not tracked'),
-          kind: 'bool',
-          optional: true,
-          get: (r) => onlyTrue(!r.track_stock),
-        },
         {
           label: l('Joaktiv', 'Inactive'),
           kind: 'bool',

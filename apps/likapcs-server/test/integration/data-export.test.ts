@@ -73,7 +73,7 @@ describe('data file for an AI', () => {
 
   const call = <T>(
     token: string | null,
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     url: string,
     payload?: Record<string, unknown>,
   ) =>
@@ -686,6 +686,304 @@ describe('data file for an AI', () => {
     });
     expect(english.json!['Summary']).toBeDefined();
     expect(english.json!['PC sessions']).toBeUndefined();
+  });
+
+  it('every product has its sales, its profit and its stock — also with the summaries alone', async () => {
+    // Six more products, none of them sold: nothing left, a little left, not counted, two
+    // archived (one with goods still on the shelf). And the chips, sold above, are archived.
+    const make = async (payload: Record<string, unknown>): Promise<ProductSummary> => {
+      const res = await call<ProductSummary>(owner.token, 'POST', '/products', payload);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      return res.body;
+    };
+    const setActive = async (product: ProductSummary, isActive: boolean) => {
+      const res = await call(owner.token, 'PATCH', `/products/${product.id}`, { isActive });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+    };
+    await make({ name: 'Fanta 0.5', sellingPriceCents: 150, purchaseCostCents: 80 });
+    await make({
+      name: 'Sprite 0.5',
+      sellingPriceCents: 150,
+      purchaseCostCents: 80,
+      initialStockMilli: 4000,
+      minStockMilli: 10_000,
+    });
+    await make({ name: 'Kafe', sellingPriceCents: 100, trackStock: false });
+    const old = await make({
+      name: 'Çokollatë e vjetër',
+      sellingPriceCents: 200,
+      purchaseCostCents: 50,
+      initialStockMilli: 3000,
+    });
+    const gone = await make({ name: 'Akullore e hequr', sellingPriceCents: 100 });
+    await setActive(old, false);
+    await setActive(gone, false);
+    await setActive(chips, false);
+    // The bottles get a category; the chips and the internet codes have none.
+    const drinks = await call<{ id: string }>(owner.token, 'POST', '/catalog/categories', {
+      name: 'Pije',
+    });
+    expect(drinks.status, JSON.stringify(drinks.body)).toBe(201);
+    const setCategory = async (categoryId: string | null) => {
+      const res = await call(owner.token, 'PATCH', `/products/${cola.id}`, { categoryId });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+    };
+    await setCategory(drinks.body.id);
+
+    try {
+      const { json, text } = await exportFile({ formats: ['json', 'txt'], parts: [] });
+      const summary = json!['Përmbledhje'] as Json;
+      // Summaries alone: no list of products at the end, and still every product is there.
+      expect(json!['Produktet (gjendja tani)']).toBeUndefined();
+      const byProduct = summary['Sipas produktit'] as Row[];
+      const stock = summary['Stoku tani sipas produktit'] as Row[];
+      const totals = summary['Totalet e periudhës'] as Row;
+      const now = summary['Gjendja tani'] as Row;
+      const named = (rows: Row[], name: string) => rows.find((r) => r['Produkti'] === name);
+
+      // 1. Sales and profit of every product. The ones sold first, most turnover first; then
+      //    every active product that did not sell, with zeros, by name.
+      expect(byProduct.map((r) => r['Produkti'])).toEqual([
+        'Chips',
+        'Cola 0.5',
+        'Kohë PC e shitur në banak',
+        'Internet 1h',
+        'Kohë në PC (seanca)',
+        'Fanta 0.5',
+        'Kafe',
+        'Sprite 0.5',
+      ]);
+      // Three bottles on two bills, one came back: 2 × 1.50, cost 2 × 0.90, 57 on the shelf.
+      const colaRow = named(byProduct, 'Cola 0.5')!;
+      expect(colaRow).toMatchObject({
+        Sasia: 2,
+        Fatura: 2,
+        Qarkullimi: 3,
+        Kosto: 1.8,
+        'Sasia e kthyer': 1,
+        'Stoku tani': 57,
+        'Gjendja e stokut': 'Ka stok',
+      });
+      for (const row of byProduct) {
+        const profit = cents(row['Qarkullimi']) - cents(row['TVSH']) - cents(row['Kosto']);
+        expect(cents(row['Fitimi bruto']), String(row['Produkti'])).toBe(profit);
+        const revenue = cents(row['Qarkullimi']) - cents(row['TVSH']);
+        // The margin is the profit's share of the revenue without VAT; none where nothing sold.
+        if (revenue > 0) {
+          expect(row['Marzhi bruto'], String(row['Produkti'])).toBe(
+            Math.round((profit * 10_000) / revenue) / 100,
+          );
+        } else {
+          expect(row['Marzhi bruto']).toBeUndefined();
+        }
+      }
+      expect(cents(colaRow['Fitimi për njësi'])).toBe(
+        Math.round(cents(colaRow['Fitimi bruto']) / 2),
+      );
+      // Sold and archived since: its sales stay, and it says that it is not sold any more.
+      expect(named(byProduct, 'Chips')).toMatchObject({
+        Sasia: 2,
+        'Stoku tani': 18,
+        Joaktiv: true,
+      });
+      // Not sold: there with zeros and its stock, so "what does not sell?" has an answer.
+      expect(named(byProduct, 'Fanta 0.5')).toMatchObject({
+        Sasia: 0,
+        Fatura: 0,
+        Qarkullimi: 0,
+        'Fitimi bruto': 0,
+        'Stoku tani': 0,
+        'Gjendja e stokut': 'Pa stok',
+      });
+      expect(named(byProduct, 'Sprite 0.5')).toMatchObject({
+        Sasia: 0,
+        'Stoku tani': 4,
+        'Gjendja e stokut': 'Stok i ulët',
+      });
+      const kafe = named(byProduct, 'Kafe')!;
+      expect(kafe).toMatchObject({ Sasia: 0, 'Gjendja e stokut': 'Stoku nuk ndiqet' });
+      expect(kafe['Stoku tani']).toBeUndefined();
+      // PC time is not goods: no stock, no state, no profit "per unit".
+      const pcTime = named(byProduct, 'Kohë në PC (seanca)')!;
+      expect(pcTime['Gjendja e stokut']).toBeUndefined();
+      expect(pcTime['Fitimi për njësi']).toBeUndefined();
+      // Archived and never sold: not here.
+      expect(named(byProduct, 'Çokollatë e vjetër')).toBeUndefined();
+      expect(named(byProduct, 'Akullore e hequr')).toBeUndefined();
+      // The rows with zeros change no total: the products still add up to the turnover (the
+      // 0.50 taken off a whole bill is not on any line) and to the cost of the goods sold.
+      expect(sumOf(byProduct, 'Qarkullimi') - 50).toBe(
+        cents(totals['Qarkullimi (me TVSH, pas kthimeve)']),
+      );
+      expect(sumOf(byProduct, 'Kosto')).toBe(cents(totals['Kosto e mallit të shitur']));
+      // A bill with two products counts for both, so the column adds up to the bills or more.
+      expect(byProduct.reduce((n, r) => n + Number(r['Fatura']), 0)).toBeGreaterThanOrEqual(
+        Number(totals['Fatura (numri i shitjeve)']),
+      );
+
+      // By category: what the products of each category sold, cost and earned — to the cent
+      // the sum of their rows above. PC time has no category and is in neither row.
+      const byCategory = summary['Sipas kategorisë'] as Row[];
+      expect(byCategory.map((r) => r['Kategoria']).sort()).toEqual(['(pa kategori)', 'Pije']);
+      const goods = byProduct.filter((r) => r['SKU'] !== undefined);
+      for (const row of byCategory) {
+        const name = row['Kategoria'] === 'Pije' ? 'Pije' : undefined;
+        const members = goods.filter((r) => r['Kategoria'] === name);
+        for (const key of ['Qarkullimi', 'TVSH', 'Kosto', 'Fitimi bruto']) {
+          expect(cents(row[key]), `${String(row['Kategoria'])} ${key}`).toBe(sumOf(members, key));
+        }
+      }
+      expect(named(byProduct, 'Cola 0.5')).toMatchObject({ Kategoria: 'Pije' });
+      expect(byCategory.find((r) => r['Kategoria'] === 'Pije')).toMatchObject({
+        'Rreshta shitjesh': 2,
+        Qarkullimi: 3,
+        Kosto: 1.8,
+        'Marzhi bruto': colaRow['Marzhi bruto'],
+      });
+
+      // 2. The stock now: nothing left first, then low, then in stock, last the uncounted;
+      //    by name inside each («Ç» after «C», as a person looks for it).
+      expect(stock.map((r) => [r['Produkti'], r['Gjendja e stokut']])).toEqual([
+        ['Fanta 0.5', 'Pa stok'],
+        ['Internet 1h', 'Stok i ulët'],
+        ['Sprite 0.5', 'Stok i ulët'],
+        ['Chips', 'Ka stok'],
+        ['Cola 0.5', 'Ka stok'],
+        ['Çokollatë e vjetër', 'Ka stok'],
+        ['Kafe', 'Stoku nuk ndiqet'],
+      ]);
+      expect(named(stock, 'Sprite 0.5')).toEqual({
+        Produkti: 'Sprite 0.5',
+        'Gjendja e stokut': 'Stok i ulët',
+        Stoku: 4,
+        'Stoku minimal': 10,
+        'Shitur në periudhë': 0,
+        'Kosto mesatare': 0.8,
+        'Vlera e stokut me kosto': 3.2,
+        Çmimi: 1.5,
+        'Vlera e stokut me çmim shitjeje': 6,
+        SKU: expect.any(String),
+      });
+      expect(named(stock, 'Cola 0.5')).toMatchObject({
+        Stoku: 57,
+        'Shitur në periudhë': 2,
+        'Vlera e stokut me kosto': 51.3,
+        'Vlera e stokut me çmim shitjeje': 85.5,
+      });
+      // Two codes left of three, and the package warns at ten: low.
+      expect(named(stock, 'Internet 1h')).toMatchObject({ Stoku: 2, 'Shitur në periudhë': 1 });
+      // Archived with goods still on the shelf: listed, marked, and counted in the value.
+      expect(named(stock, 'Çokollatë e vjetër')).toMatchObject({
+        Stoku: 3,
+        'Vlera e stokut me kosto': 1.5,
+        Joaktiv: true,
+      });
+      expect(named(stock, 'Chips')).toMatchObject({ Stoku: 18, Joaktiv: true });
+      const kafeStock = named(stock, 'Kafe')!;
+      expect(kafeStock['Stoku']).toBeUndefined();
+      expect(kafeStock['Vlera e stokut me kosto']).toBeUndefined();
+      expect(named(stock, 'Akullore e hequr')).toBeUndefined();
+
+      // 3. «Gjendja tani» counts the same rows: the states add up to the active products, and
+      //    the values are the sums of the table.
+      expect(now).toMatchObject({
+        'Produkte aktive': 5,
+        'Aktive me stok (bashkë me ato me stok të ulët)': 3,
+        'Aktive me stok të ulët': 2,
+        'Aktive pa stok': 1,
+        'Aktive ku stoku nuk ndiqet': 1,
+        'Joaktive që kanë ende stok': 2,
+      });
+      expect(stock).toHaveLength(5 + 2);
+      expect(cents(now['Vlera e stokut me kosto'])).toBe(sumOf(stock, 'Vlera e stokut me kosto'));
+      expect(cents(now['Vlera e stokut me kosto'])).toBe(320 + 2160 + 5130 + 150);
+      expect(cents(now['Vlera e stokut me çmim shitjeje'])).toBe(
+        sumOf(stock, 'Vlera e stokut me çmim shitjeje'),
+      );
+
+      // 4. The text file says the same, a product a line, with the state in words.
+      expect(text).toContain('--- Stoku tani sipas produktit ---');
+      expect(text).toContain(
+        'Kolonat: Produkti | Kategoria | Gjendja e stokut | Stoku | Stoku minimal | Shitur në periudhë | Kosto mesatare | Vlera e stokut me kosto | Çmimi | Vlera e stokut me çmim shitjeje',
+      );
+      expect(text).toContain(
+        'Fanta 0.5 | - | Pa stok | 0 | 0 | 0 | 0.80 | 0.00 | 1.50 | 0.00 ; SKU: ',
+      );
+      expect(text).toContain(
+        'Sprite 0.5 | - | Stok i ulët | 4 | 10 | 0 | 0.80 | 3.20 | 1.50 | 6.00 ; SKU: ',
+      );
+      expect(text).toContain(
+        'Kafe | - | Stoku nuk ndiqet | - | - | 0 | 0.00 | - | 1.00 | - ; SKU: ',
+      );
+      expect(text).toContain(
+        'Kolonat: Produkti | Kategoria | Sasia | Fatura | Qarkullimi | TVSH | Kosto | Fitimi bruto | Marzhi bruto | Stoku tani',
+      );
+      expect(text).toContain(
+        'Fanta 0.5 | - | 0 | 0 | 0.00 | 0.00 | 0.00 | 0.00 | - | 0 ; Gjendja e stokut: Pa stok ; SKU: ',
+      );
+      expect(text).toMatch(
+        /\nCola 0\.5 \| Pije \| 2 \| 2 \| 3\.00 \| \d+\.\d\d \| 1\.80 \| \d+\.\d\d \| \d+\.\d\d % \| 57 ; Gjendja e stokut: Ka stok ; Fitimi për njësi: \d+\.\d\d ; Sasia e kthyer: 1 ; /,
+      );
+      // The guide at the top tells the reader where the products are.
+      expect(text).toContain(
+        'tabela «Stoku tani sipas produktit» tregon për çdo produkt a ka stok',
+      );
+      expect(text).toContain('Versioni i formatit: 2');
+
+      // 5. With the lists: the list of products names the state too.
+      const full = await exportFile({ formats: ['json'], parts: ['lists'] });
+      const list = full.json!['Produktet (gjendja tani)'] as Row[];
+      expect(named(list, 'Fanta 0.5')).toMatchObject({ Stoku: 0, 'Gjendja e stokut': 'Pa stok' });
+      expect(named(list, 'Sprite 0.5')).toMatchObject({
+        Stoku: 4,
+        'Stoku minimal': 10,
+        'Gjendja e stokut': 'Stok i ulët',
+      });
+      expect(named(list, 'Kafe')).toMatchObject({ 'Gjendja e stokut': 'Stoku nuk ndiqet' });
+      expect(named(list, 'Akullore e hequr')).toMatchObject({ Joaktiv: true });
+
+      // 6. In English, and for two days on which nothing was sold: every product with zeros,
+      //    the stock as it is now.
+      const quiet = await exportFile({
+        formats: ['json'],
+        language: 'en',
+        parts: [],
+        from: dayBefore(today(), 2),
+        to: dayBefore(today(), 1),
+      });
+      const quietSummary = quiet.json!['Summary'] as Json;
+      const quietProducts = quietSummary['By product'] as Row[];
+      expect(quietProducts.map((r) => r['Product'])).toEqual([
+        'Cola 0.5',
+        'Fanta 0.5',
+        'Internet 1h',
+        'Kafe',
+        'Sprite 0.5',
+      ]);
+      expect(quietProducts.every((r) => r['Qty'] === 0 && r['Turnover'] === 0)).toBe(true);
+      expect(quietProducts[0]).toMatchObject({ 'Stock now': 57, 'Stock state': 'In stock' });
+      const quietStock = quietSummary['Stock now by product'] as Row[];
+      expect(
+        quietStock.map((r) => [r['Product'], r['Stock state'], r['Sold in the period']]),
+      ).toEqual([
+        ['Fanta 0.5', 'Out of stock', 0],
+        ['Internet 1h', 'Low stock', 0],
+        ['Sprite 0.5', 'Low stock', 0],
+        ['Chips', 'In stock', 0],
+        // In English «Ç» is a C: "Çok…" comes before "Col…" (in Albanian it follows every C).
+        ['Çokollatë e vjetër', 'In stock', 0],
+        ['Cola 0.5', 'In stock', 0],
+        ['Kafe', 'Stock not tracked', 0],
+      ]);
+      expect(quietSummary['Now']).toMatchObject({
+        'Active products': 5,
+        'Active, out of stock': 1,
+        'Active, low on stock': 2,
+      });
+    } finally {
+      await setActive(chips, true);
+      await setCategory(null);
+    }
   });
 
   it('is refused without the permission, and the files open only with the sign-in or a ticket', async () => {

@@ -1,4 +1,4 @@
-# The data file for an AI («Skedar për AI», 0.39.0)
+# The data file for an AI («Skedar për AI», 0.39.0; products 0.39.1)
 
 One file that holds the business in full — from every sale down to every cash-in and cash-out —
 made to be handed to an AI and asked questions ("which day earned the most", "what does the
@@ -36,7 +36,7 @@ In this order, in both formats:
 
 1. **Skedari (File)** — the program and its version, the business, the period, when and by whom the
    file was made, the time zone, the currency, whether customers are hidden, the version of the
-   layout (`1`).
+   layout (`2` since 0.39.1: the product tables below).
 2. **Si lexohet (How to read it)** — a dozen sentences for the reader: what the business is, how the
    times and amounts are written, what turnover, revenue, gross and net profit mean here, which
    sales count in the totals, how a PC session is tied to its sale, what `+` and `−` mean on a
@@ -50,28 +50,78 @@ In this order, in both formats:
      difference, goods received from suppliers, paid to suppliers, owed to suppliers;
    - the same by **day**, by **product**, by **category**, by **staff member**, by **PC**, by
      **payment method**, by **source** (shop, gaming, PC order …) and by **hour of the day**;
+   - **every product, one by one** (see "The products" below): its sales and profit in the period,
+     and its stock now;
    - expenses by category, stock losses by kind, the drawer by kind of movement;
-   - **Gjendja tani (As it is now)**: active products, the value of the stock at cost and at selling
-     price, products out of stock or under their minimum, customers, customer balances, open debts,
-     paid PC minutes not yet used, running sessions, open shifts, the cash that should be in the
-     drawer.
+   - **Gjendja tani (As it is now)**: active products and how many of them are in stock, low on
+     stock, out of stock or not tracked, the value of the stock at cost and at selling price,
+     customers, customer balances, open debts, paid PC minutes not yet used, running sessions, open
+     shifts, the cash that should be in the drawer.
 5. **The tables**, one row per event of the period, oldest first.
 6. **The lists as they are now** (not as they were at the end of the period).
 
-| Part (tick box) | Tables                                                                                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sales`         | sales with their lines (item, quantity, price, total, cost, line discount, PC) and how they were paid; refunds with their lines, reason and method                              |
-| `gaming`        | PC sessions with their events (time added or given free, pause, move to another PC, discount, correction); paid time bought at the desk; reservations; orders made from the PCs |
-| `cash`          | shifts (opened, closed, expected, counted, difference); every drawer movement with its receipt, customer and reason; expenses                                                   |
-| `stock`         | every stock movement (goods in, sold, wasted, corrected, counted) with quantity, cost and reason; stock counts                                                                  |
-| `purchases`     | purchases from suppliers with their lines, receipts of goods, payments and returns; staff purchases                                                                             |
-| `customers`     | customer debts with their payments and instalments; movements of customer balances; invoices issued                                                                             |
-| `lists`         | products (price, cost, stock, VAT, category), offers, PC prices, time packages, PCs, customers, suppliers, staff (name, user name, role, active, last sign-in — nothing more)   |
-| `audit`         | the action log: who did what and when. Not ticked by default (large). Only amounts, minutes, reasons and document numbers of each action are written                            |
+| Part (tick box) | Tables                                                                                                                                                                                          |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sales`         | sales with their lines (item, quantity, price, total, cost, line discount, PC) and how they were paid; refunds with their lines, reason and method                                              |
+| `gaming`        | PC sessions with their events (time added or given free, pause, move to another PC, discount, correction); paid time bought at the desk; reservations; orders made from the PCs                 |
+| `cash`          | shifts (opened, closed, expected, counted, difference); every drawer movement with its receipt, customer and reason; expenses                                                                   |
+| `stock`         | every stock movement (goods in, sold, wasted, corrected, counted) with quantity, cost and reason; stock counts                                                                                  |
+| `purchases`     | purchases from suppliers with their lines, receipts of goods, payments and returns; staff purchases                                                                                             |
+| `customers`     | customer debts with their payments and instalments; movements of customer balances; invoices issued                                                                                             |
+| `lists`         | products (price, cost, stock and its state in words, category), offers, PC prices, time packages, PCs, customers, suppliers, staff (name, user name, role, active, last sign-in — nothing more) |
+| `audit`         | the action log: who did what and when. Not ticked by default (large). Only amounts, minutes, reasons and document numbers of each action are written                                            |
 
 The totals of the summary come from the same code as the Reports page (`services/reports.ts`,
 `reports-profit.ts`, `cash.ts`), read at the same moment as the rows — so they are the figures the
 owner already knows, and they are exactly the sum of the rows below them. A test holds both.
+
+### The products (0.39.1)
+
+Two tables of the summary answer "is it in stock?" and "what did it sell and earn?" for every
+product. They are in the summary, so they are in the file whatever parts are ticked — also with
+«Vetëm përmbledhjet» — and near the top, where an AI reads first. (Until 0.39.1 the stock stood
+only in the list of products at the very end of the file, the table by product named only what
+had sold, and neither said in words whether a product was in stock.)
+
+**«Sipas produktit» (By product)** — the period. One row for every product that sold (most
+turnover first), then one for **every active product that did not sell**, with zeros, by name; so
+"what did X sell?" always has an answer, and so has "what does not sell?".
+
+| Column                                      | What it is                                                                   |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| Sasia, Fatura                               | quantity sold after refunds; the bills the product stands on                 |
+| Qarkullimi, TVSH, Kosto                     | turnover (VAT included, after refunds), the VAT in it, the cost of what sold |
+| Fitimi bruto, Marzhi bruto                  | turnover − VAT − cost; that profit as a share of the turnover without VAT    |
+| Stoku tani, Gjendja e stokut                | what is on the shelf **now** (not at the end of the period), and in words    |
+| Fitimi për njësi                            | gross profit ÷ quantity (products only)                                      |
+| Sasia e kthyer, Shitja e fundit në periudhë | quantity that came back; the last sale inside the period                     |
+| Kujdes: rreshta shitjesh pa kosto           | sale lines of the product without a cost: its profit comes out too high      |
+| Varianti, SKU, Joaktiv                      | to tell products apart; a product sold and archived since is marked          |
+
+PC time (of sessions, and sold at the desk) and lines typed by hand keep their rows, without stock:
+the table still adds up to the turnover of the period (before discounts on a whole bill) and to the
+cost of the goods sold. **«Sipas kategorisë»** gives the same per category — turnover, VAT, cost,
+gross profit and margin — as the sum of the category's products.
+
+**«Stoku tani sipas produktit» (Stock now by product)** — the moment the file is made. Every active
+product, and the archived ones that still have goods on the shelf (they count in the stock value).
+The state stands in words, and the rows are grouped by it:
+
+| «Gjendja e stokut» | When                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| Pa stok            | nothing left (0, or below zero where negative stock is allowed)                              |
+| Stok i ulët        | something left, but not more than the product's minimum stock                                |
+| Ka stok            | the rest                                                                                     |
+| Stoku nuk ndiqet   | «Ndiq stokun» is off on the product: it is sold without being counted, so there is no number |
+
+The Products page counts «Pa stok» and «Stok i ulët» together as "stok i ulët" (`stock ≤ minimum`);
+the file uses the same rule and only names the two apart. Next to the state: the stock, the
+minimum, **what was sold in the period**, the average cost and the price, and the value of the
+stock at cost and at selling price. «Gjendja tani» counts these rows: _in stock + out of stock +
+not tracked = active products_, and its two stock values are the sums of the table.
+
+Product names are ordered as a person looks for them (in Albanian «Ç» follows «C», «Ë» follows
+«E»), not by byte as the database does.
 
 ### What is never inside
 
@@ -130,17 +180,18 @@ An AI reads a limited amount of text at once; what does not fit it skips or shor
 not always say so. The dialog warns from 1 MB on and suggests a shorter period, fewer parts, or
 «Vetëm përmbledhjet». Measured in the test set-up (2 processor cores; not on a shop PC):
 
-| Data                                          | Rows    | Made in | JSON    | TXT     |
-| --------------------------------------------- | ------- | ------- | ------- | ------- |
-| Summaries only, a month of a busy shop        | 0       | 1 s     | 0.04 MB | 0.03 MB |
-| One busy day (about 2,000 sales)              | 10,048  | 0.5 s   | 1.9 MB  | 1.2 MB  |
-| Three weeks                                   | 163,008 | 3.5 s   | 32.6 MB | 21.4 MB |
-| Whole history (60,791 sales, 28,816 sessions) | 254,557 | 6 s     | 52.8 MB | 35.5 MB |
-| The same with the action log                  | 393,956 | 6.5 s   | 69.2 MB | 47.4 MB |
+| Data                                                  | Rows    | Made in | JSON    | TXT     |
+| ----------------------------------------------------- | ------- | ------- | ------- | ------- |
+| Summaries only, a month of a busy shop (120 products) | 0       | 1 s     | 0.07 MB | 0.05 MB |
+| One busy day (about 2,000 sales)                      | 10,048  | 0.5 s   | 1.9 MB  | 1.3 MB  |
+| Three weeks                                           | 163,008 | 3.5 s   | 32.6 MB | 21.4 MB |
+| Whole history (60,791 sales, 28,816 sessions)         | 254,557 | 6 s     | 52.8 MB | 35.5 MB |
+| The same with the action log                          | 393,956 | 6.5 s   | 69.2 MB | 47.4 MB |
 
 The times are from the faster runs: the test machine's speed varied, and at other hours the whole
 history took 9 s. While it was written the server answered other requests (the till's top bar, the
-product list) in under 0.1 s at the slowest, and the bar never stood still for longer than a second.
+product list) in under 0.1 s at the slowest, and the bar stood still for 1.3 s at the longest. The
+two product tables of the summary take about 0.3 kB per product in the text file.
 
 ## The two waits, each with a bar
 

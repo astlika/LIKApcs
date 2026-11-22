@@ -182,6 +182,13 @@ export const VALUES = {
     standard: l('Produkt', 'Product'),
     internet_access: l('Kod interneti', 'Internet access code'),
   },
+  /** Not stored: worked out from the stock, the minimum and "stock is tracked" (see `stockStatus`). */
+  stockStatus: {
+    in: l('Ka stok', 'In stock'),
+    low: l('Stok i ulët', 'Low stock'),
+    out: l('Pa stok', 'Out of stock'),
+    untracked: l('Stoku nuk ndiqet', 'Stock not tracked'),
+  },
   severity: {
     info: l('info', 'info'),
     warning: l('kujdes', 'warning'),
@@ -269,6 +276,7 @@ export function guide(input: GuideInput): string[] {
       'PC sessions are paid through sales: the column "Receipt" links a session to its sale. A session without a receipt is not paid yet, cost nothing, or used time that was bought earlier.',
       'Cash movements are the notes and coins that went into the drawer (+) and out of it (−). Card and bank payments do not pass through the drawer.',
       'Stock movements: a quantity with + came in, with − went out.',
+      'Products: in the Summary, the table "By product" has the sales and the profit of every product in the period (a product that did not sell is there with 0), and the table "Stock now by product" says for every product whether it is in stock, and how much. Stock is always that of the moment the file was made, not of the end of the period.',
       'Turnover by product is before discounts given on a whole bill, so the products can add up to slightly more than the turnover. The daily figures can differ from the totals by a few cents because of rounding.',
       'The lists (products, customers, staff …) and the part "Now" show the state at the moment the file was made, not at the end of the period.',
       input.hideCustomers
@@ -290,6 +298,7 @@ export function guide(input: GuideInput): string[] {
     'Seancat e PC-ve paguhen përmes shitjeve: kolona «Fatura» e lidh seancën me shitjen e saj. Një seancë pa faturë ose nuk është paguar ende, ose nuk kushtoi asgjë, ose përdori kohë të blerë më parë.',
     'Lëvizjet e arkës janë paratë në dorë që hynë në arkë (+) dhe që dolën prej saj (−). Pagesat me kartë dhe me bankë nuk kalojnë nëpër arkë.',
     'Lëvizjet e stokut: sasia me + është hyrje malli, me − është dalje.',
+    'Produktet: te Përmbledhja, tabela «Sipas produktit» ka shitjen dhe fitimin e çdo produkti në periudhë (produkti që nuk u shit është aty me 0), dhe tabela «Stoku tani sipas produktit» tregon për çdo produkt a ka stok dhe sa. Stoku është gjithmonë ai i çastit kur u bë skedari, jo i fundit të periudhës.',
     'Qarkullimi sipas produktit është para zbritjeve të dhëna mbi gjithë faturën, prandaj shuma e produkteve mund të dalë pak më e madhe se qarkullimi. Shifrat sipas ditës mund të ndryshojnë nga totalet për disa cent, për shkak të rrumbullakimit.',
     'Listat (produktet, klientët, punonjësit …) dhe pjesa «Gjendja tani» tregojnë gjendjen në çastin kur u bë skedari, jo në fund të periudhës.',
     input.hideCustomers

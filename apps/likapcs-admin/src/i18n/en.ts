@@ -2721,7 +2721,7 @@ export const en = {
     partsAll: 'All',
     partsNone: 'Summaries only',
     partsHint:
-      'The summaries (totals, by day, product, staff member, PC) are always in. The fewer parts, the smaller the file.',
+      'Always in: the totals; the sales, profit and stock of every product; by day, staff member and PC.',
     parts: {
       sales: 'Sales and refunds',
       gaming: 'PCs: sessions, reservations',

@@ -2734,7 +2734,7 @@ export const sq: Dictionary = {
     partsAll: 'Të gjitha',
     partsNone: 'Vetëm përmbledhjet',
     partsHint:
-      'Përmbledhjet (totalet, sipas ditës, produktit, punonjësit, PC-së) janë gjithmonë brenda. Sa më pak pjesë, aq më i vogël skedari.',
+      'Gjithmonë brenda: totalet; shitja, fitimi dhe stoku i çdo produkti; sipas ditës, punonjësit dhe PC-së.',
     parts: {
       sales: 'Shitjet dhe kthimet',
       gaming: 'PC-të: seancat, rezervimet',
