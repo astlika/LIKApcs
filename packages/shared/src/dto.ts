@@ -3084,6 +3084,150 @@ export const reportExportQuerySchema = reportRangeSchema.extend({
   kind: z.enum(REPORT_EXPORT_KINDS),
 });
 
+// ─── Data file for an AI (0.39.0) ────────────────────────────────────────────
+
+/**
+ * «Skedar për AI»: every figure of the business in one JSON file and/or one text file, to hand
+ * to an AI and ask it questions. On top the summaries the reports show (so nothing has to be
+ * added up from thousands of rows), then every sale, PC session, drawer movement, expense, stock
+ * movement … of the period, then the lists as they are now (products, customers, staff, prices).
+ * Passwords, keys, internet access codes, pictures and network details are never in it.
+ */
+export const DATA_EXPORT_FORMATS = ['json', 'txt'] as const;
+export type DataExportFormat = (typeof DATA_EXPORT_FORMATS)[number];
+
+/** Parts the owner can leave out to make the file smaller. The summary is always there. */
+export const DATA_EXPORT_PARTS = [
+  'sales',
+  'gaming',
+  'cash',
+  'stock',
+  'purchases',
+  'customers',
+  'lists',
+  'audit',
+] as const;
+export type DataExportPart = (typeof DATA_EXPORT_PARTS)[number];
+/** What a file holds when nothing is chosen: everything but the action log (large, technical). */
+export const DATA_EXPORT_DEFAULT_PARTS: readonly DataExportPart[] = DATA_EXPORT_PARTS.filter(
+  (part) => part !== 'audit',
+);
+
+/** Language of the labels and explanations inside the file. */
+export const DATA_EXPORT_LANGUAGES = ['sq', 'en'] as const;
+export type DataExportLanguage = (typeof DATA_EXPORT_LANGUAGES)[number];
+
+export const dataExportSchema = z
+  .object({
+    /** Both ends inclusive, business time zone. Leave both out for the whole history. */
+    from: isoDate.optional(),
+    to: isoDate.optional(),
+    formats: z.array(z.enum(DATA_EXPORT_FORMATS)).min(1).max(DATA_EXPORT_FORMATS.length),
+    parts: z.array(z.enum(DATA_EXPORT_PARTS)).max(DATA_EXPORT_PARTS.length).optional(),
+    /** Customers appear by their code only: no names, phones, e-mails or notes. */
+    hideCustomers: z.boolean().default(false),
+    language: z.enum(DATA_EXPORT_LANGUAGES).default('sq'),
+  })
+  .refine((v) => (v.from === undefined) === (v.to === undefined), {
+    message: 'Give both "from" and "to", or neither for the whole history',
+    path: ['from'],
+  })
+  .refine((v) => !v.from || !v.to || v.from <= v.to, {
+    message: '"from" must not be after "to"',
+    path: ['from'],
+  });
+export type DataExportRequest = z.infer<typeof dataExportSchema>;
+
+/** Every table of rows the file can hold; `DataExportResult.counts` says how many rows each got. */
+export const DATA_EXPORT_SECTIONS = [
+  'sales',
+  'refunds',
+  'sessions',
+  'timeCredits',
+  'reservations',
+  'orders',
+  'shifts',
+  'cashMovements',
+  'expenses',
+  'stockMovements',
+  'stockCounts',
+  'purchases',
+  'staffPurchases',
+  'debts',
+  'customerLedger',
+  'invoices',
+  'products',
+  'offers',
+  'pricing',
+  'packages',
+  'stations',
+  'customers',
+  'suppliers',
+  'users',
+  'audit',
+] as const;
+export type DataExportSection = (typeof DATA_EXPORT_SECTIONS)[number];
+
+export const DATA_EXPORT_PHASES = [
+  'starting',
+  'counting',
+  'summary',
+  ...DATA_EXPORT_SECTIONS,
+  'finishing',
+] as const;
+export type DataExportPhase = (typeof DATA_EXPORT_PHASES)[number];
+
+export interface DataExportFile {
+  format: DataExportFormat;
+  fileName: string;
+  sizeBytes: number;
+  /** Lower-case hex; a saved copy is compared with it. */
+  sha256: string;
+}
+
+export interface DataExportResult {
+  id: string;
+  /** The days the file covers (for the whole history: the first day with any data, and today). */
+  from: string;
+  to: string;
+  wholeHistory: boolean;
+  parts: DataExportPart[];
+  hideCustomers: boolean;
+  language: DataExportLanguage;
+  /** Rows written per table; a table that was left out is not listed. */
+  counts: Partial<Record<DataExportSection, number>>;
+  totalRows: number;
+  files: DataExportFile[];
+  createdAt: string;
+  /** The server deletes its copy of the files at this instant. */
+  expiresAt: string;
+}
+
+export interface DataExportJobStatus {
+  id: string;
+  state: 'running' | 'succeeded' | 'failed';
+  /** 0–100; never goes backwards. 100 only when `state` is `succeeded`. */
+  percent: number;
+  phase: DataExportPhase;
+  /** Rows written so far out of the rows to write; null while they are being counted. */
+  current: number | null;
+  total: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: { code: string; message: string } | null;
+  result: DataExportResult | null;
+}
+
+export interface DataExportJobStarted {
+  jobId: string;
+}
+
+/** A short-lived key that lets a plain link download one file (a link cannot send the sign-in). */
+export interface DataExportTicket {
+  ticket: string;
+  expiresAt: string;
+}
+
 // ─── Phase 7: suppliers & purchases ──────────────────────────────────────────
 
 export const PURCHASE_STATUSES = [

@@ -44,6 +44,8 @@ import { StatementService } from './services/statement.js';
 import { WalletService } from './services/wallet.js';
 import { debtRoutes } from './routes/debts.js';
 import { ReportsService } from './services/reports.js';
+import { DATA_EXPORT_FOLDER, DataExportService } from './services/data-export/service.js';
+import { SERVER_VERSION } from './version.js';
 import { LiveService } from './services/live.js';
 import { PurchasingService } from './services/purchasing.js';
 import { BackupService } from './services/backups.js';
@@ -56,6 +58,7 @@ import { internetAccessRoutes } from './routes/internet-access.js';
 import { offerRoutes } from './routes/offers.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
+import { dataExportRoutes } from './routes/data-export.js';
 import { liveRoutes } from './routes/live.js';
 import { purchasingRoutes } from './routes/purchasing.js';
 import { backupRoutes } from './routes/backups.js';
@@ -109,6 +112,7 @@ export interface Services {
   wallet: WalletService;
   statements: StatementService;
   reports: ReportsService;
+  dataExport: DataExportService;
   live: LiveService;
   reservations: ReservationsService;
   purchasing: PurchasingService;
@@ -277,6 +281,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const customers = new CustomersService(pool, sales, sessions);
   const statements = new StatementService(pool);
   const reports = new ReportsService(pool, cash, settings);
+  // 0.39.0: «Skedar për AI» — the whole business in one JSON / text file.
+  const dataExport = new DataExportService(pool, settings, {
+    dir: path.join(config.dataDir, DATA_EXPORT_FOLDER),
+    version: SERVER_VERSION,
+    log: app.log,
+  });
+  // Files of an earlier run cannot be reached any more (the jobs lived in memory).
+  await dataExport.clearLeftovers();
   const live = new LiveService(pool, settings, cash, reports);
   const purchasing = new PurchasingService(pool, cash);
   // 0.38.0: the id can change while the server runs (a restore of another installation's backup).
@@ -352,6 +364,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     wallet,
     statements,
     reports,
+    dataExport,
     live,
     reservations,
     purchasing,
@@ -439,6 +452,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(customerRoutes);
       await api.register(debtRoutes);
       await api.register(reportRoutes);
+      await api.register(dataExportRoutes);
       await api.register(liveRoutes);
       await api.register(reservationRoutes);
       await api.register(purchasingRoutes);

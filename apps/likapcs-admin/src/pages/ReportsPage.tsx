@@ -5,7 +5,7 @@
  */
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, LineChart } from 'lucide-react';
+import { Download, LineChart, Sparkles } from 'lucide-react';
 import {
   PERMISSIONS,
   REPORT_EXPORT_KINDS,
@@ -15,7 +15,9 @@ import {
   type SalesReport,
 } from '@likapcs/shared';
 import { api, ApiError, getServerUrl, getToken } from '../lib/api';
+import { presetRange, type RangePreset } from '../lib/report-range';
 import { CashBookCard } from '../components/reports/CashBookCard';
+import { DataFileDialog } from '../components/reports/DataFileDialog';
 import { ProfitReportView } from '../components/reports/ProfitReportView';
 import { SummaryView } from '../components/reports/SummaryView';
 import { StaffView } from '../components/reports/StaffView';
@@ -36,41 +38,9 @@ import {
   StatTile,
 } from '../components/ui/primitives';
 
-type Preset = 'today' | 'yesterday' | 'week' | 'month' | 'lastMonth' | 'custom';
+type Preset = RangePreset;
 /** The two halves of Reports: the sales picture, or profit & spending (0.21.0). */
 type ReportView = 'summary' | 'sales' | 'profit' | 'staff';
-
-function iso(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function presetRange(p: Preset): { from: string; to: string } {
-  const now = new Date();
-  const today = iso(now);
-  switch (p) {
-    case 'today':
-      return { from: today, to: today };
-    case 'yesterday': {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      return { from: iso(y), to: iso(y) };
-    }
-    case 'week': {
-      const d = new Date(now);
-      const day = (d.getDay() + 6) % 7; // Monday = 0
-      d.setDate(d.getDate() - day);
-      return { from: iso(d), to: today };
-    }
-    case 'month':
-      return { from: `${today.slice(0, 8)}01`, to: today };
-    case 'lastMonth': {
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      return { from: iso(first), to: iso(last) };
-    }
-    default:
-      return { from: today, to: today };
-  }
-}
 
 /** Downloads an authenticated CSV export through fetch + blob (works in the browser and WebView2). */
 async function downloadCsv(kind: ReportExportKind, from: string, to: string): Promise<void> {
@@ -112,6 +82,7 @@ export function ReportsPage() {
   const [exportKind, setExportKind] = useState<ReportExportKind>('sales');
   const [exporting, setExporting] = useState(false);
   const [view, setView] = useState<ReportView>('summary');
+  const [dataFileOpen, setDataFileOpen] = useState(false);
   const range = useMemo(
     () => (preset === 'custom' ? custom : presetRange(preset)),
     [preset, custom],
@@ -145,26 +116,46 @@ export function ReportsPage() {
           r ? t('reports.generated', { time: fmt.dateTime(r.generatedAt) }) : t('reports.subtitle')
         }
         actions={
-          can(PERMISSIONS.REPORTS_EXPORT) && (
+          (can(PERMISSIONS.REPORTS_EXPORT) || can(PERMISSIONS.REPORTS_EXPORT_ALL)) && (
             <div className="row" style={{ gap: 8 }}>
-              <Select
-                value={exportKind}
-                onChange={(e) => setExportKind(e.target.value as ReportExportKind)}
-                aria-label={t('reports.exportKind')}
-              >
-                {REPORT_EXPORT_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {t(`reports.export.${k}` as 'reports.export.sales')}
-                  </option>
-                ))}
-              </Select>
-              <Button onClick={() => void onExport()} loading={exporting} disabled={!valid}>
-                <Download size={14} /> {t('reports.exportCsv')}
-              </Button>
+              {can(PERMISSIONS.REPORTS_EXPORT) && (
+                <>
+                  <Select
+                    value={exportKind}
+                    onChange={(e) => setExportKind(e.target.value as ReportExportKind)}
+                    aria-label={t('reports.exportKind')}
+                  >
+                    {REPORT_EXPORT_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {t(`reports.export.${k}` as 'reports.export.sales')}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button onClick={() => void onExport()} loading={exporting} disabled={!valid}>
+                    <Download size={14} /> {t('reports.exportCsv')}
+                  </Button>
+                </>
+              )}
+              {can(PERMISSIONS.REPORTS_EXPORT_ALL) && (
+                <Button
+                  variant="primary"
+                  onClick={() => setDataFileOpen(true)}
+                  title={t('dataFile.openHint')}
+                  data-testid="data-file-open"
+                >
+                  <Sparkles size={14} /> {t('dataFile.open')}
+                </Button>
+              )}
             </div>
           )
         }
       />
+      {dataFileOpen && (
+        <DataFileDialog
+          initial={{ preset, range: valid ? range : presetRange('today') }}
+          onClose={() => setDataFileOpen(false)}
+        />
+      )}
       <div className="toolbar">
         <Segmented<ReportView>
           value={view}

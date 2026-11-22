@@ -327,8 +327,35 @@ export async function saveBackupTo(
   backup: BackupSummary,
   onProgress: (step: 'saving' | 'checking_copy', fraction: number) => void,
 ): Promise<{ name: string; bytes: number; checksumChecked: boolean }> {
-  const total = backup.sizeBytes ?? 0;
-  const url = await backupDownloadUrl(backup.id);
+  return saveUrlTo(
+    handle,
+    {
+      url: await backupDownloadUrl(backup.id),
+      sizeBytes: backup.sizeBytes ?? 0,
+      sha256: backup.sha256 ?? null,
+    },
+    onProgress,
+  );
+}
+
+/** A file on the server to copy: where it is read from, and what the copy must come out as. */
+export interface SaveSource {
+  url: string;
+  sizeBytes: number;
+  sha256: string | null;
+}
+
+/**
+ * Copies a file of the server into the chosen file and reads the copy back (see `saveBackupTo`).
+ * Used for the backup archive and for the data files made for an AI.
+ */
+export async function saveUrlTo(
+  handle: FileSystemFileHandle,
+  source: SaveSource,
+  onProgress: (step: 'saving' | 'checking_copy', fraction: number) => void,
+): Promise<{ name: string; bytes: number; checksumChecked: boolean }> {
+  const total = source.sizeBytes;
+  const url = source.url;
   const writable = await handle.createWritable();
   try {
     const response = await fetch(url);
@@ -360,7 +387,7 @@ export async function saveBackupTo(
   const saved = await handle.getFile();
   if (total > 0 && saved.size !== total) await discard('size');
   let checksumChecked = false;
-  if (backup.sha256) {
+  if (source.sha256) {
     const sha = new Sha256();
     const report = throttled((f) => onProgress('checking_copy', f));
     const reader = saved.stream().getReader();
@@ -378,9 +405,57 @@ export async function saveBackupTo(
         lastBreath = Date.now();
       }
     }
-    if (sha.digestHex() !== backup.sha256) await discard('checksum');
+    if (sha.digestHex() !== source.sha256) await discard('checksum');
     checksumChecked = true;
   }
   onProgress('checking_copy', 1);
   return { name: saved.name, bytes: saved.size, checksumChecked };
+}
+
+/**
+ * Saves a file of the server as an ordinary download (the Downloads folder), with a percentage:
+ * the file is read piece by piece and handed to the window when it is complete. This is the way
+ * every download of the Admin works in the desktop app. A file too large to hold in memory
+ * follows the link instead, and the browser's own download takes over (no percentage here then).
+ */
+export async function downloadUrlWithProgress(
+  source: { url: string; sizeBytes: number; fileName: string; type: string },
+  onProgress: (fraction: number) => void,
+): Promise<void> {
+  const click = (href: string) => {
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = source.fileName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  if (source.sizeBytes > HELD_DOWNLOAD_LIMIT_BYTES) {
+    click(source.url);
+    onProgress(1);
+    return;
+  }
+  const response = await fetch(source.url);
+  if (!response.ok || !response.body) {
+    throw new ApiError(response.status, 'download_failed', `HTTP ${response.status}`);
+  }
+  const report = throttled(onProgress);
+  const reader = response.body.getReader();
+  const pieces: BlobPart[] = [];
+  let read = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    pieces.push(value);
+    read += value.length;
+    report(source.sizeBytes > 0 ? Math.min(read / source.sizeBytes, 0.999) : 0);
+  }
+  if (source.sizeBytes > 0 && read !== source.sizeBytes) {
+    throw new CopyMismatchError('size');
+  }
+  const href = URL.createObjectURL(new Blob(pieces, { type: source.type }));
+  click(href);
+  setTimeout(() => URL.revokeObjectURL(href), 60_000);
+  onProgress(1);
 }

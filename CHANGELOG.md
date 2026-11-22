@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-22
+
+### Added
+
+- **«Skedar për AI»: the whole business in one file, to ask an AI.** Admin › Raportet has the button **Skedar për AI**. It makes one file that holds everything in detail — every sale with its lines, prices, discounts, payment and cashier; every refund; every PC session with its events, the paid time, the reservations and the orders from the PCs; the till (shifts, every cash-in and cash-out with its receipt and reason, expenses); the stock (every movement of goods, the counts); purchases from suppliers; customer debts, balances and invoices; and the lists as they are now (products, offers, prices, PCs, customers, suppliers, staff). On top stand the **summaries the program calculates itself** — the totals of the period and the same by day, product, category, staff member, PC, payment method, source and hour — the figures of the Reports page, so an AI does not have to add up thousands of rows, and a short text that tells it how to read the file. The file is handed to an AI (ChatGPT, Claude, Gemini …) and questions are asked about it.
+  - **The period**: today, yesterday, the last 7 days, this month, last month, everything, or two dates. The window opens on the days the Reports page shows.
+  - **What goes in**: eight parts as tick boxes (all but the action log are ticked); «Vetëm përmbledhjet» leaves only the summaries, for a small file.
+  - **Two formats**, either or both: **JSON** (one row per line, amounts as plain numbers) and **TXT** — readable text with the columns named once and a row as `a | b | c`, about a third smaller than the JSON; not JSON under another name. Both hold the same rows, with words instead of database names, in the language the Admin is shown in.
+  - **«Fshih emrat dhe telefonat e klientëve»**, asked every time: each customer appears by code only, and no name, phone or note is in the file — also not a name typed by hand on a session, a reservation, paid time or a cash movement.
+  - **Never inside**, whatever is chosen: passwords and PINs, sign-in keys, internet access codes, pictures and videos, network addresses, settings.
+- **A loading bar with a percentage for both waits.** Making the file: the percentage, the step in words and the rows done out of all rows («Shitjet · 23,000 / 254,557 rreshta»), with **«Anulo»** under it — the file is given up within a moment and the choices stay. Saving each file: «Ruaj si…» writes it where it is chosen, reads the copy back and compares it with the original, with its own bar; «Shkarko» saves it to Downloads, also with a percentage.
+- **A warning for a file too large for an AI.** From 1 MB on, the window says that an AI reads a limited amount of text at once and suggests a shorter period, fewer parts or the summaries alone.
+- **A permission of its own**, `reports.export_all` («Skedar për AI»): the owner and the admin role have it, anyone else only when it is given under Employees. Every file made is written to the action log.
+- **The file sees one moment.** Everything is read in one read-only snapshot, the summaries included, so the totals on top are exactly the sum of the rows below, and a sale made while the file is written is in neither. Every table is counted first and read afterwards; if the two numbers differ the file is not handed over. The shop keeps working meanwhile.
+- The server's copy of the files is deleted when the window closes, after an hour at the latest, and when the server starts; at most three are kept. They are not part of a backup.
+- Measured in the test set-up (2 processor cores; not on a shop PC) on a large test database: the whole history — 254,557 rows, of them 60,791 sales and 28,816 PC sessions — is written in 6 to 9 s (the test machine's speed varied) as 52.8 MB of JSON and 35.5 MB of text; one busy day (about 2,000 sales) in under a second as 1.9 MB and 1.2 MB; the summaries of a month alone in about a second as 0.04 MB. The bar never stood still for longer than a second. While the whole history was written, the server answered another request (the till's top bar, the product list) in under 0.1 s at the slowest. A cancel stopped the job within 0.2 s.
+- API: `POST /reports/data-file`, `GET /reports/data-file/jobs/:id`, `POST /reports/data-file/:id/:format/download-ticket`, `GET /reports/data-file/:id/:format/download`, `DELETE /reports/data-file/:id`. Migration `0064_data_export_permission.sql` (the permission only; no table changes). See `docs/data-file.md` and `docs/network-protocol.md`.
+
 ## [0.38.0] - 2026-11-21
 
 ### Added

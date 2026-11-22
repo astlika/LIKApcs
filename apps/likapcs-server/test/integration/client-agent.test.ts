@@ -101,8 +101,10 @@ describe('LIKApcs-Client agent ↔ server', () => {
 
   it('registers, waits for approval, collects the token once and comes online locked', async () => {
     await agent.start();
+    // «registering» is shown before the request leaves the PC; the device exists on the
+    // server only once it has answered with the registration id (a slow machine showed it).
     await waitFor(
-      () => snap().phase.phase === 'registering' && snap().phase,
+      () => snap().phase.phase === 'registering' && snap().phase.registrationId,
       10_000,
       'registering',
     );

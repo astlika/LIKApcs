@@ -581,6 +581,32 @@ Days are bucketed in the **business time zone** (`locale.timezone` setting, defa
 `Europe/Belgrade`), so a sale at 00:30 local time belongs to the new day even though it is still the
 previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD HH:MM:SS`).
 
+#### One file with everything, for an AI (0.39.0; `reports.export_all`)
+
+«Skedar për AI» on the Reports page: the summaries of the period and every sale, PC session, drawer
+and stock movement … in one JSON and/or text file. It holds far more than any report, so it has a
+permission of its own (owner and admin by default, migration 0064). The file is made as a **job**.
+Layout, rules and measurements: [data-file.md](data-file.md).
+
+| Route                                                 | Body / query                                               | Result                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /reports/data-file`                             | `{from?, to?, formats, parts?, hideCustomers?, language?}` | `202 {jobId}`. `formats`: `json`, `txt` or both. `from` + `to` (`YYYY-MM-DD`, both or neither): neither = the whole history. `parts`: any of `sales`, `gaming`, `cash`, `stock`, `purchases`, `customers`, `lists`, `audit` (default: all but `audit`; `[]` = summaries only). `language`: `sq` (default) or `en`. `409 EXPORT_BUSY` while one is being made                                                |
+| `GET /reports/data-file/jobs/:id`                     | —                                                          | `DataExportJobStatus`: `{id, state: 'running' \| 'succeeded' \| 'failed', percent, phase, current, total, startedAt, finishedAt, error{code, message}?, result?}` — `current` / `total` are rows; `percent` never goes back. `result`: `{id, from, to, wholeHistory, parts, hideCustomers, language, counts{<table>: rows}, totalRows, files[{format, fileName, sizeBytes, sha256}], createdAt, expiresAt}` |
+| `POST /reports/data-file/:id/:format/download-ticket` | `{}`                                                       | `{ticket, expiresAt}` — valid 10 minutes for the download of that one file, so that it can be saved as an ordinary download                                                                                                                                                                                                                                                                                 |
+| `GET /reports/data-file/:id/:format/download`         | — or `?ticket=`                                            | the file (`application/json` or `text/plain`, UTF-8, `content-length`, `content-disposition: attachment`, `cache-control: no-store`); with a ticket no sign-in is needed (`403 TICKET_INVALID`); `404` once the export was deleted or has expired                                                                                                                                                           |
+| `DELETE /reports/data-file/:id`                       | —                                                          | `204` — deletes the server's copy of the files now. While the file is still being made it **cancels** the job instead: it stops at its next query (within a moment), ends as `failed` with `EXPORT_CANCELLED`, and nothing of it stays on the disk                                                                                                                                                          |
+
+Phases of the job: `starting`, `counting`, `summary`, then one per table written (`sales`,
+`refunds`, `sessions`, `timeCredits`, `reservations`, `orders`, `shifts`, `cashMovements`,
+`expenses`, `stockMovements`, `stockCounts`, `purchases`, `staffPurchases`, `debts`,
+`customerLedger`, `invoices`, `products`, `offers`, `pricing`, `packages`, `stations`, `customers`,
+`suppliers`, `users`, `audit`), `finishing`. A failed job carries `EXPORT_INCOMPLETE` (a table gave
+a different number of rows than were counted — no file is handed over), `EXPORT_CANCELLED` (given
+up with `DELETE`), `NOT_ENOUGH_SPACE` or `EXPORT_FAILED`.
+
+The server keeps the files for one hour and for at most three exports, deletes them when it starts,
+and writes `report.data_file` (severity `warning`) to the action log for every file made.
+
 ### Backups (`backups.manage`)
 
 | Route                       | Body / query                                       | Result                                                                                                                                                                                                                     |

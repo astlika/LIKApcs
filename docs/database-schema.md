@@ -299,6 +299,15 @@ the same after a year of history as on the first day.
 - **station_heartbeats** is emptied by the migration (see the table's entry above for why it had
   grown without limit).
 
+### The data file for an AI (0064)
+
+0.39.0 adds no table. `0064_data_export_permission.sql` adds the permission `reports.export_all`
+(category `reports`) and gives it to the `owner` and `admin` roles: «Skedar për AI» on the Reports
+page writes every sale, PC session, drawer and stock movement into one file, which is far more than
+`reports.export` (the CSV of one report) lets out. The file is read from the tables as they are, in
+one read-only snapshot; its files live under `<data dir>/ai-file-tmp` for an hour at most and are not
+in the database or in a backup. See [data-file.md](data-file.md).
+
 ## Operations
 
 ```bash
