@@ -874,8 +874,11 @@ export interface CustomerOpenBills {
   customerId: string;
   bills: {
     session: SessionSummary;
-    /** The products on this bill, one row per product. */
-    items: { name: string; quantityMilli: number; lineTotalCents: number }[];
+    /**
+     * The products on this bill, oldest first. Since 0.40.0 one row per time a product was put on
+     * the bill (the same drink taken twice is two rows), each with that moment in `addedAt`.
+     */
+    items: { name: string; quantityMilli: number; lineTotalCents: number; addedAt: string }[];
   }[];
   /** Time and products still to pay on these PCs. */
   totalCents: number;
@@ -894,8 +897,11 @@ export interface PaySessionsQuote {
     customerId: string | null;
     customerName: string | null;
     billingMode: BillingMode;
-    /** The products on this PC's bill. */
-    items: { name: string; quantityMilli: number; lineTotalCents: number }[];
+    /**
+     * The products on this PC's bill, oldest first. `addedAt` (0.40.0) is the moment each one was
+     * put on the bill — added by the desk, or accepted by it when the customer sent it from the PC.
+     */
+    items: { name: string; quantityMilli: number; lineTotalCents: number; addedAt: string }[];
   })[];
   skipped: PaySessionsResponse['skipped'];
   timeCents: number;
@@ -2084,6 +2090,13 @@ export interface SaleItemSummary {
    * (`receiptRows`). `id` is null once the offer itself was deleted — the name stays.
    */
   offer?: SaleItemOffer | null;
+  /**
+   * 0.40.0: when this product was put on a PC's bill (added by the desk, or accepted by it when
+   * the customer sent it from the PC). The bill is paid later, so the time of the sale is not the
+   * time of the product. Null / absent on every other line — PC time, and products sold at the
+   * till, where the time of the sale is the time of the product.
+   */
+  addedAt?: string | null;
 }
 
 export interface SaleItemOffer {
@@ -2702,6 +2715,12 @@ export interface StationOrder {
   settledAt: string | null;
   /** When the desk finished preparing it (scan / manual check, 0.13.0); null = not yet. */
   preparedAt: string | null;
+  /**
+   * How it came to be (0.40.0): true = the customer sent it from the PC, false = the desk put the
+   * products on the PC's bill. Together with `decidedAt` (the moment the desk accepted or added
+   * it) this answers "when, and how, did this product come onto the bill".
+   */
+  fromDevice: boolean;
 }
 
 /** `GET /client/menu` (device token): what the customer at this PC can order right now. */

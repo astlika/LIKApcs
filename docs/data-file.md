@@ -36,7 +36,8 @@ In this order, in both formats:
 
 1. **Skedari (File)** — the program and its version, the business, the period, when and by whom the
    file was made, the time zone, the currency, whether customers are hidden, the version of the
-   layout (`2` since 0.39.1: the product tables below).
+   layout (`2` since 0.39.1: the product tables below; `3` since 0.40.0: the time a product was put
+   on a PC's bill, on its sale line).
 2. **Si lexohet (How to read it)** — a dozen sentences for the reader: what the business is, how the
    times and amounts are written, what turnover, revenue, gross and net profit mean here, which
    sales count in the totals, how a PC session is tied to its sale, what `+` and `−` mean on a
@@ -60,16 +61,16 @@ In this order, in both formats:
 5. **The tables**, one row per event of the period, oldest first.
 6. **The lists as they are now** (not as they were at the end of the period).
 
-| Part (tick box) | Tables                                                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sales`         | sales with their lines (item, quantity, price, total, cost, line discount, PC) and how they were paid; refunds with their lines, reason and method                                              |
-| `gaming`        | PC sessions with their events (time added or given free, pause, move to another PC, discount, correction); paid time bought at the desk; reservations; orders made from the PCs                 |
-| `cash`          | shifts (opened, closed, expected, counted, difference); every drawer movement with its receipt, customer and reason; expenses                                                                   |
-| `stock`         | every stock movement (goods in, sold, wasted, corrected, counted) with quantity, cost and reason; stock counts                                                                                  |
-| `purchases`     | purchases from suppliers with their lines, receipts of goods, payments and returns; staff purchases                                                                                             |
-| `customers`     | customer debts with their payments and instalments; movements of customer balances; invoices issued                                                                                             |
-| `lists`         | products (price, cost, stock and its state in words, category), offers, PC prices, time packages, PCs, customers, suppliers, staff (name, user name, role, active, last sign-in — nothing more) |
-| `audit`         | the action log: who did what and when. Not ticked by default (large). Only amounts, minutes, reasons and document numbers of each action are written                                            |
+| Part (tick box) | Tables                                                                                                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sales`         | sales with their lines (item, quantity, price, total, cost, line discount, PC, and — for a product that stood on a PC's bill — when it was put there) and how they were paid; refunds with their lines, reason and method |
+| `gaming`        | PC sessions with their events (time added or given free, pause, move to another PC, discount, correction); paid time bought at the desk; reservations; orders made from the PCs                                           |
+| `cash`          | shifts (opened, closed, expected, counted, difference); every drawer movement with its receipt, customer and reason; expenses                                                                                             |
+| `stock`         | every stock movement (goods in, sold, wasted, corrected, counted) with quantity, cost and reason; stock counts                                                                                                            |
+| `purchases`     | purchases from suppliers with their lines, receipts of goods, payments and returns; staff purchases                                                                                                                       |
+| `customers`     | customer debts with their payments and instalments; movements of customer balances; invoices issued                                                                                                                       |
+| `lists`         | products (price, cost, stock and its state in words, category), offers, PC prices, time packages, PCs, customers, suppliers, staff (name, user name, role, active, last sign-in — nothing more)                           |
+| `audit`         | the action log: who did what and when. Not ticked by default (large). Only amounts, minutes, reasons and document numbers of each action are written                                                                      |
 
 The totals of the summary come from the same code as the Reports page (`services/reports.ts`,
 `reports-profit.ts`, `cash.ts`), read at the same moment as the rows — so they are the figures the

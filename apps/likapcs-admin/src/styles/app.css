@@ -2413,6 +2413,13 @@ body:has(.pos) .toasts {
   font-size: 10px;
   color: #555;
 }
+/* 0.40.0: the time a product of a PC's bill was taken. Solid black: a thermal printer must not
+   thin it out, it is what the desk and the customer read when the bill is questioned. */
+.receipt__line-time {
+  font-size: 10.5px;
+  color: #111;
+  white-space: nowrap;
+}
 /* 0.36.0: what an offer holds, under its row. */
 .receipt__items .receipt__parts td {
   padding-top: 0;
@@ -8489,4 +8496,100 @@ button.ads-album .ads-album__meta {
   .data-file__file-top {
     flex-wrap: wrap;
   }
+}
+
+/* ─── The time of each product on a PC's bill (0.40.0) ─────────────────────────
+   A customer who plays takes products that are paid later. Next to each one stands the time it
+   was put on the bill — the desk reads it and looks at the camera when the bill is questioned.
+   One product per line: time · what · who · amount. The times stand in a column of their own
+   (right-aligned, so "22.11 23:40" and "14:05" end at the same place), never wrap and never
+   shrink. Nothing is cut off and nothing scrolls on its own: every product is in sight. */
+.bill-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bill-items__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.bill-items__list[data-who] {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.bill-items__row {
+  grid-column: 1 / -1;
+  display: grid;
+  /* Without subgrid (old engines) every row lays out its own columns — still one line each. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: subgrid;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.bill-items__list[data-who] .bill-items__row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: subgrid;
+}
+.bill-items__time {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  text-align: right;
+}
+.bill-items__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.bill-items__who {
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.bill-items__amount {
+  white-space: nowrap;
+  text-align: right;
+}
+.bill-items__group {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.bill-items__list[data-tone='paid'],
+.bill-items__list[data-tone='paid'] .bill-items__time {
+  color: var(--text-muted);
+}
+/* Inside the amounts of a payment window: under the row that sums them, set in a little. */
+.bill-items[data-variant='quote'] {
+  margin: -2px 0 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.bill-items__list[data-variant='quote'] {
+  color: var(--text-muted);
+}
+/* Inside the card of one PC, where several PCs are paid on one receipt. */
+.bill-items__list[data-variant='pay'] {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bill-items__list[data-variant='pay'] .bill-items__amount {
+  font-weight: 600;
+  color: var(--text);
 }

@@ -175,6 +175,37 @@ describe('receiptRows', () => {
     });
   });
 
+  it('carries the time a product was put on a PC bill; other rows have none (0.40.0)', () => {
+    const offer = { id: 'o1', name: 'Coca-Cola + 60 min', group: 1 };
+    const rows = receiptRows([
+      line({ id: 1, description: 'PC05 · 1 h', gamingSessionId: 'g1' }),
+      line({
+        id: 2,
+        productId: PRODUCT,
+        description: 'Coca-Cola',
+        gamingSessionId: 'g1',
+        addedAt: '2026-11-23T13:05:00.000Z',
+      }),
+      line({
+        id: 3,
+        productId: PRODUCT,
+        description: 'Coca-Cola',
+        gamingSessionId: 'g1',
+        addedAt: '2026-11-23T14:40:00.000Z',
+      }),
+      line({ id: 4, productId: OTHER, description: 'Tost', addedAt: null }),
+      line({ id: 5, productId: OTHER, description: 'Tost', offer }),
+    ]);
+    // The same product taken twice stays two rows: each has its own time.
+    expect(rows.map((r) => [r.description, r.addedAt])).toEqual([
+      ['PC05 · 1 h', null],
+      ['Coca-Cola', '2026-11-23T13:05:00.000Z'],
+      ['Coca-Cola', '2026-11-23T14:40:00.000Z'],
+      ['Tost', null],
+      ['Coca-Cola + 60 min', null],
+    ]);
+  });
+
   it('shows the lines of one offer as one row with its name, price and content', () => {
     const offer = { id: 'o1', name: 'Coca-Cola + 60 min', group: 1 };
     const rows = receiptRows([
@@ -210,6 +241,7 @@ describe('receiptRows', () => {
       unitPriceCents: 300,
       discountCents: 0,
       lineTotalCents: 300,
+      addedAt: null,
     });
     // The receipt adds up to the same total as the sale's lines.
     expect(rows.reduce((a, r) => a + r.lineTotalCents, 0)).toBe(500);
@@ -246,6 +278,7 @@ describe('receiptRows', () => {
         unitPriceCents: 150,
         discountCents: 0,
         lineTotalCents: 300,
+        addedAt: null,
       },
     ]);
   });

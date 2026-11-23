@@ -56,8 +56,10 @@ const KEEP_COUNT = 3;
  * Version of the layout of the file itself (stated inside it).
  *   2 (0.39.1): «Sipas produktit» lists every product, with margin and stock; the new table
  *     «Stoku tani sipas produktit»; the stock state in words; «Gjendja tani» counts by it.
+ *   3 (0.40.0): the line of a product that stood on a PC's bill says when it was put there
+ *     («Shtuar në faturën e PC-së»); a sentence of the guide explains it.
  */
-const FILE_FORMAT_VERSION = 2;
+const FILE_FORMAT_VERSION = 3;
 /**
  * Share of the loading bar: counting the rows, the summary, the tables, closing the files. The
  * summary's share inside the middle part follows the size of the data (see `summaryUnits`).

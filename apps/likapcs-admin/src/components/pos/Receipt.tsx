@@ -11,8 +11,15 @@ export function Receipt({ data }: { data: ReceiptData }) {
   const { t } = useI18n();
   const fmt = useFormat();
   const { sale, business } = data;
+  /** The receipt's own date and time, printed in its head. */
+  const soldAt = sale.completedAt ?? sale.createdAt;
   const qty = (milli: number) =>
     milli % 1000 === 0 ? String(milli / 1000) : (milli / 1000).toFixed(3);
+  /** "ora 14:05"; on another day than the receipt's: "22.11, ora 23:40". */
+  const addedText = (addedAt: string) => {
+    const { time, day } = fmt.timeOnParts(addedAt, soldAt);
+    return day ? t('receipt.addedAtDay', { day, time }) : t('receipt.addedAt', { time });
+  };
   return (
     <div className="receipt" data-width={data.widthMm} id="printable-receipt">
       <div className="receipt__head">
@@ -35,7 +42,7 @@ export function Receipt({ data }: { data: ReceiptData }) {
         </div>
         <div>
           <span>{t('receipt.date')}</span>
-          <span>{fmt.dateTime(sale.completedAt ?? sale.createdAt)}</span>
+          <span>{fmt.dateTime(soldAt)}</span>
         </div>
         <div>
           <span>{t('receipt.cashier')}</span>
@@ -65,6 +72,13 @@ export function Receipt({ data }: { data: ReceiptData }) {
               <tr>
                 <td>
                   {i.description}
+                  {/* 0.40.0: a product of a PC's bill was taken earlier than the bill is paid —
+                      the receipt says when (with the day, when it was not the receipt's day). */}
+                  {i.addedAt && (
+                    <div className="receipt__line-time" data-testid="receipt-added-at">
+                      {addedText(i.addedAt)}
+                    </div>
+                  )}
                   {i.discountCents > 0 && (
                     <div className="receipt__line-note">
                       −{fmt.money(i.discountCents)} {t('receipt.discount').toLowerCase()}

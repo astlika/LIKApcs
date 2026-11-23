@@ -174,6 +174,12 @@ export interface OrderLineForSale {
   unitCostCents: number;
   /** Exact unit cost in mills (thousandths of €). */
   unitCostMills: number;
+  /**
+   * 0.40.0: when the product was put on the bill — the desk added it, or accepted what the
+   * customer sent from the PC. It goes onto the sale line (`sale_items.added_at`): the bill is
+   * paid later, and the receipt still has to say at what time each product was taken.
+   */
+  addedAt: Date;
 }
 export interface SessionOrdersHook {
   /** Locks and returns the lines of the session's accepted "on the bill" orders. */
@@ -1978,17 +1984,20 @@ export class SessionsService {
       [customerId],
     );
     const sessions = found.rows.map((row) => this.mapRow(row));
+    // 0.40.0: one row per time a product was put on the bill, with that moment — the desk reads
+    // it when the bill is questioned. (Until then: one row per product, the times lost.)
     const items = await this.pool.query<{
       session_id: string;
       name: string;
       quantity_milli: string;
       amount: string;
+      added_at: Date;
     }>(
-      `SELECT o.session_id, oi.name, SUM(oi.quantity_milli)::bigint AS quantity_milli,
-              SUM(oi.line_total_cents)::bigint AS amount
+      `SELECT o.session_id, oi.name, oi.quantity_milli, oi.line_total_cents AS amount,
+              COALESCE(o.decided_at, o.requested_at) AS added_at
          FROM station_orders o JOIN station_order_items oi ON oi.order_id = o.id
         WHERE o.session_id = ANY($1::uuid[]) AND o.status = 'accepted'
-        GROUP BY o.session_id, oi.name ORDER BY MIN(o.requested_at)`,
+        ORDER BY COALESCE(o.decided_at, o.requested_at), o.requested_at, oi.id`,
       [sessions.map((x) => x.id)],
     );
     const bills = sessions.map((session) => ({
@@ -1999,6 +2008,7 @@ export class SessionsService {
           name: i.name,
           quantityMilli: Number(i.quantity_milli),
           lineTotalCents: Number(i.amount),
+          addedAt: i.added_at.toISOString(),
         })),
     }));
     return {
@@ -2435,6 +2445,7 @@ export class SessionsService {
           name: l.name,
           quantityMilli: l.quantityMilli,
           lineTotalCents: l.lineTotalCents,
+          addedAt: l.addedAt.toISOString(),
         })),
       });
     }
@@ -3389,8 +3400,8 @@ export class SessionsService {
         lineNo += 1;
         await client.query(
           `INSERT INTO sale_items (sale_id, line_no, product_id, gaming_session_id, description, quantity_milli, unit_price_cents,
-             discount_cents, tax_rate_bp, tax_cents, line_total_cents, cost_cents)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11)`,
+             discount_cents, tax_rate_bp, tax_cents, line_total_cents, cost_cents, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12)`,
           [
             saleId,
             lineNo,
@@ -3403,6 +3414,8 @@ export class SessionsService {
             splitInclusiveTax(line.lineTotalCents, rateBp).tax,
             line.lineTotalCents,
             multiplyMillsByQuantity(line.unitCostMills, line.quantityMilli),
+            // 0.40.0: the time the product was put on the bill, not the time of this payment.
+            line.addedAt,
           ],
         );
       }

@@ -99,6 +99,37 @@ export function formatTimeWithSeconds(
   return `${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}`;
 }
 
+/**
+ * The time of day of one line of a bill (0.40.0), read against `reference` — the day the reader
+ * already has in mind (today on a screen, the receipt's own date on a receipt). `day` is null on
+ * that same calendar day; another day of the same year gives "21.11", another year "31.12.2025".
+ * A bare "23:40" must never be read as today's when it was yesterday's.
+ */
+export function timeOnDayParts(
+  value: Date | string | number,
+  reference: Date | string | number,
+  options: DateFormatOptions = {},
+): { time: string; day: string | null } {
+  const at = getParts(toDate(value), options.timeZone);
+  const ref = getParts(toDate(reference), options.timeZone);
+  const time = `${pad2(at.hour)}:${pad2(at.minute)}`;
+  if (at.year !== ref.year) return { time, day: `${pad2(at.day)}.${pad2(at.month)}.${at.year}` };
+  if (at.month !== ref.month || at.day !== ref.day) {
+    return { time, day: `${pad2(at.day)}.${pad2(at.month)}` };
+  }
+  return { time, day: null };
+}
+
+/** `timeOnDayParts` as one text: "14:05", "21.11 23:40", "31.12.2025 23:40". */
+export function formatTimeOnDay(
+  value: Date | string | number,
+  reference: Date | string | number,
+  options: DateFormatOptions = {},
+): string {
+  const { time, day } = timeOnDayParts(value, reference, options);
+  return day ? `${day} ${time}` : time;
+}
+
 /** "09.10.2026 14:05" */
 export function formatDateTime(
   value: Date | string | number,

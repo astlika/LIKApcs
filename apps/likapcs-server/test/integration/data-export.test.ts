@@ -928,7 +928,7 @@ describe('data file for an AI', () => {
       expect(text).toContain(
         'tabela «Stoku tani sipas produktit» tregon për çdo produkt a ka stok',
       );
-      expect(text).toContain('Versioni i formatit: 2');
+      expect(text).toContain('Versioni i formatit: 3');
 
       // 5. With the lists: the list of products names the state too.
       const full = await exportFile({ formats: ['json'], parts: ['lists'] });

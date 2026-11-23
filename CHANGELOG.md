@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+## [0.40.0] - 2026-11-23
+
+### Added
+
+- **The time of every product on a PC's bill.** A customer who plays takes a drink, later something to eat, and pays at the end. Until now the bill said what he took and what it costs, not when. Each product now carries **the time it was put on the bill** — to tell the customer when he took it, and to look at the camera recording of that minute when he disputes it. It is shown:
+  - **Stacionet › the PC's panel**: under «Produktet në faturë» every product on a line of its own — the time, quantity × product, who added it (or **«nga PC-ja»** when the customer ordered it from the PC), the amount — oldest first, the times in a column of their own. Under them **«Të paguara»**: what this session has paid for already. Holding the pointer on a line gives the moment to the second; for an order from the PC both when it was sent and when the desk accepted it; for a paid product also its receipt.
+  - **The windows that take the money**: «Përfundo seancën», «Arkëto» of a bill that waits, «Paguaj» for one or several PCs, and the bill of a customer.
+  - **The printed receipt**: under each product of the PC's bill, **«ora 14:57»**; a product of another day than the receipt's names the day too («22.11, ora 23:40»). The same on a reprint, on 80 mm and on 58 mm paper. The line of the PC's time and a product sold at the till have no such note — there the receipt's own time is the time.
+  - **Shitjet › a sale**: «Shtuar te fatura e PC-së: 14:57» under the product.
+  - **«Skedar për AI»**: the sale line has «Shtuar në faturën e PC-së», and the guide of the file explains it (layout version `3`).
+- **Which moment it is**: when the desk put the product on the bill — added it there, or accepted what the customer ordered from the PC. Not when the bill was paid, and not when the customer pressed the button.
+- **Another day shows its date.** A product taken at 23:40 and looked at after midnight reads «22.11 23:40», never a bare 23:40 that would pass for today's.
+- **The list follows by itself**: a product added in this window, at another desk or from a PC appears at once, without reopening the panel.
+- **Bills paid before this update** have the times too: the update takes them from the orders those bills settled, wherever the line can be told for certain; a line it cannot tell keeps no time rather than a wrong one.
+- An order that stood on the bill and is paid on its own at the desk, before the session ends, keeps its time on that receipt as well.
+
+### Changed
+
+- «Paguaj» and the bill of a customer list the products **one per line** (they ran on in one row), and a product taken at two different times stands twice, each with its time, instead of once with the quantities added up.
+- The row that sums the products of a bill reads **«Produktet në faturë»** in the panel and in the two payment windows (it read «Porositë në llogari (5)» — a count of orders above a list of products).
+- API: `StationOrder.fromDevice`; `addedAt` on the products of `POST /sessions/pay/quote` and of `GET /sessions/open-bills` (now one row per order line); `SaleItemSummary.addedAt`, so also in a sale's detail and its receipt. Migration `0065_sale_item_added_at.sql` (the column `sale_items.added_at`, and the times of the bills already paid). See `docs/network-protocol.md`, "The time of each product on a PC's bill", and `docs/database-schema.md`.
+- Not changed: the screen of the gaming PC, the phone app and the tablet.
+
 ## [0.39.1] - 2026-11-22
 
 ### Changed

@@ -321,11 +321,12 @@ export class SalesService {
       offer_id: string | null;
       offer_name: string | null;
       offer_group: number | null;
+      added_at: Date | null;
     }>(
       `SELECT i.id::text, i.line_no, i.product_id, i.gaming_session_id, i.description, p.sku, i.quantity_milli::text,
               i.unit_price_cents::text, i.discount_cents::text, i.tax_rate_bp, i.tax_cents::text,
               i.line_total_cents::text, i.refunded_milli::text, i.addons,
-              i.offer_id, i.offer_name, i.offer_group,
+              i.offer_id, i.offer_name, i.offer_group, i.added_at,
               (SELECT array_agg(c.code ORDER BY c.id) FROM internet_access_codes c
                 WHERE c.sale_item_id = i.id) AS access_codes
          FROM sale_items i LEFT JOIN products p ON p.id = i.product_id
@@ -352,6 +353,7 @@ export class SalesService {
         i.offer_group === null || i.offer_name === null
           ? null
           : { id: i.offer_id, name: i.offer_name, group: i.offer_group },
+      addedAt: i.added_at ? i.added_at.toISOString() : null,
     }));
   }
 

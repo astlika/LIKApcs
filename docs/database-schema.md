@@ -145,7 +145,8 @@ sales ──  invoices            purchases ──< purchase_returns ──< pur
   `client_request_id` (idempotency), `shift_id`, `cashier_user_id`.
 - **sale_items** — snapshots: `description`, `unit_price_cents`, `tax_rate_bp`, `cost_cents`
   (COGS for the whole line, from the product's average cost at sale time), `quantity_milli`,
-  optional `gaming_session_id`.
+  optional `gaming_session_id`. `added_at` (0065): when a product that stood on a PC's bill was put
+  on that bill — NULL on every other line (see "The time of a product on a PC's bill" below).
 - **payments** — `kind` sale/refund/wallet_topup/customer_payment/session_deposit, `method`
   cash/card/bank_transfer/wallet/credit/other, `amount_cents`, `shift_id`.
 - **refunds / refund_items** — partial or full, `restock` flag, `authorized_by`.
@@ -307,6 +308,27 @@ page writes every sale, PC session, drawer and stock movement into one file, whi
 `reports.export` (the CSV of one report) lets out. The file is read from the tables as they are, in
 one read-only snapshot; its files live under `<data dir>/ai-file-tmp` for an hour at most and are not
 in the database or in a backup. See [data-file.md](data-file.md).
+
+### The time of a product on a PC's bill (0065)
+
+A customer who plays takes a drink, later something to eat; the desk puts each on the PC's bill
+(`station_orders`, status `accepted`, settlement `on_bill`) and the bill is paid at the end. While
+it is open, the time of a product is its order's `decided_at`: the moment the desk added it, or
+accepted what the customer sent from the PC (`device_id` set; `requested_at` is when it was sent).
+
+Once the bill is paid the products are lines of the sale, and a sale has one time — the payment's.
+`0065_sale_item_added_at.sql` adds **`sale_items.added_at`** (`timestamptz`, nullable), written:
+
+- by a session payment (`SessionsService.recordSale`) on every product line taken from the bill —
+  `COALESCE(decided_at, requested_at)` of the line's order;
+- by `POST /orders/:id/pay`, when an order that stood on the bill is paid on its own at the desk.
+
+It stays NULL on PC-time lines, on products sold at the till, and on an order paid in the very step
+it was added or accepted — there the time of the sale is the time of the product.
+
+The migration also fills the lines of bills paid before 0.40.0 from the orders their sale settled
+(`station_orders.sale_id`): the n-th line of a product on a PC's part of the sale is the n-th order
+line of that product, taken only when the quantities agree. A line without such a pair keeps NULL.
 
 ## Operations
 

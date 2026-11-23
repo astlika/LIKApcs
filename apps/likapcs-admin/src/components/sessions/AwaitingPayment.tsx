@@ -35,6 +35,7 @@ import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Button, Dialog, Field, Input, Kbd } from '../ui/primitives';
 import { AddToSessionDialog } from './AddToSessionDialog';
+import { SessionBillItems } from './SessionBillItems';
 import { paidFrom, useSessionCustomer } from './SessionPanel';
 import { SessionPaidDialog, type SessionPaid } from './SessionPaidDialog';
 
@@ -474,12 +475,12 @@ export function CollectDialog({
             </div>
             {ordersCents > 0 && (
               <div className="quote__row" data-testid="collect-orders">
-                <span className="muted">
-                  {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
-                </span>
+                <span className="muted">{t('sessions.openOrders')}</span>
                 <span className="num">{fmt.money(ordersCents)}</span>
               </div>
             )}
+            {/* 0.40.0: what those products are, each with the time it was put on the bill. */}
+            {ordersCents > 0 && <SessionBillItems sessionId={session.id} variant="quote" />}
             <div className="quote__row quote__row--total">
               <span>{t('sessions.totalDue')}</span>
               <strong className="num" data-testid="collect-total">

@@ -1141,12 +1141,16 @@ A session's bill no longer has to be settled in one step.
   sets, changes or clears who sits there, for a running session and for an ended one whose bill
   waits (409 afterwards). The products waiting on the bill follow the customer.
 - `GET /sessions/open-bills?customerId=` — the customer's sessions that run or wait, each with the
-  products on its bill, and `totalCents`.
+  products on its bill, and `totalCents`. Since 0.40.0 the products are one row per time a product
+  was put on the bill (`items[{ name, quantityMilli, lineTotalCents, addedAt }]`, oldest first),
+  no longer one row per product.
 
 **One receipt for several PCs, at any time**
 
 - `POST /sessions/pay/quote` `{ sessionIds, stopOpen }` →
-  `{ asOf, bills[], skipped[], timeCents, ordersCents, totalCents }`. Changes nothing.
+  `{ asOf, bills[], skipped[], timeCents, ordersCents, totalCents }`. Changes nothing. Each bill
+  lists its products oldest first: `items[{ name, quantityMilli, lineTotalCents, addedAt }]`
+  (`addedAt` since 0.40.0).
 - `POST /sessions/pay`
   `{ sessionIds, stopOpen = true, customerId?, discountCents?, payments, asOf?, clientRequestId? }`
   → `{ payment, bills[], skipped[], totalCents }`. One transaction, one sale with a line per PC
@@ -1255,3 +1259,29 @@ as paid time for any PC.
   whole sale, as it would on its own.
 - A sale with an offer needs the server: the Admin does not queue it offline, does not park it
   and does not put it on a PC's bill.
+
+## The time of each product on a PC's bill (0.40.0, migration 0065)
+
+A product a playing customer takes is paid later, with the PC's bill. So that the desk can say at
+what time each product was taken (and look at the camera recording of that minute), the moment is
+carried everywhere the bill is read. It is the moment the desk put the product on the bill: when
+it added it (`POST /sessions/:id/orders`), or when it accepted what the customer sent from the PC
+(`POST /orders/:id/accept`) — not when the customer sent it, and not when the bill was paid.
+
+- **`StationOrder`** (`GET /orders`, `GET /orders/:id`, the `order.changed` event) — new
+  `fromDevice: boolean`: `true` when the customer sent the order from the PC, `false` when the desk
+  added the products. With the existing `decidedAt` and `decidedByName` this says when, how and by
+  whom. `GET /orders?sessionId=<id>&limit=200` is the whole bill of one session: `accepted` orders
+  are still to pay, `paid` / `billed` ones are settled (`receiptNo` names the receipt).
+- **`POST /sessions/pay/quote`** and **`GET /sessions/open-bills`** — `addedAt` on every product
+  (see above).
+- **`SaleItemSummary.addedAt`** (`string | null`, in `SaleDetail` and `ReceiptData`) — on the lines
+  of a sale that came from a PC's bill; `null` on PC time, on products sold at the till and on an
+  order paid in the step it was added. A receipt prints it under the product; `receiptRows` hands
+  it on as `ReceiptRow.addedAt`. Bills paid before 0.40.0 get it from the migration where the line
+  can be told for certain.
+- `formatTimeOnDay(value, reference)` in `@likapcs/shared` writes it: `14:05` on the calendar day
+  of `reference` (today on a screen, the receipt's date on a receipt), `21.11 23:40` on another
+  day, `31.12.2025 23:40` in another year; `timeOnDayParts` gives the day and the time apart.
+
+The PC's own screen is unchanged: `server.order` carries what it carried.

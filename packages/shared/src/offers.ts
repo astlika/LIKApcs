@@ -273,6 +273,11 @@ export interface ReceiptRow {
   unitPriceCents: number;
   discountCents: number;
   lineTotalCents: number;
+  /**
+   * 0.40.0: when a product of a PC's bill was put on that bill (`SaleItemSummary.addedAt`); null
+   * on every other row. The receipt prints it next to the product.
+   */
+  addedAt: string | null;
 }
 
 /**
@@ -294,6 +299,7 @@ export function receiptRows(items: readonly SaleItemSummary[]): ReceiptRow[] {
         unitPriceCents: item.unitPriceCents,
         discountCents: item.discountCents,
         lineTotalCents: item.lineTotalCents,
+        addedAt: item.addedAt ?? null,
       });
       continue;
     }
@@ -316,6 +322,7 @@ export function receiptRows(items: readonly SaleItemSummary[]): ReceiptRow[] {
       unitPriceCents: item.lineTotalCents,
       discountCents: 0,
       lineTotalCents: item.lineTotalCents,
+      addedAt: null,
     };
     offers.set(offer.group, created);
     rows.push(created);

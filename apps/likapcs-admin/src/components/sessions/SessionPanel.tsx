@@ -54,6 +54,7 @@ import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { AddToSessionDialog } from './AddToSessionDialog';
 import { PaySessionsDialog } from './PaySessionsDialog';
+import { SessionBillItems } from './SessionBillItems';
 import { CustomerBillDialog, SessionCustomerDialog } from './SessionCustomer';
 import { useToast } from '../../state/toast';
 import { useShiftGuard } from '../../state/shift-guard';
@@ -764,14 +765,13 @@ function ActiveSession({
         {s.openOrdersCount > 0 && (
           <div className="row row--between" data-testid="session-open-orders">
             <span className="muted">{t('sessions.openOrders')}</span>
-            <Link to="/orders" className="num">
-              {t('sessions.openOrdersN', {
-                n: s.openOrdersCount,
-                amount: fmt.money(s.openOrdersCents),
-              })}
+            <Link to="/orders" className="num" title={t('sessions.openOrdersLink')}>
+              {fmt.money(s.openOrdersCents)}
             </Link>
           </div>
         )}
+        {/* 0.40.0: every product of this PC with the time it was put on the bill, and by whom. */}
+        <SessionBillItems sessionId={s.id} showPaid />
       </div>
 
       {!station.device?.online && <Alert tone="warning">{t('sessions.offlineWarning')}</Alert>}
@@ -1092,12 +1092,12 @@ export function EndSessionDialog({
           )}
           {ordersCents > 0 && (
             <div className="quote__row" data-testid="session-end-orders">
-              <span className="muted">
-                {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
-              </span>
+              <span className="muted">{t('sessions.openOrders')}</span>
               <span className="num">{fmt.money(ordersCents)}</span>
             </div>
           )}
+          {/* 0.40.0: what those products are, each with the time it was put on the bill. */}
+          {ordersCents > 0 && <SessionBillItems sessionId={session.id} variant="quote" />}
           {(ordersCents > 0 || addedCents > 0) && (
             <div className="quote__row quote__row--total">
               <span>{t('sessions.totalDue')}</span>

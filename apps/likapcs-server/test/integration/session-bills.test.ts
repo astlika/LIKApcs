@@ -561,8 +561,38 @@ describe('session bills: pay at the end, pay any time, one receipt', () => {
       dueCents: 60,
       openOrdersCents: 200,
     });
-    expect(mine.items).toEqual([{ name: 'Kola', quantityMilli: 2000, lineTotalCents: 200 }]);
+    expect(mine.items).toEqual([
+      { name: 'Kola', quantityMilli: 2000, lineTotalCents: 200, addedAt: expect.any(String) },
+    ]);
     expect(open.totalCents).toBeGreaterThanOrEqual(260);
+    // 0.40.0: the same drink taken again is a row of its own, with the time it was put on the bill.
+    const again = await addCola(id, 1);
+    const [first] = await ctx.pool
+      .query<{ id: string }>(`SELECT id FROM station_orders WHERE session_id = $1 AND id <> $2`, [
+        id,
+        again.id,
+      ])
+      .then((r) => r.rows);
+    await ctx.pool.query(
+      `UPDATE station_orders SET requested_at = requested_at - interval '25 minutes',
+              decided_at = decided_at - interval '25 minutes' WHERE id = $1`,
+      [first!.id],
+    );
+    const twice = (
+      await get<CustomerOpenBills>(`/sessions/open-bills?customerId=${arben.id}`)
+    ).bills.find((b) => b.session.id === id)!;
+    expect(twice.items.map((i) => [i.name, i.quantityMilli, i.lineTotalCents])).toEqual([
+      ['Kola', 2000, 200],
+      ['Kola', 1000, 100],
+    ]);
+    const [early, late] = twice.items.map((i) => Date.parse(i.addedAt));
+    expect(late! - early!).toBeGreaterThan(24 * 60_000);
+    expect(twice.session.openOrdersCents).toBe(300);
+    // Paid at once, so the rest of this test sees the bill it expects.
+    const settled = await post<Order>(`/orders/${again.id}/pay`, {
+      payments: [{ method: 'cash', amountCents: 100 }],
+    });
+    expect(settled.status).toBe(200);
 
     // An extension paid now is its own sale: the "paid" window reads that receipt, not the first.
     const extended = await post<SessionMutationResponse>(`/sessions/${id}/extend`, {

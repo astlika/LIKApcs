@@ -236,6 +236,8 @@ interface SaleLine {
   refunded_milli: number;
   offer_name: string | null;
   station: string | null;
+  /** 0.40.0: when a product of a PC's bill was put on that bill (local time); null otherwise. */
+  added_at: string | null;
   addons: { name?: string }[] | null;
 }
 interface SaleTender {
@@ -307,12 +309,14 @@ const sales = define<SaleRow>({
               (i.product_id IS NULL AND i.gaming_session_id IS NULL) AS free_text,
               i.description, i.quantity_milli,
               i.unit_price_cents, i.discount_cents, i.line_total_cents, i.cost_cents,
-              i.refunded_milli, i.offer_name, st.code AS station, i.addons
+              i.refunded_milli, i.offer_name, st.code AS station, i.addons,
+              ${ts('i.added_at', '$2')} AS added_at
          FROM sale_items i
          LEFT JOIN gaming_sessions g ON g.id = i.gaming_session_id
          LEFT JOIN stations st ON st.id = g.station_id
         WHERE i.sale_id = ANY($1::uuid[]) ORDER BY i.sale_id, i.line_no`,
       ids,
+      true,
     );
     const tenders = await childrenOf<SaleTender>(
       ctx,
@@ -416,6 +420,12 @@ const sales = define<SaleRow>({
             },
             { label: l('Oferta', 'Offer'), optional: true, get: (i) => i.offer_name },
             { label: l('PC', 'PC'), optional: true, get: (i) => i.station },
+            {
+              // 0.40.0: a product on a PC's bill is paid later; this is when it was taken.
+              label: l('Shtuar në faturën e PC-së', "Put on the PC's bill"),
+              optional: true,
+              get: (i) => i.added_at,
+            },
             {
               label: l('Shtesa', 'Extras'),
               optional: true,

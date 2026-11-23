@@ -462,6 +462,14 @@ export function SaleDetailDialog({
                         {i.sku}
                       </span>
                     )}
+                    {/* 0.40.0: a product of a PC's bill — when it was put on that bill. */}
+                    {i.addedAt && (
+                      <div className="faint" style={{ fontSize: 12 }} data-testid="sale-added-at">
+                        {t('sales.addedAt', {
+                          time: fmt.timeOn(i.addedAt, s.completedAt ?? s.createdAt),
+                        })}
+                      </div>
+                    )}
                     {/* 0.36.0: sold inside an offer — its price here is its share of the offer. */}
                     {i.offer && (
                       <div className="faint" style={{ fontSize: 12 }} data-testid="sale-offer">

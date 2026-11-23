@@ -67,6 +67,7 @@ interface OrderRow {
   decided_by_name: string | null;
   settled_at: Date | null;
   prepared_at: Date | null;
+  from_device: boolean;
   items: {
     id: number;
     product_id: string;
@@ -84,7 +85,7 @@ const ORDER_SELECT = `
   SELECT o.id, o.number, o.station_id, s.code AS station_code, s.name AS station_name, o.session_id,
          o.customer_id, c.name AS customer_name, o.status, o.settlement, o.note, o.total_cents, o.reason,
          o.sale_id, sa.receipt_no, o.requested_at, o.decided_at, u.full_name AS decided_by_name, o.settled_at,
-         o.prepared_at,
+         o.prepared_at, (o.device_id IS NOT NULL) AS from_device,
          COALESCE((SELECT json_agg(json_build_object('id', i.id, 'product_id', i.product_id, 'name', i.name,
                             'quantity_milli', i.quantity_milli, 'unit_price_cents', i.unit_price_cents,
                             'line_total_cents', i.line_total_cents, 'image_path', p.image_path,
@@ -131,6 +132,7 @@ function mapRow(row: OrderRow): StationOrder {
     decidedByName: row.decided_by_name,
     settledAt: row.settled_at?.toISOString() ?? null,
     preparedAt: row.prepared_at?.toISOString() ?? null,
+    fromDevice: row.from_device,
   };
 }
 
@@ -748,15 +750,20 @@ export class OrdersService implements SessionOrdersHook {
       purchase_cost_cents: string | number;
       average_cost_mills: string | number;
       purchase_cost_mills: string | number;
+      added_at: Date;
     }>(
       `SELECT i.order_id, i.product_id, i.name, i.quantity_milli, i.unit_price_cents, i.line_total_cents,
               p.track_stock, p.allow_negative_stock, p.average_cost_cents, p.purchase_cost_cents,
-              p.average_cost_mills, p.purchase_cost_mills
+              p.average_cost_mills, p.purchase_cost_mills,
+              COALESCE(o.decided_at, o.requested_at) AS added_at
          FROM station_orders o
          JOIN station_order_items i ON i.order_id = o.id
          JOIN products p ON p.id = i.product_id
         WHERE o.session_id = $1 AND o.status = 'accepted'
-        ORDER BY o.requested_at, i.id
+        -- 0.40.0: in the order the products came onto the bill (an order from the PC counts from
+        -- the moment the desk accepted it): the payment window and the receipt list them so,
+        -- each with that time.
+        ORDER BY COALESCE(o.decided_at, o.requested_at), o.requested_at, i.id
         FOR UPDATE OF o`,
       [sessionId],
     );
@@ -771,6 +778,7 @@ export class OrdersService implements SessionOrdersHook {
       allowNegative: l.allow_negative_stock,
       unitCostCents: millsToCents(Number(l.average_cost_mills) || Number(l.purchase_cost_mills)),
       unitCostMills: Number(l.average_cost_mills) || Number(l.purchase_cost_mills),
+      addedAt: l.added_at,
     }));
   }
 
@@ -888,6 +896,17 @@ export class OrdersService implements SessionOrdersHook {
       },
       actor,
       { fixedPrices: new Map(row.items.map((i) => [i.product_id, Number(i.unit_price_cents)])) },
+    );
+    // 0.40.0: an order that stood on the PC's bill and is paid at the desk now — its products
+    // were taken when the desk put them on the bill, not at this payment, and the lines of this
+    // sale keep that moment. An order paid in the very step it was added or accepted has none:
+    // there the time of the sale is the time of the product (`now()` is the transaction's).
+    await client.query(
+      `UPDATE sale_items si SET added_at = o.decided_at
+         FROM station_orders o
+        WHERE o.id = $1 AND si.sale_id = $2 AND si.product_id IS NOT NULL
+          AND o.status = 'accepted' AND o.decided_at < now()`,
+      [row.id, sale.id],
     );
     await client.query(
       `UPDATE station_orders SET status = 'paid', settlement = COALESCE(settlement, 'pay_now'), sale_id = $2, customer_id = $3,

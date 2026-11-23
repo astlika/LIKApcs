@@ -5,8 +5,10 @@ import {
   formatDuration,
   formatMinutesShort,
   formatTime,
+  formatTimeOnDay,
   formatTimeWithSeconds,
   toIsoDate,
+  timeOnDayParts,
 } from '../src/format.js';
 
 const instant = new Date('2026-10-09T12:05:09Z');
@@ -43,5 +45,53 @@ describe('date & time formatting', () => {
     expect(formatMinutesShort(30)).toBe('30m');
     expect(formatMinutesShort(60)).toBe('1h');
     expect(formatMinutesShort(90)).toBe('1h 30m');
+  });
+});
+
+describe('formatTimeOnDay — the time of one line of a bill', () => {
+  const tz = { timeZone: 'Europe/Belgrade' }; // UTC+1 in November (CET)
+
+  it('is the bare time on the day the reader has in mind', () => {
+    expect(formatTimeOnDay('2026-11-23T13:05:40Z', '2026-11-23T20:00:00Z', tz)).toBe('14:05');
+    // The same day in the shop, although the UTC dates differ (00:30 and 23:50 local time).
+    expect(formatTimeOnDay('2026-11-22T23:30:00Z', '2026-11-23T22:50:00Z', tz)).toBe('00:30');
+  });
+
+  it('carries the day when the product was added on another day', () => {
+    // A session over midnight: added 23:40 on the 22nd, the bill is paid at 01:10 on the 23rd.
+    expect(formatTimeOnDay('2026-11-22T22:40:00Z', '2026-11-23T00:10:00Z', tz)).toBe('22.11 23:40');
+    // The reference may be the earlier one (a reprint read against the receipt's date).
+    expect(formatTimeOnDay('2026-11-23T00:10:00Z', '2026-11-22T22:40:00Z', tz)).toBe('23.11 01:10');
+  });
+
+  it('gives the day and the time apart, for a text that names them separately', () => {
+    expect(timeOnDayParts('2026-11-23T13:05:40Z', '2026-11-23T20:00:00Z', tz)).toEqual({
+      time: '14:05',
+      day: null,
+    });
+    expect(timeOnDayParts('2026-11-22T22:40:00Z', '2026-11-23T00:10:00Z', tz)).toEqual({
+      time: '23:40',
+      day: '22.11',
+    });
+    expect(timeOnDayParts('2025-12-31T22:40:00Z', '2026-01-01T00:10:00Z', tz)).toEqual({
+      time: '23:40',
+      day: '31.12.2025',
+    });
+  });
+
+  it('carries the year too when it is another year', () => {
+    expect(formatTimeOnDay('2025-12-31T22:40:00Z', '2026-01-01T00:10:00Z', tz)).toBe(
+      '31.12.2025 23:40',
+    );
+  });
+
+  it('goes by the calendar day of the time zone, not by 24 hours', () => {
+    // 23 hours apart but two calendar days; one minute apart across midnight is two days as well.
+    expect(formatTimeOnDay('2026-11-22T08:00:00Z', '2026-11-23T07:00:00Z', tz)).toBe('22.11 09:00');
+    expect(formatTimeOnDay('2026-11-22T22:59:30Z', '2026-11-22T23:00:30Z', tz)).toBe('22.11 23:59');
+    // Without a time zone the machine's own is used, as in the other formatters.
+    const noon = new Date(2026, 10, 23, 12, 0, 0);
+    expect(formatTimeOnDay(new Date(2026, 10, 23, 9, 7, 0), noon)).toBe('09:07');
+    expect(formatTimeOnDay(new Date(2026, 10, 22, 9, 7, 0), noon)).toBe('22.11 09:07');
   });
 });

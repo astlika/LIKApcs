@@ -28,11 +28,31 @@ import { useShiftGuard } from '../../state/shift-guard';
 import { useToast } from '../../state/toast';
 import { TenderPanel, useTender } from '../payments/TenderPanel';
 import { Alert, Button, Dialog, Field, Input, Kbd, Loading, Switch } from '../ui/primitives';
+import { BillList } from './SessionBillItems';
 import type { SessionPaid } from './SessionPaidDialog';
 
-/** 2000 → "2", 1500 → "1.5": a quantity in thousandths, without trailing zeros. */
-export function quantityText(quantityMilli: number): string {
-  return String(Math.round(quantityMilli) / 1000);
+/**
+ * The products of one PC's bill under its head, one per line, each with the time it was put on
+ * the bill (0.40.0) — the desk reads it when the customer questions a product.
+ */
+export function PayBillItems({
+  items,
+}: {
+  items: readonly {
+    name: string;
+    quantityMilli: number;
+    lineTotalCents: number;
+    addedAt: string;
+  }[];
+}) {
+  return (
+    <BillList
+      variant="pay"
+      testId="pay-bill-items"
+      // The same product can be on a bill twice (taken at two times): the position is the key.
+      rows={items.map((item, index) => ({ key: String(index), ...item }))}
+    />
+  );
 }
 
 /** Queries that show money or bills: all of them are stale after a payment. */
@@ -210,19 +230,14 @@ export function PaySessionsDialog({
                       {fmt.money(b.timeCents + b.ordersCents)}
                     </strong>
                   </div>
-                  <div className="pay-bill__lines">
-                    {(b.timeCents > 0 || b.stopped) && (
+                  {(b.timeCents > 0 || b.stopped) && (
+                    <div className="pay-bill__lines">
                       <span>
                         {t('pay.time')} <b className="num">{fmt.money(b.timeCents)}</b>
                       </span>
-                    )}
-                    {b.items.map((item) => (
-                      <span key={item.name}>
-                        {quantityText(item.quantityMilli)}× {item.name}{' '}
-                        <b className="num">{fmt.money(item.lineTotalCents)}</b>
-                      </span>
-                    ))}
-                  </div>
+                    </div>
+                  )}
+                  <PayBillItems items={b.items} />
                 </li>
               ))}
             </ul>

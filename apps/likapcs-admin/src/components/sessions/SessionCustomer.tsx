@@ -22,7 +22,7 @@ import { useToast } from '../../state/toast';
 import { CustomerPicker } from '../customers/CustomerPicker';
 import { StatementPanel } from '../customers/CustomerAccount';
 import { Alert, Button, Dialog, Kbd, Loading } from '../ui/primitives';
-import { quantityText } from './PaySessionsDialog';
+import { PayBillItems } from './PaySessionsDialog';
 
 export interface SessionCustomerTarget {
   sessionId: string;
@@ -256,22 +256,20 @@ export function CustomerBillDialog({
                     {fmt.money(session.dueCents + session.openOrdersCents)}
                   </strong>
                 </div>
-                <div className="pay-bill__lines">
-                  {session.dueCents > 0 && (
-                    <span>
-                      {t('pay.time')} <b className="num">{fmt.money(session.dueCents)}</b>
-                    </span>
-                  )}
-                  {items.map((item) => (
-                    <span key={item.name}>
-                      {quantityText(item.quantityMilli)}× {item.name}{' '}
-                      <b className="num">{fmt.money(item.lineTotalCents)}</b>
-                    </span>
-                  ))}
-                  {session.dueCents === 0 && items.length === 0 && (
-                    <span className="faint">{t('customerBill.paidSoFar')}</span>
-                  )}
-                </div>
+                {(session.dueCents > 0 || items.length === 0) && (
+                  <div className="pay-bill__lines">
+                    {session.dueCents > 0 && (
+                      <span>
+                        {t('pay.time')} <b className="num">{fmt.money(session.dueCents)}</b>
+                      </span>
+                    )}
+                    {session.dueCents === 0 && items.length === 0 && (
+                      <span className="faint">{t('customerBill.paidSoFar')}</span>
+                    )}
+                  </div>
+                )}
+                {/* 0.40.0: the products one per line, each with the time it was put on the bill. */}
+                <PayBillItems items={items} />
               </li>
             ))}
           </ul>
