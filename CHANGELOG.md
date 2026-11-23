@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-23
+
+### Added
+
+- **«Backup file» as one JSON file.** Kopjet rezervë › **Backup file** now asks for the **kind of file**: **JSON** (`.json`) or **packed** (`.tar.gz`, the file made until now). The JSON file is one document that holds **everything** — every table row by row, and every picture, video and sound inside it — so the whole shop is one text file that can be opened and read, and that brings everything back on another PC. JSON is offered first; the choice is remembered on that PC. The name offered is `LIKApcs-backup-<date>-<time>.likapcs-backup.json`.
+  - **Nothing is rounded or lost on the way.** Every value is written exactly as the database gives it (an amount stays `1.50`, an empty text stays an empty text and not "nothing", a line break inside a note stays). The finished file is read back from the disk and compared with the checksums of every table and every file before it counts as made — the same proof the packed file gets.
+  - **With a password** the file is locked exactly as before and ends in `.likapcs-backup.json.enc`; without the password nothing in it can be read.
+  - **Larger than the packed file**: text is not compressed, and a picture takes a third more inside JSON. On the large test database (733,000 rows in 69 tables, 242 files of 297 MB) the JSON file is 584 MB against 319 MB packed; both are made in 16 to 20 s. When a file passes 4 GB the window says that a USB stick formatted as FAT32 cannot hold it.
+- **Restoring from the JSON file** works wherever a backup is restored: **«Rikthe nga kopja (backup)»** on the first screen of a new installation, the same on the login screen, and «Rikthe nga skedari» in Kopjet rezervë. The file is recognised by what is in it, not by its name — a file renamed to `kopja.json` restores as well. A file that was **cut off** (a copy to the USB that did not finish), **edited** or re-saved by another program is refused with a sentence that says so, and **nothing is changed** on the PC. Measured on the large test database: on an empty installation everything was back 36 s after the file was chosen; from the login screen, with a password and the safety copy of what was there, 59 s. After both, every table compared had the same rows as on the old PC and all 242 files the same bytes.
+- **«Hap dosjen»** — the folder of the backups opens with one press. It is inside `AppData`, which Windows hides, so it could not be reached by clicking through the folders. The button is beside the folder in Kopjet rezervë and on the last screen of «Backup file», where it also selects the file just made. It is shown in the program on the main PC; on another PC, where the folder is not, the window says how to open it on the main PC (Windows + R, paste the address).
+- The list of backups marks a JSON file with **«JSON»**.
+
+### Changed
+
+- **A JSON backup is restored only by LIKApcs 0.41.0 or newer.** An older version answers that the file is not a backup: update the other PC first. As before, no backup of either kind is restored by a program **older** than the one that made it — the PC that receives the file needs the same version or a newer one, and the window that makes the file now says so.
+- The daily backup, the safety copies before a restore or a reset, and the USB transfer keep writing the packed file.
+- API: `POST /backups/file {password?, format?: 'archive' | 'json'}`; `BackupSummary.format`; `GET /backups/:id/download` answers `application/json` for a JSON backup; a failed job may carry `ARCHIVE_CORRUPT`. A JSON backup is uploaded like an archive (`application/octet-stream`). No migration. See `docs/backups.md`, "JSON backup file", and `docs/network-protocol.md`.
+- Not changed: the gaming PC, the phone app and the tablet.
+
 ## [0.40.0] - 2026-11-23
 
 ### Added

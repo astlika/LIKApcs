@@ -2847,6 +2847,23 @@ export const sq: Dictionary = {
     holdsData: 'Produktet, stoku, shitjet, faturat, arka, klientët, ofertat, raportet',
     holdsFiles: 'Fotot e produkteve, sfondet, videot e reklamave, zërat',
     holdsPcs: 'Përdoruesit me fjalëkalimet e tyre, cilësimet dhe PC-të e lojës',
+    format: 'Lloji i skedarit',
+    formats: {
+      json: {
+        name: 'JSON',
+        hint: 'Tekst i hapur: çdo tabelë rresht për rresht dhe çdo foto brenda. Skedar më i madh.',
+      },
+      archive: {
+        name: 'I paketuar',
+        hint: 'I ngjeshur, më i vogël. Lloji që bëhej deri tani.',
+      },
+    },
+    formatNoteJson:
+      'Të dy llojet mbajnë të njëjtat të dhëna. Skedari JSON kthehet vetëm në LIKApcs 0.41.0 ose më të ri: përditësojeni programin edhe në PC-në tjetër.',
+    formatNoteJsonLocked:
+      'Me fjalëkalim skedari kyçet (.json.enc) dhe nuk lexohet si tekst. Kthehet vetëm në LIKApcs 0.41.0 ose më të ri.',
+    formatNoteArchive:
+      'Të dy llojet mbajnë të njëjtat të dhëna dhe kthehen njësoj me «Rikthe nga kopja». PC-ja tjetër duhet të ketë të njëjtin version të LIKApcs ose më të ri.',
     password: 'Fjalëkalim për këtë skedar',
     passwordHint: 'Pa fjalëkalim, kushdo që e ka skedarin mund t’i lexojë të dhënat.',
     passwordHintLocked: 'Nëse e lini bosh, skedari kyçet me fjalëkalimin e kopjeve të kësaj PC-je.',
@@ -2895,8 +2912,15 @@ export const sq: Dictionary = {
     download: 'Shkarko skedarin',
     downloadHint: 'Ruhet te dosja «Shkarkimet» (Downloads).',
     alsoHere: 'Skedari gjendet edhe në këtë PC, në dosjen:',
+    openFolder: 'Hap dosjen',
+    openFolderManual:
+      'Për ta hapur vetë në PC-në kryesore: shtypni tastet Windows + R, ngjitni adresën e dosjes dhe shtypni Enter.',
     howToRestore:
       'Për ta kthyer: në PC-në tjetër instaloni LIKApcs, hapeni dhe shtypni «Rikthe nga kopja» në ekranin e parë.',
+    howToRestoreJson:
+      'Për ta kthyer: në PC-në tjetër instaloni LIKApcs 0.41.0 ose më të ri, hapeni, shtypni «Rikthe nga kopja (backup)» në ekranin e parë dhe zgjidhni këtë skedar.',
+    over4Gb:
+      'Skedari është më i madh se 4 GB. Një USB e formatuar si FAT32 nuk e mban: përdorni USB ose disk me exFAT ose NTFS.',
     errAccountPassword: 'Fjalëkalimi juaj nuk është i saktë.',
     errLogin: 'Emri i përdoruesit ose fjalëkalimi nuk është i saktë.',
     errLocked: 'Llogaria është bllokuar përkohësisht. Provoni pak më vonë.',
@@ -2914,6 +2938,8 @@ export const sq: Dictionary = {
     errFilesIncomplete:
       'Të dhënat u rikthyen, por disa foto ose video nuk u vendosën dot. Bëjeni rikthimin edhe një herë.',
     errTooLarge: 'Skedari është më i madh se kufiri i lejuar.',
+    errServerOld:
+      'Serveri është i një versioni më të vjetër dhe nuk bën dot skedar JSON (u bë kopja e paketuar, gjendet te lista). Përditësojeni LIKApcs në PC-në kryesore dhe provoni përsëri.',
     errLost:
       'Serveri nuk po përgjigjet më. Mos e fikni PC-në; hapeni programin pas pak dhe shikoni te Kopjet rezervë.',
   },
@@ -2927,7 +2953,7 @@ export const sq: Dictionary = {
       'Zgjidhni skedarin e kopjes (nga USB ose nga çdo dosje). Gjithçka që është në të kthehet ashtu siç ishte.',
     introListed: 'Kthehet gjithçka që është në këtë kopje, ashtu siç ishte.',
     pick: 'Zgjidh skedarin e kopjes',
-    pickHint: 'Skedari që u bë me «Backup file»',
+    pickHint: 'Skedari që u bë me «Backup file» (.json ose .tar.gz)',
     notABackup:
       'Ky nuk është skedar kopjeje i LIKApcs. Zgjidhni skedarin që u bë me «Backup file».',
     filePassword: 'Fjalëkalimi i skedarit',
@@ -3005,6 +3031,7 @@ export const sq: Dictionary = {
     extSaved: 'Dosja u ruajt',
     extOff: 'Joaktiv',
     archiveBadge: 'E enkriptuar',
+    jsonBadgeHint: 'Kopje e shkruar si skedar JSON',
     externalOk: 'U kopjua jashtë',
     externalFailed: 'Kopja jashtë dështoi',
     archivePasswordLabel: 'Fjalëkalimi i kopjeve',

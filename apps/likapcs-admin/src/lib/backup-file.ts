@@ -9,27 +9,56 @@
  *  - the finished file is written where the owner chose (a USB stick, another disk) and then read
  *    back from there and compared with the checksum of the server's copy.
  */
-import type {
-  BackupDownloadTicket,
-  BackupJobPhase,
-  BackupJobStatus,
-  BackupSummary,
+import {
+  BACKUP_FILE_EXTENSION,
+  BACKUP_JSON_FILE_EXTENSION,
+  type BackupDownloadTicket,
+  type BackupFileFormat,
+  type BackupJobPhase,
+  type BackupJobStatus,
+  type BackupSummary,
 } from '@likapcs/shared';
 import { api, apiDownload, ApiError, getServerUrl, getToken } from './api';
 import { Sha256 } from './sha256';
+import { storage } from './storage';
 
 /** First bytes of an encrypted LIKApcs archive (see the server's `backup-crypto.ts`). */
 const ENCRYPTED_MAGIC = 'LKPBENC1';
+/**
+ * The beginning of a backup written as a JSON document (0.41.0; the server's `backup-json.ts`).
+ * Spaces are allowed for: a file another program has saved again is told "damaged" by the
+ * server, which is more use to the owner than "not a backup".
+ */
+const JSON_BACKUP_HEAD = /^\uFEFF?\s*\{\s*"format"\s*:\s*"likapcs-backup-json"/;
 
 export type ArchiveKind = 'encrypted' | 'plain' | 'unknown';
 
 /** What a chosen file is, from its first bytes — before anything is sent to the server. */
 export async function archiveKindOf(file: Blob): Promise<ArchiveKind> {
-  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-  if (head.length >= 8 && String.fromCharCode(...head) === ENCRYPTED_MAGIC) return 'encrypted';
+  const head = new Uint8Array(await file.slice(0, 96).arrayBuffer());
+  if (head.length >= 8 && String.fromCharCode(...head.subarray(0, 8)) === ENCRYPTED_MAGIC) {
+    return 'encrypted';
+  }
   // A .tar.gz starts with the gzip signature.
   if (head.length >= 2 && head[0] === 0x1f && head[1] === 0x8b) return 'plain';
+  // A JSON backup is text that says what it is.
+  if (JSON_BACKUP_HEAD.test(new TextDecoder().decode(head))) return 'plain';
   return 'unknown';
+}
+
+/**
+ * How «Backup file» writes the file when the owner has not chosen yet on this PC: the JSON
+ * document. The choice made in the window is remembered for the next time.
+ */
+export const DEFAULT_BACKUP_FILE_FORMAT: BackupFileFormat = 'json';
+
+export function rememberedBackupFormat(): BackupFileFormat {
+  const stored = storage.get('backupFileFormat');
+  return stored === 'json' || stored === 'archive' ? stored : DEFAULT_BACKUP_FILE_FORMAT;
+}
+
+export function rememberBackupFormat(format: BackupFileFormat): void {
+  storage.set('backupFileFormat', format);
 }
 
 /** A file name the upload accepts: letters, digits, dot, dash, underscore; at most 160. */
@@ -44,11 +73,19 @@ export function safeUploadName(name: string): string {
   return cleaned.length > 160 ? cleaned.slice(cleaned.length - 160).replace(/^[-.]+/, '') : cleaned;
 }
 
-/** Name offered in the "save as" window, e.g. `LIKApcs-backup-20261121-2114.likapcs-backup.tar.gz`. */
-export function suggestedBackupName(at: Date, encrypted: boolean): string {
+/**
+ * Name offered in the "save as" window, e.g. `LIKApcs-backup-20261121-2114.likapcs-backup.json`
+ * (`.likapcs-backup.tar.gz` for the packed archive; `.enc` is added to a file with a password).
+ */
+export function suggestedBackupName(
+  at: Date,
+  encrypted: boolean,
+  format: BackupFileFormat = 'archive',
+): string {
   const two = (n: number) => String(n).padStart(2, '0');
   const stamp = `${at.getFullYear()}${two(at.getMonth() + 1)}${two(at.getDate())}-${two(at.getHours())}${two(at.getMinutes())}`;
-  return `LIKApcs-backup-${stamp}.likapcs-backup.tar.gz${encrypted ? '.enc' : ''}`;
+  const ending = format === 'json' ? BACKUP_JSON_FILE_EXTENSION : BACKUP_FILE_EXTENSION;
+  return `LIKApcs-backup-${stamp}${ending}${encrypted ? '.enc' : ''}`;
 }
 
 // ─── One bar for several steps ─────────────────────────────────────────────────
@@ -458,4 +495,15 @@ export async function downloadUrlWithProgress(
   click(href);
   setTimeout(() => URL.revokeObjectURL(href), 60_000);
   onProgress(1);
+}
+
+/**
+ * The largest file a FAT32 disk can hold (4 GB less one byte). Most USB sticks are sold as FAT32,
+ * and Windows only says "the file is too large" when the copy is tried.
+ */
+export const FAT32_FILE_LIMIT_BYTES = 4 * 1024 ** 3 - 1;
+
+/** True when a backup of this size cannot be copied to a FAT32 USB stick. */
+export function tooLargeForFat32(sizeBytes: number | null | undefined): boolean {
+  return typeof sizeBytes === 'number' && sizeBytes > FAT32_FILE_LIMIT_BYTES;
 }

@@ -2834,6 +2834,23 @@ export const en = {
     holdsData: 'Products, stock, sales, bills, the cash drawer, customers, offers, reports',
     holdsFiles: 'Product pictures, wallpapers, ad videos, voice clips',
     holdsPcs: 'Users with their passwords, settings and the gaming PCs',
+    format: 'Kind of file',
+    formats: {
+      json: {
+        name: 'JSON',
+        hint: 'Plain text: every table row by row and every picture inside. A larger file.',
+      },
+      archive: {
+        name: 'Packed',
+        hint: 'Compressed, smaller. The kind made until now.',
+      },
+    },
+    formatNoteJson:
+      'Both kinds hold the same data. A JSON file is restored only by LIKApcs 0.41.0 or newer: update the program on the other PC too.',
+    formatNoteJsonLocked:
+      'With a password the file is locked (.json.enc) and cannot be read as text. It is restored only by LIKApcs 0.41.0 or newer.',
+    formatNoteArchive:
+      'Both kinds hold the same data and are restored the same way with “Restore from a backup”. The other PC needs the same version of LIKApcs or a newer one.',
     password: 'Password for this file',
     passwordHint: 'Without a password, anyone who has the file can read the data.',
     passwordHintLocked: 'If you leave it empty, the file is locked with this PC’s backup password.',
@@ -2882,8 +2899,15 @@ export const en = {
     download: 'Download the file',
     downloadHint: 'It is saved in the Downloads folder.',
     alsoHere: 'The file is also on this PC, in the folder:',
+    openFolder: 'Open the folder',
+    openFolderManual:
+      'To open it yourself on the main PC: press the Windows + R keys, paste the address of the folder and press Enter.',
     howToRestore:
       'To bring it back: install LIKApcs on the other PC, open it and press “Restore from a backup” on the first screen.',
+    howToRestoreJson:
+      'To restore: on the other PC install LIKApcs 0.41.0 or newer, open it, press “Restore from a backup” on the first screen and choose this file.',
+    over4Gb:
+      'The file is larger than 4 GB. A USB stick formatted as FAT32 cannot hold it: use a stick or disk with exFAT or NTFS.',
     errAccountPassword: 'Your password is not correct.',
     errLogin: 'The username or password is not correct.',
     errLocked: 'The account is temporarily locked. Try again a little later.',
@@ -2901,6 +2925,8 @@ export const en = {
     errFilesIncomplete:
       'The data was restored, but some pictures or videos could not be put in place. Run the restore once more.',
     errTooLarge: 'The file is larger than the allowed limit.',
+    errServerOld:
+      'The server is an older version and cannot make a JSON file (it made the packed archive, which is in the list). Update LIKApcs on the main PC and try again.',
     errLost:
       'The server no longer answers. Do not switch off the PC; open the program in a moment and look at Backups.',
   },
@@ -2914,7 +2940,7 @@ export const en = {
       'Choose the backup file (from a USB stick or any folder). Everything in it comes back as it was.',
     introListed: 'Everything in this backup comes back as it was.',
     pick: 'Choose the backup file',
-    pickHint: 'The file made with “Backup file”',
+    pickHint: 'The file made with “Backup file” (.json or .tar.gz)',
     notABackup: 'This is not a LIKApcs backup file. Choose the file made with “Backup file”.',
     filePassword: 'File password',
     filePasswordHint:
@@ -2992,6 +3018,7 @@ export const en = {
     extSaved: 'Folder saved',
     extOff: 'Off',
     archiveBadge: 'Encrypted',
+    jsonBadgeHint: 'A backup written as a JSON file',
     externalOk: 'Copied outside',
     externalFailed: 'Outside copy failed',
     archivePasswordLabel: 'Backup password',

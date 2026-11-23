@@ -125,6 +125,42 @@ export async function setAutostart(enabled: boolean): Promise<void> {
   else await mod.disable();
 }
 
+/**
+ * True when a folder of the SERVER can be opened in this PC's file manager: the desktop app,
+ * talking to a server on this same PC (the main PC). On another Admin PC the server's folders
+ * are not here to open.
+ */
+export function canShowServerFolders(serverUrl: string): boolean {
+  if (!isDesktopApp()) return false;
+  try {
+    const host = new URL(serverUrl).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens a folder of this PC in the file manager (Explorer); a file opens its folder with the
+ * file selected. 0.41.0: the backups folder is inside AppData, which Explorer hides. Returns
+ * false when it could not be opened (an older shell, a folder that is not on this PC).
+ */
+export async function showInFolder(path: string): Promise<boolean> {
+  if (!isDesktopApp()) return false;
+  try {
+    await invoke<void>('show_in_folder', { path });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A file inside a folder of the server, with the separator that folder already uses. */
+export function joinServerPath(directory: string, fileName: string): string {
+  const separator = directory.includes('\\') && !directory.includes('/') ? '\\' : '/';
+  return `${directory.replace(/[\\/]+$/, '')}${separator}${fileName}`;
+}
+
 /** The LIKA website, shown next to the version number. */
 export const LIKA_WEBSITE_URL = 'https://likaapps.com';
 

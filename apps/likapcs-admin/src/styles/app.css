@@ -8248,6 +8248,82 @@ button.ads-album .ads-album__meta {
 .job-pick .faint {
   font-size: 12.5px;
 }
+/* «Hap dosjen» under the address of the backups folder (0.41.0). */
+.job-folder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 8px;
+}
+.job-folder__hint {
+  margin-top: 6px;
+  font-size: 12px;
+}
+/* «Backup file» (0.41.0): JSON document or packed archive — two cards, one chosen. */
+.job-format {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.job-format__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.job-format__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.job-format__option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.job-format__option:hover {
+  border-color: var(--border-strong);
+}
+.job-format__option[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.job-format__name {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+}
+.job-format__name code {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.job-format__hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.job-format__note {
+  font-size: 12.5px;
+}
+@media (max-width: 520px) {
+  .job-format__options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 /* The first-run screen holds two cards: they sit together in the middle instead of sharing the
    height of the window, and the screen scrolls when a small window cannot show both. */
 .auth--stack {

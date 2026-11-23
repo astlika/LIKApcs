@@ -39,9 +39,11 @@ import {
   BACKUP_FILE_EXTENSION,
   BACKUP_FORMAT,
   BACKUP_FORMAT_VERSION,
+  BACKUP_JSON_FILE_EXTENSION,
   type BackupContents,
   type BackupEncryptionStatus,
   type BackupExternalCopy,
+  type BackupFileFormat,
   type BackupFileResult,
   type BackupJobPhase,
   type BackupJobStatus,
@@ -61,6 +63,17 @@ import { SERVER_VERSION } from '../version.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { SettingsService } from './settings.js';
 import {
+  isJsonArchiveFile,
+  JsonArchiveError,
+  JsonTableShapeError,
+  looksLikeJsonArchive,
+  peekJsonManifestText,
+  readJsonArchive,
+  readJsonManifestText,
+  verifyJsonArchive,
+  writeJsonArchive,
+} from './backup-json.js';
+import {
   ArchiveCryptoError,
   BackupKeyRing,
   decryptFile,
@@ -74,6 +87,8 @@ import {
 
 /** Plain archive name inside staging folders (the encrypted file is built from it). */
 const PLAIN_ARCHIVE = 'archive.tar.gz';
+/** The same for a backup written as a JSON document (0.41.0). */
+const PLAIN_JSON = 'archive.json';
 /** Added to the archive name when the backup is encrypted (0.26.0). */
 const ENCRYPTED_EXTENSION = '.enc';
 
@@ -232,15 +247,45 @@ const SPEED = {
   load: 21e6,
   /** The check of every reference between the loaded rows, counted per CSV byte. */
   references: 28e6,
+  /** 0.41.0, the JSON document — tables: CSV taken apart into rows and written (CSV bytes). */
+  jsonRows: 60e6,
+  /** Uploaded files written as base64 (file bytes). */
+  jsonFiles: 170e6,
+  /** Reading the document back: rows put together as CSV again, with their checksum. */
+  jsonRowsBack: 44e6,
+  /** Reading the document back: base64 to bytes, with their checksum. */
+  jsonFilesBack: 600e6,
+  /** A restore: the rows written to disk as CSV again, and checked. */
+  jsonRowsOut: 33e6,
+  /** A restore: the files written to disk, and checked. */
+  jsonFilesOut: 210e6,
 } as const;
 /** The check of the references takes about three quarters of the time the rows took to load (measured). */
 const REFERENCE_CHECK_PER_LOAD = 0.75;
 /** A table's CSV is about this share of its size on disk; CSV text packs to about this share. */
 const CSV_PER_HEAP_BYTE = 0.8;
 const PACKED_PER_CSV_BYTE = 0.15;
+/** A table as JSON rows is about this much larger than its CSV (quotes around every value). */
+const JSON_PER_CSV_BYTE = 1.35;
 
 /** Estimated seconds of each step of a backup of `csvBytes` of tables and `fileBytes` of uploads. */
-function backupCosts(csvBytes: number, fileBytes: number): Record<string, number> {
+function backupCosts(
+  csvBytes: number,
+  fileBytes: number,
+  format: BackupFileFormat = 'archive',
+): Record<string, number> {
+  if (format === 'json') {
+    // Nothing is packed: the tables grow a little as JSON rows, the files by a third as base64.
+    const document = csvBytes * JSON_PER_CSV_BYTE + fileBytes * (4 / 3);
+    return {
+      database: csvBytes / SPEED.dump + 0.2,
+      files: fileBytes / SPEED.stage + 0.05,
+      packing: csvBytes / SPEED.jsonRows + fileBytes / SPEED.jsonFiles + 0.1,
+      verifying: csvBytes / SPEED.jsonRowsBack + fileBytes / SPEED.jsonFilesBack + 0.05,
+      encrypting: document / SPEED.crypt + 0.05,
+      finishing: document / SPEED.hash + 0.1,
+    };
+  }
   const payload = csvBytes + fileBytes;
   const archive = csvBytes * PACKED_PER_CSV_BYTE + fileBytes;
   return {
@@ -497,10 +542,15 @@ export class BackupService {
 
   // ─── Create ──────────────────────────────────────────────────────────────────
 
-  async create(input: { kind: BackupKind; actor: AuditActor | null }): Promise<BackupSummary> {
+  async create(input: {
+    kind: BackupKind;
+    actor: AuditActor | null;
+    /** 0.41.0: the packed archive (default) or the JSON document. */
+    format?: BackupFileFormat;
+  }): Promise<BackupSummary> {
     this.acquire('backup');
     try {
-      return await this.runBackup(input.kind, input.actor);
+      return await this.runBackup(input.kind, input.actor, { format: input.format });
     } finally {
       this.busy = null;
     }
@@ -509,20 +559,22 @@ export class BackupService {
   private async runBackup(
     kind: BackupKind,
     actor: AuditActor | null,
-    options: { password?: string; progress?: ProgressSink } = {},
+    options: { password?: string; progress?: ProgressSink; format?: BackupFileFormat } = {},
   ): Promise<BackupSummary> {
     return (await this.writeBackup(kind, actor, options)).summary;
   }
 
   /**
    * Writes one archive. `password` (0.38.0) gives this file a password of its own instead of the
-   * backup password of this PC; `progress` reports the percentage for a loading bar.
+   * backup password of this PC; `progress` reports the percentage for a loading bar; `format`
+   * (0.41.0) writes the JSON document instead of the packed archive.
    */
   private async writeBackup(
     kind: BackupKind,
     actor: AuditActor | null,
-    options: { password?: string; progress?: ProgressSink } = {},
+    options: { password?: string; progress?: ProgressSink; format?: BackupFileFormat } = {},
   ): Promise<{ summary: BackupSummary; manifest: BackupManifest }> {
+    const format = options.format ?? 'archive';
     await fsp.mkdir(this.backupDir, { recursive: true });
     const startedAt = new Date();
     const timeZone = await this.settings.get('locale.timezone');
@@ -544,9 +596,11 @@ export class BackupService {
     );
     if (options.progress) {
       const size = await this.currentSize().catch(() => null);
-      if (size) plan.weigh(backupCosts(size.csvBytes, size.fileBytes));
+      if (size) plan.weigh(backupCosts(size.csvBytes, size.fileBytes, format));
     }
-    const baseName = `likapcs-${kind}-${stampFor(startedAt, timeZone)}${BACKUP_FILE_EXTENSION}`;
+    const baseName = `likapcs-${kind}-${stampFor(startedAt, timeZone)}${
+      format === 'json' ? BACKUP_JSON_FILE_EXTENSION : BACKUP_FILE_EXTENSION
+    }`;
     const fileName = key ? `${baseName}${ENCRYPTED_EXTENSION}` : baseName;
     const finalPath = path.join(this.backupDir, fileName);
     const { rows: inserted } = await this.pool.query<{ id: string }>(
@@ -564,6 +618,7 @@ export class BackupService {
         fileName,
         encrypted: key !== null,
         plan,
+        format,
       });
       if (key) {
         plan.enter('encrypting');
@@ -592,10 +647,13 @@ export class BackupService {
           action: 'backup.create',
           entityType: 'backup',
           entityId: id,
-          details: { kind, fileName, sizeBytes: stat.size, tables },
+          details: { kind, fileName, sizeBytes: stat.size, tables, format },
         });
       }
-      this.options.log?.info({ id, kind, fileName, sizeBytes: stat.size }, 'backup written');
+      this.options.log?.info(
+        { id, kind, fileName, sizeBytes: stat.size, format },
+        'backup written',
+      );
       await this.copyToExternal({ id, kind, fileName, finalPath, sha256 });
       if (kind === 'scheduled') await this.applyRetention();
       return { summary: await this.get(id), manifest };
@@ -623,6 +681,9 @@ export class BackupService {
    * 0.38.0: the manifest lists the checksum of every table and of every uploaded file, and the
    * finished archive is READ BACK against that list before it counts as written. An archive that
    * misses a table or a file, or holds different bytes, fails here instead of at the restore.
+   *
+   * 0.41.0: `format: 'json'` writes the same tables and files as one JSON document instead
+   * (see `backup-json.ts`); it is read back against the same list.
    */
   private async dumpPlainArchive(
     tmpDir: string,
@@ -633,6 +694,7 @@ export class BackupService {
       fileName: string;
       encrypted: boolean;
       plan?: ProgressPlan;
+      format?: BackupFileFormat;
     },
   ): Promise<{ plainArchive: string; tables: number; manifest: BackupManifest }> {
     const plan = input.plan;
@@ -671,6 +733,15 @@ export class BackupService {
       ...(staged ? { files: staged.files } : {}),
       ...(installationId ? { installationId } : {}),
     };
+    if (input.format === 'json') {
+      const plainJson = path.join(tmpDir, PLAIN_JSON);
+      await this.packJson(tmpDir, manifest, plainJson, {
+        timeZone: input.timeZone,
+        fileName: input.fileName,
+        plan,
+      });
+      return { plainArchive: plainJson, tables: manifestTables.length, manifest };
+    }
     await fsp.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
     await fsp.writeFile(
       path.join(tmpDir, 'report.txt'),
@@ -712,6 +783,61 @@ export class BackupService {
     plan?.enter('verifying');
     await verifyArchive(plainArchive, manifest, (f) => plan?.step(f));
     return { plainArchive, tables: manifestTables.length, manifest };
+  }
+
+  /**
+   * Writes the staged tables and files as one JSON document and reads it back (0.41.0). The
+   * tables that come out of the file must be, byte for byte, the tables that were dumped: a
+   * table that does not come back identical as rows is written again as the bytes of its CSV,
+   * and a file that still does not match is not kept.
+   */
+  private async packJson(
+    dir: string,
+    manifest: BackupManifest,
+    file: string,
+    input: { timeZone: string; fileName: string; plan?: ProgressPlan },
+  ): Promise<void> {
+    const plan = input.plan;
+    const readme = jsonReadme(manifest, { timeZone: input.timeZone, fileName: input.fileName });
+    const raw = new Set<string>();
+    for (;;) {
+      plan?.enter('packing');
+      try {
+        await writeJsonArchive({
+          dir,
+          manifest,
+          file,
+          readme,
+          rawTables: raw,
+          onProgress: (f) => plan?.step(f),
+        });
+      } catch (err) {
+        if (err instanceof JsonTableShapeError && !raw.has(err.table)) {
+          this.options.log?.info({ table: err.table }, 'json backup: table written as raw bytes');
+          raw.add(err.table);
+          continue;
+        }
+        throw err;
+      }
+      plan?.enter('verifying');
+      let differing: string[];
+      try {
+        differing = await verifyJsonArchive(file, manifest, (f) => plan?.step(f));
+      } catch (err) {
+        await fsp.rm(file, { force: true }).catch(() => undefined);
+        throw err;
+      }
+      if (differing.length === 0) return;
+      const again = differing.filter((t) => !raw.has(t));
+      if (again.length === 0) {
+        await fsp.rm(file, { force: true }).catch(() => undefined);
+        throw new Error(
+          `Backup verification failed: table ${differing[0]} does not match what was written. The file was not kept.`,
+        );
+      }
+      this.options.log?.info({ tables: again }, 'json backup: tables written again as raw bytes');
+      for (const t of again) raw.add(t);
+    }
   }
 
   /**
@@ -823,11 +949,15 @@ export class BackupService {
   ): Promise<BackupUploadResult> {
     await fsp.mkdir(this.backupDir, { recursive: true });
     const wanted =
-      requestedName.endsWith(BACKUP_FILE_EXTENSION) || requestedName.endsWith(ENCRYPTED_EXTENSION)
+      requestedName.endsWith(BACKUP_FILE_EXTENSION) ||
+      requestedName.endsWith(BACKUP_JSON_FILE_EXTENSION) ||
+      requestedName.endsWith(ENCRYPTED_EXTENSION)
         ? requestedName
-        : `${requestedName.replace(/\.(tar\.gz|tgz)$/i, '')}${BACKUP_FILE_EXTENSION}`;
-    const base = freeName(this.backupDir, wanted);
-    const target = path.join(this.backupDir, base);
+        : /\.json$/i.test(requestedName)
+          ? `${requestedName.replace(/\.json$/i, '')}${BACKUP_JSON_FILE_EXTENSION}`
+          : `${requestedName.replace(/\.(tar\.gz|tgz)$/i, '')}${BACKUP_FILE_EXTENSION}`;
+    let base = freeName(this.backupDir, wanted);
+    let target = path.join(this.backupDir, base);
     const hash = crypto.createHash('sha256');
     let size = 0;
     try {
@@ -849,7 +979,17 @@ export class BackupService {
     }
     let manifest: BackupManifest;
     try {
-      manifest = await this.manifestOf(target, archivePassword);
+      const described = await this.describeArchive(target, archivePassword);
+      manifest = described.manifest;
+      // 0.41.0: the name says what the file is (the list and the "save as" window go by it). A
+      // file that was renamed on the way gets the ending of what it really holds.
+      const named = nameForContents(base, described.format, described.encrypted);
+      if (named !== base) {
+        const renamed = freeName(this.backupDir, named);
+        await fsp.rename(target, path.join(this.backupDir, renamed));
+        base = renamed;
+        target = path.join(this.backupDir, renamed);
+      }
     } catch (err) {
       await fsp.rm(target, { force: true }).catch(() => undefined);
       if (err instanceof AppError) throw err;
@@ -892,7 +1032,10 @@ export class BackupService {
     );
   }
 
-  /** Returns a plain .tar.gz to read: the file itself, or a decrypted copy inside `dir`. */
+  /**
+   * Returns the plain backup to read (a `.tar.gz` or a JSON document): the file itself, or a
+   * decrypted copy inside `dir`.
+   */
   private async plainArchiveOf(
     file: string,
     dir: string,
@@ -928,10 +1071,34 @@ export class BackupService {
    * full just to be identified. A wrong password shows here as bytes that are not an archive.
    */
   private async manifestOf(file: string, password?: string): Promise<BackupManifest> {
-    if (!(await isEncryptedFile(file))) return readManifest(file);
+    return (await this.describeArchive(file, password)).manifest;
+  }
+
+  /**
+   * The manifest of an archive and how the file is written (0.41.0): the packed archive or the
+   * JSON document. Told from the first bytes, never from the name (a file may have been renamed).
+   */
+  private async describeArchive(
+    file: string,
+    password?: string,
+  ): Promise<{ manifest: BackupManifest; format: BackupFileFormat; encrypted: boolean }> {
+    if (!(await isEncryptedFile(file))) {
+      if (await isJsonArchiveFile(file)) {
+        try {
+          return {
+            manifest: parseManifest(await readJsonManifestText(file)),
+            format: 'json',
+            encrypted: false,
+          };
+        } catch (err) {
+          throw jsonArchiveProblem(err);
+        }
+      }
+      return { manifest: await readManifest(file), format: 'archive', encrypted: false };
+    }
     const key = await this.archiveKey(file, password);
     try {
-      return await peekManifest(await decryptedStream(file, key));
+      return { ...(await peekAnyManifest(await decryptedStream(file, key))), encrypted: true };
     } catch {
       throw new AppError(
         403,
@@ -1137,7 +1304,10 @@ export class BackupService {
     const encrypted = await isEncryptedFile(archiveFile);
     // The manifest is read first (only the beginning of the file): an archive this server cannot
     // take is refused before any time is spent on it, and the steps of the restore are known.
-    const announced = await this.manifestOf(archiveFile, input.archivePassword);
+    const { manifest: announced, format } = await this.describeArchive(
+      archiveFile,
+      input.archivePassword,
+    );
     this.assertRestorable(announced, input.transfer === true);
     const current = this.options.schemaVersion();
     const older = announced.schemaVersion < current;
@@ -1164,7 +1334,13 @@ export class BackupService {
       plan.weigh({
         checking: archiveSize / SPEED.hash + 0.1,
         decrypting: archiveSize / SPEED.crypt + 0.1,
-        unpacking: (csv + files) / SPEED.unpack + 0.1,
+        unpacking:
+          format === 'json'
+            ? csv / SPEED.jsonRowsOut +
+              files / SPEED.jsonFilesOut +
+              (csv + files) / SPEED.hash +
+              0.1
+            : (csv + files) / SPEED.unpack + 0.1,
         upgrading: csv / SPEED.dump + csv / SPEED.load + csv / SPEED.references + 3,
         ...(now
           ? {
@@ -1220,7 +1396,15 @@ export class BackupService {
         (f) => plan.step(f),
       );
       plan.enter('unpacking');
-      await unpackArchive(plainArchive, tmpDir, (f) => plan.step(0.6 * f));
+      // 0.41.0: a JSON document leaves the same folder behind as an unpacked archive — the
+      // manifest, a CSV per table, the uploaded files — so every step after this one is shared.
+      // Share of this step spent taking the file apart; the rest reads the result back.
+      const apart = format === 'json' ? 0.85 : 0.6;
+      if (format === 'json') {
+        await unpackJsonArchive(plainArchive, tmpDir, (f) => plan.step(apart * f));
+      } else {
+        await unpackArchive(plainArchive, tmpDir, (f) => plan.step(apart * f));
+      }
       // The decrypted copy has done its work; its room is needed for what comes next.
       if (plainArchive !== archiveFile) await fsp.rm(plainArchive, { force: true });
       const manifest = parseManifest(
@@ -1228,7 +1412,9 @@ export class BackupService {
       );
       this.assertRestorable(manifest, input.transfer === true);
       // Nothing is changed before the unpacked archive has been checked against its own list.
-      const checked = await verifyUnpacked(tmpDir, manifest, (f) => plan.step(0.6 + 0.4 * f));
+      const checked = await verifyUnpacked(tmpDir, manifest, (f) =>
+        plan.step(apart + (1 - apart) * f),
+      );
 
       let tablesDir = path.join(tmpDir, 'tables');
       let tableList = manifest.tables;
@@ -1649,13 +1835,19 @@ export class BackupService {
    * is an ordinary manual backup (database + every uploaded file, read back and checked); the
    * job reports the percentage and, at the end, what the archive holds.
    */
-  startBackupJob(input: { actor: AuditActor; password?: string }): BackupJobStatus {
+  startBackupJob(input: {
+    actor: AuditActor;
+    password?: string;
+    /** 0.41.0: the packed archive (default) or the JSON document. */
+    format?: BackupFileFormat;
+  }): BackupJobStatus {
     this.acquire('backup');
     return this.runJob('backup', async (progress) => {
       try {
         const { summary, manifest } = await this.writeBackup('manual', input.actor, {
           password: input.password,
           progress,
+          format: input.format,
         });
         const backup: BackupFileResult = {
           backup: summary,
@@ -1952,6 +2144,7 @@ export class BackupService {
       errorMessage: r.error_message,
       createdByName: r.created_by_name,
       encrypted: !!r.file_path && r.file_path.endsWith(ENCRYPTED_EXTENSION),
+      format: formatOfName(r.file_path),
       externalCopy,
     };
   }
@@ -2135,15 +2328,146 @@ async function sha256Of(file: string, onBytes?: (bytes: number) => void): Promis
 /** A name that is free in `dir`: the wanted one, or the same with -2, -3… before the extension. */
 function freeName(dir: string, wanted: string): string {
   if (!fs.existsSync(path.join(dir, wanted))) return wanted;
-  const ext = [`${BACKUP_FILE_EXTENSION}${ENCRYPTED_EXTENSION}`, BACKUP_FILE_EXTENSION].find((e) =>
-    wanted.endsWith(e),
-  );
+  const ext = [
+    `${BACKUP_FILE_EXTENSION}${ENCRYPTED_EXTENSION}`,
+    `${BACKUP_JSON_FILE_EXTENSION}${ENCRYPTED_EXTENSION}`,
+    BACKUP_FILE_EXTENSION,
+    BACKUP_JSON_FILE_EXTENSION,
+  ].find((e) => wanted.endsWith(e));
   const stem = ext ? wanted.slice(0, -ext.length) : wanted;
   for (let n = 2; n < 10_000; n += 1) {
     const candidate = `${stem}-${n}${ext ?? ''}`;
     if (!fs.existsSync(path.join(dir, candidate))) return candidate;
   }
   return `${stem}-${crypto.randomBytes(4).toString('hex')}${ext ?? ''}`;
+}
+
+/** How a stored backup is written, told from its name: the packed archive or the JSON document. */
+export function formatOfName(file: string | null): BackupFileFormat {
+  if (!file) return 'archive';
+  const name = file.endsWith(ENCRYPTED_EXTENSION)
+    ? file.slice(0, -ENCRYPTED_EXTENSION.length)
+    : file;
+  return name.endsWith(BACKUP_JSON_FILE_EXTENSION) ? 'json' : 'archive';
+}
+
+/**
+ * `name` with the ending of what the file really holds (0.41.0). An uploaded file keeps its name
+ * when the name already says the right thing; a JSON document that arrived as
+ * `kopja.likapcs-backup.tar.gz`, or a file with a password whose `.enc` was dropped on the way,
+ * gets the right ending. The list and the restore window go by the name.
+ */
+export function nameForContents(
+  name: string,
+  format: BackupFileFormat,
+  encrypted: boolean,
+): string {
+  const namedEncrypted = name.endsWith(ENCRYPTED_EXTENSION);
+  if (formatOfName(name) === format && namedEncrypted === encrypted) return name;
+  let stem = namedEncrypted ? name.slice(0, -ENCRYPTED_EXTENSION.length) : name;
+  for (const ending of [BACKUP_FILE_EXTENSION, BACKUP_JSON_FILE_EXTENSION]) {
+    if (stem.endsWith(ending)) stem = stem.slice(0, -ending.length);
+  }
+  const ending = format === 'json' ? BACKUP_JSON_FILE_EXTENSION : BACKUP_FILE_EXTENSION;
+  return `${stem || 'backup'}${ending}${encrypted ? ENCRYPTED_EXTENSION : ''}`;
+}
+
+/** What is wrong with a JSON backup, as an answer the Admin shows («damaged or changed»). */
+function jsonArchiveProblem(err: unknown): unknown {
+  if (!(err instanceof JsonArchiveError)) return err;
+  return new AppError(
+    409,
+    'ARCHIVE_CORRUPT',
+    `Skedari JSON i kopjes është i paplotë ose është ndryshuar. Asgjë nuk u ndryshua. (${err.message})`,
+    { line: err.line },
+  );
+}
+
+/**
+ * Turns a JSON backup into the folder an unpacked archive leaves behind: `manifest.json`, a CSV
+ * per table and the uploaded files (see `backup-json.ts`).
+ */
+async function unpackJsonArchive(
+  file: string,
+  dir: string,
+  onProgress?: (fraction: number) => void,
+): Promise<void> {
+  try {
+    await readJsonArchive(file, dir, onProgress);
+  } catch (err) {
+    throw jsonArchiveProblem(err);
+  }
+}
+
+/**
+ * The manifest at the beginning of a plain backup that arrives as a stream (a decrypted file),
+ * whichever way it is written. The first bytes tell a JSON document from a packed archive.
+ */
+async function peekAnyManifest(
+  source: Readable,
+): Promise<{ manifest: BackupManifest; format: BackupFileFormat }> {
+  // A file opened with the wrong password fails when its last byte has gone through, which for a
+  // small file is at once and at any moment. This listener stays for the whole life of the
+  // stream, so that error always has somebody to go to.
+  let failed: Error | null = null;
+  source.on('error', (err: Error) => {
+    failed ??= err;
+  });
+  let head: Buffer;
+  try {
+    head = await firstBytes(source, 256);
+  } catch (err) {
+    source.destroy();
+    throw err;
+  }
+  // (Nothing can happen to the stream between this check and the reader taking it over.)
+  if (failed) throw failed as Error;
+  if (looksLikeJsonArchive(head)) {
+    return { manifest: parseManifest(await peekJsonManifestText(source)), format: 'json' };
+  }
+  return { manifest: await peekManifest(source), format: 'archive' };
+}
+
+/**
+ * The first `count` bytes of a stream (or more), which stay in it: whoever reads the stream next
+ * starts at its first byte. A stream that ends earlier is not a backup.
+ */
+function firstBytes(source: Readable, count: number): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const stop = (): void => {
+      source.off('readable', onReadable);
+      source.off('end', onEnd);
+      source.off('error', onError);
+    };
+    const onReadable = (): void => {
+      for (;;) {
+        const chunk = source.read() as Buffer | null;
+        if (chunk === null) return;
+        chunks.push(chunk);
+        size += chunk.length;
+        if (size >= count) {
+          stop();
+          const all = Buffer.concat(chunks);
+          source.unshift(all);
+          resolve(all);
+          return;
+        }
+      }
+    };
+    const onEnd = (): void => {
+      stop();
+      reject(new Error('The file ends before a backup could begin'));
+    };
+    const onError = (err: Error): void => {
+      stop();
+      reject(err);
+    };
+    source.on('readable', onReadable);
+    source.on('end', onEnd);
+    source.on('error', onError);
+  });
 }
 
 /** The numbers of an archive that are shown to the owner. */
@@ -2527,6 +2851,31 @@ export function nextOccurrence(time: string, timeZone: string, now: Date): Date 
     if (instant > now.getTime()) return new Date(instant);
   }
   return new Date(now.getTime() + 24 * 3600 * 1000);
+}
+
+/**
+ * The note at the top of a JSON backup (0.41.0), for a person who opens the file: what it is, how
+ * it is brought back, and that it must not be edited. Albanian first, then English.
+ */
+function jsonReadme(
+  manifest: BackupManifest,
+  opts: { timeZone: string; fileName: string },
+): string {
+  const when = new Date(manifest.createdAt).toLocaleString('en-GB', {
+    timeZone: opts.timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  });
+  const rows = manifest.tables.reduce((sum, t) => sum + t.rows, 0);
+  const files = manifest.uploads?.files ?? 0;
+  return [
+    `LIKApcs — kopje e plotë (backup) në JSON. Biznesi: ${manifest.businessName ?? '—'}. Bërë më ${when} (${opts.timeZone}) me LIKApcs ${manifest.serverVersion}.`,
+    `Përmban gjithçka: ${manifest.tables.length} tabela me ${rows} rreshta (produktet, stoku, shitjet, faturat, arka, klientët, përdoruesit me fjalëkalimet e tyre, cilësimet, PC-të) dhe ${files} skedarë (fotot, sfondet, videot, zërat).`,
+    'SI KTHEHET: hapni LIKApcs (i njëjti version ose më i ri), zgjidhni «Rikthe nga kopja (backup)» dhe këtë skedar. Në një PC të ri kjo është në ekranin e parë.',
+    'MOS E NDRYSHONI këtë skedar: një skedar i ndryshuar ose i prerë nuk pranohet. Ruajeni në vend të sigurt: kushdo që e ka mund t’i lexojë të dhënat.',
+    'Full LIKApcs backup as JSON. To restore: open LIKApcs (same version or newer), choose «Restore from a backup» and pick this file. Do not edit it: a changed or cut-off file is refused.',
+    'Layout: "tables" holds every table row by row (each value is the text PostgreSQL writes for it; null is an empty value), "files" holds every uploaded file as base64, "manifest" lists their sizes and SHA-256 checksums.',
+  ].join(' ');
 }
 
 /** Human-readable report written inside every archive (report.txt). Albanian, for the owner. */

@@ -1,15 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveKindOf,
   BACKUP_SHARES,
   backupCheckingPercent,
   backupJobPercent,
   backupSavingPercent,
+  DEFAULT_BACKUP_FILE_FORMAT,
+  rememberBackupFormat,
+  rememberedBackupFormat,
   RESTORE_SHARES,
   restoreJobPercent,
   restoreUploadPercent,
   safeUploadName,
   suggestedBackupName,
+  tooLargeForFat32,
 } from './backup-file';
 
 describe('archiveKindOf', () => {
@@ -22,6 +26,23 @@ describe('archiveKindOf', () => {
 
   it('knows a plain archive by the gzip signature', async () => {
     expect(await archiveKindOf(bytes(0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3))).toBe('plain');
+  });
+
+  it('knows a backup written as a JSON document by how it begins (0.41.0)', async () => {
+    const head = '{"format":"likapcs-backup-json","formatVersion":1,\n"readme":"…",\n';
+    expect(await archiveKindOf(new Blob([head]))).toBe('plain');
+    // Saved again by a Windows tool: a mark in front, other line ends.
+    expect(await archiveKindOf(new Blob(['\uFEFF', head.replace(/\n/g, '\r\n')]))).toBe('plain');
+    // Laid out differently by another program: the server says what is wrong with it.
+    expect(await archiveKindOf(new Blob(['{\n  "format": "likapcs-backup-json",\n']))).toBe(
+      'plain',
+    );
+    // Other JSON is not a backup: the data file made for an AI, a settings file.
+    expect(await archiveKindOf(new Blob(['{"format":"likapcs-data","version":3}']))).toBe(
+      'unknown',
+    );
+    expect(await archiveKindOf(new Blob(['{"hello":"world"}']))).toBe('unknown');
+    expect(await archiveKindOf(new Blob(['[1,2,3]']))).toBe('unknown');
   });
 
   it('says "unknown" for anything else, and for a file too short to tell', async () => {
@@ -69,6 +90,67 @@ describe('suggestedBackupName', () => {
     expect(suggestedBackupName(at, true)).toBe(
       'LIKApcs-backup-20261121-0905.likapcs-backup.tar.gz.enc',
     );
+  });
+
+  it('ends in .json for a backup written as a JSON document (0.41.0)', () => {
+    const at = new Date(2026, 10, 24, 21, 30);
+    expect(suggestedBackupName(at, false, 'json')).toBe(
+      'LIKApcs-backup-20261124-2130.likapcs-backup.json',
+    );
+    expect(suggestedBackupName(at, true, 'json')).toBe(
+      'LIKApcs-backup-20261124-2130.likapcs-backup.json.enc',
+    );
+    expect(suggestedBackupName(at, false, 'archive')).toBe(suggestedBackupName(at, false));
+    // The upload accepts these names as they are.
+    expect(safeUploadName(suggestedBackupName(at, true, 'json'))).toBe(
+      suggestedBackupName(at, true, 'json'),
+    );
+  });
+});
+
+describe('the kind of file «Backup file» makes', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is JSON until the owner chooses, then what was chosen last', () => {
+    // The tests run without a browser: a storage that keeps what it is given stands in for it.
+    const kept = new Map<string, string>();
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (key: string) => kept.get(key) ?? null,
+        setItem: (key: string, value: string) => void kept.set(key, value),
+        removeItem: (key: string) => void kept.delete(key),
+      },
+    });
+    expect(DEFAULT_BACKUP_FILE_FORMAT).toBe('json');
+    expect(rememberedBackupFormat()).toBe('json');
+    rememberBackupFormat('archive');
+    expect(kept.get('likapcs.backupFileFormat')).toBe('archive');
+    expect(rememberedBackupFormat()).toBe('archive');
+    rememberBackupFormat('json');
+    expect(rememberedBackupFormat()).toBe('json');
+    // Something else in the storage is not a choice.
+    kept.set('likapcs.backupFileFormat', 'zip');
+    expect(rememberedBackupFormat()).toBe('json');
+  });
+
+  it('is JSON where nothing can be remembered', () => {
+    expect(rememberedBackupFormat()).toBe('json');
+    expect(() => rememberBackupFormat('archive')).not.toThrow();
+  });
+});
+
+describe('a file a FAT32 USB stick cannot hold', () => {
+  it('warns only above 4 GB less one byte', () => {
+    const limit = 4 * 1024 ** 3 - 1;
+    expect(tooLargeForFat32(limit)).toBe(false);
+    expect(tooLargeForFat32(limit + 1)).toBe(true);
+    expect(tooLargeForFat32(612_500_000)).toBe(false);
+    expect(tooLargeForFat32(9 * 1024 ** 3)).toBe(true);
+  });
+
+  it('stays quiet when the size is not known', () => {
+    expect(tooLargeForFat32(null)).toBe(false);
+    expect(tooLargeForFat32(undefined)).toBe(false);
   });
 });
 

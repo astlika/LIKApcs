@@ -8,6 +8,7 @@ import type { Readable } from 'node:stream';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
+  BACKUP_JSON_FILE_EXTENSION,
   PERMISSIONS,
   backupEncryptionSchema,
   backupFileSchema,
@@ -100,6 +101,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const job = services.backups.startBackupJob({
       actor: actorOf(request),
       password: body.password,
+      format: body.format,
     });
     return reply.code(202).send({ jobId: job.id });
   });
@@ -184,11 +186,19 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/backups/:id/download', { preHandler: manageOrTicket }, async (request, reply) => {
     const file = await services.backups.file(idParams.parse(request.params).id);
-    return reply
-      .header('content-type', 'application/gzip')
-      .header('content-length', String(file.sizeBytes))
-      .header('content-disposition', `attachment; filename="${file.fileName}"`)
-      .send(fs.createReadStream(file.path));
+    return (
+      reply
+        // 0.41.0: a backup written as a JSON document says so (one with a password is bytes).
+        .header(
+          'content-type',
+          file.fileName.endsWith(BACKUP_JSON_FILE_EXTENSION)
+            ? 'application/json; charset=utf-8'
+            : 'application/gzip',
+        )
+        .header('content-length', String(file.sizeBytes))
+        .header('content-disposition', `attachment; filename="${file.fileName}"`)
+        .send(fs.createReadStream(file.path))
+    );
   });
 
   app.delete('/backups/:id', manage, async (request) =>

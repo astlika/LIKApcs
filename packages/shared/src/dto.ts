@@ -3454,6 +3454,19 @@ export const BACKUP_FORMAT = 'likapcs-backup';
 export const BACKUP_FORMAT_VERSION = 1;
 export const BACKUP_FILE_EXTENSION = '.likapcs-backup.tar.gz';
 
+/**
+ * 0.41.0 — the same backup written as ONE JSON document instead of a packed archive: every table
+ * row by row and every uploaded file as base64. Larger than the archive, but it is plain text
+ * that any program can open, and a restore reads it without unpacking an archive. Both kinds are
+ * restored by the same steps and hold exactly the same data.
+ */
+export const BACKUP_JSON_FORMAT = 'likapcs-backup-json';
+export const BACKUP_JSON_FORMAT_VERSION = 1;
+export const BACKUP_JSON_FILE_EXTENSION = '.likapcs-backup.json';
+/** How «Backup file» writes the file: the packed archive (`.tar.gz`) or the JSON document. */
+export const BACKUP_FILE_FORMATS = ['archive', 'json'] as const;
+export type BackupFileFormat = (typeof BACKUP_FILE_FORMATS)[number];
+
 export interface BackupManifest {
   format: typeof BACKUP_FORMAT;
   formatVersion: number;
@@ -3512,6 +3525,8 @@ export interface BackupSummary {
   createdByName: string | null;
   /** 0.26.0: the file is encrypted with the backup password (needed to open it on another PC). */
   encrypted: boolean;
+  /** 0.41.0: how the file is written, told from its name: the packed archive or the JSON document. */
+  format: BackupFileFormat;
   /** 0.26.0: the copy to the external disk (null when no external folder is set). */
   externalCopy: BackupExternalCopy | null;
 }
@@ -3678,9 +3693,13 @@ export interface BackupJobStarted {
   jobId: string;
 }
 
-/** «Backup file»: an optional password of its own for this one file. */
+/**
+ * «Backup file»: an optional password of its own for this one file, and (0.41.0) how the file is
+ * written. Without `format` the packed archive is made, as before.
+ */
 export const backupFileSchema = z.object({
   password: z.string().min(4).max(200).optional(),
+  format: z.enum(BACKUP_FILE_FORMATS).default('archive'),
 });
 export type BackupFileRequest = z.infer<typeof backupFileSchema>;
 

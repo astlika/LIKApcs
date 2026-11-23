@@ -134,6 +134,65 @@ async fn open_url(url: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Opens a folder of this PC in the file manager (0.41.0). The backups folder is inside AppData,
+/// which Windows Explorer hides, so the owner could not get to the file that was just made. When
+/// `path` is a file, its folder opens with that file selected.
+///
+/// The path is only ever SHOWN, never run: a file goes to Explorer behind `/select,`, and a path
+/// that does not exist on this PC (the server may be another PC) is refused.
+#[tauri::command]
+async fn show_in_folder(path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control() || c == '"') {
+        return Err("not a path".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = std::path::PathBuf::from(&trimmed);
+        if !target.is_absolute() {
+            return Err("the path must be absolute".to_string());
+        }
+        let is_dir = target.is_dir();
+        if !is_dir && !target.is_file() {
+            return Err("the path does not exist on this PC".to_string());
+        }
+        #[cfg(target_os = "windows")]
+        let result = {
+            use std::os::windows::process::CommandExt;
+            let mut command = std::process::Command::new("explorer.exe");
+            if is_dir {
+                command.arg(&target);
+            } else {
+                // Explorer reads its command line itself: the path goes in quotes right after
+                // the comma (a file name cannot hold a quote, and one was refused above), and
+                // it wants backslashes.
+                let shown = target.display().to_string().replace('/', "\\");
+                command.raw_arg(format!("/select,\"{}\"", shown));
+            }
+            command.spawn()
+        };
+        #[cfg(target_os = "macos")]
+        let result = {
+            let mut command = std::process::Command::new("open");
+            if !is_dir {
+                command.arg("-R");
+            }
+            command.arg(&target).spawn()
+        };
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        let result = {
+            let folder = if is_dir {
+                target.clone()
+            } else {
+                target.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| target.clone())
+            };
+            std::process::Command::new("xdg-open").arg(folder).spawn()
+        };
+        result.map(|_| ()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ─── Customer display (0.16.0) ─────────────────────────────────────────────────
 #[tauri::command]
 fn display_monitors(app: AppHandle) -> Vec<display::MonitorInfo> {
@@ -180,6 +239,7 @@ pub fn run() {
             firewall_status,
             allow_firewall,
             open_url,
+            show_in_folder,
             display_monitors,
             display_open,
             display_close,

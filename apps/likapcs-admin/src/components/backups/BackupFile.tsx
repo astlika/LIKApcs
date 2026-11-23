@@ -3,7 +3,8 @@
  *
  * `BackupFileDialog` makes ONE file that holds everything (the database and every uploaded
  * picture, wallpaper, video and voice clip), lets the owner choose where it goes, and reads the
- * saved copy back. `RestoreFileDialog` takes such a file — on the first screen of a new
+ * saved copy back. 0.41.0: the file is written as a JSON document or as the packed archive; both
+ * hold the same data and are restored the same way. `RestoreFileDialog` takes such a file — on the first screen of a new
  * installation, on the login screen, or on the Backups page — and puts everything back. Both show
  * one bar with the percentage of the whole operation.
  */
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import type {
   BackupEncryptionStatus,
+  BackupFileFormat,
   BackupFileResult,
   BackupJobStarted,
   BackupSummary,
@@ -27,7 +29,8 @@ import type {
   LoginResponse,
   RestoreResult,
 } from '@likapcs/shared';
-import { api, ApiError, pauseUnauthorizedHandler } from '../../lib/api';
+import { api, ApiError, getServerUrl, pauseUnauthorizedHandler } from '../../lib/api';
+import { canShowServerFolders, joinServerPath, showInFolder } from '../../lib/desktop';
 import {
   archiveKindOf,
   backupCheckingPercent,
@@ -39,11 +42,14 @@ import {
   downloadBackupByLink,
   followJob,
   JobLostError,
+  rememberBackupFormat,
+  rememberedBackupFormat,
   restoreJobPercent,
   restoreUploadPercent,
   safeUploadName,
   saveBackupTo,
   suggestedBackupName,
+  tooLargeForFat32,
   uploadWithProgress,
   type ArchiveKind,
   type ProgressView,
@@ -181,6 +187,8 @@ export function BackupFileDialog({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
+  // 0.41.0: JSON document or packed archive; the choice is remembered on this PC.
+  const [format, setFormat] = useState<BackupFileFormat>(rememberedBackupFormat);
   const [password, setPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [stage, setStage] = useState<'form' | 'running' | 'done'>('form');
@@ -207,8 +215,9 @@ export function BackupFileDialog({
     setSaveFailure(null);
     const encrypted = password.length > 0 || encryption.data?.enabled === true;
     // Straight from the click: a "save as" window opens only on a user's action.
-    const target = await chooseSaveLocation(suggestedBackupName(new Date(), encrypted));
+    const target = await chooseSaveLocation(suggestedBackupName(new Date(), encrypted, format));
     if (target === 'cancelled') return;
+    rememberBackupFormat(format);
     const saves = target !== null;
     setStage('running');
     setView({ percent: 0, phase: 'starting', current: null, total: null });
@@ -216,7 +225,7 @@ export function BackupFileDialog({
     try {
       const { jobId } = await api<BackupJobStarted>('/backups/file', {
         method: 'POST',
-        body: password ? { password } : {},
+        body: password ? { password, format } : { format },
       });
       const job = await followJob(jobId, (s) =>
         setView({
@@ -234,6 +243,18 @@ export function BackupFileDialog({
       made = job.backup;
     } catch (err) {
       setFailure(failureOf(err, t));
+      setStage('form');
+      return;
+    }
+    // A server older than 0.41.0 does not know the JSON kind and makes the packed archive: that
+    // must not be saved under the `.json` name that was offered.
+    if (format === 'json' && made.backup.format !== 'json') {
+      onChanged();
+      if (target) {
+        const remove = (target as unknown as { remove?: () => Promise<void> }).remove;
+        if (typeof remove === 'function') await remove.call(target).catch(() => undefined);
+      }
+      setFailure({ message: t('backupFile.errServerOld'), detail: null, code: 'server_old' });
       setStage('form');
       return;
     }
@@ -327,6 +348,39 @@ export function BackupFileDialog({
               {failure.detail && <div className="faint job-detail">{failure.detail}</div>}
             </Alert>
           )}
+          <div className="job-format">
+            <div className="job-format__title">{t('backupFile.format')}</div>
+            <div
+              className="job-format__options"
+              role="radiogroup"
+              aria-label={t('backupFile.format')}
+            >
+              {(['json', 'archive'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  role="radio"
+                  aria-checked={format === kind}
+                  className="job-format__option"
+                  onClick={() => setFormat(kind)}
+                  data-testid={`backup-file-format-${kind}`}
+                >
+                  <span className="job-format__name">
+                    <strong>{t(`backupFile.formats.${kind}.name`)}</strong>
+                    <code className="mono">{kind === 'json' ? '.json' : '.tar.gz'}</code>
+                  </span>
+                  <span className="job-format__hint">{t(`backupFile.formats.${kind}.hint`)}</span>
+                </button>
+              ))}
+            </div>
+            <div className="faint job-format__note" data-testid="backup-file-format-note">
+              {format === 'json'
+                ? password.length > 0 || encryption.data?.enabled
+                  ? t('backupFile.formatNoteJsonLocked')
+                  : t('backupFile.formatNoteJson')
+                : t('backupFile.formatNoteArchive')}
+            </div>
+          </div>
           <Field
             label={t('backupFile.password')}
             optional
@@ -398,7 +452,9 @@ export function BackupFileDialog({
             <Fact
               label={t('backupFile.factSize')}
               value={formatFileSize(result.backup.sizeBytes)}
-              sub={result.backup.encrypted ? t('backupFile.factLocked') : t('backupFile.factOpen')}
+              sub={`${t(`backupFile.formats.${result.backup.format ?? 'archive'}.name`)} · ${
+                result.backup.encrypted ? t('backupFile.factLocked') : t('backupFile.factOpen')
+              }`}
             />
           </div>
           {saved && (
@@ -439,9 +495,22 @@ export function BackupFileDialog({
               <div className="mono faint" style={{ userSelect: 'all', fontSize: 12 }}>
                 {result.backup.fileName}
               </div>
+              <OpenFolder
+                directory={result.directory}
+                fileName={result.backup.fileName ?? undefined}
+              />
             </div>
           </div>
-          <p className="muted">{t('backupFile.howToRestore')}</p>
+          {tooLargeForFat32(result.backup.sizeBytes) && (
+            <Alert tone="warning" icon={<AlertTriangle size={16} />}>
+              <span data-testid="backup-file-over-4gb">{t('backupFile.over4Gb')}</span>
+            </Alert>
+          )}
+          <p className="muted">
+            {result.backup.format === 'json'
+              ? t('backupFile.howToRestoreJson')
+              : t('backupFile.howToRestore')}
+          </p>
         </div>
       )}
     </Dialog>
@@ -668,8 +737,8 @@ export function RestoreFileDialog({
             </div>
           ) : (
             <>
-              {/* No `accept` filter: the file may have been renamed, and a file with a password
-                  ends in `.enc`, which a filter for `.gz` would hide. */}
+              {/* No `accept` filter: the file may have been renamed, a file with a password ends
+                  in `.enc` and a JSON backup in `.json`; a filter for `.gz` would hide them. */}
               <input
                 ref={fileInput}
                 type="file"
@@ -807,6 +876,40 @@ export function RestoreFileDialog({
         </div>
       )}
     </Dialog>
+  );
+}
+
+/**
+ * «Hap dosjen» (0.41.0): opens a folder of the main PC in Explorer, with `fileName` selected.
+ * The backups folder is inside AppData, which Explorer hides, so its address alone was of little
+ * use. Where the folder cannot be opened from here (a browser, an Admin on another PC) a line
+ * says how to open it by hand.
+ */
+export function OpenFolder({ directory, fileName }: { directory: string; fileName?: string }) {
+  const { t } = useI18n();
+  const [failed, setFailed] = useState(false);
+  if (!canShowServerFolders(getServerUrl())) {
+    return <div className="faint job-folder__hint">{t('backupFile.openFolderManual')}</div>;
+  }
+  const open = async () => {
+    setFailed(false);
+    // The file selected when it is there; the folder alone otherwise.
+    const shown =
+      (fileName !== undefined && (await showInFolder(joinServerPath(directory, fileName)))) ||
+      (await showInFolder(directory));
+    setFailed(!shown);
+  };
+  return (
+    <div className="job-folder">
+      <Button size="sm" onClick={() => void open()} data-testid="backup-open-folder">
+        <FolderOpen size={13} /> {t('backupFile.openFolder')}
+      </Button>
+      {failed && (
+        <div className="field__error" data-testid="backup-open-folder-failed">
+          {t('backupFile.openFolderManual')}
+        </div>
+      )}
+    </div>
   );
 }
 

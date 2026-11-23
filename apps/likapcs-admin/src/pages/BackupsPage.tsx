@@ -33,7 +33,8 @@ import {
   type ServerInfoResponse,
   type SettingsMap,
 } from '@likapcs/shared';
-import { api, ApiError, apiDownload, apiUpload } from '../lib/api';
+import { api, ApiError, apiDownload, apiUpload, getServerUrl } from '../lib/api';
+import { canShowServerFolders, showInFolder } from '../lib/desktop';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
@@ -172,7 +173,8 @@ export function BackupsPage() {
                 ref={fileInput}
                 type="file"
                 // `.enc`: an archive with a password. (Before 0.38.0 the window hid those files.)
-                accept=".gz,.tgz,.enc,application/gzip"
+                // `.json`: a backup written as a JSON document (0.41.0).
+                accept=".gz,.tgz,.enc,.json,application/gzip,application/json"
                 hidden
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -242,6 +244,19 @@ export function BackupsPage() {
             <code className="mono" style={{ userSelect: 'all' }}>
               {data.directory}
             </code>
+            {canShowServerFolders(getServerUrl()) && (
+              <Button
+                size="sm"
+                onClick={() =>
+                  void showInFolder(data.directory).then((shown) => {
+                    if (!shown) toast.error(t('backupFile.openFolderManual'));
+                  })
+                }
+                data-testid="backups-open-folder"
+              >
+                <FolderOpen size={13} /> {t('backupFile.openFolder')}
+              </Button>
+            )}
             <span className="faint" style={{ marginLeft: 'auto' }}>
               {t('backups.directoryHint')}{' '}
               <Link to="/settings?tab=system">{t('backups.changeSchedule')}</Link>
@@ -292,8 +307,18 @@ export function BackupsPage() {
                       {b.schemaVersion !== null && (
                         <span className="faint"> · v{b.schemaVersion}</span>
                       )}
-                      {(b.encrypted || b.externalCopy) && (
+                      {(b.encrypted || b.externalCopy || b.format === 'json') && (
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                          {b.format === 'json' && (
+                            <span
+                              title={t('backups.jsonBadgeHint')}
+                              style={{ display: 'inline-flex' }}
+                            >
+                              <Badge tone="accent">
+                                <span data-testid="backup-json-badge">JSON</span>
+                              </Badge>
+                            </span>
+                          )}
                           {b.encrypted && (
                             <Badge tone="info">
                               <Lock size={11} /> {t('backups.archiveBadge')}
