@@ -2846,9 +2846,9 @@ export const en = {
       },
     },
     formatNoteJson:
-      'Both kinds hold the same data. A JSON file is restored only by LIKApcs 0.41.0 or newer: update the program on the other PC too.',
+      'Both kinds hold the same data. A JSON file is restored only by LIKApcs 0.41.1 or newer: update the program on the other PC too.',
     formatNoteJsonLocked:
-      'With a password the file is locked (.json.enc) and cannot be read as text. It is restored only by LIKApcs 0.41.0 or newer.',
+      'With a password the file is locked (.json.enc) and cannot be read as text. It is restored only by LIKApcs 0.41.1 or newer.',
     formatNoteArchive:
       'Both kinds hold the same data and are restored the same way with “Restore from a backup”. The other PC needs the same version of LIKApcs or a newer one.',
     password: 'Password for this file',
@@ -2905,7 +2905,7 @@ export const en = {
     howToRestore:
       'To bring it back: install LIKApcs on the other PC, open it and press “Restore from a backup” on the first screen.',
     howToRestoreJson:
-      'To restore: on the other PC install LIKApcs 0.41.0 or newer, open it, press “Restore from a backup” on the first screen and choose this file.',
+      'To restore: on the other PC install LIKApcs 0.41.1 or newer, open it, press “Restore from a backup” on the first screen and choose this file.',
     over4Gb:
       'The file is larger than 4 GB. A USB stick formatted as FAT32 cannot hold it: use a stick or disk with exFAT or NTFS.',
     errAccountPassword: 'Your password is not correct.',

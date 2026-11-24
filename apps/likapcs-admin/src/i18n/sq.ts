@@ -2859,9 +2859,9 @@ export const sq: Dictionary = {
       },
     },
     formatNoteJson:
-      'Të dy llojet mbajnë të njëjtat të dhëna. Skedari JSON kthehet vetëm në LIKApcs 0.41.0 ose më të ri: përditësojeni programin edhe në PC-në tjetër.',
+      'Të dy llojet mbajnë të njëjtat të dhëna. Skedari JSON kthehet vetëm në LIKApcs 0.41.1 ose më të ri: përditësojeni programin edhe në PC-në tjetër.',
     formatNoteJsonLocked:
-      'Me fjalëkalim skedari kyçet (.json.enc) dhe nuk lexohet si tekst. Kthehet vetëm në LIKApcs 0.41.0 ose më të ri.',
+      'Me fjalëkalim skedari kyçet (.json.enc) dhe nuk lexohet si tekst. Kthehet vetëm në LIKApcs 0.41.1 ose më të ri.',
     formatNoteArchive:
       'Të dy llojet mbajnë të njëjtat të dhëna dhe kthehen njësoj me «Rikthe nga kopja». PC-ja tjetër duhet të ketë të njëjtin version të LIKApcs ose më të ri.',
     password: 'Fjalëkalim për këtë skedar',
@@ -2918,7 +2918,7 @@ export const sq: Dictionary = {
     howToRestore:
       'Për ta kthyer: në PC-në tjetër instaloni LIKApcs, hapeni dhe shtypni «Rikthe nga kopja» në ekranin e parë.',
     howToRestoreJson:
-      'Për ta kthyer: në PC-në tjetër instaloni LIKApcs 0.41.0 ose më të ri, hapeni, shtypni «Rikthe nga kopja (backup)» në ekranin e parë dhe zgjidhni këtë skedar.',
+      'Për ta kthyer: në PC-në tjetër instaloni LIKApcs 0.41.1 ose më të ri, hapeni, shtypni «Rikthe nga kopja (backup)» në ekranin e parë dhe zgjidhni këtë skedar.',
     over4Gb:
       'Skedari është më i madh se 4 GB. Një USB e formatuar si FAT32 nuk e mban: përdorni USB ose disk me exFAT ose NTFS.',
     errAccountPassword: 'Fjalëkalimi juaj nuk është i saktë.',
