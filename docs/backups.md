@@ -190,10 +190,23 @@ The server then:
    otherwise; the scratch database is dropped either way);
 4. writes a `pre_restore` safety copy of the current data;
 5. in **one transaction**: truncates every table, copies the rows back (the number of rows of every
-   table must equal the manifest), checks every reference between them, resets all sequences,
-   keeps the current `backup_history` rows (they describe the files on disk now) and re-creates the
-   acting administrator's session when that user exists in the restored data. `schema_migrations`
-   and `station_heartbeats` are not brought back;
+   table must equal the manifest), puts back the current `backup_history` rows (they describe the
+   files on disk now), checks every reference, resets all sequences and re-creates the acting
+   administrator's session when that user exists in the restored data. `schema_migrations` and
+   `station_heartbeats` are not brought back.
+
+   **What belongs to this PC and not to the archive** (0.41.1). The backup history is not taken
+   from the archive, so a restored row that points into it may find nothing: an import from
+   another program (`import_runs.backup_id`) points at the safety backup taken before it, which
+   is a file of the PC the archive was made on. Such a pointer is emptied — what the database
+   does itself when the row is deleted (`ON DELETE SET NULL`) — and kept when the row is still
+   there (a restore on the same PC). Any reference into a table a restore does not bring back
+   must be a column that may be empty; `backups-import-restore.test.ts` checks the schema for
+   that. Likewise the action-log row of the restore names the acting user by id only when that
+   user exists in the restored data (on another PC the person restoring is an account of that
+   PC); the user name is written either way. A reference that really finds nothing among the
+   restored tables stops the restore with `409 ARCHIVE_REFERENCES_BROKEN`, naming the table;
+
 6. replaces the uploads folder with the archive's files and counts them
    (`500 RESTORE_FILES_INCOMPLETE`);
 7. when the archive comes from **another installation**, takes over its `installationId` (written
@@ -224,9 +237,10 @@ estimated from how long the rows took to load.
 1. Old PC: Admin → Backups → **Backup file**, saved to a USB stick (JSON or packed — both hold the
    same).
 2. New PC: install LIKApcs — **the same version as the old PC or a newer one** (a backup of a
-   newer version is refused, and a JSON file needs 0.41.0 or newer). On its first screen choose
-   **Rikthe nga kopja (backup)**, pick the file and type its password if it has one. No account is
-   needed: the installation is empty.
+   newer version is refused, a JSON file needs 0.41.0 or newer, and a shop that imported its data
+   from another program needs 0.41.1 or newer: before it no backup of such a shop could be
+   restored anywhere). On its first screen choose **Rikthe nga kopja (backup)**, pick the file and
+   type its password if it has one. No account is needed: the installation is empty.
 3. Sign in with the accounts of the old PC.
 4. Switch LIKApcs off on the old PC. Both would answer with the same identity, and a gaming PC
    would connect to whichever it finds first.

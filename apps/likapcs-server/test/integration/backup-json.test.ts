@@ -760,6 +760,18 @@ describe('JSON backup made by an older version (0.41.0)', () => {
          VALUES ('Kola "e vjetër", 0.5l', 'OLD-1', 150, '')`,
       );
       await pool.query(`INSERT INTO customers (code, name) VALUES ('C0001', 'Klient i vjetër')`);
+      // 0.41.1: this shop had imported its data from another program. The import points at the
+      // safety backup taken before it — a file of that PC, which no other PC has.
+      const safety = await pool.query<{ id: string }>(
+        `INSERT INTO backup_history (kind, status, file_path, schema_version)
+         VALUES ('pre_import', 'succeeded', 'C:\\LIKApcs-Data\\backups\\para-importit.tar.gz', 52)
+         RETURNING id`,
+      );
+      await pool.query(
+        `INSERT INTO import_runs (source, file_name, backup_id, started_by, status, finished_at)
+         VALUES ('likapos_pro', 'LIKApos_Pro_backup.json', $1, $2, 'succeeded', now())`,
+        [safety.rows[0]!.id, user.rows[0]!.id],
+      );
       const uploads = path.join(root, 'uploads-52');
       await fsp.mkdir(path.join(uploads, 'products'), { recursive: true });
       await fsp.writeFile(path.join(uploads, 'products', 'old.jpg'), 'OLD-PICTURE');
@@ -835,6 +847,12 @@ describe('JSON backup made by an older version (0.41.0)', () => {
     expect(product.rows).toEqual([
       { name: 'Kola "e vjetër", 0.5l', description: '', image_thumb_path: null },
     ]);
+    // The import is back; the safety backup it pointed at is not on this PC, so it points
+    // nowhere (0.41.1: this one row used to stop the whole restore).
+    const imports = await ctx.pool.query<{ file_name: string; backup_id: string | null }>(
+      'SELECT file_name, backup_id FROM import_runs',
+    );
+    expect(imports.rows).toEqual([{ file_name: 'LIKApos_Pro_backup.json', backup_id: null }]);
     // A migration newer than the file ran over its data.
     const live = await ctx.pool.query(
       `SELECT 1 FROM role_permissions rp JOIN roles r ON r.id = rp.role_id

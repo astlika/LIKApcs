@@ -647,6 +647,8 @@ password), `finishing`. Phases of a restore job: `checking`, `decrypting` (only 
 `restoring_database`, `checking_references`, `restoring_files`. A failed job carries one of:
 `ARCHIVE_INCOMPLETE` (a table or a file is missing or was changed — nothing was restored),
 `ARCHIVE_CORRUPT` (0.41.0: a JSON backup that was cut off or changed — nothing was restored),
+`ARCHIVE_REFERENCES_BROKEN` (0.41.1: a row of the backup points at a row that is not in it; the
+message names the table — nothing was restored),
 `ARCHIVE_UPGRADE_FAILED`, `NOT_ENOUGH_SPACE`, `RESTORE_FILES_INCOMPLETE`.
 
 **JSON backup (0.41.0).** `BackupSummary.format` is `'archive'` or `'json'`. A JSON backup goes

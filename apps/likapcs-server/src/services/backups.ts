@@ -1514,6 +1514,13 @@ export class BackupService {
         loadMs = Date.now() - loadStarted;
         plan.enter('checking_references');
         const checkStarted = Date.now();
+        // 0.41.1: the backup history of THIS PC goes back before the references are checked
+        // (it used to go back after), and a restored row that points at a backup which is not
+        // on this PC lets go of it. A shop that had imported from another program could not
+        // restore any backup: the import points at its safety backup, the history was still
+        // empty when the references were checked, and the whole restore failed on that one row.
+        await this.putBackHistory(client, history);
+        const referencesEmptied = await this.emptyLostReferences(client);
         await withEstimatedProgress(
           loadMs * REFERENCE_CHECK_PER_LOAD,
           (f) => plan.step(f),
@@ -1534,19 +1541,6 @@ export class BackupService {
             'UPDATE user_sessions SET revoked_at = now() WHERE revoked_at IS NULL',
           );
         }
-        for (const h of history) {
-          const keys = Object.keys(h);
-          await client.query(
-            `INSERT INTO backup_history (${keys.map(quoteIdent).join(', ')})
-             VALUES (${keys
-               .map((k, i) =>
-                 k === 'created_by' ? `(SELECT id FROM users WHERE id = $${i + 1})` : `$${i + 1}`,
-               )
-               .join(', ')})
-             ON CONFLICT (id) DO NOTHING`,
-            keys.map((k) => h[k]),
-          );
-        }
         if (session) {
           const keys = Object.keys(session);
           // The archive may already contain this session (signed in before the backup was taken);
@@ -1564,7 +1558,10 @@ export class BackupService {
           );
           sessionKept = (rowCount ?? 0) > 0;
         }
-        await recordAudit(client, input.actor, {
+        // 0.41.1: the action log this row goes into is the RESTORED one. Whoever restores on
+        // another PC is an account of that PC and is not among the restored users, and the row
+        // may only name a user who is: without this the restore failed at its very last step.
+        await recordAudit(client, await this.actorInRestoredData(client, input.actor), {
           action: input.transfer ? 'backup.transfer_import' : 'backup.restore',
           entityType: 'backup',
           entityId: input.id,
@@ -1577,6 +1574,7 @@ export class BackupService {
             preRestoreBackupId: safety.id,
             tablesRestored,
             rowsRestored,
+            referencesEmptied,
           },
         });
         await client.query('COMMIT');
@@ -2210,17 +2208,153 @@ export class BackupService {
     }
   }
 
-  /** Checks everything that was deferred, now, and makes the constraints immediate again. */
+  /**
+   * Checks everything that was deferred, now, and makes the constraints immediate again.
+   * 0.41.1: a reference that finds nothing is reported in words (it used to be the database's
+   * own sentence), naming the table, and says that nothing was changed.
+   */
   private async enforceForeignKeys(
     client: { query: DbPool['query'] },
     deferred: { table: string; name: string }[],
   ): Promise<void> {
-    await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+    try {
+      await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+    } catch (err) {
+      const pg = err as { code?: string; table?: string; constraint?: string; detail?: string };
+      if (pg.code !== '23503') throw err;
+      this.options.log?.error({ err }, 'restore: a reference of the backup finds nothing');
+      throw new AppError(
+        409,
+        'ARCHIVE_REFERENCES_BROKEN',
+        `Kopja nuk u kthye: te tabela "${pg.table ?? '?'}" një rresht tregon te diçka që nuk është në kopje (${pg.constraint ?? '?'}). Asgjë nuk u ndryshua.`,
+        { table: pg.table ?? null, constraint: pg.constraint ?? null, detail: pg.detail ?? null },
+      );
+    }
     for (const fk of deferred) {
       await client.query(
         `ALTER TABLE ${fk.table} ALTER CONSTRAINT ${quoteIdent(fk.name)} NOT DEFERRABLE`,
       );
     }
+  }
+
+  /**
+   * The actor of an action-log row written into data that was just restored: the user and the
+   * device are named by id only when they exist there (the log references them); the label —
+   * the user name the routes pass — stays either way, so the log still says who it was.
+   */
+  private async actorInRestoredData(
+    client: { query: DbPool['query'] },
+    actor: AuditActor,
+  ): Promise<AuditActor> {
+    const present = async (table: 'users' | 'station_devices', id: string | null | undefined) => {
+      if (!id) return null;
+      const { rows } = await client.query<{ id: string }>(`SELECT id FROM ${table} WHERE id = $1`, [
+        id,
+      ]);
+      return rows[0]?.id ?? null;
+    };
+    return {
+      ...actor,
+      userId: await present('users', actor.userId),
+      deviceId: await present('station_devices', actor.deviceId),
+    };
+  }
+
+  /**
+   * Puts back the rows of the tables whose CURRENT rows survive a restore (the backup history:
+   * it lists the files on this disk). Who made a backup is kept only when that user is in the
+   * restored data.
+   */
+  private async putBackHistory(
+    client: { query: DbPool['query'] },
+    history: Record<string, unknown>[],
+  ): Promise<void> {
+    for (const h of history) {
+      const keys = Object.keys(h);
+      await client.query(
+        `INSERT INTO backup_history (${keys.map(quoteIdent).join(', ')})
+         VALUES (${keys
+           .map((k, i) =>
+             k === 'created_by' ? `(SELECT id FROM users WHERE id = $${i + 1})` : `$${i + 1}`,
+           )
+           .join(', ')})
+         ON CONFLICT (id) DO NOTHING`,
+        keys.map((k) => h[k]),
+      );
+    }
+  }
+
+  /**
+   * 0.41.1 — restored rows that point into a table whose rows are NOT brought back from the
+   * archive (`PRESERVE_CURRENT`, `NOT_RESTORED`, `SKIP_ON_RESTORE`). Such a table holds what
+   * this PC has, so a pointer from the archive may find nothing in it: the import of another
+   * program's data points at the safety backup taken before it, and that backup is a file of
+   * the PC the archive was made on.
+   *
+   * A pointer that finds nothing is emptied — what the database does by itself when the row it
+   * points at is deleted (these references are `ON DELETE SET NULL`). A pointer that still
+   * finds its row (a restore on the same PC) is kept. Only columns that may be empty are
+   * touched; anything else is left to the check of the references, which then refuses the
+   * archive with nothing changed. Runs inside the restore's transaction, after the kept tables
+   * have their rows back. Returns what was emptied, for the action log.
+   */
+  private async emptyLostReferences(client: {
+    query: DbPool['query'];
+  }): Promise<{ table: string; columns: string[]; rows: number }[]> {
+    const kept = [...PRESERVE_CURRENT, ...NOT_RESTORED, ...SKIP_ON_RESTORE];
+    const { rows: references } = await client.query<{
+      child: string;
+      parent: string;
+      child_columns: string[];
+      parent_columns: string[];
+      nullable: boolean;
+    }>(
+      `SELECT c.conrelid::regclass::text AS child,
+              c.confrelid::regclass::text AS parent,
+              (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                 FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+              ) AS child_columns,
+              (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                 FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum
+              ) AS parent_columns,
+              (SELECT bool_and(NOT a.attnotnull)
+                 FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+              ) AS nullable
+         FROM pg_constraint c
+         JOIN pg_namespace n ON n.oid = c.connamespace
+         JOIN pg_class parent ON parent.oid = c.confrelid
+         JOIN pg_class child ON child.oid = c.conrelid
+        WHERE c.contype = 'f' AND n.nspname = 'public' AND c.conparentid = 0
+          AND parent.relname = ANY ($1::text[])
+          AND NOT child.relname = ANY ($1::text[])
+        ORDER BY 1, 2`,
+      [kept],
+    );
+    const emptied: { table: string; columns: string[]; rows: number }[] = [];
+    for (const ref of references) {
+      if (!ref.nullable) continue;
+      const columns = ref.child_columns.map(quoteIdent);
+      const { rowCount } = await client.query(
+        `UPDATE ${ref.child} AS c
+            SET ${columns.map((column) => `${column} = NULL`).join(', ')}
+          WHERE ${columns.map((column) => `c.${column} IS NOT NULL`).join(' AND ')}
+            AND NOT EXISTS (
+              SELECT 1 FROM ${ref.parent} AS p
+               WHERE ${ref.parent_columns
+                 .map((column, i) => `p.${quoteIdent(column)} = c.${columns[i]}`)
+                 .join(' AND ')})`,
+      );
+      if ((rowCount ?? 0) > 0) {
+        emptied.push({ table: ref.child, columns: ref.child_columns, rows: rowCount ?? 0 });
+      }
+    }
+    if (emptied.length > 0) {
+      this.options.log?.info({ emptied }, 'restore: references to backups of another PC emptied');
+    }
+    return emptied;
   }
 
   /** The order the tables are restored in: see `restoreOrder`. */
