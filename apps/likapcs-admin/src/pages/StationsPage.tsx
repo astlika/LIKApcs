@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -69,6 +70,10 @@ import { ConnectPcDialog, FirewallCard } from '../components/stations/ConnectPcD
 import { QuickStartDialog, useStationActions } from '../components/stations/useStationActions';
 import { billingModeKey, formatHms, projectSession } from '../lib/session-time';
 import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
+import { InternetBar } from '../components/pos/InternetBar';
+import { PaySessionsDialog } from '../components/sessions/PaySessionsDialog';
+import { CustomerBillDialog } from '../components/sessions/SessionCustomer';
+import { SessionPaidDialog, type SessionPaid } from '../components/sessions/SessionPaidDialog';
 import { storage } from '../lib/storage';
 import { BoardStatsBar, HoverInfo, ViewMenu } from '../components/stations/BoardHeader';
 import { ReservationsDialog } from '../components/stations/ReservationsDialog';
@@ -1036,6 +1041,8 @@ export function StationsPage() {
           onChanged={invalidate}
         />
       )}
+      {/* 0.36.0: the internet packages, sold from here without leaving the PCs. */}
+      <InternetBar pinned />
     </div>
   );
 }
@@ -1195,6 +1202,38 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
   const fmt = useFormat();
   const now = useNow();
   const live = station.activeSession;
+  // 0.36.0: the customer's name opens what they have open and what they owe; "pay" from there.
+  const [bill, setBill] = useState(false);
+  const [payIds, setPayIds] = useState<string[] | null>(null);
+  const [paid, setPaid] = useState<SessionPaid | null>(null);
+  // Shown whether or not the session still runs: a payment can be what ended it. In the body, not
+  // in the actions bar: the bar is its own layer, and the internet bar would cover the buttons.
+  const payment = createPortal(
+    <>
+      {bill && live?.customerId && (
+        <CustomerBillDialog
+          customerId={live.customerId}
+          onClose={() => setBill(false)}
+          onPay={(ids) => {
+            setBill(false);
+            setPayIds(ids);
+          }}
+        />
+      )}
+      {payIds && (
+        <PaySessionsDialog
+          sessionIds={payIds}
+          onClose={() => setPayIds(null)}
+          onPaid={(receipt) => {
+            setPayIds(null);
+            setPaid(receipt);
+          }}
+        />
+      )}
+      {paid && <SessionPaidDialog paid={paid} onFinish={() => setPaid(null)} />}
+    </>,
+    document.body,
+  );
   if (!live) {
     return (
       <span className="map-actions__status">
@@ -1212,6 +1251,7 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
           </span>
         )}
         {station.device && <HardwareStrip device={station.device} />}
+        {payment}
       </span>
     );
   }
@@ -1237,8 +1277,26 @@ function SelectedSummary({ station, fetchedAt }: { station: StationSummary; fetc
           : `${t('sessions.elapsed')} ${formatHms(elapsed)}`}
       </span>
       <span className="num">{fmt.money(live.currentPriceCents)}</span>
-      {live.customerName && <span className="muted">{live.customerName}</span>}
+      {(live.dueCents ?? 0) + station.orders.openCents > 0 && (
+        <span className="due-pill" data-testid="selected-due">
+          {t('board.dueNow')} {fmt.money((live.dueCents ?? 0) + station.orders.openCents)}
+        </span>
+      )}
+      {live.customerId ? (
+        <button
+          type="button"
+          className="name-link"
+          onClick={() => setBill(true)}
+          title={t('customerBill.body')}
+          data-testid="selected-customer"
+        >
+          {live.customerName}
+        </button>
+      ) : (
+        live.customerName && <span className="muted">{live.customerName}</span>
+      )}
       {station.device && <HardwareStrip device={station.device} />}
+      {payment}
     </span>
   );
 }
@@ -2227,17 +2285,7 @@ function DeviceCommands({
           <em>{t(`stations.tasksEnd.${ended.trigger === 'auto' ? 'automatic' : 'byStaff'}`)}</em>
         </span>
       )}
-      {station.device?.widget && (
-        <span
-          className="st-commands__widget"
-          data-ok={station.device.widget.ok ? 'true' : 'false'}
-          data-testid="device-widget"
-          title={`${station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')} · ${station.device.widget.detail}`}
-        >
-          <MonitorCheck size={12} />
-          {station.device.widget.ok ? t('stations.widgetOk') : t('stations.widgetHidden')}
-        </span>
-      )}
+      {station.device?.widget && <WidgetReport report={station.device.widget} />}
       {!online && <span className="st-commands__offline">{t('stations.commandsOffline')}</span>}
       <Dialog
         open={messageOpen}
@@ -2309,5 +2357,41 @@ function HoverCard({
       {canPreview && <LivePreviewCard station={station} rect={hover.rect} feed={feed} />}
       <HoverInfo station={station} rect={hover.rect} fetchedAt={fetchedAt} />
     </>
+  );
+}
+
+/**
+ * What the PC says about its countdown widget, in words the desk can act on (0.35.1): hidden by
+ * the owner's own setting, covered by a game in exclusive fullscreen, or simply visible.
+ */
+function WidgetReport({ report }: { report: { ok: boolean; detail: string } }) {
+  const { t } = useI18n();
+  const game = report.detail.startsWith('fullscreen-app:')
+    ? report.detail.slice('fullscreen-app:'.length)
+    : null;
+  const label = report.ok
+    ? t('stations.widgetOk')
+    : report.detail === 'hidden-for-game'
+      ? t('stations.widgetHiddenForGame')
+      : game !== null
+        ? t('stations.widgetCovered')
+        : t('stations.widgetHidden');
+  const why = report.ok
+    ? report.detail
+    : report.detail === 'hidden-for-game'
+      ? t('stations.widgetHiddenForGameHint')
+      : game !== null
+        ? t('stations.widgetCoveredHint', { game })
+        : report.detail;
+  return (
+    <span
+      className="st-commands__widget"
+      data-ok={report.ok ? 'true' : 'false'}
+      data-testid="device-widget"
+      title={`${label} · ${why}`}
+    >
+      <MonitorCheck size={12} />
+      {label}
+    </span>
   );
 }

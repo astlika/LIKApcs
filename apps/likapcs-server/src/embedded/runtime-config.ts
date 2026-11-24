@@ -45,3 +45,16 @@ export function readControlToken(file: string): string | null {
     return null;
   }
 }
+
+/**
+ * 0.38.0: makes this installation the one a restored backup came from. Only the id changes; the
+ * database password and the control token stay this PC's own. The gaming PCs remember the id of
+ * the server they were paired with, so with it they find the new main PC by themselves.
+ */
+export function writeInstallationId(file: string, installationId: string): void {
+  const current = JSON.parse(fs.readFileSync(file, 'utf8')) as RuntimeConfig;
+  const next: RuntimeConfig = { ...current, installationId };
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}

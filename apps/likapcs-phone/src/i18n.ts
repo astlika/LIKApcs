@@ -46,6 +46,30 @@ export function useT(): TFunc {
 }
 
 const EN: Record<string, string> = {
+  // 0.34.0: internet access (Wi-Fi codes)
+  'kod pas pagesës': 'code after payment',
+  'Kodi i internetit i shitjes së fundit': 'Internet code of the last sale',
+  'Shfaq': 'Show',
+  'Kodi i internetit': 'Internet code',
+  'Kodet e internetit': 'Internet codes',
+  'Dërgo kodin': 'Send the code',
+  'U kopjua': 'Copied',
+  'Kopjo': 'Copy',
+  'U dha klientit': 'Handed to the customer',
+  'Shitja u regjistrua': 'Sale recorded',
+  'Jepeni klientit:': 'Give it to the customer:',
+  'Jepjani klientit:': 'Give them to the customer:',
+  'Kodi gjendet edhe më vonë te Admin › Shitjet, në këtë faturë.': 'The code is also in Admin › Sales later, on this receipt.',
+  'Shtypni përsëri «Përfundo»: shitja nuk bëhet dy herë dhe kodi shfaqet.': 'Press “Complete” again: the sale is not made twice and the code appears.',
+  'Paketë interneti: stoku janë kodet e lira. Kodet shtohen te Admin › Produktet.': 'Internet package: its stock is its unused codes. Codes are added in Admin › Products.',
+  'Kode interneti të shtuara': 'Internet codes added',
+  'Kode interneti të hequra': 'Internet codes removed',
+  'Nuk mjafton stoku për {name}: kanë mbetur {n}.': 'Not enough stock for {name}: {n} left.',
+  '{name} nuk ka më stok.': '{name} is out of stock.',
+  'Stoku i {name} janë kodet e lira. Kodet shtohen te Admin › Produktet › Shto internet access.': 'The stock of {name} is its unused codes. Codes are added in Admin › Products › Add internet access.',
+  '{name} shitet vetëm si shitje e rregullt: kodi jepet kur paguhet.': '{name} is sold as a normal sale only: the code is handed over on payment.',
+  'Ky version nuk i shfaq kodet e internetit. Rifreskoni aplikacionin.': 'This version cannot show internet codes. Reload the app.',
+  'Interneti shitet me copë: një kod për secilën.': 'Internet access is sold by the piece: one code each.',
   // server link, PIN lock, cash by denomination, time-up alert
   // stock screen (phone)
   'Pa kategori': 'No category',

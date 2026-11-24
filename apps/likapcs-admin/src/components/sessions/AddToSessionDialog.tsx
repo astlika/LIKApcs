@@ -44,7 +44,8 @@ export function AddToSessionDialog({
     queryKey: ['products', 'session-add', search],
     queryFn: () =>
       api<{ items: ProductSummary[]; total: number }>('/products', {
-        query: { q: search || undefined, pageSize: 200 },
+        // `standard`: internet access is sold at the till only (its code is handed over on payment).
+        query: { q: search || undefined, pageSize: 200, kind: 'standard' },
       }),
     staleTime: 15_000,
   });

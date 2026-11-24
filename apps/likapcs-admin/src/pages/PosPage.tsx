@@ -30,6 +30,8 @@ import {
   X,
   Users,
   CalendarClock,
+  Tags,
+  Wifi,
 } from 'lucide-react';
 import {
   PERMISSIONS,
@@ -37,6 +39,7 @@ import {
   customerDiscountCents,
   type CategorySummary,
   type CustomerSummary,
+  type OfferSummary,
   type ProductLookupResponse,
   type ProductSummary,
   type SettingsMap,
@@ -62,6 +65,7 @@ import { OfflineQueueBar } from '../components/pos/OfflineQueueBar';
 import { printOfflineSlip } from '../lib/offline-receipt';
 import {
   addFreeItem,
+  addOfferChecked,
   addTimeItem,
   addToCart,
   addToCartChecked,
@@ -74,6 +78,9 @@ import {
   pcItemsFromCart,
   type PcTarget,
   emptyCart,
+  hasInternetAccess,
+  hasOffer,
+  isInternetAccess,
   lineKey,
   lineName,
   removeLine,
@@ -106,6 +113,15 @@ import {
   Kbd,
   Loading,
 } from '../components/ui/primitives';
+import { AwaitingPaymentStrip } from '../components/sessions/AwaitingPayment';
+import { InternetBar } from '../components/pos/InternetBar';
+import {
+  announceOfferStarts,
+  announceOfferWaiting,
+  offerContents,
+  refreshAfterOfferSale,
+  useOffers,
+} from '../components/pos/Offers';
 
 /** 0.27.4: the PCs the desk can put products on: running, paused, or ended and not yet paid. */
 async function fetchPcTargets(): Promise<PcTarget[]> {
@@ -133,6 +149,7 @@ async function fetchPcTargets(): Promise<PcTarget[]> {
 
 const PC_BLOCK_KEYS = {
   notPc: 'pos.pcBlock.notPc',
+  internet: 'pos.pcBlock.internet',
   addons: 'pos.pcBlock.addons',
   whole: 'pos.pcBlock.whole',
   discount: 'pos.pcBlock.discount',
@@ -178,6 +195,9 @@ export function PosPage() {
     quantityMilli: number;
   } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  // 0.36.0: offers. `offersOnly`: the "Ofertat" chip — the grid shows the offers alone.
+  const [offersOnly, setOffersOnly] = useState(false);
+  const offers = useOffers('active');
   const searchRef = useRef<HTMLInputElement>(null);
   // Keep the scan field focused whenever nothing else needs the keyboard, so the next scan (or
   // typed code) always has somewhere to go. Deferred: dialogs are still unmounting when called.
@@ -253,6 +273,11 @@ export function PosPage() {
         toast.error(t('pos.staffNoFreeItems'));
         return;
       }
+      // 0.34.0: a staff purchase shows no code; internet access is an ordinary sale.
+      if (hasInternetAccess(cart)) {
+        toast.error(t('pos.staffNoInternet'));
+        return;
+      }
       setCart((c) => ({
         ...c,
         staff: true,
@@ -268,7 +293,17 @@ export function PosPage() {
   // 0.33.4: a product that may not go below zero is not put in the sale beyond its stock — by a
   // click, a search, a barcode or a typed quantity. Products allowed below zero are not limited.
   const stockRefused = useCallback(
-    (refusal: StockRefusal) => {
+    (refusal: StockRefusal, internet = false) => {
+      // 0.34.0: for internet access the stock is the codes that are left.
+      if (internet) {
+        toast.error(
+          refusal.stockMilli > 0
+            ? t('pos.codesOnly', { n: refusal.stockMilli / 1000, name: refusal.productName })
+            : t('pos.codesNone', { name: refusal.productName }),
+          t('pos.codesRefill'),
+        );
+        return;
+      }
       toast.error(
         refusal.stockMilli > 0
           ? t('pos.stockOnly', { n: refusal.stockMilli / 1000, name: refusal.productName })
@@ -299,9 +334,18 @@ export function PosPage() {
   const add = useCallback(
     (product: ProductSummary, quantityMilli = 1000) => {
       if (!product.isActive) return;
+      // 0.34.0: an internet code is handed over when a sale is paid at the till — so it never
+      // goes on a staff purchase or on a PC's bill.
+      if (isInternetAccess(product) && (latestCart.current.staff || latestCart.current.pc)) {
+        toast.error(
+          latestCart.current.staff ? t('pos.staffNoInternet') : t('pos.pcBlock.internet'),
+        );
+        focusSearch();
+        return;
+      }
       const checked = addToCartChecked(latestCart.current, product, quantityMilli);
       if (checked.refused) {
-        stockRefused(checked.refused);
+        stockRefused(checked.refused, isInternetAccess(product));
         focusSearch();
         return;
       }
@@ -313,13 +357,13 @@ export function PosPage() {
       setCart((c) => addToCartChecked(c, product, quantityMilli).cart);
       focusSearch();
     },
-    [focusSearch, setCart, stockRefused],
+    [focusSearch, setCart, stockRefused, t, toast],
   );
   const addWithExtras = useCallback(
     (product: ProductSummary, quantityMilli: number, addonIds: readonly string[]) => {
       const checked = addToCartChecked(latestCart.current, product, quantityMilli, addonIds);
       if (checked.refused) {
-        stockRefused(checked.refused);
+        stockRefused(checked.refused, isInternetAccess(product));
         return;
       }
       latestCart.current = checked.cart;
@@ -327,10 +371,35 @@ export function PosPage() {
     },
     [setCart, stockRefused],
   );
+  // 0.36.0: an offer goes in at its one price. 0.36.1: with one click, like a product — nothing
+  // is asked; its PC minutes wait at the desk as paid time until a PC is started with them.
+  const addOffer = useCallback(
+    (offer: OfferSummary) => {
+      // An offer is paid at the till: never on a staff purchase, never on a PC's bill.
+      if (latestCart.current.staff || latestCart.current.pc) {
+        toast.error(latestCart.current.staff ? t('offers.noStaff') : t('offers.noPcBill'));
+        focusSearch();
+        return;
+      }
+      const checked = addOfferChecked(latestCart.current, { offer, taxRateBp: defaultTaxBp });
+      if (checked.refused) {
+        stockRefused(checked.refused);
+        focusSearch();
+        return;
+      }
+      latestCart.current = checked.cart;
+      setCart((c) => addOfferChecked(c, { offer, taxRateBp: defaultTaxBp }).cart);
+      focusSearch();
+    },
+    [defaultTaxBp, focusSearch, setCart, stockRefused, t, toast],
+  );
   const changeQuantity = useCallback(
     (key: string, quantityMilli: number) => {
       const checked = setQuantityChecked(latestCart.current, key, quantityMilli);
-      if (checked.refused) stockRefused(checked.refused);
+      if (checked.refused) {
+        const line = latestCart.current.lines.find((l) => lineKey(l) === key);
+        stockRefused(checked.refused, line?.kind === 'product' && isInternetAccess(line.product));
+      }
       latestCart.current = checked.cart;
       setCart((c) => setQuantityChecked(c, key, quantityMilli).cart);
     },
@@ -545,16 +614,28 @@ export function PosPage() {
   // (the server decides at payment time), the grid is only the browsing surface.
   const hideOut = settings.data?.['pos.hide_out_of_stock'] ?? true;
   const list = useMemo(() => {
+    // "Ofertat" alone: no product tiles.
+    if (offersOnly) return [];
     const items = products.data?.items ?? [];
     return hideOut
       ? items.filter((p) => !(p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0))
       : items;
-  }, [products.data, hideOut]);
+  }, [products.data, hideOut, offersOnly]);
+  // 0.36.0: the offers come first in the grid — under "All" and under "Ofertat", and by search.
+  const offerTiles = useMemo(() => {
+    if (cart.staff || cart.pc || (!offersOnly && categoryId !== null)) return [];
+    const wanted = gridSearch.toLowerCase();
+    return (offers.data ?? []).filter(
+      (o) => wanted === '' || o.name.toLowerCase().includes(wanted),
+    );
+  }, [offers.data, offersOnly, categoryId, gridSearch, cart.staff, cart.pc]);
 
   return (
     <div className="pos">
       <section className="pos__catalog">
         <OfflineQueueBar />
+        {/* 0.36.0: a PC bill that waits reaches the till here too, not only on the Stations page. */}
+        <AwaitingPaymentStrip testId="pos-awaiting" compact />
         <div className="pos__search">
           <ScanLine size={18} className="muted" />
           <input
@@ -582,11 +663,28 @@ export function PosPage() {
           <button
             type="button"
             className="chip"
-            aria-pressed={categoryId === null}
-            onClick={() => setCategoryId(null)}
+            aria-pressed={categoryId === null && !offersOnly}
+            onClick={() => {
+              setCategoryId(null);
+              setOffersOnly(false);
+            }}
           >
             {t('pos.allCategories')}
           </button>
+          {(offers.data?.length ?? 0) > 0 && !cart.staff && !cart.pc && (
+            <button
+              type="button"
+              className="chip chip--offers"
+              aria-pressed={offersOnly}
+              onClick={() => {
+                setCategoryId(null);
+                setOffersOnly(true);
+              }}
+              data-testid="pos-offers-chip"
+            >
+              <Tags size={13} /> {t('offers.chip')}
+            </button>
+          )}
           {(categories.data ?? [])
             .filter((c) => c.isActive)
             .map((c) => (
@@ -594,22 +692,78 @@ export function PosPage() {
                 key={c.id}
                 type="button"
                 className="chip"
-                aria-pressed={categoryId === c.id}
+                aria-pressed={categoryId === c.id && !offersOnly}
                 style={c.color ? { borderColor: c.color } : undefined}
-                onClick={() => setCategoryId(c.id)}
+                onClick={() => {
+                  setCategoryId(c.id);
+                  setOffersOnly(false);
+                }}
               >
                 {c.name}
               </button>
             ))}
         </div>
         {products.isLoading && <Loading />}
-        {products.isSuccess && list.length === 0 && (
+        {products.isSuccess && list.length === 0 && offerTiles.length === 0 && (
           <EmptyState
             icon={<ShoppingCart size={22} />}
             title={search ? t('pos.noMatches') : t('pos.noProducts')}
           />
         )}
         <div className="pos__grid">
+          {offerTiles.map((o) => (
+            <button
+              key={`offer:${o.id}`}
+              type="button"
+              className="tile tile--offer"
+              disabled={!o.available}
+              onClick={() => addOffer(o)}
+              data-testid="pos-offer-tile"
+            >
+              <div className="tile__head">
+                {o.items[0]?.imageUrl && (
+                  <div className="tile__image" aria-hidden>
+                    <img
+                      src={fileUrl(o.items[0].imageThumbUrl ?? o.items[0].imageUrl) ?? undefined}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </div>
+                )}
+                <div className="tile__name" title={`${o.name} — ${offerContents(o)}`}>
+                  <span className="tile__offer">
+                    <Tags size={11} /> {t('offers.badge')}
+                  </span>
+                  {o.name}
+                </div>
+              </div>
+              <div className="tile__meta">
+                <span className="num">
+                  {o.minutes === 0 && o.productsCents > o.priceCents && (
+                    <>
+                      <s className="faint">{fmt.money(o.productsCents)}</s>{' '}
+                    </>
+                  )}
+                  <strong>{fmt.money(o.priceCents)}</strong>
+                </span>
+                {/* 0.36.1: how many of it the stock covers, like the stock on a product tile. */}
+                {!o.available ? (
+                  <span className="tile__stock text-danger">{t('offers.unavailable')}</span>
+                ) : (
+                  o.stockUnits !== null &&
+                  o.stockUnits !== undefined && (
+                    <span
+                      className={`tile__stock ${o.stockUnits <= 0 ? 'text-warning' : 'faint'}`}
+                      data-testid="pos-offer-stock"
+                    >
+                      {t('pos.stockLeft', { n: o.stockUnits })}
+                    </span>
+                  )
+                )}
+              </div>
+            </button>
+          ))}
           {list.map((p) => {
             const out = p.trackStock && !p.allowNegativeStock && p.stockMilli <= 0;
             return (
@@ -626,10 +780,19 @@ export function PosPage() {
                 <div className="tile__head">
                   {p.imageUrl && (
                     <div className="tile__image" aria-hidden>
-                      <img src={fileUrl(p.imageUrl) ?? undefined} alt="" loading="lazy" />
+                      {/* 0.37.0: the small copy when there is one (see lib/thumbs). */}
+                      <img
+                        src={fileUrl(p.imageThumbUrl ?? p.imageUrl) ?? undefined}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                      />
                     </div>
                   )}
                   <div className="tile__name" title={p.name}>
+                    {isInternetAccess(p) && (
+                      <Wifi size={13} className="tile__wifi" aria-label={t('internet.badge')} />
+                    )}
                     {p.name}
                   </div>
                 </div>
@@ -646,7 +809,13 @@ export function PosPage() {
                     <span
                       className={`tile__stock ${out ? 'text-danger' : p.lowStock ? 'text-warning' : 'faint'}`}
                     >
-                      {out ? t('pos.outOfStock') : t('pos.stockLeft', { n: p.stockMilli / 1000 })}
+                      {isInternetAccess(p)
+                        ? out
+                          ? t('pos.codesOut')
+                          : t('pos.codesLeft', { n: p.stockMilli / 1000 })
+                        : out
+                          ? t('pos.outOfStock')
+                          : t('pos.stockLeft', { n: p.stockMilli / 1000 })}
                     </span>
                   )}
                 </div>
@@ -654,6 +823,8 @@ export function PosPage() {
             );
           })}
         </div>
+        {/* 0.36.0: the internet packages, always in sight under the products. */}
+        {!cart.staff && <InternetBar onPick={(pkg) => add(pkg.product)} />}
       </section>
 
       <aside
@@ -793,6 +964,17 @@ export function PosPage() {
                         <span className="text-success"> · {t('pos.promo')}</span>
                       )}
                   </div>
+                  {line.kind === 'offer' && (
+                    <div className="pos-line__note faint" data-testid="pos-line-offer">
+                      <Tags size={11} style={{ verticalAlign: '-1px' }} /> {t('offers.badge')}:{' '}
+                      {offerContents(line.offer)}
+                    </div>
+                  )}
+                  {line.kind === 'product' && isInternetAccess(line.product) && (
+                    <div className="pos-line__note faint" data-testid="pos-line-internet">
+                      <Wifi size={11} style={{ verticalAlign: '-1px' }} /> {t('pos.internetNote')}
+                    </div>
+                  )}
                 </div>
                 <div className="pos-line__qty">
                   {line.kind === 'time' ? (
@@ -828,7 +1010,7 @@ export function PosPage() {
                 </div>
                 <div className="pos-line__total num">
                   {fmt.money(computed.lineTotalCents)}
-                  {canDiscount && !cart.staff && !cart.pc && (
+                  {canDiscount && !cart.staff && !cart.pc && line.kind !== 'offer' && (
                     <input
                       className="input pos-line__discount"
                       placeholder="−0.00"
@@ -909,14 +1091,17 @@ export function PosPage() {
                   disabled={
                     cart.lines.length === 0 ||
                     !!cart.staff ||
-                    cart.lines.some((l) => l.kind === 'time')
+                    cart.lines.some((l) => l.kind === 'time') ||
+                    hasOffer(cart)
                   }
                   title={
                     cart.staff
                       ? t('pos.staffNoPark')
                       : cart.lines.some((l) => l.kind === 'time')
                         ? t('pos.timeItemNotParkable')
-                        : undefined
+                        : hasOffer(cart)
+                          ? t('offers.notParkable')
+                          : undefined
                   }
                   loading={suspend.isPending}
                   onClick={() => suspend.mutate()}
@@ -1025,6 +1210,17 @@ export function PosPage() {
           onCompleted={(sale, receiptData) => {
             setDialog(null);
             setReceipt({ ...receiptData, claimPins: sale.claimPins });
+            // 0.36.1: the minutes of an offer wait at the desk as paid time — say so, and refresh
+            // the PCs and the stock. (`offerStarts`: an offer sold for a PC, as Stations does.)
+            if (hasOffer(cart)) {
+              announceOfferStarts(sale.offerStarts, toast, t);
+              announceOfferWaiting(
+                cart.lines.flatMap((l) => (l.kind === 'offer' ? [l] : [])),
+                toast,
+                t,
+              );
+              refreshAfterOfferSale(queryClient);
+            }
             // The customer's debt and balance moved: every view of them refetches.
             void queryClient.invalidateQueries({ queryKey: ['customers'] });
             // Customer display: "thank you" with what was paid / put on the tab.
@@ -1216,6 +1412,7 @@ function displayUnit(line: CartLine, staff: boolean): number {
   if (line.kind === 'product')
     return staff ? line.product.purchaseCostCents : unitPriceOf(line.product);
   if (line.kind === 'time' && staff) return 0;
+  if (line.kind === 'offer') return line.offer.priceCents;
   return line.unitPriceCents;
 }
 
@@ -1409,6 +1606,8 @@ function PaymentDialog({
   // Punkti 4 (0.28.0): a sale made while this PC cannot reach the server waits in the offline
   // queue with its own number. Anything the server could not settle later is refused here.
   const queueOffline = (request: OfflineSaleDraft['request']): QueuedSale => {
+    // 0.34.0: the code comes from the server — offline the customer would leave without one.
+    if (hasInternetAccess(cart)) throw new OfflineRefusedError(t('pos.offlineInternet'));
     if (!getOfflineSnapshot().deviceCode) throw new OfflineRefusedError(t('pos.offlineNoDevice'));
     if (cart.lines.some((l) => l.kind !== 'product')) {
       throw new OfflineRefusedError(t('pos.offlineItems'));
@@ -1448,7 +1647,8 @@ function PaymentDialog({
         const receipt = await api<ReceiptData>(`/sales/${order.saleId}/receipt`);
         return { sale, receipt };
       }
-      const body = { ...cartToRequest(cart), payments: tender.payments };
+      // `accessCodes`: this till shows the internet codes a sale hands out (0.34.0).
+      const body = { ...cartToRequest(cart), payments: tender.payments, accessCodes: true };
       if (!resumedId && getLiveStatus() !== 'connected') {
         return { offline: queueOffline(body as OfflineSaleDraft['request']) };
       }
@@ -1460,6 +1660,12 @@ function PaymentDialog({
       } catch (err) {
         // The connection broke during the sale: it goes to the queue with the same
         // clientRequestId, so a retry can never sell twice (the server answers `duplicate`).
+        // 0.34.0: with internet access the sale never goes to the offline queue (the cashier
+        // would not see the code). The answer was lost, the sale may have been made: the same
+        // request is sent again — it is made once, and its codes come back with it.
+        if (err instanceof ApiError && err.status === 0 && hasInternetAccess(cart)) {
+          throw new OfflineRefusedError(t('pos.internetRetry'));
+        }
         if (!resumedId && err instanceof ApiError && err.status === 0) {
           return { offline: queueOffline(body as OfflineSaleDraft['request']) };
         }
@@ -1483,6 +1689,26 @@ function PaymentDialog({
       if (shiftGuard.handle(err, () => complete.mutate())) return;
       const shortage = stockShortageOf(err);
       if (shortage) {
+        // 0.34.0: for internet access "no stock" means the codes ran out (another till sold them).
+        const internet = cart.lines.some(
+          (l) =>
+            l.kind === 'product' &&
+            isInternetAccess(l.product) &&
+            l.product.name === shortage.productName,
+        );
+        if (internet) {
+          toast.error(
+            shortage.availableMilli > 0
+              ? t('pos.codesOnly', {
+                  n: shortage.availableMilli / 1000,
+                  name: shortage.productName,
+                })
+              : t('pos.codesNone', { name: shortage.productName }),
+            t('pos.codesRefill'),
+          );
+          void queryClient.invalidateQueries({ queryKey: ['products'] });
+          return;
+        }
         // 0.33.4: the stock changed since the product was added: say it in the till's language.
         toast.error(stockShortageText(shortage, t), t('pos.stockHint'));
         void queryClient.invalidateQueries({ queryKey: ['products'] });

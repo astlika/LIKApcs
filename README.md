@@ -15,6 +15,10 @@ Professional **Gaming Station POS / ERP** ecosystem for internet cafés and gami
 Monorepo (pnpm workspaces): `apps/likapcs-server`, `apps/likapcs-admin`, `apps/likapcs-client`,
 `packages/shared`, `database/migrations`, `docs`, `.github/workflows`.
 
+Beside them: **likalivepcs**, the owner's Android app (`apps/likapcs-live`, its own Gradle project
+and workflow) — every sale and every change in the shop as a notification on the phone. It only
+reads, and has its own releases (`likalivepcs-v*`); see [its README](apps/likapcs-live/README.md).
+
 ## Install (end users)
 
 LIKApcs has exactly two installers. No separate database or server setup is needed.
@@ -72,6 +76,7 @@ Full instructions: [docs/development-setup.md](docs/development-setup.md).
 - [Network protocol](docs/network-protocol.md) — HTTP API v1, `/ws/admin`, `/ws/client`, device registration flow
 - [Development setup](docs/development-setup.md) — prerequisites, launch, tests, troubleshooting
 - [Backups & restore](docs/backups.md) — archive format, daily schedule, restore procedure, moving to a new PC
+- [Data file for an AI](docs/data-file.md) — «Skedar për AI»: every figure of the business in one JSON / text file, what is inside and what never is
 - [GitHub setup](docs/github-setup.md) — private repo, branch protection, CI/release workflows, secrets
 - [CHANGELOG](CHANGELOG.md)
 

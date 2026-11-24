@@ -24,6 +24,7 @@ import {
   billableSeconds,
   priceForSeconds,
   quotePrepaidMinutes,
+  unpaidTimeDueCents,
   splitInclusiveTax,
   type BillingMode,
   type CollectSessionRequest,
@@ -62,6 +63,11 @@ import {
   type SessionPaymentSummary,
   type StartSessionRequest,
   type RenameSessionPcRequest,
+  type PaySessionsRequest,
+  type PaySessionsResponse,
+  type PaySessionsQuote,
+  type SessionCustomerRequest,
+  type CustomerOpenBills,
   SaleMathError,
   settlePayments,
 } from '@likapcs/shared';
@@ -119,6 +125,11 @@ interface SessionRow {
   created_by_name: string | null;
   notes: string | null;
   created_at: Date;
+  /** 0.36.0: a paid session's minutes added "to pay at the end" (see migration 0060). */
+  unpaid_cents: string | number;
+  unpaid_seconds: number;
+  /** 0.36.0: open time — already paid while the session runs on. */
+  paid_cents: string | number;
 }
 
 const SESSION_SELECT = `
@@ -128,6 +139,7 @@ const SESSION_SELECT = `
          g.planned_seconds, g.started_at, g.ends_at, g.paused_at, g.paused_by, g.total_paused_seconds, g.ended_at,
          g.end_reason, g.billable_seconds, g.quoted_price_cents, g.discount_cents, g.final_price_cents,
          g.sale_id, sa.receipt_no, g.billed_at, u.full_name AS created_by_name, g.notes, g.created_at,
+         g.unpaid_cents, g.unpaid_seconds, g.paid_cents,
          (SELECT COALESCE(SUM(o.total_cents), 0)::bigint FROM station_orders o
            WHERE o.session_id = g.id AND o.status = 'accepted') AS open_orders_cents,
          (SELECT COUNT(*)::int FROM station_orders o
@@ -162,6 +174,12 @@ export interface OrderLineForSale {
   unitCostCents: number;
   /** Exact unit cost in mills (thousandths of €). */
   unitCostMills: number;
+  /**
+   * 0.40.0: when the product was put on the bill — the desk added it, or accepted what the
+   * customer sent from the PC. It goes onto the sale line (`sale_items.added_at`): the bill is
+   * paid later, and the receipt still has to say at what time each product was taken.
+   */
+  addedAt: Date;
 }
 export interface SessionOrdersHook {
   /** Locks and returns the lines of the session's accepted "on the bill" orders. */
@@ -190,9 +208,11 @@ export function clientBillingOf(session: SessionSummary): ClientSessionBilling {
   const endPay = session.billingMode === 'endpay';
   return {
     billingMode: session.billingMode,
-    paidCents: prepaid ? (session.quotedPriceCents ?? 0) : 0,
+    // 0.36.0: open time that was partly paid while it runs — the PC takes it off its running amount.
+    paidCents: prepaid ? (session.quotedPriceCents ?? 0) : endPay ? 0 : session.advanceCents,
     // End pay: the PC shows "pay at the end · amount" — the reserved amount, never a running one.
-    dueCents: endPay ? (session.quotedPriceCents ?? 0) : 0,
+    // 0.36.0: a paid session shows the minutes that were added "to pay at the end".
+    dueCents: endPay ? (session.quotedPriceCents ?? 0) : prepaid ? session.dueCents : 0,
     terms: session.billingMode === 'postpaid' ? session.terms : null,
     billableSeconds: session.billableSeconds,
     asOf: new Date().toISOString(),
@@ -217,7 +237,32 @@ export function termsFromRow(row: SessionRow): PricingTerms {
     minimumChargeCents: Number(t.minimumChargeCents ?? 0),
     roundingMode: t.roundingMode ?? 'up',
     roundingIncrementCents: Number(t.roundingIncrementCents ?? 1),
+    freeMinutes: Number(t.freeMinutes ?? 0),
   };
+}
+
+/**
+ * 0.36.0: time still to pay on a session right now (the products on its bill come on top).
+ * `priceNow` is the running price of an open-time session; unused otherwise.
+ */
+export function timeDueCents(row: SessionRow, live: boolean, priceNow: number): number {
+  if (row.status === 'cancelled') return 0;
+  if (row.billing_mode === 'prepaid') return Number(row.unpaid_cents ?? 0);
+  if (row.billed_at) return 0;
+  // `paid_cents` is the money taken so far; a discount given with it is in `discount_cents`,
+  // which the final price of an ended session already has taken off.
+  const advance = Number(row.paid_cents ?? 0);
+  if (row.billing_mode === 'postpaid') {
+    const price = live
+      ? priceNow - Number(row.discount_cents ?? 0)
+      : Number(row.final_price_cents ?? 0);
+    return Math.max(0, price - advance);
+  }
+  // Pay at the end: the reserved amount while it runs, the amount fixed at the end afterwards.
+  const price = live
+    ? Number(row.quoted_price_cents ?? 0)
+    : Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+  return Math.max(0, price - advance);
 }
 
 const MODE_WORDS: Record<BillingMode, string> = {
@@ -232,6 +277,12 @@ function describe(row: SessionRow, seconds: number): string {
   const duration = h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m} min`;
   return `${row.station_code} · ${duration} (${MODE_WORDS[row.billing_mode] ?? row.billing_mode})`;
 }
+
+/**
+ * How late an expiry warning may still be sent. The watcher looks every second, so a warning
+ * normally goes out within a second of its mark; anything later than this is no longer true.
+ */
+const WARNING_LATE_MINUTES = 0.5;
 
 export class SessionsService {
   /** Stations whose device dropped while a session was live: stationId → disconnect time. */
@@ -375,17 +426,19 @@ export class SessionsService {
     else if (row.billing_mode === 'postpaid') currentPrice = priceForSeconds(seconds, terms);
     // Prepaid: what was paid. End pay: what will be due (the reserved amount).
     else currentPrice = Number(row.quoted_price_cents ?? 0);
+    const dueCents = timeDueCents(row, live, currentPrice);
     // 0.28.0: a prepaid PC whose ended session still has products on its bill waits at the desk
-    // too (the time was paid at the start, so only the products are due).
+    // too (the time was paid at the start, so only the products are due). 0.36.0: so does one
+    // with minutes that were added "to pay at the end" — and a cancelled session keeps the
+    // products that were handed over: they are owed whatever happened to the time.
+    const openOrders = Number(row.open_orders_cents ?? 0) > 0;
     const awaitingPayment =
-      ((row.billing_mode === 'endpay' || row.billing_mode === 'postpaid') &&
-        !live &&
-        row.status !== 'cancelled' &&
-        row.billed_at === null) ||
-      (row.billing_mode === 'prepaid' &&
-        !live &&
-        row.status !== 'cancelled' &&
-        Number(row.open_orders_cents ?? 0) > 0);
+      !live &&
+      (row.status === 'cancelled'
+        ? openOrders
+        : row.billing_mode === 'prepaid'
+          ? openOrders || dueCents > 0
+          : row.billed_at === null || openOrders);
     return {
       id: row.id,
       stationId: row.station_id,
@@ -421,6 +474,9 @@ export class SessionsService {
       notes: row.notes,
       openOrdersCents: Number(row.open_orders_cents ?? 0),
       openOrdersCount: Number(row.open_orders_count ?? 0),
+      dueCents,
+      advanceCents: row.billing_mode === 'postpaid' ? Number(row.paid_cents ?? 0) : 0,
+      unpaidSeconds: row.billing_mode === 'prepaid' ? Number(row.unpaid_seconds ?? 0) : 0,
       awaitingPayment,
       createdAt: row.created_at.toISOString(),
     };
@@ -471,9 +527,19 @@ export class SessionsService {
     }
     if (query.awaitingPayment)
       where.push(
-        `((g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed'))
-           OR (g.billing_mode = 'prepaid' AND g.status IN ('expired', 'completed')
-               AND EXISTS (SELECT 1 FROM station_orders o WHERE o.session_id = g.id AND o.status = 'accepted')))`,
+        // The same rule as `awaitingPayment` in mapRow (0.36.0: unpaid added minutes, and the
+        // products of any ended session — a cancelled one too).
+        // 0.37.0: the same sessions, found through the index of the waiting ones
+        // (gaming_sessions_station_awaiting_idx) and the open orders instead of reading every
+        // session there ever was: this list is asked for all day by the Stations page and the till.
+        `g.id IN (
+           SELECT a.id FROM gaming_sessions a
+            WHERE a.status IN ('expired', 'completed')
+              AND ((a.billing_mode IN ('endpay', 'postpaid') AND a.billed_at IS NULL)
+                OR (a.billing_mode = 'prepaid' AND a.unpaid_cents > 0))
+           UNION
+           SELECT o.session_id FROM station_orders o JOIN gaming_sessions a ON a.id = o.session_id
+            WHERE o.status = 'accepted' AND a.status IN ('expired', 'completed', 'cancelled'))`,
       );
     if (query.from) {
       params.push(query.from);
@@ -616,9 +682,14 @@ export class SessionsService {
             : ((await this.reservations?.holdOf(client, req.stationId, req.reservationId, now)) ??
               null);
         if (!own) {
-          throw new AppError(409, 'reservation_mismatch', 'This reservation does not keep this PC', {
-            reservationId: req.reservationId,
-          });
+          throw new AppError(
+            409,
+            'reservation_mismatch',
+            'This reservation does not keep this PC',
+            {
+              reservationId: req.reservationId,
+            },
+          );
         }
         checkInReservationId = own.reservationId;
       } else if (hold) {
@@ -844,17 +915,25 @@ export class SessionsService {
     return { session, client: ack };
   }
 
+  /**
+   * More minutes for a running session. A paid session pays them now (a second sale) — or, with
+   * `later` (0.36.0), takes them on its bill "to pay at the end": nothing is taken here and the
+   * amount waits at the desk when the session ends. A pay-at-the-end session always adds them to
+   * its bill. `payerId` (a batch of PCs paid by one person): the sale goes on that customer, the
+   * session keeps its own.
+   */
   async extend(
     id: string,
     req: ExtendSessionRequest,
     actor: SessionActorContext,
+    opts: { payerId?: string | null } = {},
   ): Promise<SessionMutationResult> {
     const now = new Date();
     let payment: SessionPaymentSummary | null = null;
     let settled = { approved: null as string | null, cancelled: [] as string[] };
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
-      await lockCustomers(client, row.customer_id);
+      await lockCustomers(client, row.customer_id, req.customerId, opts.payerId);
       if (row.billing_mode === 'postpaid')
         throw conflict(
           'Only prepaid / end-pay sessions can be extended; postpaid sessions run until stopped',
@@ -862,6 +941,10 @@ export class SessionsService {
       if (row.status !== 'active' && row.status !== 'paused')
         throw conflict(`Session is ${row.status}`);
       const endPay = row.billing_mode === 'endpay';
+      // 0.36.0: the customer picked in the "+ minutes" window was never sent, so pay later only
+      // worked on a session that was started with one.
+      if (req.customerId && req.customerId !== row.customer_id)
+        await this.attachCustomer(client, row, req.customerId, null, actor);
       if (req.clientRequestId) {
         const dup = await client.query(
           'SELECT 1 FROM session_events WHERE session_id = $1 AND event_type = $2 AND payload->>$3 = $4',
@@ -890,10 +973,12 @@ export class SessionsService {
           minutes: quote.minutes ?? 0,
         });
       }
-      // Prepaid: the extension is paid right now (a second sale). End pay: it is added to the
-      // amount the desk collects when the time ends — no money moves here.
+      // Prepaid: the extension is paid right now (a second sale) — or, with `later`, it joins
+      // the bill as unpaid minutes. End pay: it is added to the amount the desk collects when
+      // the time ends. In both of the latter no money moves here.
+      const later = !!req.later && !endPay && !redeemed && priceCents > 0;
       const sale =
-        endPay || redeemed
+        endPay || redeemed || later
           ? null
           : await this.recordSale(client, {
               sessionId: id,
@@ -901,24 +986,35 @@ export class SessionsService {
               priceCents: quote.priceCents,
               discountCents: 0,
               tenders: req,
-              customerId: row.customer_id,
+              customerId: opts.payerId ?? row.customer_id,
               actor,
               at: now,
             });
       payment = sale?.payment ?? null;
-      await client.query(
-        `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
-           quoted_price_cents = quoted_price_cents + $3, final_price_cents = final_price_cents + $3, version = version + 1
-         WHERE id = $1`,
-        [id, extraSeconds, priceCents],
-      );
+      if (later) {
+        // quoted / final stay "what was paid": the added minutes are owed, not paid.
+        await client.query(
+          `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
+             unpaid_cents = unpaid_cents + $3, unpaid_seconds = unpaid_seconds + $2, version = version + 1
+           WHERE id = $1`,
+          [id, extraSeconds, priceCents],
+        );
+      } else {
+        await client.query(
+          `UPDATE gaming_sessions SET planned_seconds = planned_seconds + $2, ends_at = ends_at + make_interval(secs => $2),
+             quoted_price_cents = quoted_price_cents + $3, final_price_cents = final_price_cents + $3, version = version + 1
+           WHERE id = $1`,
+          [id, extraSeconds, priceCents],
+        );
+      }
       await this.addEvent(client, id, 'extended', actor, {
         minutes: quote.minutes,
         priceCents,
         ...(redeemed ? { creditId: redeemed.creditId } : {}),
         saleId: sale?.saleId ?? null,
         receiptNo: sale?.receiptNo ?? null,
-        deferred: endPay,
+        deferred: endPay || later,
+        ...(later ? { later: true, dueCents: Number(row.unpaid_cents ?? 0) + priceCents } : {}),
         clientRequestId: req.clientRequestId ?? null,
       });
       await recordAudit(client, actor, {
@@ -995,6 +1091,17 @@ export class SessionsService {
           { code: 'TIME_INSUFFICIENT', maxMinutes },
         );
       const removeSeconds = req.minutes * 60;
+      // 0.36.0: a paid session with minutes added "to pay at the end" gives those back first —
+      // they are the last minutes of its time — and owes that much less.
+      const unpaidSeconds = Number(row.unpaid_seconds ?? 0);
+      const unpaidSecondsOff =
+        row.billing_mode === 'prepaid' ? Math.min(removeSeconds, unpaidSeconds) : 0;
+      const unpaidCentsOff =
+        unpaidSecondsOff <= 0
+          ? 0
+          : unpaidSecondsOff >= unpaidSeconds
+            ? Number(row.unpaid_cents ?? 0)
+            : Math.floor((Number(row.unpaid_cents ?? 0) * unpaidSecondsOff) / unpaidSeconds);
       // Pay at the end: the reservation shrinks by what those minutes were worth (never below 0).
       let priceCents = 0;
       if (row.billing_mode === 'endpay') {
@@ -1008,14 +1115,16 @@ export class SessionsService {
         `UPDATE gaming_sessions SET planned_seconds = GREATEST(planned_seconds - $2, 0),
            ends_at = ends_at - make_interval(secs => $2),
            quoted_price_cents = quoted_price_cents - $3, final_price_cents = final_price_cents - $3,
+           unpaid_seconds = unpaid_seconds - $4, unpaid_cents = unpaid_cents - $5,
            version = version + 1
          WHERE id = $1`,
-        [id, removeSeconds, priceCents],
+        [id, removeSeconds, priceCents, unpaidSecondsOff, unpaidCentsOff],
       );
       await this.addEvent(client, id, 'correction', actor, {
         kind: 'time_removed',
         minutes: req.minutes,
         priceCents,
+        ...(unpaidCentsOff > 0 ? { unpaidCents: unpaidCentsOff } : {}),
         clientRequestId: req.clientRequestId ?? null,
       });
       await recordAudit(client, actor, {
@@ -1135,6 +1244,15 @@ export class SessionsService {
   ): Promise<BulkMinutesResult> {
     if (req.gift && !actor.permissions?.has(PERMISSIONS.STATIONS_GIFT))
       throw forbidden('Giving minutes away needs the stations.gift permission');
+    // 0.36.0: one person pays the batch (pay later, the balance): checked before anything moves.
+    if (req.customerId) {
+      const found = await this.pool.query<{ status: string }>(
+        'SELECT status FROM customers WHERE id = $1',
+        [req.customerId],
+      );
+      if (!found.rows[0] || found.rows[0].status === 'archived')
+        throw badRequest('Customer not found');
+    }
     const applied: BulkMinutesApplied[] = [];
     const skipped: BulkMinutesSkipped[] = [];
     const stations = await this.pool.query<{ id: string; code: string }>(
@@ -1183,7 +1301,8 @@ export class SessionsService {
           endPay: live.billingMode === 'endpay',
           minutes: quote.minutes ?? req.minutes ?? 0,
           priceCents: quote.priceCents,
-          payer: !req.gift && live.billingMode === 'prepaid' && quote.priceCents > 0,
+          // 0.36.0: with `later` nobody pays now — the minutes join each PC's bill.
+          payer: !req.gift && !req.later && live.billingMode === 'prepaid' && quote.priceCents > 0,
         });
       } catch (err) {
         skipped.push({
@@ -1231,15 +1350,18 @@ export class SessionsService {
             paymentMethod: req.paymentMethod,
             // A zero quote needs no tender; end-pay takes nothing now (its time joins the bill).
             payments: payerIndex >= 0 && perPayer ? (perPayer[payerIndex] ?? []) : [],
+            later: req.later,
           },
           actor,
+          { payerId: req.customerId ?? null },
         );
         if (p.payer) totalCents += p.priceCents;
         applied.push({
           stationId: p.stationId,
           code: p.code,
           minutes: p.minutes,
-          priceCents: p.endPay ? 0 : p.priceCents,
+          priceCents: p.payer ? p.priceCents : 0,
+          ...(!p.payer && p.priceCents > 0 ? { laterCents: p.priceCents } : {}),
         });
       } catch (err) {
         skipped.push({
@@ -1290,7 +1412,11 @@ export class SessionsService {
       // Staff may stop the clock when they open the checkout, within a bounded window: the price
       // the customer was told is the price billed, but the server decides how far back "now" goes.
       let at = requestedAt;
-      if (req.stoppedSecondsAgo && row.billing_mode !== 'prepaid' && row.status === 'active') {
+      if (
+        req.stoppedSecondsAgo &&
+        (row.billing_mode !== 'prepaid' || Number(row.unpaid_cents ?? 0) > 0) &&
+        row.status === 'active'
+      ) {
         const back = Math.min(req.stoppedSecondsAgo, SESSION_STOP_CLOCK_GRACE_SECONDS) * 1000;
         at = new Date(Math.max(row.started_at.getTime(), requestedAt.getTime() - back));
       }
@@ -1317,22 +1443,31 @@ export class SessionsService {
         // 0.19.4: bulk stop — the time is priced now, the bill waits at the desk (collect / pay all).
         if (row.billed_at) throw conflict('Session is already billed');
         const price = priceForSeconds(seconds, termsFromRow(row));
+        // 0.36.0: what was paid while the session ran (and a discount given then) comes off.
+        const advance = Number(row.paid_cents ?? 0);
+        const earlier = Number(row.discount_cents ?? 0);
+        const owed = Math.max(0, price - earlier - advance);
         if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
           throw forbidden('Missing permission: pos.discount');
-        if (req.discountCents > price) throw badRequest('Discount exceeds the price');
-        const final = price - req.discountCents;
+        if (req.discountCents > owed) throw badRequest('Discount exceeds the price');
+        const final = Math.max(0, price - earlier - req.discountCents);
+        // 0.36.0: nothing owed (free minutes, or all of it paid while it ran) and no product on
+        // the bill — there is nothing to wait for at the desk: the bill is closed here.
+        const nothingOwed = owed - req.discountCents === 0 && orderLines.length === 0;
         await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
-             discount_cents = $4, final_price_cents = $5, paused_at = NULL, paused_by = NULL,
-             notes = COALESCE($6, notes), version = version + 1
+             discount_cents = discount_cents + $4, final_price_cents = $5, paused_at = NULL, paused_by = NULL,
+             notes = COALESCE($6, notes), billed_at = CASE WHEN $7 THEN $2::timestamptz ELSE NULL END,
+             version = version + 1
            WHERE id = $1 AND billed_at IS NULL`,
-          [id, at, seconds, req.discountCents, final, req.notes ?? null],
+          [id, at, seconds, req.discountCents, final, req.notes ?? null, nothingOwed],
         );
         await this.addEvent(client, id, 'stopped', actor, {
           endedAt: at.toISOString(),
           billableSeconds: seconds,
-          awaitingPayment: true,
-          dueCents: final,
+          ...(nothingOwed
+            ? { nothingOwed: true }
+            : { awaitingPayment: true, dueCents: owed - req.discountCents }),
         });
         if (req.discountCents > 0)
           await this.addEvent(client, id, 'discount_applied', actor, {
@@ -1341,32 +1476,41 @@ export class SessionsService {
       } else if (row.billing_mode === 'postpaid') {
         if (row.billed_at) throw conflict('Session is already billed');
         const price = priceForSeconds(seconds, termsFromRow(row));
+        // 0.36.0: what was paid while the session ran (and a discount given then) comes off.
+        const advance = Number(row.paid_cents ?? 0);
+        const earlier = Number(row.discount_cents ?? 0);
+        const owed = Math.max(0, price - earlier - advance);
         if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
           throw forbidden('Missing permission: pos.discount');
-        if (req.discountCents > price) throw badRequest('Discount exceeds the price');
-        const final = price - req.discountCents;
-        const sale = await this.recordSale(client, {
-          sessionId: id,
-          description: describe(row, seconds),
-          priceCents: price,
-          discountCents: req.discountCents,
-          tenders: req,
-          customerId: row.customer_id,
-          actor,
-          at,
-          orderLines,
-        });
-        payment = sale.payment;
-        if (orderIds.length && this.orders) {
+        if (req.discountCents > owed) throw badRequest('Discount exceeds the price');
+        const final = Math.max(0, price - earlier - req.discountCents);
+        // 0.36.0: nothing owed and no product on the bill: closed without a receipt. A session
+        // that ended inside its free minutes used to make a receipt of 0.00.
+        const nothingOwed = owed - req.discountCents === 0 && orderLines.length === 0;
+        const sale = nothingOwed
+          ? null
+          : await this.recordSale(client, {
+              sessionId: id,
+              description: describe(row, seconds),
+              priceCents: owed,
+              discountCents: req.discountCents,
+              tenders: req,
+              customerId: row.customer_id,
+              actor,
+              at,
+              orderLines,
+            });
+        payment = sale?.payment ?? null;
+        if (sale && orderIds.length && this.orders) {
           await this.orders.markBilled(client, orderIds, sale.saleId, actor);
           billedOrders = orderIds;
         }
         const updated = await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
-             discount_cents = $4, final_price_cents = $5, sale_id = $6, billed_at = $2, paused_at = NULL, notes = COALESCE($7, notes),
-             version = version + 1
+             discount_cents = discount_cents + $4, final_price_cents = $5, sale_id = $6, billed_at = $2, paused_at = NULL,
+             notes = COALESCE($7, notes), version = version + 1
            WHERE id = $1 AND billed_at IS NULL`,
-          [id, at, seconds, req.discountCents, final, sale.saleId, req.notes ?? null],
+          [id, at, seconds, req.discountCents, final, sale?.saleId ?? null, req.notes ?? null],
         );
         if (updated.rowCount !== 1) throw conflict('Session was billed concurrently');
         await this.addEvent(client, id, 'stopped', actor, {
@@ -1378,10 +1522,11 @@ export class SessionsService {
             discountCents: req.discountCents,
           });
         await this.addEvent(client, id, 'billed', actor, {
-          saleId: sale.saleId,
-          receiptNo: sale.receiptNo,
-          amountCents: final,
-          methods: sale.methods,
+          saleId: sale?.saleId ?? null,
+          receiptNo: sale?.receiptNo ?? null,
+          amountCents: owed - req.discountCents,
+          methods: sale?.methods ?? [],
+          ...(nothingOwed ? { nothingOwed: true } : {}),
         });
       } else if (row.billing_mode === 'endpay') {
         // Pay at the end (0.14.0), stopped by staff before the time ran out: the used time is
@@ -1395,7 +1540,10 @@ export class SessionsService {
           throw forbidden('Missing permission: pos.discount');
         if (req.discountCents > price) throw badRequest('Discount exceeds the price');
         const final = price - req.discountCents;
-        if (req.payments) {
+        // 0.36.0: nothing owed (the customer left inside the free minutes) and no product on the
+        // bill: there is nothing to collect — closed here, with no receipt and no waiting bill.
+        const nothingOwed = final === 0 && orderLines.length === 0;
+        if (req.payments && !nothingOwed) {
           const sale = await this.recordSale(client, {
             sessionId: id,
             description: describe(row, seconds),
@@ -1439,16 +1587,15 @@ export class SessionsService {
           await client.query(
             `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
                discount_cents = $4, final_price_cents = $5, paused_at = NULL, paused_by = NULL, notes = COALESCE($6, notes),
-               version = version + 1
+               billed_at = CASE WHEN $7 THEN $2::timestamptz ELSE NULL END, version = version + 1
              WHERE id = $1 AND billed_at IS NULL`,
-            [id, at, seconds, req.discountCents, final, req.notes ?? null],
+            [id, at, seconds, req.discountCents, final, req.notes ?? null, nothingOwed],
           );
           await this.addEvent(client, id, 'stopped', actor, {
             endedAt: at.toISOString(),
             billableSeconds: seconds,
             reservedCents: reserved,
-            awaitingPayment: true,
-            dueCents: final,
+            ...(nothingOwed ? { nothingOwed: true } : { awaitingPayment: true, dueCents: final }),
           });
           if (req.discountCents > 0)
             await this.addEvent(client, id, 'discount_applied', actor, {
@@ -1458,13 +1605,26 @@ export class SessionsService {
       } else {
         // 0.19.4: a bulk stop leaves the orders open on the bill (nothing is charged now).
         const ordersDueCents = orderLines.reduce((acc, l) => acc + l.lineTotalCents, 0);
-        const payNowOrders = !!req.payments && req.payments.length > 0;
-        if (orderLines.length && this.orders && !req.parkForDesk && payNowOrders) {
-          // Prepaid time was paid at the start; only the orders are billed now.
+        // 0.36.0: minutes that were added "to pay at the end". Stopped early, only the time used
+        // beyond the paid part is owed; the amount is fixed here and waits with the products.
+        const unpaidDue = unpaidTimeDueCents({
+          usedSeconds: seconds,
+          plannedSeconds: row.planned_seconds ?? 0,
+          unpaidSeconds: Number(row.unpaid_seconds ?? 0),
+          unpaidCents: Number(row.unpaid_cents ?? 0),
+          terms: termsFromRow(row),
+        });
+        const payNow = !!req.payments && req.payments.length > 0 && !req.parkForDesk;
+        const somethingDue = orderLines.length > 0 || unpaidDue > 0;
+        if (somethingDue && payNow) {
+          // Prepaid time was paid at the start; the added minutes and the orders are billed now.
           const sale = await this.recordSale(client, {
             sessionId: id,
-            description: describe(row, seconds),
-            priceCents: null,
+            description:
+              unpaidDue > 0
+                ? `${row.station_code} · added minutes (paid at the end)`
+                : describe(row, seconds),
+            priceCents: unpaidDue > 0 ? unpaidDue : null,
             discountCents: 0,
             tenders: req,
             customerId: row.customer_id,
@@ -1473,28 +1633,37 @@ export class SessionsService {
             orderLines,
           });
           payment = sale.payment;
-          await this.orders.markBilled(client, orderIds, sale.saleId, actor);
-          billedOrders = orderIds;
+          if (orderIds.length && this.orders) {
+            await this.orders.markBilled(client, orderIds, sale.saleId, actor);
+            billedOrders = orderIds;
+          }
           await this.addEvent(client, id, 'billed', actor, {
             saleId: sale.saleId,
             receiptNo: sale.receiptNo,
             amountCents: sale.payment.totalCents,
             methods: sale.methods,
             orders: orderIds.length,
+            ...(unpaidDue > 0 ? { addedMinutesCents: unpaidDue } : {}),
           });
         }
+        // Paid now: the added minutes become part of what was paid. Not paid: what is owed for
+        // them is fixed (less than was added when the session stopped early).
+        const paidNow = somethingDue && payNow ? unpaidDue : 0;
         await client.query(
           `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
-             paused_at = NULL, paused_by = NULL, notes = COALESCE($4, notes), version = version + 1 WHERE id = $1`,
-          [id, at, seconds, req.notes ?? null],
+             paused_at = NULL, paused_by = NULL, notes = COALESCE($4, notes),
+             quoted_price_cents = quoted_price_cents + $5,
+             final_price_cents = CASE WHEN $5 > 0 THEN COALESCE(final_price_cents, 0) + $5 ELSE final_price_cents END,
+             unpaid_cents = $6, version = version + 1 WHERE id = $1`,
+          [id, at, seconds, req.notes ?? null, paidNow, paidNow > 0 ? 0 : unpaidDue],
         );
         await this.addEvent(client, id, 'stopped', actor, {
           endedAt: at.toISOString(),
           billableSeconds: seconds,
           unusedSeconds: Math.max(0, (row.planned_seconds ?? 0) - seconds),
-          // Products still on the bill wait at the desk (collected later, the time stays paid).
-          ...(orderLines.length && !payNowOrders
-            ? { awaitingPayment: true, dueCents: ordersDueCents }
+          // What is still owed waits at the desk (collected later, the time stays paid).
+          ...(somethingDue && !payNow
+            ? { awaitingPayment: true, dueCents: ordersDueCents + unpaidDue }
             : {}),
         });
       }
@@ -1578,10 +1747,17 @@ export class SessionsService {
         const row = await this.pool.query<{
           final_price_cents: number | null;
           quoted_price_cents: number | null;
-        }>('SELECT final_price_cents, quoted_price_cents FROM gaming_sessions WHERE id = $1', [
-          sessionId,
-        ]);
-        const due = Number(row.rows[0]!.final_price_cents ?? row.rows[0]!.quoted_price_cents ?? 0);
+          paid_cents: number | null;
+        }>(
+          'SELECT final_price_cents, quoted_price_cents, paid_cents FROM gaming_sessions WHERE id = $1',
+          [sessionId],
+        );
+        // What is still owed: an open-time bill that was partly paid while it ran owes the rest.
+        const due = Math.max(
+          0,
+          Number(row.rows[0]!.final_price_cents ?? row.rows[0]!.quoted_price_cents ?? 0) -
+            Number(row.rows[0]!.paid_cents ?? 0),
+        );
         if (req.mode === 'fixed' && req.amountCents > due)
           throw badRequest(
             `The fixed amount is above the bill (${due} cents); use a discount instead`,
@@ -1630,8 +1806,12 @@ export class SessionsService {
   ): Promise<SessionSummary> {
     const session = await withTransaction(this.pool, async (client) => {
       const row = await this.lock(client, id);
-      if (row.status !== 'active' && row.status !== 'paused') throw conflict('Session is not running');
-      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [id, req.pcLabel]);
+      if (row.status !== 'active' && row.status !== 'paused')
+        throw conflict('Session is not running');
+      await client.query('UPDATE gaming_sessions SET pc_label = $2 WHERE id = $1', [
+        id,
+        req.pcLabel,
+      ]);
       await recordAudit(client, actor, {
         action: 'session.pc_label',
         entityType: 'gaming_session',
@@ -1778,6 +1958,66 @@ export class SessionsService {
   }
 
   /** The PC session behind a sale (for the Sales page), or null when the sale has no PC time. */
+  /** 0.36.0: the sale has at least one PC session on it (its receipt is a session receipt). */
+  async saleHasSessions(saleId: string): Promise<boolean> {
+    const found = await this.pool.query(
+      'SELECT 1 FROM sale_items WHERE sale_id = $1 AND gaming_session_id IS NOT NULL LIMIT 1',
+      [saleId],
+    );
+    return (found.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * 0.36.0: the customer's sessions that run or whose bill waits, with the products on each
+   * bill — "who bought what and has not paid", before any of it is a sale.
+   */
+  async openBillsOfCustomer(customerId: string): Promise<CustomerOpenBills> {
+    const found = await this.pool.query<SessionRow>(
+      `${SESSION_SELECT}
+        WHERE g.customer_id = $1
+          AND (g.status IN ('active', 'paused')
+            OR (g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed'))
+            OR (g.billing_mode = 'prepaid' AND g.status IN ('expired', 'completed') AND g.unpaid_cents > 0)
+            OR (g.status IN ('expired', 'completed', 'cancelled')
+                AND EXISTS (SELECT 1 FROM station_orders o WHERE o.session_id = g.id AND o.status = 'accepted')))
+        ORDER BY g.started_at`,
+      [customerId],
+    );
+    const sessions = found.rows.map((row) => this.mapRow(row));
+    // 0.40.0: one row per time a product was put on the bill, with that moment — the desk reads
+    // it when the bill is questioned. (Until then: one row per product, the times lost.)
+    const items = await this.pool.query<{
+      session_id: string;
+      name: string;
+      quantity_milli: string;
+      amount: string;
+      added_at: Date;
+    }>(
+      `SELECT o.session_id, oi.name, oi.quantity_milli, oi.line_total_cents AS amount,
+              COALESCE(o.decided_at, o.requested_at) AS added_at
+         FROM station_orders o JOIN station_order_items oi ON oi.order_id = o.id
+        WHERE o.session_id = ANY($1::uuid[]) AND o.status = 'accepted'
+        ORDER BY COALESCE(o.decided_at, o.requested_at), o.requested_at, oi.id`,
+      [sessions.map((x) => x.id)],
+    );
+    const bills = sessions.map((session) => ({
+      session,
+      items: items.rows
+        .filter((i) => i.session_id === session.id)
+        .map((i) => ({
+          name: i.name,
+          quantityMilli: Number(i.quantity_milli),
+          lineTotalCents: Number(i.amount),
+          addedAt: i.added_at.toISOString(),
+        })),
+    }));
+    return {
+      customerId,
+      bills,
+      totalCents: sessions.reduce((acc, x) => acc + x.dueCents + x.openOrdersCents, 0),
+    };
+  }
+
   async saleLink(saleId: string): Promise<SaleSessionLink | null> {
     const found = await this.pool.query<{
       id: string;
@@ -1895,21 +2135,25 @@ export class SessionsService {
     await lockCustomers(client, row.customer_id, req.customerId);
     // 0.19.4: a postpaid bill parked by a bulk stop waits at the desk too.
     // 0.28.0: a prepaid PC collects only its products (the time was paid at the start).
+    // 0.36.0: … and the minutes that were added "to pay at the end". A cancelled session, and one
+    // whose time is paid already, still collect the products left on their bill.
     const prepaid = row.billing_mode === 'prepaid';
+    const cancelled = row.status === 'cancelled';
     if (!prepaid && row.billing_mode !== 'endpay' && row.billing_mode !== 'postpaid')
       throw conflict('Only pay-at-the-end sessions are collected at the desk');
     if (row.status === 'active' || row.status === 'paused')
       throw conflict('Session is still running — end it first');
-    if (row.status === 'cancelled') throw conflict('Session was cancelled; nothing to collect');
-    if (!prepaid && row.billed_at) throw conflict('Session is already paid');
     const orderLines = this.orders ? await this.orders.openLinesForSession(client, id) : [];
     const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
-    if (prepaid) {
-      if (orderLines.length === 0)
-        throw conflict('Nothing to collect: the time was paid at the start');
-      if (req.discountCents > 0)
-        throw badRequest('A discount applies to time, not to products on a prepaid bill');
-    }
+    if (cancelled && orderLines.length === 0)
+      throw conflict('Session was cancelled; nothing to collect');
+    if (!prepaid && !cancelled && row.billed_at && orderLines.length === 0)
+      throw conflict('Session is already paid');
+    /** Only products are left: the time is paid, or the session was cancelled. */
+    const timeSettled = cancelled || (!prepaid && !!row.billed_at);
+    const unpaid = prepaid && !cancelled ? Number(row.unpaid_cents ?? 0) : 0;
+    if (prepaid && !cancelled && orderLines.length === 0 && unpaid === 0)
+      throw conflict('Nothing to collect: the time was paid at the start');
     if (req.customerId && req.customerId !== row.customer_id) {
       const found = await client.query<{ status: string }>(
         'SELECT status FROM customers WHERE id = $1',
@@ -1924,17 +2168,28 @@ export class SessionsService {
       row.customer_id = req.customerId;
     }
     // The amount due was fixed when the session ended (used time capped at the reservation, or
-    // the full reservation when it ran out); a discount already applied at the end stays.
-    const due = prepaid ? 0 : Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+    // the full reservation when it ran out); a discount already applied at the end stays. An
+    // open-time bill that was partly paid while it ran owes the rest (0.36.0).
+    const full = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+    const due = timeSettled
+      ? 0
+      : prepaid
+        ? unpaid
+        : Math.max(0, full - Number(row.paid_cents ?? 0));
     if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
       throw forbidden('Missing permission: pos.discount');
+    if (req.discountCents > 0 && due === 0 && (prepaid || timeSettled))
+      throw badRequest('A discount applies to time, not to products on a prepaid bill');
     if (req.discountCents > due) throw badRequest('Discount exceeds the amount due');
     const final = due - req.discountCents;
     const sale = await this.recordSale(client, {
       sessionId: id,
-      description: describe(row, row.billable_seconds ?? 0),
-      // A prepaid bill has no session line: only its products are sold.
-      priceCents: prepaid ? null : due,
+      description:
+        prepaid && due > 0
+          ? `${row.station_code} · added minutes (paid at the end)`
+          : describe(row, row.billable_seconds ?? 0),
+      // A bill whose time is paid has no session line: only its products are sold.
+      priceCents: timeSettled || (prepaid && due === 0) ? null : due,
       discountCents: req.discountCents,
       tenders: req,
       customerId: row.customer_id,
@@ -1947,15 +2202,28 @@ export class SessionsService {
       await this.orders.markBilled(client, orderIds, sale.saleId, actor);
       billedOrders = orderIds;
     }
-    if (prepaid) {
-      // The session keeps its paid time; the products are settled on their own receipt.
+    if (timeSettled) {
+      // Nothing about the time changes; the products are settled on their own receipt.
       await client.query('UPDATE gaming_sessions SET version = version + 1 WHERE id = $1', [id]);
+    } else if (prepaid) {
+      // The session keeps its paid time; the added minutes join it once they are paid.
+      await client.query(
+        `UPDATE gaming_sessions SET quoted_price_cents = quoted_price_cents + $2,
+           final_price_cents = CASE WHEN $2 > 0 THEN COALESCE(final_price_cents, 0) + $2 ELSE final_price_cents END,
+           discount_cents = discount_cents + $3, unpaid_cents = 0, unpaid_seconds = 0, version = version + 1
+         WHERE id = $1`,
+        [id, final, req.discountCents],
+      );
+      if (req.discountCents > 0)
+        await this.addEvent(client, id, 'discount_applied', actor, {
+          discountCents: req.discountCents,
+        });
     } else {
       const updated = await client.query(
         `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4, billed_at = $5,
          notes = COALESCE($6, notes), version = version + 1
        WHERE id = $1 AND billed_at IS NULL`,
-        [id, req.discountCents, final, sale.saleId, at, req.notes ?? null],
+        [id, req.discountCents, full - req.discountCents, sale.saleId, at, req.notes ?? null],
       );
       if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
       if (req.discountCents > 0)
@@ -2022,15 +2290,28 @@ export class SessionsService {
     const scopeLabel = stationId ? 'at this PC' : 'at any PC';
     const outcome = await withTransaction(this.pool, async (client) => {
       // Lock the waiting bills in id order, so two desks paying the same PC cannot deadlock.
+      // 0.36.0: the same bills the desk's waiting list shows — a paid session with minutes
+      // added "to pay at the end" or with products on its bill was left out, so "pay all" did
+      // not take what the list said was owed.
       const waiting = await client.query<{
         id: string;
+        billing_mode: BillingMode;
+        status: string;
+        billed_at: Date | null;
         final_price_cents: string | number | null;
         quoted_price_cents: string | number | null;
+        unpaid_cents: string | number;
+        paid_cents: string | number;
       }>(
-        `SELECT id, final_price_cents, quoted_price_cents FROM gaming_sessions
-          WHERE ($1::uuid IS NULL OR station_id = $1) AND billing_mode IN ('endpay', 'postpaid')
-            AND billed_at IS NULL AND status IN ('expired', 'completed')
-          ORDER BY id FOR UPDATE`,
+        `SELECT g.id, g.billing_mode, g.status, g.billed_at, g.final_price_cents, g.quoted_price_cents,
+                g.unpaid_cents, g.paid_cents
+           FROM gaming_sessions g
+          WHERE ($1::uuid IS NULL OR g.station_id = $1)
+            AND ((g.billing_mode IN ('endpay', 'postpaid') AND g.billed_at IS NULL AND g.status IN ('expired', 'completed'))
+              OR (g.billing_mode = 'prepaid' AND g.status IN ('expired', 'completed') AND g.unpaid_cents > 0)
+              OR (g.status IN ('expired', 'completed', 'cancelled')
+                  AND EXISTS (SELECT 1 FROM station_orders o WHERE o.session_id = g.id AND o.status = 'accepted')))
+          ORDER BY g.id FOR UPDATE OF g`,
         [stationId],
       );
       if (waiting.rowCount === 0) throw conflict(`No bill is waiting ${scopeLabel}`);
@@ -2038,7 +2319,18 @@ export class SessionsService {
       const bills: { sessionId: string; totalCents: number }[] = [];
       for (const row of waiting.rows) {
         const lines = this.orders ? await this.orders.openLinesForSession(client, row.id) : [];
-        const due = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+        const due =
+          row.status === 'cancelled'
+            ? 0
+            : row.billing_mode === 'prepaid'
+              ? Number(row.unpaid_cents ?? 0)
+              : row.billed_at
+                ? 0
+                : Math.max(
+                    0,
+                    Number(row.final_price_cents ?? row.quoted_price_cents ?? 0) -
+                      Number(row.paid_cents ?? 0),
+                  );
         const ordersCents = lines.reduce((acc, l) => acc + l.lineTotalCents, 0);
         bills.push({ sessionId: row.id, totalCents: due + ordersCents });
       }
@@ -2100,6 +2392,514 @@ export class SessionsService {
     };
   }
 
+  /**
+   * 0.36.0 — what `pay` would put on the receipt right now, without changing anything. The desk
+   * shows these lines; `asOf` goes back with the payment so the amount shown is the amount billed.
+   */
+  async payQuote(
+    req: Pick<PaySessionsRequest, 'sessionIds' | 'stopOpen'>,
+    at: Date = new Date(),
+  ): Promise<PaySessionsQuote> {
+    const ids = [...new Set(req.sessionIds)].sort();
+    const found = await this.pool.query<SessionRow>(
+      `${SESSION_SELECT} WHERE g.id = ANY($1::uuid[]) ORDER BY g.id`,
+      [ids],
+    );
+    const skipped: PaySessionsResponse['skipped'] = ids
+      .filter((id) => !found.rows.some((r) => r.id === id))
+      .map((sessionId) => ({ sessionId, reason: 'not_found' as const }));
+    const bills: PaySessionsQuote['bills'] = [];
+    // The order lines are read the way the payment reads them (a short transaction of its own).
+    const linesOf = new Map<string, OrderLineForSale[]>();
+    if (this.orders) {
+      const orders = this.orders;
+      await withTransaction(this.pool, async (client) => {
+        for (const row of found.rows)
+          linesOf.set(row.id, await orders.openLinesForSession(client, row.id));
+      });
+    }
+    for (const row of found.rows) {
+      const lines = linesOf.get(row.id) ?? [];
+      const planned = this.planPayment(row, lines, req.stopOpen, at);
+      if (!planned) {
+        skipped.push({
+          sessionId: row.id,
+          reason: row.status === 'cancelled' ? 'cancelled' : 'nothing_due',
+        });
+        continue;
+      }
+      bills.push({
+        sessionId: row.id,
+        stationId: row.station_id,
+        stationCode: row.station_code,
+        stationName: row.station_name,
+        customerId: row.customer_id,
+        customerName: row.customer_name,
+        billingMode: row.billing_mode,
+        timeCents: planned.timeCents,
+        discountCents: 0,
+        ordersCents: planned.ordersCents,
+        stopped: planned.stop,
+        running: planned.live && !planned.stop,
+        items: lines.map((l) => ({
+          name: l.name,
+          quantityMilli: l.quantityMilli,
+          lineTotalCents: l.lineTotalCents,
+          addedAt: l.addedAt.toISOString(),
+        })),
+      });
+    }
+    const timeCents = bills.reduce((acc, b) => acc + b.timeCents, 0);
+    const ordersCents = bills.reduce((acc, b) => acc + b.ordersCents, 0);
+    return {
+      asOf: at.toISOString(),
+      bills,
+      skipped,
+      timeCents,
+      ordersCents,
+      totalCents: timeCents + ordersCents,
+    };
+  }
+
+  /** What one session owes at `at`; null when nothing is owed and it is not to be stopped. */
+  private planPayment(
+    row: SessionRow,
+    orderLines: OrderLineForSale[],
+    stopOpen: boolean,
+    at: Date,
+  ): {
+    live: boolean;
+    stop: boolean;
+    seconds: number;
+    priceNow: number;
+    timeCents: number;
+    ordersCents: number;
+  } | null {
+    const live = row.status === 'active' || row.status === 'paused';
+    const seconds = live
+      ? billableSeconds({
+          startedAt: row.started_at,
+          endedAt: new Date(Math.max(row.started_at.getTime(), at.getTime())),
+          totalPausedSeconds: row.total_paused_seconds,
+          pausedAt: row.paused_at,
+        })
+      : (row.billable_seconds ?? 0);
+    const openTime = row.billing_mode === 'postpaid';
+    const priceNow = live && openTime ? priceForSeconds(seconds, termsFromRow(row)) : 0;
+    const timeCents = timeDueCents(row, live, priceNow);
+    const ordersCents = orderLines.reduce((acc, l) => acc + l.lineTotalCents, 0);
+    const stop = live && openTime && stopOpen;
+    if (timeCents <= 0 && ordersCents <= 0 && !stop) return null;
+    return { live, stop, seconds, priceNow, timeCents, ordersCents };
+  }
+
+  /**
+   * 0.36.0 — payment for one or several PCs on ONE receipt, at any time (see `paySessionsSchema`).
+   * Everything happens in one transaction: either every selected PC is on the receipt and the
+   * money is taken once, or nothing changed.
+   */
+  async pay(
+    req: PaySessionsRequest,
+    actor: SessionActorContext,
+    now: Date = new Date(),
+  ): Promise<PaySessionsResponse> {
+    if (req.discountCents > 0 && !actor.permissions?.has('pos.discount'))
+      throw forbidden('Missing permission: pos.discount');
+    // The desk froze the clock when it showed the amounts; the server bounds how far back.
+    const asOf = req.asOf ? new Date(req.asOf) : now;
+    const at = new Date(
+      Math.min(
+        now.getTime(),
+        Math.max(asOf.getTime(), now.getTime() - SESSION_STOP_CLOCK_GRACE_SECONDS * 1000),
+      ),
+    );
+    const ids = [...new Set(req.sessionIds)].sort();
+    let cancelledRequests: string[] = [];
+    const outcome = await withTransaction(this.pool, async (client) => {
+      const skipped: PaySessionsResponse['skipped'] = [];
+      // Sessions in id order, then the customers: two desks paying the same PCs queue up.
+      const rows: SessionRow[] = [];
+      for (const id of ids) {
+        const found = await client.query<SessionRow>(
+          `${SESSION_SELECT} WHERE g.id = $1 FOR UPDATE OF g`,
+          [id],
+        );
+        if (found.rows[0]) rows.push(found.rows[0]);
+        else skipped.push({ sessionId: id, reason: 'not_found' });
+      }
+      await lockCustomers(client, req.customerId, ...rows.map((r) => r.customer_id));
+      if (req.clientRequestId) {
+        const dup = await client.query<{ sale_id: string | null }>(
+          `SELECT payload->>'saleId' AS sale_id FROM session_events
+            WHERE session_id = ANY($1::uuid[]) AND event_type = 'billed'
+              AND payload->>'clientRequestId' = $2 LIMIT 1`,
+          [ids, req.clientRequestId],
+        );
+        const saleId = dup.rows[0]?.sale_id;
+        if (saleId) return { done: false as const, replay: await this.paidAlready(client, saleId) };
+      }
+      if (req.customerId) {
+        const found = await client.query<{ status: string }>(
+          'SELECT status FROM customers WHERE id = $1',
+          [req.customerId],
+        );
+        if (!found.rows[0] || found.rows[0].status === 'archived')
+          throw badRequest('Customer not found');
+      }
+
+      type Planned = NonNullable<ReturnType<SessionsService['planPayment']>> & {
+        row: SessionRow;
+        orderLines: OrderLineForSale[];
+        discountCents: number;
+      };
+      const plan: Planned[] = [];
+      for (const row of rows) {
+        const orderLines = this.orders ? await this.orders.openLinesForSession(client, row.id) : [];
+        const planned = this.planPayment(row, orderLines, req.stopOpen, at);
+        if (!planned) {
+          skipped.push({
+            sessionId: row.id,
+            reason: row.status === 'cancelled' ? 'cancelled' : 'nothing_due',
+          });
+          continue;
+        }
+        plan.push({ ...planned, row, orderLines, discountCents: 0 });
+      }
+      if (plan.length === 0)
+        throw new AppError(409, 'nothing_due', 'Nothing is owed on the selected PCs');
+
+      // A discount comes off the time, spread over the PCs by their share of it.
+      const timeTotal = plan.reduce((acc, b) => acc + b.timeCents, 0);
+      if (req.discountCents > timeTotal) throw badRequest('Discount exceeds the time on the bill');
+      if (req.discountCents > 0) {
+        const timed = plan.filter((b) => b.timeCents > 0);
+        for (const b of timed)
+          b.discountCents = Math.floor((req.discountCents * b.timeCents) / timeTotal);
+        let left = req.discountCents - timed.reduce((acc, b) => acc + b.discountCents, 0);
+        for (const b of timed) {
+          if (left <= 0) break;
+          const add = Math.min(left, b.timeCents - b.discountCents);
+          b.discountCents += add;
+          left -= add;
+        }
+      }
+
+      const text = (b: Planned): string => {
+        if (b.row.billing_mode === 'prepaid')
+          return `${b.row.station_code} · added minutes (paid at the end)`;
+        if (b.row.billing_mode === 'endpay' && b.live)
+          return `${b.row.station_code} · ${Math.round((b.row.planned_seconds ?? 0) / 60)} min (pay at the end, paid while running)`;
+        if (b.live && !b.stop) return `${describe(b.row, b.seconds)} · so far`;
+        return describe(b.row, b.live ? b.seconds : (b.row.billable_seconds ?? 0));
+      };
+      // A PC that only pays products has no time line; a stopped one shows its time even at 0.
+      const line = (b: Planned): number | null => (b.timeCents > 0 || b.stop ? b.timeCents : null);
+      // An open-time session that is stopped and owes nothing (it ended inside its free minutes,
+      // or all of it was paid while it ran) is closed without being on a receipt.
+      const owesNothing = (b: Planned) => b.stop && b.timeCents <= 0 && b.ordersCents <= 0;
+      const charge = plan.filter((b) => !owesNothing(b));
+      const own = [...new Set(charge.map((b) => b.row.customer_id))];
+      // Nobody named at the desk: the receipt goes on the customer all these PCs share, if any.
+      const customerId = req.customerId ?? (own.length === 1 ? (own[0] ?? null) : null);
+      const first = charge[0];
+      const codes = plan.map((b) => b.row.station_code).join(', ');
+      const sale = first
+        ? await this.recordSale(client, {
+            sessionId: first.row.id,
+            description: text(first),
+            priceCents: line(first),
+            orderLines: first.orderLines,
+            more: charge.slice(1).map((b) => ({
+              sessionId: b.row.id,
+              description: text(b),
+              priceCents: line(b),
+              orderLines: b.orderLines,
+            })),
+            label:
+              charge.length === 1
+                ? text(first)
+                : `${charge.length} PC · ${charge.map((b) => b.row.station_code).join(', ')}`.slice(
+                    0,
+                    160,
+                  ),
+            discountCents: req.discountCents,
+            tenders: req,
+            customerId,
+            actor,
+            at,
+          })
+        : null;
+
+      const billedOrders: string[] = [];
+      const stopped: string[] = [];
+      const refreshed: string[] = [];
+      for (const b of plan) {
+        const { row } = b;
+        const orderIds = [...new Set(b.orderLines.map((l) => l.orderId))];
+        if (sale && orderIds.length && this.orders) {
+          await this.orders.markBilled(client, orderIds, sale.saleId, actor);
+          billedOrders.push(...orderIds);
+        }
+        const net = b.timeCents - b.discountCents;
+        // A session on the receipt is linked to its sale; one that owed nothing has none.
+        const saleId = owesNothing(b) ? null : (sale?.saleId ?? null);
+        if (row.status === 'cancelled' || (b.timeCents <= 0 && !b.stop)) {
+          // Only products: nothing about the time changes.
+          await client.query('UPDATE gaming_sessions SET version = version + 1 WHERE id = $1', [
+            row.id,
+          ]);
+        } else if (row.billing_mode === 'prepaid') {
+          // The added minutes are paid: they join what was paid for the time.
+          await client.query(
+            `UPDATE gaming_sessions SET quoted_price_cents = quoted_price_cents + $2,
+               final_price_cents = COALESCE(final_price_cents, 0) + $2, discount_cents = discount_cents + $3,
+               unpaid_cents = 0, unpaid_seconds = 0, version = version + 1
+             WHERE id = $1`,
+            [row.id, net, b.discountCents],
+          );
+          if (b.live) refreshed.push(row.id);
+        } else if (row.billing_mode === 'endpay' && b.live) {
+          // Paid while it runs: from here on it is a paid session until its time is up.
+          const updated = await client.query(
+            `UPDATE gaming_sessions SET billing_mode = 'prepaid', quoted_price_cents = $2, final_price_cents = $2,
+               discount_cents = discount_cents + $3, sale_id = $4, billed_at = $5, version = version + 1
+             WHERE id = $1 AND billed_at IS NULL`,
+            [row.id, net, b.discountCents, saleId, at],
+          );
+          if (updated.rowCount !== 1) throw conflict('Session was billed concurrently');
+          await this.addEvent(client, row.id, 'correction', actor, {
+            kind: 'paid_while_running',
+            from: 'endpay',
+            to: 'prepaid',
+            amountCents: net,
+          });
+          refreshed.push(row.id);
+        } else if (b.live && b.stop) {
+          // Open time, stopped by this payment: billed in full, like "Stop" with a tender.
+          const earlier = Number(row.discount_cents ?? 0);
+          const updated = await client.query(
+            `UPDATE gaming_sessions SET status = 'completed', ended_at = $2, end_reason = 'stopped_by_staff', billable_seconds = $3,
+               discount_cents = discount_cents + $4, final_price_cents = $5, sale_id = $6, billed_at = $2,
+               paused_at = NULL, paused_by = NULL, version = version + 1
+             WHERE id = $1 AND billed_at IS NULL`,
+            [
+              row.id,
+              at,
+              b.seconds,
+              b.discountCents,
+              Math.max(0, b.priceNow - earlier - b.discountCents),
+              saleId,
+            ],
+          );
+          if (updated.rowCount !== 1) throw conflict('Session was billed concurrently');
+          await this.addEvent(client, row.id, 'stopped', actor, {
+            endedAt: at.toISOString(),
+            billableSeconds: b.seconds,
+          });
+          const settled = await this.settleRequests(
+            client,
+            {
+              stationId: row.station_id,
+              sessionId: row.id,
+              cancel: { kinds: ['extend'], reason: 'session_ended' },
+            },
+            actor,
+          );
+          cancelledRequests = cancelledRequests.concat(settled.cancelled);
+          stopped.push(row.id);
+        } else if (b.live) {
+          // Open time that runs on: the money taken so far comes off the final bill.
+          await client.query(
+            `UPDATE gaming_sessions SET paid_cents = paid_cents + $2, discount_cents = discount_cents + $3,
+               version = version + 1 WHERE id = $1`,
+            [row.id, net, b.discountCents],
+          );
+        } else {
+          // Ended, its bill waited at the desk.
+          const full = Number(row.final_price_cents ?? row.quoted_price_cents ?? 0);
+          const updated = await client.query(
+            `UPDATE gaming_sessions SET discount_cents = discount_cents + $2, final_price_cents = $3, sale_id = $4,
+               billed_at = $5, version = version + 1
+             WHERE id = $1 AND billed_at IS NULL`,
+            [row.id, b.discountCents, full - b.discountCents, saleId, at],
+          );
+          if (updated.rowCount !== 1) throw conflict('Session was collected concurrently');
+        }
+        if (b.discountCents > 0)
+          await this.addEvent(client, row.id, 'discount_applied', actor, {
+            discountCents: b.discountCents,
+          });
+        await this.addEvent(client, row.id, 'billed', actor, {
+          saleId,
+          receiptNo: saleId ? (sale?.receiptNo ?? null) : null,
+          amountCents: net + b.ordersCents,
+          methods: saleId ? (sale?.methods ?? []) : [],
+          ...(saleId ? {} : { nothingOwed: true }),
+          orders: orderIds.length,
+          pcs: plan.length,
+          ...(b.live && !b.stop ? { whileRunning: true } : {}),
+          clientRequestId: req.clientRequestId ?? null,
+        });
+      }
+      await recordAudit(client, actor, {
+        action: 'session.pay',
+        entityType: sale ? 'sale' : null,
+        entityId: sale?.saleId ?? null,
+        details: {
+          pcs: plan.length,
+          stations: codes,
+          totalCents: sale?.payment.totalCents ?? 0,
+          discountCents: req.discountCents,
+          stopped: stopped.length,
+        },
+      });
+      return {
+        done: true as const,
+        payment: sale?.payment ?? null,
+        bills: plan.map((b) => ({
+          sessionId: b.row.id,
+          stationId: b.row.station_id,
+          stationCode: b.row.station_code,
+          stationName: b.row.station_name,
+          timeCents: b.timeCents - b.discountCents,
+          discountCents: b.discountCents,
+          ordersCents: b.ordersCents,
+          stopped: b.stop,
+          running: b.live && !b.stop,
+        })),
+        skipped,
+        billedOrders,
+        stopped,
+        refreshed,
+      };
+    });
+    if (!outcome.done) return outcome.replay;
+
+    await this.announceRequests({ approved: null, cancelled: cancelledRequests });
+    if (outcome.billedOrders.length && this.orders)
+      await this.orders.announce(outcome.billedOrders);
+    for (const bill of outcome.bills) {
+      const session = await this.getById(bill.sessionId);
+      if (outcome.stopped.includes(bill.sessionId)) {
+        await this.mirror(session, 'session.end', { sessionId: bill.sessionId }, actor);
+        this.autoEndTasks(session, actor);
+      } else if (outcome.refreshed.includes(bill.sessionId) && session.endsAt) {
+        // The PC's money line: "paid" instead of "to pay at the end".
+        await this.mirror(
+          session,
+          'session.extend',
+          { sessionId: bill.sessionId, endsAt: session.endsAt, billing: clientBillingOf(session) },
+          actor,
+        );
+      }
+      await this.broadcast(session);
+    }
+    return {
+      payment: outcome.payment,
+      bills: outcome.bills,
+      skipped: outcome.skipped,
+      totalCents: outcome.payment?.totalCents ?? 0,
+    };
+  }
+
+  /** The answer of a `pay` that already happened (a retried request): read back from its sale. */
+  private async paidAlready(client: DbClient, saleId: string): Promise<PaySessionsResponse> {
+    const sale = await client.query<{
+      receipt_no: string;
+      total_cents: string;
+      paid_cents: string;
+      change_cents: string;
+    }>('SELECT receipt_no, total_cents, paid_cents, change_cents FROM sales WHERE id = $1', [
+      saleId,
+    ]);
+    if (!sale.rows[0]) throw notFound('Sale');
+    const debt = await client.query<{ amount: string; due_date: string | null }>(
+      `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS amount, MIN(to_char(due_date, 'YYYY-MM-DD')) AS due_date
+         FROM customer_debts WHERE sale_id = $1`,
+      [saleId],
+    );
+    const lines = await client.query<{
+      session_id: string;
+      station_id: string;
+      code: string;
+      name: string;
+      status: string;
+      time_cents: string;
+      orders_cents: string;
+    }>(
+      `SELECT g.id AS session_id, g.station_id, s.code, s.name, g.status,
+              COALESCE(SUM(i.line_total_cents) FILTER (WHERE i.product_id IS NULL), 0)::bigint AS time_cents,
+              COALESCE(SUM(i.line_total_cents) FILTER (WHERE i.product_id IS NOT NULL), 0)::bigint AS orders_cents
+         FROM sale_items i
+         JOIN gaming_sessions g ON g.id = i.gaming_session_id
+         JOIN stations s ON s.id = g.station_id
+        WHERE i.sale_id = $1
+        GROUP BY g.id, g.station_id, s.code, s.name, g.status
+        ORDER BY MIN(i.line_no)`,
+      [saleId],
+    );
+    const s0 = sale.rows[0];
+    return {
+      payment: {
+        saleId,
+        receiptNo: s0.receipt_no,
+        totalCents: Number(s0.total_cents),
+        paidCents: Number(s0.paid_cents),
+        changeCents: Number(s0.change_cents),
+        creditCents: Number(debt.rows[0]?.amount ?? 0),
+        dueDate: debt.rows[0]?.due_date ?? null,
+      },
+      bills: lines.rows.map((l) => ({
+        sessionId: l.session_id,
+        stationId: l.station_id,
+        stationCode: l.code,
+        stationName: l.name,
+        timeCents: Number(l.time_cents),
+        discountCents: 0,
+        ordersCents: Number(l.orders_cents),
+        stopped: false,
+        running: l.status === 'active' || l.status === 'paused',
+      })),
+      skipped: [],
+      totalCents: Number(s0.total_cents),
+    };
+  }
+
+  /**
+   * 0.36.0: who sits at this session — the registered customer, a typed name, or nobody. For a
+   * running session and for an ended one whose bill still waits at the desk.
+   */
+  async setCustomer(
+    id: string,
+    req: SessionCustomerRequest,
+    actor: SessionActorContext,
+  ): Promise<SessionSummary> {
+    const session = await withTransaction(this.pool, async (client) => {
+      const row = await this.lock(client, id);
+      await lockCustomers(client, row.customer_id, req.customerId);
+      const before = this.mapRow(row);
+      const live = row.status === 'active' || row.status === 'paused';
+      if (!live && !before.awaitingPayment)
+        throw conflict('This session is closed; its customer cannot be changed');
+      const name = req.customerId ? null : (req.customerName ?? '').trim() || null;
+      await this.attachCustomer(client, row, req.customerId, name, actor);
+      await recordAudit(client, actor, {
+        action: 'session.customer',
+        entityType: 'gaming_session',
+        entityId: id,
+        details: {
+          stationCode: row.station_code,
+          customerId: req.customerId,
+          customerName: name,
+          previousCustomerId: before.customerId,
+        },
+      });
+      return this.getById(id, client);
+    });
+    await this.broadcast(session);
+    return session;
+  }
+
   /** Postpaid / end pay: stop without charging (wrong station, test, customer left immediately). */
   async cancel(
     id: string,
@@ -2116,6 +2916,9 @@ export class SessionsService {
       // End pay (0.14.0) took no money, so it cancels like postpaid.
       if (row.billing_mode === 'prepaid')
         throw conflict('Prepaid sessions are already paid; refund them from the sale instead');
+      // 0.36.0: an open-time session that was paid while it ran has taken money too.
+      if (Number(row.paid_cents ?? 0) > 0)
+        throw conflict('Part of this session is already paid; stop it and refund from the sale');
       await client.query(
         `UPDATE gaming_sessions SET status = 'cancelled', ended_at = $2, end_reason = 'cancelled', billable_seconds = 0,
            final_price_cents = 0, paused_at = NULL, notes = COALESCE(notes || E'\\n', '') || $3, version = version + 1 WHERE id = $1`,
@@ -2175,9 +2978,12 @@ export class SessionsService {
          WHERE id = $1`,
         [id, seconds],
       );
+      const unpaid = Number(row.unpaid_cents ?? 0);
       await this.addEvent(client, id, 'expired', actor, {
         endsAt: row.ends_at.toISOString(),
         ...(endPay ? { awaitingPayment: true, dueCents: Number(row.quoted_price_cents ?? 0) } : {}),
+        // 0.36.0: minutes added "to pay at the end" are owed in full once the time ran out.
+        ...(!endPay && unpaid > 0 ? { awaitingPayment: true, dueCents: unpaid } : {}),
       });
       settled = await this.settleRequests(
         client,
@@ -2192,7 +2998,9 @@ export class SessionsService {
     });
     if (!session) return null;
     await this.announceRequests(settled);
-    await this.mirror(session, 'session.end', { sessionId: id }, actor);
+    // 0.35.0: `reason` tells the PC the time ran out (it then says "Koha juaj mbaroi"); staff
+    // ending a session, or the customer leaving, stays silent.
+    await this.mirror(session, 'session.end', { sessionId: id, reason: 'expired' }, actor);
     await this.broadcast(session);
     this.autoEndTasks(session, actor);
     return session;
@@ -2301,6 +3109,10 @@ export class SessionsService {
             const key = `${s.id}:${minutes}`;
             if (remaining > minutes || this.warned.has(key)) continue;
             this.warned.add(key);
+            // 0.35.0: the PC says the minutes aloud, so they have to be true. A mark that was
+            // passed a while ago (a session that began with less time, a resume or an extension
+            // near the end, a server restart) is skipped: "5 minutes" with 3 left is wrong.
+            if (remaining < minutes - WARNING_LATE_MINUTES) continue;
             const text =
               language === 'sq'
                 ? `Edhe ${minutes} minuta kohë`
@@ -2310,7 +3122,9 @@ export class SessionsService {
               ? await this.hub.sendCommand(
                   deviceId,
                   'message.show',
-                  { text, durationSeconds: 15 },
+                  // 0.35.0: `announce` lets the PC say it as well ("Edhe 5 minuta"); an older
+                  // client shows the text and ignores the rest.
+                  { text, durationSeconds: 15, announce: { minutes } },
                   { timeoutMs: 5000 },
                 )
               : null;
@@ -2401,6 +3215,45 @@ export class SessionsService {
 
   // ─── Internals ───────────────────────────────────────────────────────────────
 
+  /**
+   * 0.36.0: puts a registered customer (or a typed name, or nobody) on a session, inside the
+   * caller's transaction. The products that wait on the session's bill follow: they are what the
+   * customer "bought and has not paid", and the customer's page reads them by customer.
+   */
+  private async attachCustomer(
+    client: DbClient,
+    row: SessionRow,
+    customerId: string | null,
+    customerName: string | null,
+    actor: AuditActor,
+  ): Promise<void> {
+    if (customerId) {
+      const found = await client.query<{ status: string }>(
+        'SELECT status FROM customers WHERE id = $1',
+        [customerId],
+      );
+      if (!found.rows[0] || found.rows[0].status === 'archived')
+        throw badRequest('Customer not found');
+    }
+    await client.query(
+      'UPDATE gaming_sessions SET customer_id = $2, customer_name = $3, version = version + 1 WHERE id = $1',
+      [row.id, customerId, customerId ? null : customerName || null],
+    );
+    await client.query(
+      `UPDATE station_orders SET customer_id = $2
+        WHERE session_id = $1 AND status IN ('pending', 'accepted')`,
+      [row.id, customerId],
+    );
+    await this.addEvent(client, row.id, 'correction', actor, {
+      kind: 'customer_changed',
+      customerId,
+      customerName: customerId ? null : customerName || null,
+      previousCustomerId: row.customer_id,
+    });
+    row.customer_id = customerId;
+    row.customer_name = customerId ? null : customerName || null;
+  }
+
   private async lock(client: DbClient, id: string): Promise<SessionRow> {
     const result = await client.query<SessionRow>(
       `${SESSION_SELECT} WHERE g.id = $1 FOR UPDATE OF g`,
@@ -2447,6 +3300,18 @@ export class SessionsService {
       at: Date;
       /** Ordered products settled on this receipt (0.10.0). */
       orderLines?: OrderLineForSale[];
+      /**
+       * 0.36.0: more PCs on the same receipt — each with its own session line and its own
+       * products. `sessionId`, `priceCents` and `orderLines` above are the first PC.
+       */
+      more?: {
+        sessionId: string;
+        description: string;
+        priceCents: number | null;
+        orderLines?: OrderLineForSale[];
+      }[];
+      /** What the drawer, the debt and the balance call this receipt (default: `description`). */
+      label?: string;
     },
   ): Promise<{
     saleId: string;
@@ -2454,9 +3319,19 @@ export class SessionsService {
     methods: string[];
     payment: SessionPaymentSummary;
   }> {
-    const orderLines = input.orderLines ?? [];
+    const bills = [
+      {
+        sessionId: input.sessionId,
+        description: input.description,
+        priceCents: input.priceCents,
+        orderLines: input.orderLines ?? [],
+      },
+      ...(input.more ?? []).map((b) => ({ ...b, orderLines: b.orderLines ?? [] })),
+    ];
+    const label = input.label ?? input.description;
+    const orderLines = bills.flatMap((b) => b.orderLines);
     const ordersCents = orderLines.reduce((acc, l) => acc + l.lineTotalCents, 0);
-    const sessionCents = input.priceCents ?? 0;
+    const sessionCents = bills.reduce((acc, b) => acc + (b.priceCents ?? 0), 0);
     const subtotal = sessionCents + ordersCents;
     const total = subtotal - input.discountCents;
     const payments: SalePaymentInput[] =
@@ -2500,45 +3375,50 @@ export class SessionsService {
     );
     const saleId = sale.rows[0]!.id;
     let lineNo = 0;
-    if (input.priceCents !== null) {
-      lineNo += 1;
-      await client.query(
-        `INSERT INTO sale_items (sale_id, line_no, gaming_session_id, description, quantity_milli, unit_price_cents, discount_cents,
-           tax_rate_bp, tax_cents, line_total_cents)
-         VALUES ($1, $7, $2, $3, 1000, $4, 0, $5, $6, $4)`,
-        [
-          saleId,
-          input.sessionId,
-          input.description,
-          input.priceCents,
-          rateBp,
-          splitInclusiveTax(input.priceCents, rateBp).tax,
-          lineNo,
-        ],
-      );
-    }
-    // Ordered products: real sale lines (with cost) and real stock movements — the same facts
-    // a POS sale writes, so reports and inventory see nothing special about an order.
-    for (const line of orderLines) {
-      lineNo += 1;
-      await client.query(
-        `INSERT INTO sale_items (sale_id, line_no, product_id, gaming_session_id, description, quantity_milli, unit_price_cents,
-           discount_cents, tax_rate_bp, tax_cents, line_total_cents, cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11)`,
-        [
-          saleId,
-          lineNo,
-          line.productId,
-          input.sessionId,
-          line.name,
-          line.quantityMilli,
-          line.unitPriceCents,
-          rateBp,
-          splitInclusiveTax(line.lineTotalCents, rateBp).tax,
-          line.lineTotalCents,
-          multiplyMillsByQuantity(line.unitCostMills, line.quantityMilli),
-        ],
-      );
+    // One PC after the other: its time, then what it had on its bill.
+    for (const bill of bills) {
+      if (bill.priceCents !== null) {
+        lineNo += 1;
+        await client.query(
+          `INSERT INTO sale_items (sale_id, line_no, gaming_session_id, description, quantity_milli, unit_price_cents, discount_cents,
+             tax_rate_bp, tax_cents, line_total_cents)
+           VALUES ($1, $7, $2, $3, 1000, $4, 0, $5, $6, $4)`,
+          [
+            saleId,
+            bill.sessionId,
+            bill.description,
+            bill.priceCents,
+            rateBp,
+            splitInclusiveTax(bill.priceCents, rateBp).tax,
+            lineNo,
+          ],
+        );
+      }
+      // Ordered products: real sale lines (with cost) and real stock movements — the same facts
+      // a POS sale writes, so reports and inventory see nothing special about an order.
+      for (const line of bill.orderLines) {
+        lineNo += 1;
+        await client.query(
+          `INSERT INTO sale_items (sale_id, line_no, product_id, gaming_session_id, description, quantity_milli, unit_price_cents,
+             discount_cents, tax_rate_bp, tax_cents, line_total_cents, cost_cents, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12)`,
+          [
+            saleId,
+            lineNo,
+            line.productId,
+            bill.sessionId,
+            line.name,
+            line.quantityMilli,
+            line.unitPriceCents,
+            rateBp,
+            splitInclusiveTax(line.lineTotalCents, rateBp).tax,
+            line.lineTotalCents,
+            multiplyMillsByQuantity(line.unitCostMills, line.quantityMilli),
+            // 0.40.0: the time the product was put on the bill, not the time of this payment.
+            line.addedAt,
+          ],
+        );
+      }
     }
     const perProduct = new Map<string, OrderLineForSale & { qty: number }>();
     for (const line of orderLines) {
@@ -2577,7 +3457,7 @@ export class SessionsService {
         type: 'sale',
         referenceType: 'sale',
         referenceId: saleId,
-        reason: `${receiptNo} · ${input.description}`,
+        reason: `${receiptNo} · ${label}`,
         actorUserId: input.actor.userId ?? null,
       });
       for (const [i, p] of payments.entries()) {
@@ -2604,7 +3484,7 @@ export class SessionsService {
           saleId,
           amountCents: creditCents,
           dueDate: credit.find((p) => p.dueDate)?.dueDate ?? null,
-          notes: `${receiptNo} · ${input.description}`,
+          notes: `${receiptNo} · ${label}`,
           actor: input.actor,
         });
         const d = await client.query<{ due_date: string }>(
@@ -2623,7 +3503,7 @@ export class SessionsService {
           amountCents: fromWallet,
           referenceType: 'sale',
           referenceId: saleId,
-          note: `${receiptNo} · ${input.description}`,
+          note: `${receiptNo} · ${label}`,
           actor: input.actor,
         });
       }

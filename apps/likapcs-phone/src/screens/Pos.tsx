@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { takeHandoff } from '../stockData';
+import { isInternetAccess, takeHandoff } from '../stockData';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { PERMISSIONS, type CategorySummary, type CustomerSummary, type Paginated, type ProductAddonSummary, type ProductLookupResponse, type ProductSummary, type SaleDetail, type SalesListResponse } from '@likapcs/shared';
-import { api, errorText, money, newRequestId, parseEuroToCents, shortDate } from '../api';
+import { ApiError, api, errorText, money, newRequestId, parseEuroToCents, shortDate } from '../api';
 import { can, useMe } from '../me';
 import { useLive } from '../useLive';
 import { useNotify } from '../notify';
@@ -13,6 +13,12 @@ import { PaymentPanel, centsText, newPaymentLine, summarizePayment, type Payment
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useDebounced } from '../useDebounced';
 import { buzz } from '../sound';
+
+/** 0.34.0: the internet codes a sale handed out, per line, to show to the cashier. */
+interface SoldCodes {
+  receiptNo: string | null;
+  lines: { name: string; codes: string[] }[];
+}
 
 /** One line of the cart: a product with the extras chosen for it. The same product with other extras is another line. */
 interface CartLine {
@@ -100,6 +106,7 @@ function useFavs(): [Set<string>, (id: string) => void] {
 /** Point of sale: pick products (with extras when they have them), check the cart, take the money. Online only. */
 export function Pos() {
   const notify = useNotify();
+  const t = useT();
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim(), 250);
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -115,6 +122,9 @@ export function Pos() {
   const [favOnly, setFavOnly] = useState(false);
   const [resume, setResume] = useState<ResumeState | null>(null);
   const [suspendedOpen, setSuspendedOpen] = useState(false);
+  // 0.34.0: the codes of the last sale stay within reach until the cashier says they were handed over.
+  const [soldCodes, setSoldCodes] = useState<SoldCodes | null>(null);
+  const [codesOpen, setCodesOpen] = useState(false);
   const suspendedList = useLive(['suspended'], () => api<SalesListResponse>('/sales?status=suspended&pageSize=50'));
   const suspendedCount = suspendedList.data?.total ?? 0;
   const [favs, toggleFav] = useFavs();
@@ -339,6 +349,7 @@ export function Pos() {
                   <span className="tile__name">{p.name}</span>
                   <span className="tile__price">{money(unitPrice(p))}</span>
                   {hasExtras && <span className="tile__note">Me opsione</span>}
+                  {isInternetAccess(p) && <span className="tile__note tile__note--wifi">Wi-Fi · {t('kod pas pagesës')}</span>}
                   {p.trackStock && piecesLeft(p) <= LOW_STOCK_PIECES && (
                     <span className="tile__note tile__note--low">Mbetur {piecesLeft(p)}</span>
                   )}
@@ -356,6 +367,16 @@ export function Pos() {
             );
           })}
         </ul>
+      )}
+
+      {soldCodes && !codesOpen && (
+        <button type="button" className="codes-banner" onClick={() => setCodesOpen(true)}>
+          <span>
+            {t('Kodi i internetit i shitjes së fundit')}
+            {soldCodes.receiptNo ? ` · ${soldCodes.receiptNo}` : ''}
+          </span>
+          <strong>{t('Shfaq')}</strong>
+        </button>
       )}
 
       {count > 0 && (
@@ -406,11 +427,15 @@ export function Pos() {
           onQty={setQty}
           canDiscount={canDiscount}
           onClose={() => setCartOpen(false)}
-          onSold={(receipt) => {
+          onSold={(receipt, codeLines) => {
             setCart({});
             setResume(null);
             setCartOpen(false);
             notify(receipt ? `Shitja u regjistrua · ${receipt}` : 'Shitja u regjistrua.');
+            if (codeLines.length > 0) {
+              setSoldCodes({ receiptNo: receipt, lines: codeLines });
+              setCodesOpen(true);
+            }
           }}
           onSuspended={(ref) => {
             setCart({});
@@ -420,7 +445,84 @@ export function Pos() {
           }}
         />
       )}
+
+      {soldCodes && codesOpen && (
+        <AccessCodesSheet
+          sold={soldCodes}
+          onClose={() => setCodesOpen(false)}
+          onDone={() => {
+            setCodesOpen(false);
+            setSoldCodes(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * 0.34.0: the internet codes of the sale just made, in large type. Closing the sheet keeps them
+ * one tap away (a banner on the till); "handed over" puts them away. They stay on the sale either
+ * way (Admin › Sales).
+ */
+function AccessCodesSheet({ sold, onClose, onDone }: { sold: SoldCodes; onClose: () => void; onDone: () => void }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const count = sold.lines.reduce((n, l) => n + l.codes.length, 0);
+  const text = sold.lines.map((l) => `${l.name}: ${l.codes.join(', ')}`).join('\n');
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // No clipboard here: the code is on the screen.
+    }
+  };
+  const share = async () => {
+    try {
+      await navigator.share({ text });
+    } catch {
+      // Cancelled, or sharing is not available.
+    }
+  };
+  return (
+    <Sheet
+      title={count === 1 ? t('Kodi i internetit') : t('Kodet e internetit')}
+      onClose={onClose}
+      footer={
+        <>
+          {canShare && (
+            <Btn variant="ghost" block onClick={() => void share()}>
+              {t('Dërgo kodin')}
+            </Btn>
+          )}
+          <Btn variant="ghost" block onClick={() => void copy()}>
+            {copied ? t('U kopjua') : t('Kopjo')}
+          </Btn>
+          <Btn block onClick={onDone}>
+            {t('U dha klientit')}
+          </Btn>
+        </>
+      }
+    >
+      <Notice tone="ok">
+        {t('Shitja u regjistrua')}
+        {sold.receiptNo ? ` · ${sold.receiptNo}` : ''}. {count === 1 ? t('Jepeni klientit:') : t('Jepjani klientit:')}
+      </Notice>
+      {sold.lines.map((l, i) => (
+        <div key={`${l.name}-${i}`} className="code-block">
+          <span className="muted small">{l.name}</span>
+          {l.codes.map((c) => (
+            <strong key={c} className="code-big">
+              {c}
+            </strong>
+          ))}
+        </div>
+      ))}
+      <p className="muted small">{t('Kodi gjendet edhe më vonë te Admin › Shitjet, në këtë faturë.')}</p>
+    </Sheet>
   );
 }
 
@@ -495,7 +597,7 @@ function CartSheet({
   onClear: () => void;
   onVoidResume: () => void;
   onClose: () => void;
-  onSold: (receipt: string | null) => void;
+  onSold: (receipt: string | null, codeLines: SoldCodes['lines']) => void;
   onSuspended: (ref: string | null) => void;
 }) {
   const online = useOnline();
@@ -546,7 +648,7 @@ function CartSheet({
   // A suspended sale that was opened again is completed in place (same sale number), not copied.
   const sell = useMutation({
     mutationFn: () =>
-      api<{ sale?: { receiptNo?: string | null }; receiptNo?: string | null }>(
+      api<{ sale?: { receiptNo?: string | null }; receiptNo?: string | null; items?: SaleDetail['items'] }>(
         resume ? `/sales/${resume.id}/complete` : '/sales',
         {
           method: 'POST',
@@ -554,6 +656,8 @@ function CartSheet({
             ...saleBody(),
             payments: total === 0 ? [] : pay.payments,
             staff: false,
+            // 0.34.0: this till shows the internet codes a sale hands out (the sheet below).
+            accessCodes: true,
           },
         },
       ),
@@ -561,7 +665,10 @@ function CartSheet({
       void qc.invalidateQueries({ queryKey: ['phone', 'products'] });
       void qc.invalidateQueries({ queryKey: ['phone', 'debts'] });
       void qc.invalidateQueries({ queryKey: ['phone', 'suspended'] });
-      onSold(res.sale?.receiptNo ?? res.receiptNo ?? resume?.receiptNo ?? null);
+      const codeLines = (res.items ?? [])
+        .filter((i) => (i.accessCodes?.length ?? 0) > 0)
+        .map((i) => ({ name: i.description, codes: i.accessCodes }));
+      onSold(res.sale?.receiptNo ?? res.receiptNo ?? resume?.receiptNo ?? null, codeLines);
     },
   });
 
@@ -589,6 +696,9 @@ function CartSheet({
         <>
           {!online && <Notice tone="danger">Pa lidhje me serverin. Shitja nuk mund të regjistrohet tani.</Notice>}
           {sell.isError && <Notice tone="danger">{errorText(sell.error)}</Notice>}
+          {sell.isError && sell.error instanceof ApiError && sell.error.status === 0 && lines.some((l) => isInternetAccess(l.product)) && (
+            <Notice tone="warn">{t('Shtypni përsëri «Përfundo»: shitja nuk bëhet dy herë dhe kodi shfaqet.')}</Notice>
+          )}
           {suspend.isError && <Notice tone="danger">{errorText(suspend.error)}</Notice>}
           {lines.length > 0 && !resume && (
             <Btn

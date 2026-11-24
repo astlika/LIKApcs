@@ -540,7 +540,17 @@ describe('orders from the PC + customer pause / resume', () => {
     const sent = await order({ items: [{ productId: cola.id, quantity: 3 }] });
     expect(sent.status).toBe(201);
     expect(sent.body.totalCents).toBe(450); // promo is off now
+    // 0.40.0: sent from the PC five minutes ago, accepted by the desk two minutes ago, paid now.
+    expect(sent.body.fromDevice).toBe(true);
+    await ctx.pool.query(
+      `UPDATE station_orders SET requested_at = now() - interval '5 minutes' WHERE id = $1`,
+      [sent.body.id],
+    );
     await call(owner.token, 'POST', `/orders/${sent.body.id}/accept`, { settlement: 'on_bill' });
+    await ctx.pool.query(
+      `UPDATE station_orders SET decided_at = now() - interval '2 minutes' WHERE id = $1`,
+      [sent.body.id],
+    );
     const sessionId = started.body.session.id;
     const short = await call<Err>(owner.token, 'POST', `/sessions/${sessionId}/end`, {
       payments: [{ method: 'cash', amountCents: 400 }],
@@ -558,6 +568,13 @@ describe('orders from the PC + customer pause / resume', () => {
     expect(settled.body.status).toBe('billed');
     const sale = await call<SaleDetail>(owner.token, 'GET', `/sales/${settled.body.saleId}`);
     expect(sale.body.items.map((i) => [i.productId, i.quantityMilli])).toEqual([[cola.id, 3000]]);
+    // 0.40.0: the line of the receipt carries the moment the desk accepted the order (when the
+    // product was brought) — not when the customer sent it, and not when the bill was paid.
+    expect(settled.body.fromDevice).toBe(true);
+    expect(sale.body.items[0]!.addedAt).toBe(settled.body.decidedAt);
+    const decided = Date.parse(settled.body.decidedAt!);
+    expect(decided - Date.parse(settled.body.requestedAt)).toBeGreaterThan(170_000);
+    expect(Date.parse(sale.body.completedAt!) - decided).toBeGreaterThan(110_000);
     expect(
       (await call<ProductSummary>(owner.token, 'GET', `/products/${cola.id}`)).body.stockMilli,
     ).toBe(6_000);

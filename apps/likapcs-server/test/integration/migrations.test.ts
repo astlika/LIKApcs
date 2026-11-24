@@ -64,6 +64,9 @@ const REQUIRED_TABLES = [
   'customer_debts',
   'debt_payments',
   'ads',
+  // 0.36.0: offers (products + PC minutes at one price)
+  'offers',
+  'offer_items',
 ];
 
 describe('database migrations', () => {

@@ -5,13 +5,13 @@
  * automatically (payment method `other`, no drawer). Only actors with `pos.staff_purchase` may
  * record one. Staff purchases are never voided here; the expense cannot be voided either.
  */
-import type { StaffPurchaseRequest, StaffPurchaseSummary } from '@likapcs/shared';
+import type { ProductKind, StaffPurchaseRequest, StaffPurchaseSummary } from '@likapcs/shared';
 import { millsToCents } from '@likapcs/shared';
 import type { DbPool } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import { forbidden, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
-import { applyMovement } from './catalog.js';
+import { applyMovement, internetAccessTillOnly } from './catalog.js';
 
 export interface StaffPurchaseActor extends AuditActor {
   userId: string;
@@ -21,6 +21,7 @@ export interface StaffPurchaseActor extends AuditActor {
 interface ProductRow {
   id: string;
   name: string;
+  kind: ProductKind;
   track_stock: boolean;
   allow_negative_stock: boolean;
   purchase_cost_cents: string;
@@ -47,13 +48,16 @@ export class StaffPurchasesService {
     const result = await withTransaction(this.pool, async (client) => {
       const ids = [...perProduct.keys()].sort();
       const found = await client.query<ProductRow>(
-        `SELECT id, name, track_stock, allow_negative_stock, purchase_cost_cents,
+        `SELECT id, name, kind, track_stock, allow_negative_stock, purchase_cost_cents,
                 purchase_cost_mills, average_cost_mills
            FROM products WHERE id = ANY($1::uuid[]) ORDER BY id`,
         [ids],
       );
       const products = new Map(found.rows.map((p) => [p.id, p]));
       for (const id of ids) if (!products.has(id)) throw notFound('Product');
+      // 0.34.0: a staff purchase shows no code; internet access goes through a sale at the till.
+      const access = found.rows.find((p) => p.kind === 'internet_access');
+      if (access) throw internetAccessTillOnly(access.id, access.name);
 
       let totalCostCents = 0;
       const lines: { product: ProductRow; quantityMilli: number; lineCostCents: number }[] = [];

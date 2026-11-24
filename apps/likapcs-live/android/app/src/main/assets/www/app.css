@@ -725,6 +725,14 @@ svg {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+.c-power .act__icon {
+  background: var(--cyan-soft);
+  color: var(--cyan-text);
+}
+.c-day .act__icon {
+  background: var(--ok-soft);
+  color: var(--ok-text);
+}
 .c-money .act__icon {
   background: var(--warn-soft);
   color: var(--warn-text);
@@ -805,6 +813,72 @@ svg {
   display: block;
   font-size: 13px;
   color: var(--muted);
+}
+/* The finer switches inside a kind, and the numbers and hours some of them use. */
+.topics {
+  margin: 0 0 8px 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.switch-row--sub {
+  min-height: 48px;
+  border-top: 0;
+  padding: 4px 0;
+}
+.switch-row--sub .switch-row__text strong {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.switch-row--sub .switch {
+  width: 44px;
+  height: 26px;
+}
+.switch-row--sub .switch::after {
+  width: 20px;
+  height: 20px;
+}
+.switch-row--sub .switch--on::after {
+  transform: translateX(18px);
+}
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 2px 0 10px;
+}
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.opt__input {
+  width: 84px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* Wide enough for "11:30 PM": the phone shows the hour its own way (and opens its own picker). */
+.opt__input--time {
+  width: 132px;
+}
+.opt__input:focus {
+  border-color: #3b82f6;
+}
+.opt--bad .opt__input {
+  border-color: var(--danger);
+  color: var(--danger-text);
 }
 .switch {
   flex: none;

@@ -43,6 +43,24 @@ export function liveSessionPrice(
   return session.currentPriceCents;
 }
 
+/**
+ * 0.36.0: time still to pay on a session right now (products on its bill come on top). The
+ * server's figure, projected forward for open time, which is metered: its running price minus
+ * what was already paid (and discounted) while it ran.
+ */
+export function sessionDueNow(
+  session: Pick<
+    SessionSummary,
+    'billingMode' | 'status' | 'terms' | 'dueCents' | 'discountCents' | 'advanceCents'
+  >,
+  elapsedSeconds: number,
+): number {
+  const live = session.status === 'active' || session.status === 'paused';
+  if (!live || session.billingMode !== 'postpaid') return session.dueCents ?? 0;
+  const running = priceForSeconds(Math.max(0, Math.floor(elapsedSeconds)), session.terms);
+  return Math.max(0, running - (session.discountCents ?? 0) - (session.advanceCents ?? 0));
+}
+
 /** Short label key for a billing mode (chips, badges, lists). */
 export function billingModeKey(
   mode: SessionSummary['billingMode'],

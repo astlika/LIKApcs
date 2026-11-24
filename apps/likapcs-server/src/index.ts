@@ -5,6 +5,7 @@ import { createPool } from './db/pool.js';
 import { getMigrationStatus, runMigrations } from './db/migrate.js';
 import { buildApp } from './app.js';
 import { openDatabase } from './embedded/bootstrap.js';
+import { writeInstallationId } from './embedded/runtime-config.js';
 import { DiscoveryResponder } from './discovery.js';
 import { StartupReporter } from './embedded/startup-state.js';
 import { SERVER_VERSION } from './version.js';
@@ -112,28 +113,35 @@ async function main(): Promise<void> {
   }
 
   let shuttingDown = false;
+  // What LAN discovery answers with. 0.38.0: the id changes when a backup of another installation
+  // is restored (this PC takes that installation's place), so it is kept where it can be updated.
+  const discoveryInfo = database.runtime
+    ? {
+        installationId: database.runtime.installationId,
+        httpPort: config.port,
+        getName: (): Promise<string> => app.services.settings.get('business.name'),
+      }
+    : null;
   const app = await buildApp({
     config,
     pool,
     logger,
     controlToken: database.runtime?.controlToken ?? null,
     installationId: database.runtime?.installationId ?? null,
+    adoptInstallationId: (id) => {
+      writeInstallationId(database.dirs.configFile, id);
+      if (database.runtime) database.runtime.installationId = id;
+      if (discoveryInfo) discoveryInfo.installationId = id;
+      console.info(`[restore] this server now answers as installation ${id}`);
+    },
     requestShutdown: (reason) => void shutdown(reason),
   });
   await listenWithRetry(app, config.host, config.port, startupLog);
   reporter.set('listening');
 
   const discovery =
-    config.discovery.enabled && database.runtime
-      ? new DiscoveryResponder(
-          {
-            installationId: database.runtime.installationId,
-            httpPort: config.port,
-            getName: () => app.services.settings.get('business.name'),
-          },
-          config.discovery.port,
-          app.log,
-        )
+    config.discovery.enabled && discoveryInfo
+      ? new DiscoveryResponder(discoveryInfo, config.discovery.port, app.log)
       : null;
   if (discovery) {
     await discovery

@@ -5,7 +5,11 @@ import { announceSale } from './announce.js';
 import {
   PERMISSIONS,
   createSaleSchema,
+  extendSessionSchema,
+  startSessionSchema,
   syncSalesEnvelopeSchema,
+  type OfferStartResult,
+  type SaleDetail,
   type SyncSalesResponse,
   refundSchema,
   saleListQuerySchema,
@@ -65,13 +69,75 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   // 0.31.0: a completed sale is announced to the admins who may see live tracking. The sale is
   // already committed; a failed announcement must never fail the sale.
   const announce = (saleId: string) => announceSale(app, saleId);
+  /**
+   * 0.36.0: the PC minutes of an offer go to their PC the moment the sale is paid — a free PC
+   * starts with them, a running session gets them added. The sale is already committed and the
+   * minutes are a paid credit of that PC (0.19.0), so nothing is lost when they cannot be given
+   * at once (the PC is reserved, runs on open time, or the cashier may not control the PCs): they
+   * stay paid for that PC and the desk starts them at Stations. The answer says which it was.
+   */
+  const giveOfferMinutes = async (
+    sale: SaleDetail,
+    request: FastifyRequest,
+  ): Promise<SaleDetail> => {
+    const waiting = await services.sales.offerCredits(sale.id);
+    if (waiting.length === 0) return sale;
+    const actor = actorOf(request);
+    const mayControl = actor.permissions.has(PERMISSIONS.STATIONS_CONTROL);
+    const offerStarts: OfferStartResult[] = [];
+    for (const credit of waiting) {
+      const pc = {
+        stationId: credit.stationId,
+        stationCode: credit.stationCode,
+        minutes: credit.minutes,
+      };
+      if (!mayControl) {
+        offerStarts.push({ ...pc, result: 'kept', reason: 'permission' });
+        continue;
+      }
+      try {
+        const live = await services.sessions.liveForStation(credit.stationId);
+        if (live) {
+          await services.sessions.extend(
+            live.id,
+            extendSessionSchema.parse({ minutes: credit.minutes, creditId: credit.creditId }),
+            actor,
+          );
+          offerStarts.push({ ...pc, result: 'extended', reason: null });
+        } else {
+          await services.sessions.start(
+            startSessionSchema.parse({
+              stationId: credit.stationId,
+              billingMode: 'prepaid',
+              minutes: credit.minutes,
+              creditId: credit.creditId,
+              ...(sale.customerId ? { customerId: sale.customerId } : {}),
+            }),
+            actor,
+          );
+          offerStarts.push({ ...pc, result: 'started', reason: null });
+        }
+      } catch (err) {
+        request.log.warn(
+          { err, saleId: sale.id, stationId: credit.stationId },
+          'offer minutes stay as a paid credit of the PC',
+        );
+        offerStarts.push({
+          ...pc,
+          result: 'kept',
+          reason: err instanceof Error ? err.message : 'failed',
+        });
+      }
+    }
+    return { ...sale, offerStarts };
+  };
   app.post('/sales', sell, async (request, reply) => {
     const sale = await services.sales.create(
       createSaleSchema.parse(request.body),
       actorOf(request),
     );
     await announce(sale.id);
-    return reply.code(201).send(sale);
+    return reply.code(201).send(await giveOfferMinutes(sale, request));
   });
   app.post('/sales/suspend', sell, async (request, reply) =>
     reply
@@ -85,7 +151,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
       actorOf(request),
     );
     await announce(sale.id);
-    return sale;
+    return giveOfferMinutes(sale, request);
   });
   app.post('/sales/:id/void', sell, async (request, reply) => {
     await services.sales.voidSuspended(idParams.parse(request.params).id, actorOf(request));

@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { ProductSummary } from '@likapcs/shared';
+import type { OfferSummary, ProductSummary } from '@likapcs/shared';
 import {
+  OFFER_MAX_UNITS,
   addFreeItem,
+  addOfferChecked,
+  addOfferItem,
+  hasOffer,
   pcBlocker,
   pcItemsFromCart,
   addTimeItem,
   addToCart,
   addToCartChecked,
+  cartItemCount,
   cartQuantityOf,
   cartToRequest,
   cartTotals,
   emptyCart,
+  hasInternetAccess,
+  isInternetAccess,
   lineKey,
   lineName,
   removeLine,
@@ -23,6 +30,7 @@ import {
 
 const product = (over: Partial<ProductSummary>): ProductSummary => ({
   id: 'p1',
+  kind: 'standard',
   parentId: null,
   parentName: null,
   variantLabel: null,
@@ -398,5 +406,237 @@ describe('stock at the till (0.33.4)', () => {
     const more = setQuantityChecked(shrunk, 'cola', 4000);
     expect(more.refused?.allowedMilli).toBe(1000);
     expect(cartQuantityOf(more.cart, 'cola')).toBe(3000);
+  });
+});
+
+describe('internet access at the till (0.34.0)', () => {
+  const wifi = (over: Partial<ProductSummary> = {}) =>
+    product({
+      id: 'wifi-1h',
+      name: 'Internet 1h',
+      kind: 'internet_access',
+      stockMilli: 3000,
+      ...over,
+    });
+
+  it('is an ordinary line in the cart, limited by the codes that are left', () => {
+    let cart = addToCartChecked(emptyCart(), wifi()).cart;
+    cart = addToCartChecked(cart, wifi()).cart;
+    expect(cart.lines).toHaveLength(1);
+    expect(cartQuantityOf(cart, 'wifi-1h')).toBe(2000);
+    expect(isInternetAccess(wifi())).toBe(true);
+    expect(isInternetAccess(product({}))).toBe(false);
+    expect(hasInternetAccess(cart)).toBe(true);
+    expect(hasInternetAccess(addToCart(emptyCart(), product({})))).toBe(false);
+    // Three codes left: the fourth is refused.
+    cart = addToCartChecked(cart, wifi()).cart;
+    const fourth = addToCartChecked(cart, wifi());
+    expect(fourth.refused).toEqual({
+      productName: 'Internet 1h',
+      stockMilli: 3000,
+      allowedMilli: 0,
+    });
+    expect(cartQuantityOf(fourth.cart, 'wifi-1h')).toBe(3000);
+    // No codes at all: nothing goes in.
+    const none = addToCartChecked(emptyCart(), wifi({ stockMilli: 0 }));
+    expect(none.refused?.allowedMilli).toBe(0);
+    expect(none.cart.lines).toHaveLength(0);
+  });
+
+  it('is sold by the piece: a typed fraction becomes a whole number of codes', () => {
+    const cart = addToCartChecked(emptyCart(), wifi({ stockMilli: 10_000 })).cart;
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 2500).cart, 'wifi-1h')).toBe(3000);
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 2400).cart, 'wifi-1h')).toBe(2000);
+    expect(cartQuantityOf(setQuantityChecked(cart, 'wifi-1h', 300).cart, 'wifi-1h')).toBe(1000);
+    // Zero still removes the line; an ordinary product keeps its fraction.
+    expect(setQuantityChecked(cart, 'wifi-1h', 0).cart.lines).toHaveLength(0);
+    const cola = addToCart(emptyCart(), product({ id: 'cola' }));
+    expect(cartQuantityOf(setQuantityChecked(cola, 'cola', 2500).cart, 'cola')).toBe(2500);
+  });
+
+  it('never goes to a PC bill: the code is handed over when the sale is paid', () => {
+    const cart = addToCart(addToCart(emptyCart(), product({ id: 'cola' })), wifi());
+    expect(pcBlocker(cart)).toBe('internet');
+    expect(pcBlocker(removeLine(cart, 'wifi-1h'))).toBeNull();
+  });
+
+  it('a product saved before this version has no kind and is an ordinary product', () => {
+    const old = { ...product({ id: 'old' }) } as Partial<ProductSummary>;
+    delete old.kind;
+    const cart = addToCart(emptyCart(), old as ProductSummary);
+    expect(hasInternetAccess(cart)).toBe(false);
+    expect(pcBlocker(cart)).toBeNull();
+  });
+});
+
+describe('offers at the till (0.36.0, one click since 0.36.1)', () => {
+  const item = (
+    over: Partial<OfferSummary['items'][number]> = {},
+  ): OfferSummary['items'][number] => ({
+    productId: 'cola',
+    name: 'Coca-Cola',
+    quantityMilli: 1000,
+    unitCode: 'pcs',
+    unitPriceCents: 150,
+    available: true,
+    imageUrl: null,
+    stockMilli: null,
+    stockLimited: false,
+    taxRateBp: 1800,
+    unitCostMills: 450,
+    ...over,
+  });
+  const offer = (over: Partial<OfferSummary> = {}): OfferSummary => ({
+    id: 'offer-1',
+    name: 'Coca-Cola + 60 min',
+    priceCents: 300,
+    minutes: 60,
+    isActive: true,
+    items: [item()],
+    productsCents: 150,
+    available: true,
+    stockUnits: null,
+    profit: null,
+    sold: null,
+    createdAt: '2026-11-20T10:00:00.000Z',
+    updatedAt: '2026-11-20T10:00:00.000Z',
+    ...over,
+  });
+  /** An offer whose Coca-Cola counts its stock and may not go below zero. */
+  const limited = (stockMilli: number, quantityMilli = 1000): OfferSummary =>
+    offer({ items: [item({ stockMilli, stockLimited: true, quantityMilli })] });
+
+  it('goes in with one click: one line at the offer price, nothing asked, sent as the offer alone', () => {
+    const cart = addOfferItem(emptyCart(), { offer: offer(), taxRateBp: 1800 });
+    expect(cart.lines).toHaveLength(1);
+    expect(hasOffer(cart)).toBe(true);
+    expect(lineName(cart.lines[0]!)).toBe('Coca-Cola + 60 min');
+    expect(cartTotals(cart).totalCents).toBe(300);
+    // No PC and no name: the minutes wait at the desk as paid time.
+    expect(cartToRequest(cart).items).toEqual([{ offerId: 'offer-1' }]);
+  });
+
+  it('the same offer again raises the quantity of its line; each unit is sent as its own item', () => {
+    let cart = addOfferItem(emptyCart(), { offer: offer(), taxRateBp: 1800 });
+    cart = addOfferItem(cart, { offer: offer(), taxRateBp: 1800 });
+    cart = addOfferItem(cart, {
+      offer: offer({ id: 'offer-2', name: 'Dy pije' }),
+      taxRateBp: 1800,
+    });
+    expect(cart.lines).toHaveLength(2);
+    expect(cart.lines[0]).toMatchObject({ kind: 'offer', quantityMilli: 2000 });
+    expect(cartTotals(cart).totalCents).toBe(900);
+    expect(cartItemCount(cart)).toBe(3);
+    expect(cartToRequest(cart).items).toEqual([
+      { offerId: 'offer-1' },
+      { offerId: 'offer-1' },
+      { offerId: 'offer-2' },
+    ]);
+  });
+
+  it('the line follows the offer as it is now (a price changed between two clicks)', () => {
+    let cart = addOfferItem(emptyCart(), { offer: offer(), taxRateBp: 1800 });
+    cart = addOfferItem(cart, { offer: offer({ priceCents: 250 }), taxRateBp: 1800 });
+    expect(cartTotals(cart).totalCents).toBe(500);
+  });
+
+  it('takes whole units and no line discount, sits beside products, never goes to a PC bill', () => {
+    let cart = addToCart(emptyCart(), product({ id: 'cola' }));
+    cart = addOfferItem(cart, { offer: offer({ minutes: 0 }), taxRateBp: 1800 });
+    const offerKey = lineKey(cart.lines[1]!);
+    expect(cartTotals(cart).totalCents).toBe(150 + 300);
+
+    cart = setQuantity(cart, offerKey, 2600);
+    cart = setLineDiscount(cart, offerKey, 100);
+    expect(cart.lines[1]).toMatchObject({ kind: 'offer', quantityMilli: 3000, discountCents: 0 });
+    expect(cartTotals(cart).totalCents).toBe(150 + 900);
+    cart = setQuantity(cart, offerKey, 1000);
+    expect(cartToRequest(cart).items).toEqual([
+      { productId: 'cola', quantityMilli: 1000, discountCents: 0 },
+      { offerId: 'offer-1' },
+    ]);
+    // Never more than the cap, however much is typed.
+    expect(setQuantity(cart, offerKey, 999_000).lines[1]).toMatchObject({
+      quantityMilli: OFFER_MAX_UNITS * 1000,
+    });
+
+    expect(pcBlocker(cart)).toBe('notPc');
+    const without = setQuantity(cart, offerKey, 0);
+    expect(hasOffer(without)).toBe(false);
+    expect(pcBlocker(without)).toBeNull();
+  });
+
+  it('is not added past the stock of its product', () => {
+    const two = limited(2000);
+    let step = addOfferChecked(emptyCart(), { offer: two, taxRateBp: 1800 });
+    expect(step.refused).toBeNull();
+    step = addOfferChecked(step.cart, { offer: two, taxRateBp: 1800 });
+    expect(step.refused).toBeNull();
+    expect(step.cart.lines[0]).toMatchObject({ quantityMilli: 2000 });
+    const third = addOfferChecked(step.cart, { offer: two, taxRateBp: 1800 });
+    expect(third.cart).toBe(step.cart);
+    // What the line may hold at most is said too: the whole stock, no other line takes of it.
+    expect(third.refused).toEqual({
+      productName: 'Coca-Cola',
+      stockMilli: 2000,
+      allowedMilli: 2000,
+    });
+
+    // Two of the product in every offer: a stock of three covers one offer.
+    const pair = limited(3000, 2000);
+    const one = addOfferChecked(emptyCart(), { offer: pair, taxRateBp: 1800 });
+    expect(one.refused).toBeNull();
+    expect(addOfferChecked(one.cart, { offer: pair, taxRateBp: 1800 }).refused).toMatchObject({
+      productName: 'Coca-Cola',
+      stockMilli: 3000,
+    });
+
+    // Nothing on the shelf: not even one.
+    const none = addOfferChecked(emptyCart(), { offer: limited(0), taxRateBp: 1800 });
+    expect(none.cart.lines).toHaveLength(0);
+    expect(none.refused).toMatchObject({ productName: 'Coca-Cola', stockMilli: 0 });
+  });
+
+  it('the stock is shared with the product sold on its own, both ways', () => {
+    const cola = product({ id: 'cola', name: 'Coca-Cola', trackStock: true, stockMilli: 3000 });
+    const three = limited(3000);
+    // Two on their own, then offers: only one more Coca-Cola is left.
+    let cart = addToCart(emptyCart(), cola, 2000);
+    const first = addOfferChecked(cart, { offer: three, taxRateBp: 1800 });
+    expect(first.refused).toBeNull();
+    expect(addOfferChecked(first.cart, { offer: three, taxRateBp: 1800 }).refused).toMatchObject({
+      productName: 'Coca-Cola',
+      stockMilli: 3000,
+      allowedMilli: 1000,
+    });
+    // An offer first: the product on its own is counted against what the offer took.
+    cart = addOfferItem(emptyCart(), { offer: three, taxRateBp: 1800 });
+    expect(cartQuantityOf(cart, 'cola')).toBe(1000);
+    expect(addToCartChecked(cart, cola, 2000).refused).toBeNull();
+    expect(addToCartChecked(cart, cola, 3000).refused).toMatchObject({ allowedMilli: 2000 });
+  });
+
+  it('a typed quantity is cut to what the stock allows; products not counted are never limited', () => {
+    const three = limited(3000);
+    const cart = addOfferItem(emptyCart(), { offer: three, taxRateBp: 1800 });
+    const offerKey = lineKey(cart.lines[0]!);
+    const cut = setQuantityChecked(cart, offerKey, 10_000);
+    expect(cut.cart.lines[0]).toMatchObject({ quantityMilli: 3000 });
+    expect(cut.refused).toMatchObject({ productName: 'Coca-Cola', stockMilli: 3000 });
+    // Down is always allowed; zero removes the line.
+    expect(setQuantityChecked(cut.cart, offerKey, 1000).cart.lines[0]).toMatchObject({
+      quantityMilli: 1000,
+    });
+    expect(setQuantityChecked(cut.cart, offerKey, 0).cart.lines).toHaveLength(0);
+
+    let free = addOfferItem(emptyCart(), { offer: offer(), taxRateBp: 1800 });
+    const typed = setQuantityChecked(free, lineKey(free.lines[0]!), 7400);
+    expect(typed.refused).toBeNull();
+    expect(typed.cart.lines[0]).toMatchObject({ quantityMilli: 7000 });
+    // The cap: one more click leaves the cart as it is, without a stock message.
+    free = setQuantity(free, lineKey(free.lines[0]!), OFFER_MAX_UNITS * 1000);
+    const capped = addOfferChecked(free, { offer: offer(), taxRateBp: 1800 });
+    expect(capped.cart).toBe(free);
+    expect(capped.refused).toBeNull();
   });
 });

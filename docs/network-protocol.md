@@ -249,9 +249,26 @@ opens a `pending` run, later events update it; `none`/`unavailable` close it qui
 | `PUT /products/:id/image`                                              | `products.manage`; raw body with `content-type: image/png\|jpeg\|webp\|gif` (≤ 5 MB, format sniffed from the bytes). Replaces and deletes the previous file → `ProductSummary` with the new `imageUrl`                                                                   |
 | `POST /products/:id/image/from-url`                                    | `{url}` — the **server** downloads the picture (http/https only, ≤ 5 MB, 10 s, private/loopback addresses refused) so the Admin never embeds third-party URLs                                                                                                            |
 | `DELETE /products/:id/image`                                           | removes the file → `imageUrl: null`. Deleting a never-sold product also deletes its picture file                                                                                                                                                                         |
+| `PUT /products/:id/image/thumb?of=<file>`                              | 0.37.0, `products.manage`; raw picture body (≤ 256 kB): the small copy (longest side 160 px) that tiles and lists show. `of`: file name of the picture it was made from; `409 IMAGE_CHANGED` if the product shows another one now → `ProductSummary`                     |
+| `GET /catalog/product-thumbs/missing`                                  | 0.37.0, `products.manage` → `{items: [{id, image, imageUrl}]}`: pictures without a small copy (at most 500; animated GIFs get none). The Admin makes the copies                                                                                                          |
 | `GET /files/products/:name`                                            | **public, no token** (POS tiles, future kiosk screens): immutable file names (`<24 hex>.<ext>`), `Cache-Control: public, max-age=31536000, immutable`. Files live in `<dataDir>/uploads/products` (`LIKAPCS_UPLOAD_DIR`) and are **not** part of database backups        |
 | `POST /products/:id/stock`                                             | `{type: adjustment\|initial\|damaged\|expired\|missing\|stock_count, quantityMilliDelta \| newStockMilli, reason, unitCostCents?}`; `409 INSUFFICIENT_STOCK` if it would go negative and the product disallows that                                                      |
 | `GET /inventory/movements`                                             | `?productId&type&from&to&page&pageSize` → ledger with `stockAfterMilli`                                                                                                                                                                                                  |
+
+**Search (0.36.1).** `GET /products?q=` does not mind capitals or accents: the name, the SKU and
+the brand are compared with accents taken off and in lower case on both sides ("caj", "çaj" and
+"ÇAJ" find "Çaj"; "uje" finds "Ujë"), a barcode has to match whole. The database is created with
+the C locale, where `lower()` and `ILIKE` fold A–Z only, so the folding is done with `translate()`
+over a fixed table of accented Latin letters (`db/fold.ts`) — no collation is involved.
+
+**Small copies of the pictures (0.37.0, migration 0063).** A product picture is up to 800 px (more
+when it came from a link) and a tile shows it 48 px wide; decoding the full picture for every
+tile was most of what opening the till cost on a slow PC. `ProductSummary.imageThumbUrl` (and
+`imageThumbUrl` on an offer's items) is a copy 160 px on its longest side, or null while there
+is none — show `imageUrl` then. The server has no picture library, so the Admin makes the copies
+and sends them with `PUT /products/:id/image/thumb?of=<file>`: right after a picture is saved,
+and in the background for the ones listed by `GET /catalog/product-thumbs/missing`. A copy
+belongs to the picture named in `of`; setting or removing the picture drops it.
 
 ### Ads — customer-screen slideshow & promo prices (0.7.0; `products.view` to read, `products.manage` to change)
 
@@ -346,7 +363,7 @@ balance is short, `403 wallet_disabled` when `wallet.enabled` is off. `wallet` m
 
 | Route                         | Body / query                                             | Result                                                                                                                                                                                                                                 |
 | ----------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /cash/status`            | —                                                        | `{registers, current: CashShiftDetail \| null, requireOpenShift, differenceWarningCents}` — polled by the Admin top-bar pill; `current` is the open shift of the default register                                                      |
+| `GET /cash/status`            | `?brief=true` (0.37.0)                                   | `{registers, current: CashShiftDetail \| null, requireOpenShift, differenceWarningCents}` — `current` is the open shift of the default register. `?brief=true`: without its `totals` and `movements` (what the top-bar pill polls)     |
 | `GET /cash/registers`         | —                                                        | active registers (`0009` seeds _Main register_)                                                                                                                                                                                        |
 | `POST /cash/shifts/open`      | `{registerId?, openingCents, notes?}`                    | `201 CashShiftDetail`; `409 CONFLICT` when the register already has an open shift                                                                                                                                                      |
 | `POST /cash/shifts/:id/close` | `{countedCashCents, notes?}`                             | closes the shift: `expected_cash_cents` is computed from the ledger inside the same transaction, `difference_cents = counted − expected`; audited                                                                                      |
@@ -564,19 +581,87 @@ Days are bucketed in the **business time zone** (`locale.timezone` setting, defa
 `Europe/Belgrade`), so a sale at 00:30 local time belongs to the new day even though it is still the
 previous day in UTC. CSV timestamps are rendered in the same zone (`YYYY-MM-DD HH:MM:SS`).
 
+#### One file with everything, for an AI (0.39.0; `reports.export_all`)
+
+«Skedar për AI» on the Reports page: the summaries of the period and every sale, PC session, drawer
+and stock movement … in one JSON and/or text file. It holds far more than any report, so it has a
+permission of its own (owner and admin by default, migration 0064). The file is made as a **job**.
+Layout, rules and measurements: [data-file.md](data-file.md).
+
+| Route                                                 | Body / query                                               | Result                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /reports/data-file`                             | `{from?, to?, formats, parts?, hideCustomers?, language?}` | `202 {jobId}`. `formats`: `json`, `txt` or both. `from` + `to` (`YYYY-MM-DD`, both or neither): neither = the whole history. `parts`: any of `sales`, `gaming`, `cash`, `stock`, `purchases`, `customers`, `lists`, `audit` (default: all but `audit`; `[]` = summaries only). `language`: `sq` (default) or `en`. `409 EXPORT_BUSY` while one is being made                                                |
+| `GET /reports/data-file/jobs/:id`                     | —                                                          | `DataExportJobStatus`: `{id, state: 'running' \| 'succeeded' \| 'failed', percent, phase, current, total, startedAt, finishedAt, error{code, message}?, result?}` — `current` / `total` are rows; `percent` never goes back. `result`: `{id, from, to, wholeHistory, parts, hideCustomers, language, counts{<table>: rows}, totalRows, files[{format, fileName, sizeBytes, sha256}], createdAt, expiresAt}` |
+| `POST /reports/data-file/:id/:format/download-ticket` | `{}`                                                       | `{ticket, expiresAt}` — valid 10 minutes for the download of that one file, so that it can be saved as an ordinary download                                                                                                                                                                                                                                                                                 |
+| `GET /reports/data-file/:id/:format/download`         | — or `?ticket=`                                            | the file (`application/json` or `text/plain`, UTF-8, `content-length`, `content-disposition: attachment`, `cache-control: no-store`); with a ticket no sign-in is needed (`403 TICKET_INVALID`); `404` once the export was deleted or has expired                                                                                                                                                           |
+| `DELETE /reports/data-file/:id`                       | —                                                          | `204` — deletes the server's copy of the files now. While the file is still being made it **cancels** the job instead: it stops at its next query (within a moment), ends as `failed` with `EXPORT_CANCELLED`, and nothing of it stays on the disk                                                                                                                                                          |
+
+Phases of the job: `starting`, `counting`, `summary`, then one per table written (`sales`,
+`refunds`, `sessions`, `timeCredits`, `reservations`, `orders`, `shifts`, `cashMovements`,
+`expenses`, `stockMovements`, `stockCounts`, `purchases`, `staffPurchases`, `debts`,
+`customerLedger`, `invoices`, `products`, `offers`, `pricing`, `packages`, `stations`, `customers`,
+`suppliers`, `users`, `audit`), `finishing`. A failed job carries `EXPORT_INCOMPLETE` (a table gave
+a different number of rows than were counted — no file is handed over), `EXPORT_CANCELLED` (given
+up with `DELETE`), `NOT_ENOUGH_SPACE` or `EXPORT_FAILED`.
+
+The server keeps the files for one hour and for at most three exports, deletes them when it starts,
+and writes `report.data_file` (severity `warning`) to the action log for every file made.
+
 ### Backups (`backups.manage`)
 
-| Route                       | Body / query                                       | Result                                                                                                                                                                                                                     |
-| --------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /backups`              | `?includeDeleted&limit`                            | `{directory, schemaVersion, schedule{enabled, time, keepCount, nextRunAt}, items[BackupSummary]}`                                                                                                                          |
-| `POST /backups`             | `{}`                                               | `201` — writes a `manual` archive (consistent snapshot of every table) and records it                                                                                                                                      |
-| `POST /backups/upload`      | `?fileName=` + raw `application/octet-stream` body | `201` — stores a copied archive in the backup folder after validating its manifest; `400` for anything that is not a LIKApcs archive, `409` if the name exists                                                             |
-| `GET /backups/:id`          | —                                                  | one summary                                                                                                                                                                                                                |
-| `GET /backups/:id/download` | —                                                  | the archive (`application/gzip`, `content-disposition: attachment`)                                                                                                                                                        |
-| `DELETE /backups/:id`       | —                                                  | removes the file, marks the history row `deleted`                                                                                                                                                                          |
-| `POST /backups/:id/restore` | `{password, confirm: true}`                        | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 SCHEMA_MISMATCH` for another schema version; `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`) |
+| Route                       | Body / query                                       | Result                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /backups`              | `?includeDeleted&limit`                            | `{directory, schemaVersion, schedule{enabled, time, keepCount, nextRunAt}, items[BackupSummary]}`                                                                                                                                                                                                                               |
+| `POST /backups`             | `{}`                                               | `201` — writes a `manual` archive (consistent snapshot of every table) and records it                                                                                                                                                                                                                                           |
+| `POST /backups/upload`      | `?fileName=` + raw `application/octet-stream` body | `201` — stores a copied archive (≤ 64 GB) after validating its manifest; `400` for anything that is not a LIKApcs archive or JSON backup (told from the first bytes, not the name), `409 ARCHIVE_CORRUPT` for a JSON backup that was cut off or re-written; a taken name gets `-2`, `-3`; password of an `.enc` file: see below |
+| `GET /backups/:id`          | —                                                  | one summary                                                                                                                                                                                                                                                                                                                     |
+| `GET /backups/:id/download` | — or `?ticket=`                                    | the archive (`application/gzip`; `application/json` for a `.likapcs-backup.json` file, `content-disposition: attachment`); with a ticket no sign-in is needed (`403 TICKET_INVALID`)                                                                                                                                            |
+| `DELETE /backups/:id`       | —                                                  | removes the file, marks the history row `deleted`                                                                                                                                                                                                                                                                               |
+| `POST /backups/:id/restore` | `{password, confirm: true, archivePassword?}`      | `403 PASSWORD_MISMATCH` unless the caller's own password matches; `409 ARCHIVE_NEWER` (archive of a newer version); `409 BACKUP_BUSY` while another backup/restore runs; otherwise `RestoreResult` (see `docs/backups.md`)                                                                                                      |
 
 Admin WebSocket event `system.restored` follows a successful restore; Admin apps reload every view.
+
+#### Backup file and restore with a percentage (0.38.0)
+
+Long operations run as a **job**: the call answers `202 {jobId}` at once and the job is read with
+`GET /backups/jobs/:id`. That route needs **no sign-in** (the id is the key) and never touches the
+database, so it answers while a restore holds every table — a signed-in request waits until the
+restore's transaction ends.
+
+| Route                               | Body / query                                  | Result                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /backups/file`                | `{password?, format?}`                        | `202 {jobId}` — one archive with every table and every uploaded file, read back against its own manifest before it counts as written. With `password` the file is encrypted with it (else with this PC's backup password, when one is set). `409 BACKUP_BUSY` while another runs 0.41.0: `format` is `'archive'` (default, `.likapcs-backup.tar.gz`) or `'json'` (one JSON document, `.likapcs-backup.json`); `password` has at least 4 characters |
+| `GET /backups/jobs/:id`             | — (no sign-in)                                | `BackupJobStatus`: `{id, kind: 'backup' \| 'restore', state: 'running' \| 'succeeded' \| 'failed', percent, phase, current, total, startedAt, finishedAt, error{code, message}, backup{backup, contents, verified, directory}, restore: RestoreResult}`. `percent` never goes backwards and is 100 only on success. Kept for one hour (the last 20 jobs); `404` afterwards                                                                         |
+| `POST /backups/:id/download-ticket` | `{}`                                          | `{ticket, expiresAt}` — valid 10 minutes for `GET /backups/:id/download?ticket=` of that archive only, so a browser can save the file as an ordinary download                                                                                                                                                                                                                                                                                      |
+| `POST /backups/:id/restore-job`     | `{password, confirm: true, archivePassword?}` | `202 {jobId}`. Refused at once, before any work: `403 PASSWORD_MISMATCH`, `400 ARCHIVE_PASSWORD_REQUIRED`, `403 ARCHIVE_PASSWORD_WRONG`, `409 ARCHIVE_NEWER`, `409 BACKUP_BUSY`                                                                                                                                                                                                                                                                    |
+| `POST /system/restore/upload`       | `?fileName=` + raw body (no sign-in)          | `201 {backup, contents}` — **only while no user exists** (`409 NOT_FRESH_INSTALL` otherwise): the first screen of a new installation sends the backup file here                                                                                                                                                                                                                                                                                    |
+| `POST /system/restore`              | `{backupId, archivePassword?}` (no sign-in)   | `202 {jobId}` — restores that archive on the empty installation. Refused at once: `400 ARCHIVE_PASSWORD_REQUIRED`, `403 ARCHIVE_PASSWORD_WRONG`, `409 ARCHIVE_NEWER`, `409 BACKUP_BUSY`; `409 NOT_FRESH_INSTALL` once a user exists                                                                                                                                                                                                                |
+
+The password of an encrypted archive is sent with an upload in the header `x-archive-password-utf8`
+(percent-encoded UTF-8; a header cannot carry every letter as it is) or, for older callers, in
+`x-archive-password`.
+
+Phases of a backup job: `database`, `files`, `packing`, `verifying`, `encrypting` (only with a
+password), `finishing`. Phases of a restore job: `checking`, `decrypting` (only for an `.enc` file),
+`unpacking`, `upgrading` (only for an archive of an older version), `safety_copy`,
+`restoring_database`, `checking_references`, `restoring_files`. A failed job carries one of:
+`ARCHIVE_INCOMPLETE` (a table or a file is missing or was changed — nothing was restored),
+`ARCHIVE_CORRUPT` (0.41.0: a JSON backup that was cut off or changed — nothing was restored),
+`ARCHIVE_REFERENCES_BROKEN` (0.41.1: a row of the backup points at a row that is not in it; the
+message names the table — nothing was restored),
+`ARCHIVE_UPGRADE_FAILED`, `NOT_ENOUGH_SPACE`, `RESTORE_FILES_INCOMPLETE`.
+
+**JSON backup (0.41.0).** `BackupSummary.format` is `'archive'` or `'json'`. A JSON backup goes
+through every route above exactly like an archive: it is uploaded as a raw
+`application/octet-stream` body (not `application/json`), restored by the same jobs and encrypted
+the same way (`.likapcs-backup.json.enc`). A server older than 0.41.0 ignores `format` and writes an
+archive; it refuses a JSON file at upload with `400`. The layout of the file is in
+`docs/backups.md`, "JSON backup file".
+
+`RestoreResult` adds `filesRestored`, `fileBytesRestored`, `verified` (every table and file matched
+its checksum; `false` for an archive from before 0.38.0, which lists sizes only), `archiveVersion`,
+`archiveSchemaVersion`, `upgraded` and `identityAdopted` (the server took over the installation id of
+the archive, so the gaming PCs of the old main PC connect to this one without a new approval).
 
 ### Updates (`updates.manage`; the events route only needs a signed-in user)
 
@@ -885,6 +970,12 @@ server closes the socket (`timeout` in the connection log) and the station turns
 connection from the same device replaces the old one (`4004`), so a flapping Wi-Fi link never leaves
 two live sockets.
 
+0.37.0 — every heartbeat is answered and updates the PC's state in memory (online, load, locked),
+but not every one is written to the database: `station_devices.last_seen_at` is written on the
+first heartbeat of a connection, when the address, version, `locked` or `sessionId` changes, once
+a minute otherwise, and when the PC disconnects. The `lastSeenAt` of a connected PC in
+`StationSummary.device` / `StationDeviceSummary` is the time of its last heartbeat.
+
 ## 5. Registration flow (end-to-end)
 
 ```
@@ -936,3 +1027,271 @@ answer `409 out_of_stock` with `{code: 'INSUFFICIENT_STOCK', productId, productN
 requestedMilli}` when a product that may not go below zero is asked beyond what is free: its stock
 minus what already waits on the bills (accepted, unsold orders). The stock moves when the bill is
 paid; ending or collecting a session never fails on the stock of its order lines.
+
+## Internet access codes (0.34.0, migration 0057)
+
+A package ("Internet 1 orë") is a product with `kind: 'internet_access'` (`ProductSummary.kind`;
+`GET /products?kind=standard|internet_access`). Its stock is the number of its unused codes: it
+is tracked, never negative, sold by the piece, has no variants and is not on the PC menu.
+
+| Route                           | Permission        | Body / query                                                                                             | Result                                                                                                                 |
+| ------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GET /internet-access/packages` | `products.view`   | —                                                                                                        | `{items: [{product, availableCodes, soldCodes, lastLoadedAt, lastSoldAt}]}`                                            |
+| `POST /internet-access/check`   | `products.manage` | `{codes[]}`                                                                                              | `{fresh, waiting[], soldBefore[]}` — nothing is stored                                                                 |
+| `POST /internet-access/load`    | `products.manage` | `{productId \| package{name, sellingPriceCents, categoryId?, lowAtCodes=10}, codes[], allowSoldBefore?}` | `{added, batchId, created, fresh, waiting[], soldBefore[], package}`; `201` when the package was created               |
+| `GET /internet-access/codes`    | `products.manage` | `?productId&status=available\|sold&q&page&pageSize≤500`                                                  | `{items, total, page, pageSize}`; unused codes in the order they will be sold, sold ones with receipt, time and seller |
+| `POST /internet-access/remove`  | `products.manage` | `{productId, ids[] \| batchId \| all: true, reason}`                                                     | `{removed, package}`; only unused codes, `409 ACCESS_CODES_NONE_UNUSED` when there are none                            |
+
+Codes are 4–64 visible characters, case-sensitive, at most 5000 per request. A code that already
+waits to be sold (in any package) is never loaded twice — it is reported in `waiting[]`. A code
+that was sold before is loaded only with `allowSoldBefore: true`. A package is created together
+with its first load (`package{…}`), never with `POST /products`; a second package with the same
+name is refused (`409 ACCESS_PACKAGE_EXISTS`).
+
+**Selling.** `POST /sales` and `POST /sales/:id/complete` must carry `accessCodes: true` — "this
+till shows the codes it is given" — when the sale holds a package, else `409
+ACCESS_CODES_NOT_SHOWN` and nothing is sold. Each unit takes the oldest unused code inside the
+sale's transaction (`SELECT … FOR UPDATE SKIP LOCKED`), and the codes come back on the line:
+`SaleDetail.items[].accessCodes: string[]` (also on `GET /sales/:id`, the receipt and a reprint).
+The same `clientRequestId` answers with the same sale and codes. Whole units only (`400
+ACCESS_CODES_WHOLE`), never offline (`400 OFFLINE_ACCESS_CODES`), too few codes → `409
+INSUFFICIENT_STOCK`. A parked sale takes no code until it is completed. A refund returns the
+money; the code stays sold and the stock does not go back up.
+
+**Refused for a package.** `POST /products/:id/stock` and purchases (`409 INTERNET_ACCESS_STOCK`);
+staff purchases, the PC menu and a PC's bill (`409 INTERNET_ACCESS_TILL_ONLY`); changing what makes
+it a package on `PATCH /products/:id` (`409 INTERNET_ACCESS_SHAPE`). `DELETE /products/:id`
+archives a package that has codes.
+
+Audit: `internet_access.codes.loaded`, `internet_access.codes.removed`, and `accessCodes: n` on
+`sale.completed`. The codes themselves are never written to the audit log. Stock movements:
+`codes_loaded`, `codes_removed`, `sale`.
+
+## Spoken time warnings (0.35.0)
+
+The customer PC says the expiry warnings aloud. Nothing new is sent at the time of a warning
+except two fields on commands that already existed:
+
+- `message.show` of a time warning carries `announce: {minutes}` next to `text` and
+  `durationSeconds`. The PC shows the text as before and says the minutes. A message typed at the
+  desk has no `announce` and is not spoken. A warning is sent only while its minutes are true: a mark that
+  was passed more than half a minute ago (a session that began with less time, a resume or an
+  extension near the end, a server restart) is skipped.
+- `session.end` carries `reason: 'expired'` when the time ran out (the PC says "time is up"); a
+  session ended by staff has no `reason`.
+
+What is played is decided on the PC from `display.voice` (`ClientDisplayConfig`, sent in the
+welcome and in every `server.display`):
+
+```json
+{
+  "enabled": true,
+  "language": "sq",
+  "volume": 100,
+  "chime": true,
+  "custom": { "5": "/api/v1/files/voice/<24 hex>.mp3" }
+}
+```
+
+A slot is the minutes left (`"5"`, `"1"` … as in `stations.expiry_warning_minutes`) or `"up"`. For
+a slot the PC plays the chime (when on), then the owner's recording from `custom`, else the
+built-in voice in `language` (15, 10, 5, 1 and `up`), else nothing more. A recording that cannot be
+played falls through to the built-in voice. A client older than 0.35.0 ignores all of this; a
+server older than 0.35.0 sends no `voice` and the PC stays silent.
+
+| Route                        | Permission        | Body / query                                                         | Result                                                |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `PUT /client/voice/:slot`    | `settings.manage` | raw audio (MP3, WAV, OGG, M4A; ≤ 2 MB), `?name=` the file's own name | `{custom}` — the whole `client.voice_custom` map      |
+| `DELETE /client/voice/:slot` | `settings.manage` | —                                                                    | `{custom}`                                            |
+| `GET /files/voice/:name`     | public            | —                                                                    | the recording; random immutable names, cached forever |
+
+The format is sniffed from the bytes (`400` with `details.code: VOICE_FORMAT` otherwise, `413`
+above 2 MB, `409 VOICE_TOO_MANY` beyond 12 recordings). Settings: `client.voice_enabled`,
+`client.voice_language` (`sq` \| `en`), `client.voice_volume` (0–100), `client.voice_chime`,
+`client.voice_custom` (slot → `{file, name}`, written by the two routes above). The files live in
+`<dataDir>/uploads/voice` and, like every upload, go into every backup and come back with a restore.
+
+## Session bills: pay at the end, pay any time, one receipt (0.36.0, migrations 0060–0061)
+
+A session's bill no longer has to be settled in one step.
+
+**What a session owes** — every `SessionSummary` carries it, so no screen recomputes it:
+
+- `dueCents` — time still to pay right now. A paid (prepaid) session: the minutes added "to pay at
+  the end". Pay at the end: the reserved amount while it runs, the amount fixed at the end
+  afterwards. Open time: the running amount minus what was paid while it ran. 0 once paid, and 0
+  for a cancelled session.
+- `openOrdersCents` — the products on its bill (as before). What the desk asks for is
+  `dueCents + openOrdersCents`.
+- `advanceCents` (open time: paid while it runs on) and `unpaidSeconds` (a paid session: how many
+  of its last seconds were added to pay at the end).
+- `awaitingPayment` — the session ended and something is still owed: unpaid time, or products. A
+  cancelled session with products on its bill waits too. `GET /sessions?awaitingPayment=true`,
+  `POST /sessions/collect-all` and `POST /stations/:id/collect-all` use the same rule.
+- `StationSummary.activeSession` gains `customerId` and `dueCents`; `awaitingPayment` of a station
+  counts a paid session that ended with unpaid minutes.
+
+**Minutes to pay at the end**
+
+- `POST /sessions/:id/extend` — `later: true` on a paid session: no sale, the minutes join the
+  bill (`dueCents`). `customerId` sets the session's registered customer with the request (pay
+  later and the balance need one).
+- `POST /sessions/bulk-minutes` — `later: true` for the whole batch; `customerId` names who pays a
+  batch with `credit` / `wallet` tenders (each paid PC still gets its own receipt; the sessions
+  keep their own customers). Each applied PC reports `priceCents` (paid now) and `laterCents`.
+- When the session's time runs out, all of it is owed. Stopped earlier, only the time used beyond
+  the paid part is owed — `unpaidTimeDueCents` in `@likapcs/shared`, without free minutes and
+  minimums — and nothing when it stopped inside the paid time. `POST /sessions/:id/end` takes it
+  with `payments` (one receipt with the products) or leaves it waiting; `stoppedSecondsAgo` is
+  honoured for it. `POST /sessions/:id/remove-time` gives the unpaid minutes back first.
+
+**The customer of a session**
+
+- `PATCH /sessions/:id/customer` `{ customerId | null, customerName? }` (`stations.control`) —
+  sets, changes or clears who sits there, for a running session and for an ended one whose bill
+  waits (409 afterwards). The products waiting on the bill follow the customer.
+- `GET /sessions/open-bills?customerId=` — the customer's sessions that run or wait, each with the
+  products on its bill, and `totalCents`. Since 0.40.0 the products are one row per time a product
+  was put on the bill (`items[{ name, quantityMilli, lineTotalCents, addedAt }]`, oldest first),
+  no longer one row per product.
+
+**One receipt for several PCs, at any time**
+
+- `POST /sessions/pay/quote` `{ sessionIds, stopOpen }` →
+  `{ asOf, bills[], skipped[], timeCents, ordersCents, totalCents }`. Changes nothing. Each bill
+  lists its products oldest first: `items[{ name, quantityMilli, lineTotalCents, addedAt }]`
+  (`addedAt` since 0.40.0).
+- `POST /sessions/pay`
+  `{ sessionIds, stopOpen = true, customerId?, discountCents?, payments, asOf?, clientRequestId? }`
+  → `{ payment, bills[], skipped[], totalCents }`. One transaction, one sale with a line per PC
+  and the products of each:
+  - paid session — its added minutes and its products; it runs on;
+  - pay at the end, running — the whole reserved amount; from then on it is a paid session
+    (`billingMode` becomes `prepaid`) until its time is up;
+  - open time, running — with `stopOpen` it is stopped at `asOf` and billed in full; without, the
+    time so far is paid (`advanceCents`) and it runs on, the rest is owed at the end. Such a
+    session can no longer be cancelled;
+  - ended, waiting — its bill.
+
+  A session that owes nothing is in `skipped`; when nothing at all is owed: 409 `nothing_due`.
+  `discountCents` comes off the time and is spread over the PCs by their share (`pos.discount`).
+  `asOf` is the quote's instant (never the future, at most ten minutes back), so the amount shown
+  is the amount billed. `payment` is null when only open-time sessions that owed nothing were
+  stopped.
+
+- `GET /sessions/by-sale/:saleId/receipt` (`stations.control`) — the receipt of the sale that was
+  just paid; 404 for a sale without a PC on it.
+
+**A bill that owes nothing** — time that cost nothing (inside the free minutes, or all paid while
+it ran) with no product on the bill — is closed when the session ends: `billedAt` is set, there is
+no sale, no receipt of 0.00 and nothing waits at the desk.
+
+**Free minutes** — `freeMinutes` (0–60) on a pricing rule and in the terms of a session: a session
+no longer than that costs nothing; past it the whole time is charged. Applied by
+`priceForSeconds` (open time, pay at the end stopped early), never by a prepaid quote.
+
+**Internet bar** — `GET /internet-access/packages` marks the packages shown on the quick bar
+(`inBar`, at most four); `PUT /internet-access/bar` `{ productIds }` (`products.manage`) chooses
+them (setting `pos.internet_bar`; empty = the first packages by themselves).
+
+## Offers: products and PC minutes at one price (0.36.0, migration 0062)
+
+An offer is a recipe kept by the server: some products, some PC minutes, one price
+("Coca-Cola + 60 min" for 3.00). Selling it writes ordinary sale lines.
+
+0.36.1 (no migration): the offer says what is in stock for it, what one sale of it earns and what
+it has sold so far; the till sells it with one click, without a PC — the minutes wait at the desk
+as paid time for any PC.
+
+**Managing offers**
+
+- `GET /offers` (`pos.sell` or `products.view`; `?active=true` for the till; 0.37.0
+  `?money=false`: `profit` and `sold` come as null and are not worked out — the till and the
+  Stations page ask this way) → `{ items: OfferSummary[] }`. An `OfferSummary` has `id`, `name`, `priceCents`, `minutes`,
+  `isActive`, `items[]` (`productId`, `name`, `quantityMilli`, `unitCode`, `unitPriceCents` — what
+  one unit costs outside the offer right now —, `available`, `imageUrl`), `productsCents` (its
+  products outside the offer; PC time is not counted, its price depends on the PC) and
+  `available` (every product of it can be sold right now).
+- 0.36.1 — each item also has `stockMilli` (null when the product does not count its stock),
+  `stockLimited` (counted and not allowed below zero: the till never sells past it), `taxRateBp`
+  and `unitCostMills` (what one unit costs to buy: the average purchase cost, else the product's
+  purchase cost; 0 when none is recorded). The offer also has `stockUnits`, `profit` and `sold`;
+  the last two are null for a user with neither `products.manage` nor `reports.view`:
+  - `stockUnits` — how many times the stock covers it now (the product that runs out first
+    decides); null when none of its products counts its stock.
+  - `profit` — what ONE sale earns: `{ netCents, vatCents, costCents, profitCents, missingCost[] }`.
+    The price is shared among the products and the PC time as a sale shares it; the VAT is taken
+    out of each share at its own rate (PC time at the business default); `costCents` is what the
+    products cost to buy (PC time costs nothing); `profitCents = netCents − costCents`.
+    `missingCost` names the products with no purchase cost: the profit counts them as free.
+  - `sold` — `{ count, revenueCents, profitCents }` from the sale lines of the offer: `count` is
+    how many were sold and not refunded whole; `revenueCents` is what was paid after sale
+    discounts and refunds; `profitCents` is that without VAT, less the cost booked on the lines
+    (goods a refund put back on the shelf are taken off).
+- `POST /offers/preview` (`products.manage`) `{ priceCents?, minutes?, items? }` — the offer in the
+  form, before it is saved → `{ items, productsCents, timeCents, stockUnits, profit }`
+  (`timeCents`: what the minutes cost outside the offer right now; 0 without a price rule).
+  Nothing is written. 404 for a product that does not exist.
+- `POST /offers`, `PUT /offers/:id` (`products.manage`) take the whole offer:
+  `{ name, priceCents, minutes, items: [{ productId, quantityMilli }], isActive }`. At least one
+  product or some minutes; at most ten products, each once; ordinary products only
+  (400 `OFFER_PRODUCT_KIND` for an internet access package).
+- `PATCH /offers/:id` `{ isActive }` takes it off the till or puts it back; `DELETE /offers/:id`
+  removes it (sales made with it keep its name).
+
+**Selling an offer** — `POST /sales` takes, among its items, `{ offerId, stationId?, holderName? }`:
+
+- The server replaces the item with one line per product of the offer and, when the offer has
+  minutes, one PC-time line for `stationId` — or, without a PC, for `holderName` (answered with a
+  PIN in `claimPins`, as for PC time sold at the till). Each line carries
+  `offer: { id, name, group }`; a receipt shows the lines of one `group` as one row
+  (`receiptRows` in `@likapcs/shared`; since 0.36.1 the same offer bought several times with the
+  same content is one row with its count).
+- 0.36.1 — `{ offerId }` alone, with neither a PC nor a name, is what the till sends (one item
+  per unit sold). The minutes become a paid time credit for ANY PC, without a PIN: no PC starts,
+  `claimPins` and `offerStarts` are absent. The credit carries the offer's name and, when the
+  sale has a customer, the customer's name. `GET /time-credits[?stationId=]` lists it with
+  `stationId: null`, `holderName` (null without a customer) and `offerName`; the desk uses it as
+  any credit — `POST /sessions { stationId, billingMode: "prepaid", minutes, creditId }` starts a
+  PC with it and `POST /sessions/:id/extend { minutes, creditId }` adds it to a running paid or
+  pay-at-the-end session. Nothing is charged again. It cannot be claimed at a PC (no PIN).
+- The lines together cost `priceCents`, shared by what each costs outside the offer. A customer's
+  default discount and a discount on the whole sale apply on top, as for any line.
+- After the sale is committed the minutes are given to the PC: a free PC starts a prepaid session
+  with them, a running prepaid or pay-at-the-end session is extended. The answer lists what
+  happened in `offerStarts[]`: `{ stationId, stationCode, minutes, result, reason }` with `result`
+  `started`, `extended` or `kept`. `kept`: the minutes stay a paid credit of that PC and the desk
+  starts them at Stations — the cashier has no `stations.control` (`reason: "permission"`), the PC
+  runs on open time, is reserved, or the start failed (`reason` is the message).
+- Refused: an offer that is off the till (409 `OFFER_INACTIVE`), without content (409
+  `OFFER_EMPTY`) or deleted (404); an offer on a staff purchase (`STAFF_ITEMS`); a parked sale
+  with an offer (409 `OFFER_NOT_PARKABLE`). A product of the offer that is out of stock fails the
+  whole sale, as it would on its own.
+- A sale with an offer needs the server: the Admin does not queue it offline, does not park it
+  and does not put it on a PC's bill.
+
+## The time of each product on a PC's bill (0.40.0, migration 0065)
+
+A product a playing customer takes is paid later, with the PC's bill. So that the desk can say at
+what time each product was taken (and look at the camera recording of that minute), the moment is
+carried everywhere the bill is read. It is the moment the desk put the product on the bill: when
+it added it (`POST /sessions/:id/orders`), or when it accepted what the customer sent from the PC
+(`POST /orders/:id/accept`) — not when the customer sent it, and not when the bill was paid.
+
+- **`StationOrder`** (`GET /orders`, `GET /orders/:id`, the `order.changed` event) — new
+  `fromDevice: boolean`: `true` when the customer sent the order from the PC, `false` when the desk
+  added the products. With the existing `decidedAt` and `decidedByName` this says when, how and by
+  whom. `GET /orders?sessionId=<id>&limit=200` is the whole bill of one session: `accepted` orders
+  are still to pay, `paid` / `billed` ones are settled (`receiptNo` names the receipt).
+- **`POST /sessions/pay/quote`** and **`GET /sessions/open-bills`** — `addedAt` on every product
+  (see above).
+- **`SaleItemSummary.addedAt`** (`string | null`, in `SaleDetail` and `ReceiptData`) — on the lines
+  of a sale that came from a PC's bill; `null` on PC time, on products sold at the till and on an
+  order paid in the step it was added. A receipt prints it under the product; `receiptRows` hands
+  it on as `ReceiptRow.addedAt`. Bills paid before 0.40.0 get it from the migration where the line
+  can be told for certain.
+- `formatTimeOnDay(value, reference)` in `@likapcs/shared` writes it: `14:05` on the calendar day
+  of `reference` (today on a screen, the receipt's date on a receipt), `21.11 23:40` on another
+  day, `31.12.2025 23:40` in another year; `timeOnDayParts` gives the day and the time apart.
+
+The PC's own screen is unchanged: `server.order` carries what it carried.

@@ -21,6 +21,13 @@ export interface PricingTerms {
   roundingMode: RoundingMode;
   /** Final amount is rounded to this increment (1 = cent, 10 = 10 cents, 50 = half euro). */
   roundingIncrementCents: Cents;
+  /**
+   * 0.36.0: a session that lasts no longer than this many minutes costs nothing ("up to 3 minutes
+   * free"); one second more and the whole time is charged, from the first minute. 0 or absent = off.
+   * It applies to time that is measured (open time, or pay-at-the-end stopped early), never to a
+   * number of minutes that is bought: see `priceForSeconds` and `quotePrepaidMinutes`.
+   */
+  freeMinutes?: number;
 }
 
 export const DEFAULT_PRICING_TERMS: PricingTerms = {
@@ -30,6 +37,7 @@ export const DEFAULT_PRICING_TERMS: PricingTerms = {
   minimumChargeCents: 0,
   roundingMode: 'up',
   roundingIncrementCents: 1,
+  freeMinutes: 0,
 };
 
 function assertNonNegativeInt(value: unknown, label: string): asserts value is number {
@@ -70,9 +78,20 @@ export function chargeableMinutes(seconds: number, terms: PricingTerms): number 
   return Math.max(terms.minimumMinutes, blocks * increment);
 }
 
-/** Price for a duration in seconds under the given terms. */
+/** The free minutes of the terms as a whole number (0 = none). */
+export function freeMinutesOf(terms: PricingTerms): number {
+  const free = Math.trunc(Number(terms.freeMinutes ?? 0));
+  return Number.isFinite(free) && free > 0 ? free : 0;
+}
+
+/**
+ * Price for a measured duration in seconds under the given terms. Inside the free minutes
+ * (0.36.0) the price is 0; past them the whole duration is charged.
+ */
 export function priceForSeconds(seconds: number, terms: PricingTerms): Cents {
   const minutes = chargeableMinutes(seconds, terms);
+  const free = freeMinutesOf(terms);
+  if (free > 0 && seconds <= free * 60) return 0;
   return priceForChargeableMinutes(minutes, terms);
 }
 
@@ -85,10 +104,44 @@ export function priceForChargeableMinutes(minutes: number, terms: PricingTerms):
   return Math.max(rounded, terms.minimumChargeCents);
 }
 
-/** Prepaid quote: the customer buys `minutes`; the billing increment and minimums still apply. */
+/**
+ * Prepaid quote: the customer buys `minutes`; the billing increment and minimums still apply.
+ * The free minutes do not: bought minutes are never free (a "+2 minutes" extension would be).
+ */
 export function quotePrepaidMinutes(minutes: number, terms: PricingTerms): Cents {
   assertNonNegativeInt(minutes, 'minutes');
-  return priceForSeconds(minutes * 60, terms);
+  return priceForChargeableMinutes(chargeableMinutes(minutes * 60, terms), terms);
+}
+
+/**
+ * 0.36.0 — what is owed for time that was added to a paid session "to pay at the end".
+ *
+ * The paid part comes first and is never given back; the unpaid minutes are the last
+ * `unpaidSeconds` of the `plannedSeconds`. A session that runs out owes all of `unpaidCents`. One
+ * that is stopped earlier owes only the time used beyond the paid part, at the session's terms and
+ * never more than `unpaidCents` — nothing when it stopped inside the paid time.
+ */
+export function unpaidTimeDueCents(input: {
+  usedSeconds: number;
+  plannedSeconds: number;
+  unpaidSeconds: number;
+  unpaidCents: Cents;
+  terms: PricingTerms;
+}): Cents {
+  if (input.unpaidCents <= 0) return 0;
+  const paidSeconds = Math.max(0, input.plannedSeconds - input.unpaidSeconds);
+  const beyond = Math.max(0, Math.trunc(input.usedSeconds) - paidSeconds);
+  if (beyond <= 0) return 0;
+  if (beyond >= input.unpaidSeconds) return input.unpaidCents;
+  // The free minutes and the minimums belong to the session as a whole — the paid part already
+  // met them — not to minutes added to it later.
+  const price = priceForSeconds(beyond, {
+    ...input.terms,
+    freeMinutes: 0,
+    minimumMinutes: 0,
+    minimumChargeCents: 0,
+  });
+  return Math.min(price, input.unpaidCents);
 }
 
 // ─── Rule selection ──────────────────────────────────────────────────────────
@@ -119,19 +172,30 @@ export interface LocalClock {
 
 const WEEKDAYS: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
 
+/** 0.37.0: one formatter per time zone, kept (the session clock asks every second). */
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+function clockFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = clockFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      weekday: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    clockFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 /** Local date/time components of `at` in `timeZone` (IANA name), computed with Intl only. */
 export function localClock(at: Date | string | number, timeZone: string): LocalClock {
   const date = new Date(at);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).formatToParts(date);
+  const parts = clockFormatter(timeZone).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const hour = Number(get('hour')) % 24;
   return {
@@ -218,5 +282,6 @@ export function termsOf(rule: PricingTerms): PricingTerms {
     minimumChargeCents: rule.minimumChargeCents,
     roundingMode: rule.roundingMode,
     roundingIncrementCents: rule.roundingIncrementCents,
+    freeMinutes: freeMinutesOf(rule),
   };
 }

@@ -62,7 +62,8 @@ export function moneyLine(
   if (!view || !display?.widgetShowPayment) return null;
   const options = { currency: display.currency, locale: language };
   const onBill = ordersOnBillCents(orders);
-  if (view.paidCents !== null && onBill === 0)
+  // 0.36.0: a paid session with minutes added "to pay at the end" owes them — it reads "to pay".
+  if (view.paidCents !== null && onBill === 0 && !(view.owedCents && view.owedCents > 0))
     return {
       label: t('paid'),
       amount: formatMoney(view.paidCents, options),

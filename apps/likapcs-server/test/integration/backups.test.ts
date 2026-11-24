@@ -204,34 +204,38 @@ describe('backups & restore', () => {
     expect(audit.body.items.some((a) => a.action === 'backup.restore')).toBe(true);
   }, 60_000);
 
-  it('refuses archives from a different schema version', async () => {
-    const file = path.join(backupDir, 'wrong-schema.likapcs-backup.tar.gz');
+  it('refuses archives from a newer schema version', async () => {
+    const file = path.join(backupDir, 'newer-schema.likapcs-backup.tar.gz');
     // Build an archive with a doctored manifest from the first backup.
     const tar = await import('tar');
     const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'likapcs-doctor-'));
     await tar.extract({ file: path.join(backupDir, first.fileName!), cwd: tmp });
     const manifest = JSON.parse(await fsp.readFile(path.join(tmp, 'manifest.json'), 'utf8'));
-    manifest.schemaVersion = 1;
+    manifest.schemaVersion = ctx.app.schemaVersion + 1;
+    manifest.serverVersion = '99.0.0';
     await fsp.writeFile(path.join(tmp, 'manifest.json'), JSON.stringify(manifest));
-    await tar.create({ gzip: true, file, cwd: tmp }, ['manifest.json', 'tables']);
+    await tar.create({ gzip: true, file, cwd: tmp }, ['manifest.json', 'tables', 'uploads']);
     await fsp.rm(tmp, { recursive: true, force: true });
     const upload = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/backups/upload?fileName=old-version',
+      url: '/api/v1/backups/upload?fileName=newer-version',
       headers: { ...authHeader(owner.token), 'content-type': 'application/octet-stream' },
       payload: await fsp.readFile(file),
     });
     expect(upload.statusCode).toBe(201);
     const uploaded = upload.json() as BackupSummary;
-    expect(uploaded.schemaVersion).toBe(1);
-    const restore = await call<{ error: { code: string } }>(
+    expect(uploaded.schemaVersion).toBe(ctx.app.schemaVersion + 1);
+    const restore = await call<{ error: { code: string; message: string } }>(
       owner.token,
       'POST',
       `/backups/${uploaded.id}/restore`,
       { password: OWNER.password, confirm: true },
     );
+    // 0.38.0: an OLDER archive is brought up to this version (see backup-file.test.ts); only a
+    // newer one is refused, and the answer says what to do.
     expect(restore.status).toBe(409);
-    expect(restore.body.error.code).toBe('SCHEMA_MISMATCH');
+    expect(restore.body.error.code).toBe('ARCHIVE_NEWER');
+    expect(restore.body.error.message).toContain('99.0.0');
   });
 
   it('deletes archives and enforces permissions', async () => {

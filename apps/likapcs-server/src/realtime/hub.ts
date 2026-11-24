@@ -56,7 +56,10 @@ export interface AdminPresence {
 
 export interface HubEvents {
   'device.online': [DevicePresence];
-  'device.offline': [{ deviceId: string; stationId: string; reason: string }];
+  /** `lastHeartbeatAt`: when the PC was last heard from (0.37.0: written as its "last seen"). */
+  'device.offline': [
+    { deviceId: string; stationId: string; reason: string; lastHeartbeatAt?: Date },
+  ];
   'device.heartbeat': [DevicePresence];
 }
 
@@ -97,7 +100,17 @@ export class RealtimeHub extends EventEmitter<HubEvents> {
       pending.resolve({ ok: false, error: 'device disconnected' });
     }
     this.devices.delete(deviceId);
-    this.emit('device.offline', { deviceId, stationId: existing.stationId, reason });
+    this.emit('device.offline', {
+      deviceId,
+      stationId: existing.stationId,
+      reason,
+      lastHeartbeatAt: existing.lastHeartbeatAt,
+    });
+  }
+
+  /** When a connected PC was last heard from; null when it is not connected. */
+  lastSeen(deviceId: string): Date | null {
+    return this.devices.get(deviceId)?.lastHeartbeatAt ?? null;
   }
 
   touchDevice(deviceId: string, metrics: ClientMetrics | null, locked: boolean | null): void {

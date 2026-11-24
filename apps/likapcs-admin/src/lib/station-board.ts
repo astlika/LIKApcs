@@ -83,6 +83,13 @@ export interface StationView {
   productsCents: number;
   /** gaming + products: what the PC shows as its total. */
   totalCents: number;
+  /**
+   * 0.36.0: what the PC still owes right now — time that is not paid yet (also of an ended
+   * session whose bill waits) and the open products. The total above counts paid time too.
+   */
+  dueCents: number;
+  /** 0.36.0: the registered customer of the running session, or null. */
+  customerId: string | null;
   products: StationOrderLine[];
   /** When the running session started (ISO), or null. */
   startedAt: string | null;
@@ -135,6 +142,8 @@ export function describeStation(
     gamingCents,
     productsCents,
     totalCents: gamingCents + productsCents,
+    dueCents: (live?.dueCents ?? 0) + station.awaitingPayment.amountCents + productsCents,
+    customerId: live?.customerId ?? null,
     products: station.orders.items,
     startedAt: live?.startedAt ?? null,
     debtCents: station.debt.cents,
@@ -171,14 +180,23 @@ export function countdownLabel(totalSeconds: number): string {
   return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
 }
 
+/** 0.37.0: one formatter per time zone, kept — the board asks for every tile, every second. */
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /** HH:mm in the business time zone (the "Filloi: 16:20" and "Për: 20:00" labels). */
 export function clockLabel(iso: string, timeZone?: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone,
-  }).format(new Date(iso));
+  const key = timeZone ?? '';
+  let formatter = clockFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone,
+    });
+    clockFormatters.set(key, formatter);
+  }
+  return formatter.format(new Date(iso));
 }
 
 /** The header figures. Counts are PCs; revenue and units come from the day's dashboard figures. */

@@ -87,7 +87,7 @@ export function StationTile({
   const hasTime = view.timerSeconds !== null;
   const timer = hasTime ? timerText(view) : null;
   const lineText = line.join(' • ');
-  const hasFoot = view.badges.length > 0 || !!station.pendingRequest || view.awaitingCount > 0;
+  const hasFoot = view.badges.length > 0 || !!station.pendingRequest || view.dueCents > 0;
 
   return (
     <div
@@ -125,10 +125,17 @@ export function StationTile({
               {t('requests.tile')}
             </span>
           )}
-          {view.awaitingCount > 0 && (
-            <span className="pcg__flag" data-kind="awaiting" data-testid="tile-awaiting">
+          {/* 0.36.0: everything the PC still owes — unpaid time (also while the session runs)
+              and the products on its bill; it used to show only the time of an ended session. */}
+          {view.dueCents > 0 && (
+            <span
+              className="pcg__flag"
+              data-kind="awaiting"
+              data-testid={view.awaitingCount > 0 ? 'tile-awaiting' : 'tile-due'}
+              title={t('board.dueNow')}
+            >
               <Hourglass size={11} />
-              {fmt.money(view.awaitingCents)}
+              {fmt.money(view.dueCents)}
             </span>
           )}
         </div>

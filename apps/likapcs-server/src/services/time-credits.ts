@@ -31,14 +31,17 @@ export class TimeCreditsService {
       station_id: string | null;
       station_code: string | null;
       holder_name: string | null;
+      offer_name: string | null;
       minutes_total: number;
       minutes_remaining: number;
       sale_id: string;
       created_at: Date;
     }>(
-      `SELECT c.id, c.station_id, s.code AS station_code, c.holder_name, c.minutes_total,
-              c.minutes_remaining, c.sale_id, c.created_at
-         FROM time_credits c LEFT JOIN stations s ON s.id = c.station_id
+      `SELECT c.id, c.station_id, s.code AS station_code, c.holder_name, i.offer_name,
+              c.minutes_total, c.minutes_remaining, c.sale_id, c.created_at
+         FROM time_credits c
+         LEFT JOIN stations s ON s.id = c.station_id
+         LEFT JOIN sale_items i ON i.id = c.sale_item_id
         WHERE c.cancelled_at IS NULL AND c.minutes_remaining > 0
           AND ($1::uuid IS NULL OR c.station_id IS NULL OR c.station_id = $1)
         ORDER BY c.created_at, c.id`,
@@ -49,6 +52,7 @@ export class TimeCreditsService {
       stationId: x.station_id,
       stationCode: x.station_code,
       holderName: x.holder_name,
+      offerName: x.offer_name,
       minutesTotal: x.minutes_total,
       minutesRemaining: x.minutes_remaining,
       saleId: x.sale_id,
@@ -59,6 +63,8 @@ export class TimeCreditsService {
   /**
    * Written inside the sale transaction, one credit per time line. Without a PC (`stationId`
    * null) the credit carries a PIN: its plain value is returned once, only the hash is stored.
+   * 0.36.1: `pin: false` makes a credit for any PC without a PIN — only the desk can give it
+   * (the minutes of an offer sold with one click).
    */
   async create(
     client: DbClient,
@@ -71,9 +77,10 @@ export class TimeCreditsService {
       minutes: number;
       priceCents: number;
       actor: AuditActor;
+      pin?: boolean;
     },
   ): Promise<{ creditId: string; pin: string | null }> {
-    const pin = input.stationId === null ? generatePin() : null;
+    const pin = input.stationId === null && input.pin !== false ? generatePin() : null;
     const pinHash = pin === null ? null : await hashPassword(pin);
     const r = await client.query<{ id: string }>(
       `INSERT INTO time_credits (sale_id, sale_item_id, station_id, minutes_total, minutes_remaining,

@@ -131,6 +131,10 @@ export class EmbeddedPostgres {
       // Frequent, cheap checkpoints keep crash recovery short when Windows shuts the PC down
       // without stopping the server (the whole database is a few MB).
       '-c checkpoint_timeout=2min',
+      // 0.37.0: never compile a query to machine code first. That pays off for reports over
+      // millions of rows; here it could only add a pause to a query that is asked again a few
+      // seconds later, on a main PC with two cores.
+      '-c jit=off',
       '-c log_min_messages=warning',
       '-c log_timezone=UTC',
       '-c timezone=UTC',

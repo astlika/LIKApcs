@@ -10,9 +10,11 @@ import type {
   CategorySummary,
   InventoryMovementSummary,
   ProductInput,
+  ProductKind,
   ProductListQuery,
   ProductLookupResponse,
   ProductSummary,
+  ProductThumbMissing,
   StockAdjustmentInput,
   TaxCategoryInput,
   TaxCategorySummary,
@@ -25,9 +27,10 @@ import { millsToCents } from '@likapcs/shared';
 export function unitMills(cents: number, mills?: number | null): number {
   return mills ?? cents * 10;
 }
+import { foldText, sqlFold } from '../db/fold.js';
 import type { DbClient, DbPool, Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
-import { badRequest, conflict, notFound } from '../errors.js';
+import { type AppError, badRequest, conflict, notFound } from '../errors.js';
 import { ACTIVE_PROMO_SQL } from './ads.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import { ProductImageStore } from './product-images.js';
@@ -37,6 +40,7 @@ interface ProductRow {
   addons: { id: string; name: string; price_cents: string | number }[] | null;
   id: string;
   name: string;
+  kind: ProductKind;
   sku: string;
   category_id: string | null;
   category_name: string | null;
@@ -61,6 +65,8 @@ interface ProductRow {
   description: string | null;
   storage_location: string | null;
   image_path: string | null;
+  /** The small copy of the picture — null unless it was made from the current picture. */
+  image_thumb_path: string | null;
   is_active: boolean;
   client_menu: boolean;
   client_menu_order: number;
@@ -76,13 +82,15 @@ interface ProductRow {
 }
 
 const PRODUCT_SELECT = `
-  SELECT p.id, p.name, p.sku, p.category_id, c.name AS category_name, c.color AS category_color, p.brand,
+  SELECT p.id, p.name, p.kind, p.sku, p.category_id, c.name AS category_name, c.color AS category_color, p.brand,
          p.supplier_id, p.tax_category_id, tc.rate_bp AS tax_rate_bp, p.unit_code,
          COALESCE(u.is_decimal, false) AS unit_is_decimal,
          p.purchase_cost_cents, p.average_cost_cents, p.selling_price_cents, p.price_includes_tax,
          p.purchase_cost_mills, p.average_cost_mills, p.selling_price_mills,
          p.stock_milli, p.min_stock_milli, p.allow_negative_stock, p.track_stock, p.description,
-         p.storage_location, p.image_path, p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
+         p.storage_location, p.image_path,
+         CASE WHEN p.image_thumb_of = p.image_path THEN p.image_thumb_path END AS image_thumb_path,
+         p.is_active, p.client_menu, p.client_menu_order, p.created_at, p.updated_at,
          p.parent_id, pp.name AS parent_name, p.variant_label,
          (SELECT count(*) FROM products v WHERE v.parent_id = p.id)::text AS variant_count,
          ${ACTIVE_PROMO_SQL('p')} AS promo_price_cents,
@@ -262,6 +270,7 @@ export class CatalogService {
     return {
       id: row.id,
       name: row.name,
+      kind: row.kind,
       sku: row.sku,
       categoryId: row.category_id,
       categoryName: row.category_name,
@@ -295,6 +304,7 @@ export class CatalogService {
       variantLabel: row.variant_label,
       variantCount: Number(row.variant_count),
       imageUrl: ProductImageStore.urlFor(row.image_path),
+      imageThumbUrl: ProductImageStore.urlFor(row.image_thumb_path),
       barcodes: (row.barcodes ?? []).map((b) => ({
         id: b.id,
         barcode: b.barcode,
@@ -330,10 +340,17 @@ export class CatalogService {
     }
     if (query.lowStock) where.push('p.track_stock AND p.stock_milli <= p.min_stock_milli');
     if (query.menu) where.push('p.client_menu');
+    if (query.kind) {
+      values.push(query.kind);
+      where.push(`p.kind = $${values.length}`);
+    }
     if (query.q) {
-      values.push(`%${query.q.toLowerCase()}%`, query.q);
+      // 0.36.1: capitals and accents do not matter — "caj", "çaj" and "ÇAJ" find "Çaj" (the
+      // database folds A–Z only, so both sides are folded the same way; see `db/fold.ts`).
+      values.push(`%${foldText(query.q)}%`, query.q);
+      const typed = `$${values.length - 1}`;
       where.push(
-        `(lower(p.name) LIKE $${values.length - 1} OR lower(p.sku) LIKE $${values.length - 1} OR lower(COALESCE(p.brand, '')) LIKE $${values.length - 1}
+        `(${sqlFold('p.name')} LIKE ${typed} OR ${sqlFold('p.sku')} LIKE ${typed} OR ${sqlFold("COALESCE(p.brand, '')")} LIKE ${typed}
           OR EXISTS (SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode = $${values.length}))`,
       );
     }
@@ -393,12 +410,15 @@ export class CatalogService {
     const unique = [...new Set(productIds)];
     await withTransaction(this.pool, async (client) => {
       if (unique.length) {
-        const found = await client.query<{ id: string }>(
-          'SELECT id FROM products WHERE id = ANY($1::uuid[]) AND is_active',
+        const found = await client.query<{ id: string; kind: ProductKind; name: string }>(
+          'SELECT id, kind, name FROM products WHERE id = ANY($1::uuid[]) AND is_active',
           [unique],
         );
         if (found.rowCount !== unique.length)
           throw badRequest('Only active products can be offered on the PC menu');
+        // 0.34.0: an internet code is handed over at the till, after payment — never from a PC.
+        const access = found.rows.find((p) => p.kind === 'internet_access');
+        if (access) throw internetAccessTillOnly(access.id, access.name);
       }
       await client.query(
         `UPDATE products SET client_menu = false, client_menu_order = 0
@@ -425,82 +445,99 @@ export class CatalogService {
   }
 
   async createProduct(input: ProductInput, actor: AuditActor): Promise<ProductSummary> {
+    return withTransaction(this.pool, (client) => this.createProductIn(client, input, actor));
+  }
+
+  /**
+   * The same, inside a transaction the caller owns. `kind` is `internet_access` only for a package
+   * created together with its codes (0.34.0, see `InternetAccessService`).
+   */
+  async createProductIn(
+    client: DbClient,
+    input: ProductInput,
+    actor: AuditActor,
+    kind: ProductKind = 'standard',
+  ): Promise<ProductSummary> {
     const purchaseMills = unitMills(input.purchaseCostCents, input.purchaseCostMills);
     const sellingMills = unitMills(input.sellingPriceCents, input.sellingPriceMills);
     const purchaseCents = millsToCents(purchaseMills);
     const sellingCents = millsToCents(sellingMills);
-    return withTransaction(this.pool, async (client) => {
-      await checkVariant(client, null, input.parentId, input.variantLabel);
-      const sku = input.sku?.trim() || (await nextSku(client));
-      const r = await client
-        .query<{ id: string }>(
-          `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
-                                 average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
-                                 allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
-                                 client_menu, parent_id, variant_label,
-                                 purchase_cost_mills, average_cost_mills, selling_price_mills)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                   $21, $21, $22) RETURNING id`,
-          [
-            input.name,
-            sku,
-            input.categoryId,
-            input.brand,
-            input.supplierId,
-            input.taxCategoryId,
-            input.unitCode,
-            purchaseCents,
-            sellingCents,
-            input.priceIncludesTax,
-            input.minStockMilli,
-            input.allowNegativeStock,
-            input.trackStock,
-            input.description,
-            input.storageLocation,
-            input.isActive,
-            actor.userId ?? null,
-            input.clientMenu,
-            input.parentId,
-            input.variantLabel,
-            purchaseMills,
-            sellingMills,
-          ],
-        )
-        .catch((err: { code?: string; constraint?: string }) => {
-          if (err.code === '23505') throw conflict('SKU already exists', { field: 'sku' });
-          if (err.code === '23503' && err.constraint?.includes('unit_code'))
-            throw badRequest('Unknown unit', { field: 'unitCode' });
-          throw err;
-        });
-      const id = r.rows[0]!.id;
-      for (const [i, b] of input.barcodes.entries()) {
-        await this.insertBarcode(client, id, {
-          ...b,
-          isPrimary: b.isPrimary || (i === 0 && !input.barcodes.some((x) => x.isPrimary)),
-        });
-      }
-      if (input.initialStockMilli && input.initialStockMilli > 0) {
-        await applyMovement(client, {
-          productId: id,
-          type: 'initial',
-          delta: input.initialStockMilli,
-          unitCostCents: purchaseCents,
-          unitCostMills: purchaseMills,
-          reason: 'Opening stock',
-          referenceType: 'product',
-          referenceId: id,
-          actorUserId: actor.userId ?? null,
-          allowNegative: false,
-        });
-      }
-      await recordAudit(client, actor, {
-        action: 'catalog.product.created',
-        entityType: 'product',
-        entityId: id,
-        details: { name: input.name, sku, sellingPriceCents: input.sellingPriceCents },
+    await checkVariant(client, null, input.parentId, input.variantLabel);
+    const sku = input.sku?.trim() || (await nextSku(client));
+    const r = await client
+      .query<{ id: string }>(
+        `INSERT INTO products (name, sku, category_id, brand, supplier_id, tax_category_id, unit_code, purchase_cost_cents,
+                               average_cost_cents, selling_price_cents, price_includes_tax, min_stock_milli,
+                               allow_negative_stock, track_stock, description, storage_location, is_active, created_by,
+                               client_menu, parent_id, variant_label,
+                               purchase_cost_mills, average_cost_mills, selling_price_mills, kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                 $21, $21, $22, $23) RETURNING id`,
+        [
+          input.name,
+          sku,
+          input.categoryId,
+          input.brand,
+          input.supplierId,
+          input.taxCategoryId,
+          input.unitCode,
+          purchaseCents,
+          sellingCents,
+          input.priceIncludesTax,
+          input.minStockMilli,
+          input.allowNegativeStock,
+          input.trackStock,
+          input.description,
+          input.storageLocation,
+          input.isActive,
+          actor.userId ?? null,
+          input.clientMenu,
+          input.parentId,
+          input.variantLabel,
+          purchaseMills,
+          sellingMills,
+          kind,
+        ],
+      )
+      .catch((err: { code?: string; constraint?: string }) => {
+        if (err.code === '23505') throw conflict('SKU already exists', { field: 'sku' });
+        if (err.code === '23503' && err.constraint?.includes('unit_code'))
+          throw badRequest('Unknown unit', { field: 'unitCode' });
+        throw err;
       });
-      return this.getProduct(id, client);
+    const id = r.rows[0]!.id;
+    for (const [i, b] of input.barcodes.entries()) {
+      await this.insertBarcode(client, id, {
+        ...b,
+        isPrimary: b.isPrimary || (i === 0 && !input.barcodes.some((x) => x.isPrimary)),
+      });
+    }
+    if (input.initialStockMilli && input.initialStockMilli > 0) {
+      await applyMovement(client, {
+        productId: id,
+        type: 'initial',
+        delta: input.initialStockMilli,
+        unitCostCents: purchaseCents,
+        unitCostMills: purchaseMills,
+        reason: 'Opening stock',
+        referenceType: 'product',
+        referenceId: id,
+        actorUserId: actor.userId ?? null,
+        allowNegative: false,
+      });
+    }
+    await recordAudit(client, actor, {
+      action: 'catalog.product.created',
+      entityType: 'product',
+      entityId: id,
+      details: {
+        name: input.name,
+        sku,
+        sellingPriceCents: input.sellingPriceCents,
+        ...(kind === 'standard' ? {} : { kind }),
+      },
     });
+    return this.getProduct(id, client);
   }
 
   async updateProduct(
@@ -541,6 +578,30 @@ export class CatalogService {
       patch = { ...patch, sellingPriceMills: mills, sellingPriceCents: millsToCents(mills) };
     }
     return withTransaction(this.pool, async (client) => {
+      // 0.34.0: an internet access package keeps the shape its codes rely on (counted stock that
+      // never goes below zero, sold by the piece at the till).
+      const shape = await client.query<{ kind: ProductKind; name: string }>(
+        'SELECT kind, name FROM products WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      if (shape.rows[0]?.kind === 'internet_access') {
+        const fixed: [keyof UpdateProductInput, unknown][] = [
+          ['trackStock', true],
+          ['allowNegativeStock', false],
+          ['unitCode', 'pc'],
+          ['clientMenu', false],
+          ['parentId', null],
+          ['variantLabel', null],
+        ];
+        for (const [key, value] of fixed) {
+          if (key in patch && patch[key] !== value) {
+            throw conflict(
+              `${shape.rows[0].name} is an internet access package: its stock is counted in codes, it is sold by the piece and only at the till`,
+              { code: 'INTERNET_ACCESS_SHAPE', field: key },
+            );
+          }
+        }
+      }
       if ('parentId' in patch || 'variantLabel' in patch) {
         const current = await client.query<{
           parent_id: string | null;
@@ -594,8 +655,11 @@ export class CatalogService {
   /** Replaces the product picture with an already stored file; the previous file is removed. */
   async setProductImage(id: string, fileName: string, actor: AuditActor): Promise<ProductSummary> {
     const previous = await withTransaction(this.pool, async (client) => {
-      const r = await client.query<{ image_path: string | null }>(
-        'UPDATE products SET image_path = $2 WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        `UPDATE products SET image_path = $2, image_thumb_path = NULL, image_thumb_of = NULL
+          WHERE id = $1
+      RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path,
+                (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
         [id, fileName],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -605,19 +669,24 @@ export class CatalogService {
         entityId: id,
         details: { file: fileName },
       });
-      return r.rows[0]!.image_path;
+      return r.rows[0]!;
     }).catch(async (err: unknown) => {
       await this.images.remove(fileName); // the file was stored before the row update failed
       throw err;
     });
-    if (previous && previous !== fileName) await this.images.remove(previous);
+    if (previous.image_path && previous.image_path !== fileName)
+      await this.images.remove(previous.image_path);
+    await this.images.remove(previous.image_thumb_path);
     return this.getProduct(id);
   }
 
   async clearProductImage(id: string, actor: AuditActor): Promise<ProductSummary> {
     const previous = await withTransaction(this.pool, async (client) => {
-      const r = await client.query<{ image_path: string | null }>(
-        'UPDATE products SET image_path = NULL WHERE id = $1 RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        `UPDATE products SET image_path = NULL, image_thumb_path = NULL, image_thumb_of = NULL
+          WHERE id = $1
+      RETURNING (SELECT image_path FROM products WHERE id = $1) AS image_path,
+                (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
         [id],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -626,10 +695,59 @@ export class CatalogService {
         entityType: 'product',
         entityId: id,
       });
-      return r.rows[0]!.image_path;
+      return r.rows[0]!;
     });
-    await this.images.remove(previous);
+    await this.images.remove(previous.image_path);
+    await this.images.remove(previous.image_thumb_path);
     return this.getProduct(id);
+  }
+
+  /**
+   * 0.37.0: stores the small copy of a product's picture (the Admin makes it — the server has no
+   * picture library). `of` is the picture it was made from: when the product shows another one by
+   * now, the copy is dropped and the answer is a conflict. No audit entry: nothing the owner
+   * decides changes, the same picture is only shown from a smaller file.
+   */
+  async setProductThumb(id: string, of: string, fileName: string): Promise<ProductSummary> {
+    let previous: string | null;
+    try {
+      const r = await this.pool.query<{ image_thumb_path: string | null }>(
+        `UPDATE products SET image_thumb_path = $3, image_thumb_of = $2
+          WHERE id = $1 AND image_path = $2
+      RETURNING (SELECT image_thumb_path FROM products WHERE id = $1) AS image_thumb_path`,
+        [id, of, fileName],
+      );
+      if (!r.rowCount) {
+        await this.getProduct(id); // 404 when the product is gone
+        throw conflict('The product shows another picture now', { code: 'IMAGE_CHANGED' });
+      }
+      previous = r.rows[0]!.image_thumb_path;
+    } catch (err) {
+      await this.images.remove(fileName);
+      throw err;
+    }
+    if (previous && previous !== fileName) await this.images.remove(previous);
+    return this.getProduct(id);
+  }
+
+  /**
+   * 0.37.0: pictures that still have no small copy (the Admin makes them in the background, a
+   * few at a time). Animated pictures are left out: a copy would freeze them.
+   */
+  async productsMissingThumb(limit = 500): Promise<ProductThumbMissing[]> {
+    const r = await this.pool.query<{ id: string; image_path: string }>(
+      `SELECT id, image_path FROM products
+        WHERE image_path IS NOT NULL AND image_path NOT LIKE '%.gif'
+          AND (image_thumb_path IS NULL OR image_thumb_of IS DISTINCT FROM image_path)
+        ORDER BY is_active DESC, name
+        LIMIT $1`,
+      [limit],
+    );
+    return r.rows.map((row) => ({
+      id: row.id,
+      image: row.image_path,
+      imageUrl: ProductImageStore.urlFor(row.image_path)!,
+    }));
   }
 
   /**
@@ -640,17 +758,19 @@ export class CatalogService {
   async deleteProduct(id: string, actor: AuditActor): Promise<{ archived: boolean }> {
     const result = await this.deleteProductRow(id, actor);
     if (result.imagePath) await this.images.remove(result.imagePath);
+    if (result.thumbPath) await this.images.remove(result.thumbPath);
     return { archived: result.archived };
   }
 
   private async deleteProductRow(
     id: string,
     actor: AuditActor,
-  ): Promise<{ archived: boolean; imagePath: string | null }> {
+  ): Promise<{ archived: boolean; imagePath: string | null; thumbPath?: string | null }> {
     return withTransaction(this.pool, async (client) => {
       const used = await client.query(
         `SELECT 1 FROM sale_items WHERE product_id = $1
-          UNION ALL SELECT 1 FROM inventory_movements WHERE product_id = $1 LIMIT 1`,
+          UNION ALL SELECT 1 FROM inventory_movements WHERE product_id = $1
+          UNION ALL SELECT 1 FROM internet_access_codes WHERE product_id = $1 LIMIT 1`,
         [id],
       );
       if (used.rowCount) {
@@ -672,8 +792,8 @@ export class CatalogService {
         throw conflict('This product has variants — archive it instead of deleting it', {
           code: 'HAS_VARIANTS',
         });
-      const r = await client.query<{ image_path: string | null }>(
-        'DELETE FROM products WHERE id = $1 RETURNING image_path',
+      const r = await client.query<{ image_path: string | null; image_thumb_path: string | null }>(
+        'DELETE FROM products WHERE id = $1 RETURNING image_path, image_thumb_path',
         [id],
       );
       if (!r.rowCount) throw notFound('Product');
@@ -682,7 +802,11 @@ export class CatalogService {
         entityType: 'product',
         entityId: id,
       });
-      return { archived: false, imagePath: r.rows[0]!.image_path };
+      return {
+        archived: false,
+        imagePath: r.rows[0]!.image_path,
+        thumbPath: r.rows[0]!.image_thumb_path,
+      };
     });
   }
 
@@ -802,11 +926,15 @@ export class CatalogService {
         stock_milli: string | number;
         allow_negative_stock: boolean;
         average_cost_mills: string | number;
+        kind: ProductKind;
+        name: string;
       }>(
-        'SELECT stock_milli, allow_negative_stock, average_cost_mills FROM products WHERE id = $1 FOR UPDATE',
+        'SELECT stock_milli, allow_negative_stock, average_cost_mills, kind, name FROM products WHERE id = $1 FOR UPDATE',
         [productId],
       );
       if (!current.rows[0]) throw notFound('Product');
+      if (current.rows[0].kind === 'internet_access')
+        throw internetAccessStock(productId, current.rows[0].name);
       const stock = Number(current.rows[0].stock_milli);
       const delta =
         input.newStockMilli !== undefined ? input.newStockMilli - stock : input.quantityMilliDelta!;
@@ -949,11 +1077,13 @@ async function checkVariant(
     });
   if (parentId === selfId)
     throw badRequest('A product cannot be a variant of itself', { field: 'parentId' });
-  const parent = await client.query<{ parent_id: string | null }>(
-    'SELECT parent_id FROM products WHERE id = $1',
+  const parent = await client.query<{ parent_id: string | null; kind: ProductKind }>(
+    'SELECT parent_id, kind FROM products WHERE id = $1',
     [parentId],
   );
   if (!parent.rows[0]) throw notFound('Parent product');
+  if (parent.rows[0].kind === 'internet_access')
+    throw badRequest('An internet access package cannot have variants', { field: 'parentId' });
   if (parent.rows[0].parent_id)
     throw badRequest('A variant cannot have variants — choose the main product', {
       field: 'parentId',
@@ -992,6 +1122,28 @@ export interface MovementInput {
   actorUserId: string | null;
   /** Whether the product may go below zero (its `allow_negative_stock` flag). */
   allowNegative: boolean;
+  /**
+   * 0.34.0: this movement is the stock side of internet access codes being loaded, removed or
+   * sold — the caller changes the same number of codes in the same transaction. Any other
+   * movement of an internet access package is refused.
+   */
+  accessCodes?: boolean;
+}
+
+/** 0.34.0: the stock of an internet access package is its unused codes; nothing else moves it. */
+export function internetAccessStock(productId: string, productName: string): AppError {
+  return conflict(
+    `${productName} is an internet access package: its stock is its unused codes. Load or remove codes instead.`,
+    { code: 'INTERNET_ACCESS_STOCK', productId, productName },
+  );
+}
+
+/** 0.34.0: an internet access code is handed over at the till, after payment. */
+export function internetAccessTillOnly(productId: string, productName: string): AppError {
+  return conflict(
+    `${productName} is sold at the till only: its code is handed over when the sale is paid.`,
+    { code: 'INTERNET_ACCESS_TILL_ONLY', productId, productName },
+  );
 }
 
 /**
@@ -1002,11 +1154,13 @@ export async function applyMovement(
   client: DbClient,
   input: MovementInput,
 ): Promise<{ movementId: number; stockAfterMilli: number }> {
-  const r = await client.query<{ stock_milli: string | number; name: string }>(
-    'SELECT stock_milli, name FROM products WHERE id = $1 FOR UPDATE',
+  const r = await client.query<{ stock_milli: string | number; name: string; kind: ProductKind }>(
+    'SELECT stock_milli, name, kind FROM products WHERE id = $1 FOR UPDATE',
     [input.productId],
   );
   if (!r.rows[0]) throw notFound('Product');
+  if (r.rows[0].kind === 'internet_access' && !input.accessCodes)
+    throw internetAccessStock(input.productId, r.rows[0].name);
   const after = Number(r.rows[0].stock_milli) + input.delta;
   if (after < 0 && !input.allowNegative) {
     throw conflict(`Insufficient stock for ${r.rows[0].name}`, {

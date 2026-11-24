@@ -4,7 +4,9 @@ import {
   formatDateTime,
   formatMoney,
   formatTime,
+  formatTimeOnDay,
   formatUnitMoney,
+  timeOnDayParts,
   type Cents,
 } from '@likapcs/shared';
 import { useI18n } from '../i18n';
@@ -32,6 +34,15 @@ export function useFormat() {
     (v: string | Date | null | undefined) => (v ? formatDateTime(v, { timeZone }) : '—'),
     [timeZone],
   );
+  /**
+   * The time of one line of a bill (0.40.0): "14:05" on the day of `reference` (today when left
+   * out; on a receipt, the receipt's own date), with the day in front when it is another day.
+   */
+  const timeOn = useCallback(
+    (v: string | Date | null | undefined, reference?: string | Date | null) =>
+      v ? formatTimeOnDay(v, reference ?? new Date(), { timeZone }) : '—',
+    [timeZone],
+  );
   const relative = useCallback(
     (v: string | Date | null | undefined) => {
       if (!v) return '—';
@@ -51,5 +62,22 @@ export function useFormat() {
     (mills: number) => formatUnitMoney(mills, { currency, locale: language }),
     [currency, language],
   );
-  return { money, unitMoney, date, time, dateTime, relative, currency, timeZone };
+  /** The same, day and time apart ("22.11" / "23:40"; `day` null on the day of `reference`). */
+  const timeOnParts = useCallback(
+    (v: string | Date, reference?: string | Date | null) =>
+      timeOnDayParts(v, reference ?? new Date(), { timeZone }),
+    [timeZone],
+  );
+  return {
+    money,
+    unitMoney,
+    date,
+    time,
+    timeOn,
+    timeOnParts,
+    dateTime,
+    relative,
+    currency,
+    timeZone,
+  };
 }

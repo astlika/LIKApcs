@@ -20,7 +20,9 @@ type Key =
   /** Admin version seen at the previous start — used to report a completed self-update. */
   | 'lastVersion'
   /** 0.32.0: the Stations layout (grid, list, compact, detailed) for this browser; the account copy is in preferences. */
-  | 'stationsView';
+  | 'stationsView'
+  /** 0.41.0: how «Backup file» wrote the file last time on this PC ('json' or 'archive'). */
+  | 'backupFileFormat';
 
 export const storage = {
   get(key: Key): string | null {

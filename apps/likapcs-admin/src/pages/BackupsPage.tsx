@@ -8,7 +8,9 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   Archive,
+  ArchiveRestore,
   Download,
+  FileArchive,
   FolderOpen,
   HardDriveDownload,
   Import,
@@ -27,17 +29,19 @@ import {
   type BackupEncryptionStatus,
   type BackupSummary,
   type BackupsResponse,
-  type RestoreResult,
   type ServerEndpoint,
   type ServerInfoResponse,
   type SettingsMap,
 } from '@likapcs/shared';
-import { api, ApiError, apiDownload, apiUpload } from '../lib/api';
+import { api, ApiError, apiDownload, apiUpload, getServerUrl } from '../lib/api';
+import { canShowServerFolders, showInFolder } from '../lib/desktop';
 import { useFormat } from '../lib/format';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
 import { ImportWizard } from '../components/backups/ImportWizard';
+import { BackupFileDialog, RestoreFileDialog } from '../components/backups/BackupFile';
+import { safeUploadName } from '../lib/backup-file';
 import {
   Alert,
   Badge,
@@ -80,6 +84,9 @@ export function BackupsPage() {
   const [deleting, setDeleting] = useState<BackupSummary | null>(null);
   const [showDeleted, setShowDeleted] = useState(false);
   const [importing, setImporting] = useState(false);
+  // 0.38.0: one file with everything, and its way back.
+  const [makingFile, setMakingFile] = useState(false);
+  const [restoringFile, setRestoringFile] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const list = useQuery({
@@ -109,8 +116,12 @@ export function BackupsPage() {
       apiUpload<BackupSummary>(
         '/backups/upload',
         file,
-        { fileName: file.name.replace(/[^A-Za-z0-9._-]/g, '_') },
-        { headers: password ? { 'x-archive-password': password } : undefined },
+        { fileName: safeUploadName(file.name) },
+        {
+          headers: password
+            ? { 'x-archive-password-utf8': encodeURIComponent(password) }
+            : undefined,
+        },
       ),
     onSuccess: (b) => {
       setUploadRetry(null);
@@ -161,7 +172,9 @@ export function BackupsPage() {
               <input
                 ref={fileInput}
                 type="file"
-                accept=".gz,.tgz,application/gzip"
+                // `.enc`: an archive with a password. (Before 0.38.0 the window hid those files.)
+                // `.json`: a backup written as a JSON document (0.41.0).
+                accept=".gz,.tgz,.enc,.json,application/gzip,application/json"
                 hidden
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -175,8 +188,19 @@ export function BackupsPage() {
               <Button onClick={() => fileInput.current?.click()} loading={upload.isPending}>
                 <Upload size={14} /> {t('backups.upload')}
               </Button>
-              <Button variant="primary" onClick={() => create.mutate()} loading={create.isPending}>
+              <Button onClick={() => create.mutate()} loading={create.isPending}>
                 <HardDriveDownload size={14} /> {t('backups.backupNow')}
+              </Button>
+              <Button onClick={() => setRestoringFile(true)} data-testid="restore-file-open">
+                <ArchiveRestore size={14} /> {t('restoreFile.open')}
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => setMakingFile(true)}
+                title={t('backupFile.openHint')}
+                data-testid="backup-file-open"
+              >
+                <FileArchive size={14} /> {t('backupFile.open')}
               </Button>
             </>
           )
@@ -220,6 +244,19 @@ export function BackupsPage() {
             <code className="mono" style={{ userSelect: 'all' }}>
               {data.directory}
             </code>
+            {canShowServerFolders(getServerUrl()) && (
+              <Button
+                size="sm"
+                onClick={() =>
+                  void showInFolder(data.directory).then((shown) => {
+                    if (!shown) toast.error(t('backupFile.openFolderManual'));
+                  })
+                }
+                data-testid="backups-open-folder"
+              >
+                <FolderOpen size={13} /> {t('backupFile.openFolder')}
+              </Button>
+            )}
             <span className="faint" style={{ marginLeft: 'auto' }}>
               {t('backups.directoryHint')}{' '}
               <Link to="/settings?tab=system">{t('backups.changeSchedule')}</Link>
@@ -270,8 +307,18 @@ export function BackupsPage() {
                       {b.schemaVersion !== null && (
                         <span className="faint"> · v{b.schemaVersion}</span>
                       )}
-                      {(b.encrypted || b.externalCopy) && (
+                      {(b.encrypted || b.externalCopy || b.format === 'json') && (
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                          {b.format === 'json' && (
+                            <span
+                              title={t('backups.jsonBadgeHint')}
+                              style={{ display: 'inline-flex' }}
+                            >
+                              <Badge tone="accent">
+                                <span data-testid="backup-json-badge">JSON</span>
+                              </Badge>
+                            </span>
+                          )}
                           {b.encrypted && (
                             <Badge tone="info">
                               <Lock size={11} /> {t('backups.archiveBadge')}
@@ -369,7 +416,15 @@ export function BackupsPage() {
           </table>
         </div>
       )}
-      {restoring && <RestoreDialog backup={restoring} onClose={() => setRestoring(null)} />}
+      {restoring && (
+        <RestoreFileDialog mode="signedIn" backup={restoring} onClose={() => setRestoring(null)} />
+      )}
+      {restoringFile && (
+        <RestoreFileDialog mode="signedIn" onClose={() => setRestoringFile(false)} />
+      )}
+      {makingFile && (
+        <BackupFileDialog onClose={() => setMakingFile(false)} onChanged={invalidate} />
+      )}
       {uploadRetry && (
         <ArchivePasswordDialog
           fileName={uploadRetry.file.name}
@@ -393,151 +448,6 @@ export function BackupsPage() {
       )}
       {canManage && <ImportWizard open={importing} onClose={() => setImporting(false)} />}
     </>
-  );
-}
-
-function RestoreDialog({ backup, onClose }: { backup: BackupSummary; onClose: () => void }) {
-  const { t } = useI18n();
-  const fmt = useFormat();
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const [password, setPassword] = useState('');
-  const [archivePassword, setArchivePassword] = useState('');
-  const [acknowledged, setAcknowledged] = useState(false);
-  const [result, setResult] = useState<RestoreResult | null>(null);
-  const mutation = useMutation({
-    mutationFn: () =>
-      api<RestoreResult>(`/backups/${backup.id}/restore`, {
-        method: 'POST',
-        body: {
-          password,
-          confirm: true,
-          archivePassword: archivePassword || undefined,
-        },
-      }),
-    onSuccess: (r) => {
-      setResult(r);
-      // Everything the app has cached describes the old data.
-      void queryClient.invalidateQueries();
-      toast.success(t('backups.restored'));
-    },
-    onError: (err) => {
-      if (err instanceof ApiError && err.code === 'PASSWORD_MISMATCH') {
-        toast.error(t('backups.wrongPassword'));
-        return;
-      }
-      if (err instanceof ApiError && err.code === 'ARCHIVE_PASSWORD_REQUIRED') {
-        toast.error(t('backups.archiveRequiredBody'));
-        return;
-      }
-      if (err instanceof ApiError && err.code === 'ARCHIVE_PASSWORD_WRONG') {
-        toast.error(t('backups.archiveWrong'));
-        return;
-      }
-      toast.error(err instanceof ApiError ? err.message : t('common.errorGeneric'));
-    },
-  });
-  const valid = password.length > 0 && acknowledged;
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={t('backups.restoreTitle')}
-      size="md"
-      locked={mutation.isPending}
-      footer={
-        result ? (
-          <Button variant="primary" onClick={onClose}>
-            {t('common.close')}
-          </Button>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="danger"
-              disabled={!valid}
-              loading={mutation.isPending}
-              onClick={() => mutation.mutate()}
-            >
-              <RotateCcw size={14} /> {t('backups.restoreConfirm')}
-            </Button>
-          </>
-        )
-      }
-    >
-      {result ? (
-        <div className="stack">
-          <Alert tone="success">{t('backups.restoreDone')}</Alert>
-          <div className="grid grid--2">
-            <StatTile label={t('backups.tablesRestored')} value={String(result.tablesRestored)} />
-            <StatTile
-              label={t('backups.rowsRestored')}
-              value={result.rowsRestored.toLocaleString()}
-            />
-            <StatTile
-              label={t('backups.duration')}
-              value={`${(result.durationMs / 1000).toFixed(1)} s`}
-            />
-            <StatTile
-              label={t('backups.safetyCopy')}
-              value={result.preRestoreBackupId ? t('common.yes') : t('common.no')}
-            />
-          </div>
-          {!result.sessionKept && <Alert tone="warning">{t('backups.sessionLost')}</Alert>}
-        </div>
-      ) : (
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (valid && !mutation.isPending) mutation.mutate();
-          }}
-        >
-          <Alert tone="danger" icon={<AlertTriangle size={16} />}>
-            {t('backups.restoreWarning', {
-              name: backup.fileName ?? '',
-              when: fmt.dateTime(backup.startedAt),
-            })}
-          </Alert>
-          <p className="muted">{t('backups.restoreSafety')}</p>
-          <Field label={t('backups.yourPassword')}>
-            {(id) => (
-              <Input
-                id={id}
-                type="password"
-                autoComplete="current-password"
-                autoFocus
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            )}
-          </Field>
-          {backup.encrypted && (
-            <Field
-              label={t('backups.archivePasswordLabel')}
-              hint={t('backups.archivePasswordHint')}
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  type="password"
-                  autoComplete="off"
-                  value={archivePassword}
-                  onChange={(e) => setArchivePassword(e.target.value)}
-                />
-              )}
-            </Field>
-          )}
-          <Checkbox
-            checked={acknowledged}
-            onChange={(e) => setAcknowledged(e.target.checked)}
-            label={t('backups.acknowledge')}
-          />
-        </form>
-      )}
-    </Dialog>
   );
 }
 
@@ -592,7 +502,9 @@ function ServerCard({ canManage }: { canManage: boolean }) {
       <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <Network size={16} className="muted" />
         <strong>{t('backups.netCardTitle')}</strong>
-        {data && <Badge tone="success">{t('backups.netListening', { port: data.bind.port })}</Badge>}
+        {data && (
+          <Badge tone="success">{t('backups.netListening', { port: data.bind.port })}</Badge>
+        )}
       </div>
       <p className="muted" style={{ marginTop: 8 }}>
         {t('backups.netHelp')}

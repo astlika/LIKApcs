@@ -28,6 +28,15 @@ let unauthorizedHandler: (() => void) | null = null;
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
+/**
+ * 0.38.0: while a backup is being restored the signed-in account may stop existing (the data is
+ * replaced). The restore dialog shows the result and then reloads the app itself, so a 401 in the
+ * background must not throw the user to the login screen in the middle of it.
+ */
+let unauthorizedPaused = false;
+export function pauseUnauthorizedHandler(paused: boolean): void {
+  unauthorizedPaused = paused;
+}
 
 /** Default server address: same origin in the browser/dev build, localhost:4700 in the desktop app. */
 export const DEFAULT_DESKTOP_SERVER_URL = 'http://127.0.0.1:4700';
@@ -74,6 +83,11 @@ interface RequestOptions {
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined | null>;
   auth?: boolean;
+  /**
+   * Use this sign-in instead of the stored one, without storing it (0.38.0: «Restore from a
+   * backup» on the login screen checks the owner's account for that one operation only).
+   */
+  token?: string;
   signal?: AbortSignal;
 }
 
@@ -86,7 +100,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
   const headers: Record<string, string> = { accept: 'application/json' };
   if (options.body !== undefined) headers['content-type'] = 'application/json';
-  const token = getToken();
+  const token = options.token ?? getToken();
   if (options.auth !== false && token) headers.authorization = `Bearer ${token}`;
 
   let response: Response;
@@ -119,7 +133,14 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       body.error?.message ?? `HTTP ${response.status}`,
       body.error?.details,
     );
-    if (response.status === 401 && options.auth !== false && token && unauthorizedHandler)
+    if (
+      response.status === 401 &&
+      options.auth !== false &&
+      !options.token &&
+      token &&
+      unauthorizedHandler &&
+      !unauthorizedPaused
+    )
       unauthorizedHandler();
     throw error;
   }

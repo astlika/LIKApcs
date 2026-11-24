@@ -13,6 +13,7 @@ import { ArrowLeft, Gift, Plus } from 'lucide-react';
 import {
   PERMISSIONS,
   type BulkMinutesResult,
+  type CustomerSummary,
   type GamingPackageSummary,
   type SalePaymentInput,
   type SessionQuoteResponse,
@@ -108,7 +109,7 @@ export function BulkMinutesDialog({
   const quotesLoading = !gift && body !== null && quotes.some((q) => q.isFetching);
 
   const apply = useMutation({
-    mutationFn: (payments: SalePaymentInput[] | undefined) =>
+    mutationFn: (how: BulkTender | undefined) =>
       api<BulkMinutesResult>('/sessions/bulk-minutes', {
         method: 'POST',
         body: {
@@ -116,7 +117,10 @@ export function BulkMinutesDialog({
           gift,
           ...(packageId ? { packageId } : { minutes: minutesValue }),
           reason: gift && reason.trim() ? reason.trim() : undefined,
-          ...(payments ? { payments } : {}),
+          // 0.36.0: nothing now (the minutes join each PC's bill), or one tender — which may be
+          // pay later on one name.
+          ...(how?.later ? { later: true } : how ? { payments: how.payments } : {}),
+          ...(how?.customerId ? { customerId: how.customerId } : {}),
         },
       }),
     onSuccess: (result) => {
@@ -135,7 +139,7 @@ export function BulkMinutesDialog({
   const choose = () => {
     if (!body || apply.isPending || quotesLoading || pending) return;
     if (gift || estimate <= 0) {
-      apply.mutate(gift ? undefined : []);
+      apply.mutate(gift ? undefined : { payments: [] });
       return;
     }
     setPending(true);
@@ -163,7 +167,7 @@ export function BulkMinutesDialog({
           totalCents={estimate}
           busy={apply.isPending}
           onBack={() => setPending(false)}
-          onConfirm={(payments) => apply.mutate(payments)}
+          onConfirm={(how) => apply.mutate(how)}
         />
       </Dialog>
     );
@@ -282,6 +286,15 @@ export function BulkMinutesDialog({
   );
 }
 
+/** How a batch is paid: one tender, or nothing now (0.36.0). */
+interface BulkTender {
+  payments?: SalePaymentInput[];
+  /** Nothing is paid now: the minutes go on each PC's bill, to pay at the end. */
+  later?: boolean;
+  /** Who pays the batch — pay later needs a name. The sessions keep their own customers. */
+  customerId?: string;
+}
+
 /** The single tender step of a batch: one amount, split across the bills by the server. */
 function BulkMinutesTender({
   totalCents,
@@ -292,23 +305,39 @@ function BulkMinutesTender({
   totalCents: number;
   busy: boolean;
   onBack: () => void;
-  onConfirm: (payments: SalePaymentInput[]) => void;
+  onConfirm: (how: BulkTender) => void;
 }) {
   const { t } = useI18n();
-  // Pay-later and balance need a named customer per bill; a batch of PCs takes cash, card or split.
+  // 0.36.0: a batch can be paid at the end (the End Pay chip) or put on one name (pay later).
+  // The balance stays out: it belongs to one customer's own bill.
+  const [customer, setCustomer] = useState<CustomerSummary | null>(null);
   const tender = useTender({
     totalCents,
-    customer: null,
-    allowCredit: false,
+    customer,
+    allowEndPay: true,
     allowWallet: false,
   });
   const submit = () => {
-    if (tender.covered && !busy) onConfirm(tender.payments);
+    if (!tender.covered || busy) return;
+    if (tender.endPay) onConfirm({ later: true });
+    else onConfirm({ payments: tender.payments, customerId: customer?.id });
   };
   useEnterSubmits(submit);
   return (
     <div className="stack">
-      <TenderPanel tender={tender} onSubmit={submit} testId="bulk-minutes" />
+      <TenderPanel
+        tender={tender}
+        onSubmit={submit}
+        onCustomerChange={setCustomer}
+        testId="bulk-minutes"
+      />
+      <p className="faint" style={{ fontSize: 12, margin: 0 }} data-testid="bulk-minutes-how">
+        {tender.endPay
+          ? t('map.bulkLaterHint')
+          : tender.mode === 'credit'
+            ? t('map.bulkCustomerHint')
+            : ''}
+      </p>
       <div className="row row--between" style={{ marginTop: 4 }}>
         <Button onClick={onBack}>
           <ArrowLeft size={14} /> {t('common.back')}

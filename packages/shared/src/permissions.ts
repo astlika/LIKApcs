@@ -11,6 +11,11 @@ export const PERMISSIONS = {
   DASHBOARD_VIEW: 'dashboard.view',
   REPORTS_VIEW: 'reports.view',
   REPORTS_EXPORT: 'reports.export',
+  /**
+   * 0.39.0: make «Skedar për AI» — one file with every sale, session, drawer and stock movement,
+   * customer and price. Owner and admin by default.
+   */
+  REPORTS_EXPORT_ALL: 'reports.export_all',
 
   // Gaming stations
   STATIONS_VIEW: 'stations.view',

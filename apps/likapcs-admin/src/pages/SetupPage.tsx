@@ -7,6 +7,7 @@ import { api, ApiError, apiUpload, fieldError } from '../lib/api';
 import { useI18n } from '../i18n';
 import { useAuth } from '../state/auth';
 import { useToast } from '../state/toast';
+import { RestoreEntry, RestoreFileDialog } from '../components/backups/BackupFile';
 import {
   Alert,
   Button,
@@ -40,6 +41,8 @@ export function SetupPage() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
+  // 0.38.0: bring everything back from a backup file instead of starting empty.
+  const [restoring, setRestoring] = useState(false);
   const status = useQuery({
     queryKey: ['setup-status'],
     queryFn: () => api<SetupStatusResponse>('/system/setup-status', { auth: false }),
@@ -85,7 +88,7 @@ export function SetupPage() {
       : null;
 
   return (
-    <div className="auth">
+    <div className="auth auth--stack">
       <form className="card auth__card auth__card--wide" onSubmit={submit}>
         <div className="auth__brand">
           <div className="brand-mark">LK</div>
@@ -230,11 +233,13 @@ export function SetupPage() {
           </Button>
         </div>
       </form>
-      <div className="card auth__card auth__card--wide" style={{ marginTop: 12, padding: 16 }}>
-        <Button variant="ghost" onClick={() => setImporting(true)}>
+      <div className="card auth__card auth__card--wide" style={{ padding: 16, gap: 10 }}>
+        <RestoreEntry onClick={() => setRestoring(true)} />
+        <Button variant="ghost" size="sm" onClick={() => setImporting(true)}>
           <Usb size={14} /> {t('setup.importOpen')}
         </Button>
       </div>
+      {restoring && <RestoreFileDialog mode="fresh" onClose={() => setRestoring(false)} />}
       {importing && <TransferImportDialog onClose={() => setImporting(false)} />}
     </div>
   );

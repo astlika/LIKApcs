@@ -231,15 +231,30 @@ describe('session payments', () => {
     });
     expect(early.status).toBe(200);
     expect(early.body.session.billableSeconds).toBe(0);
-    // Minimum charge rules may still bill something; whatever it is, the receipt exists and is
-    // readable with stations.control alone.
-    const receipt = await ctx.app.inject({
+    // 0.36.0: nothing was owed — no time, nothing on the bill — so the session is closed without
+    // a receipt (it used to make one of 0.00). It is billed, and nothing waits at the desk.
+    expect(early.body.payment ?? null).toBeNull();
+    expect(early.body.session).toMatchObject({
+      status: 'completed',
+      finalPriceCents: 0,
+      saleId: null,
+      awaitingPayment: false,
+    });
+    expect(early.body.session.billedAt).not.toBeNull();
+    const none = await ctx.app.inject({
       method: 'GET',
       url: `/api/v1/sessions/${third.body.session.id}/receipt`,
       headers: H(),
     });
+    expect(none.statusCode).toBe(404);
+    // A bill that took money has its receipt, readable with stations.control alone.
+    const receipt = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${again.body.session.id}/receipt`,
+      headers: H(),
+    });
     expect(receipt.statusCode).toBe(200);
-    expect(receipt.json<ReceiptData>().sale.id).toBe(early.body.payment!.saleId);
+    expect(receipt.json<ReceiptData>().sale.id).toBe(clamped.body.payment!.saleId);
   });
 
   it('pay later beyond the customer limit is refused and the session stays live', async () => {

@@ -32,6 +32,7 @@ interface RuleRow {
   billing_increment_minutes: number;
   minimum_charge_cents: string | number;
   minimum_minutes: number;
+  free_minutes: number;
   rounding_mode: 'up' | 'down' | 'nearest';
   rounding_increment_cents: string | number;
   is_happy_hour: boolean;
@@ -65,7 +66,7 @@ const RULE_SELECT = `
   SELECT r.id, r.name, r.station_id, s.code AS station_code, r.days_of_week,
          to_char(r.start_time, 'HH24:MI') AS start_time, to_char(r.end_time, 'HH24:MI') AS end_time,
          r.rate_cents_per_hour, r.billing_increment_minutes, r.minimum_charge_cents, r.minimum_minutes,
-         r.rounding_mode, r.rounding_increment_cents, r.is_happy_hour, r.priority, r.is_active,
+         r.free_minutes, r.rounding_mode, r.rounding_increment_cents, r.is_happy_hour, r.priority, r.is_active,
          to_char(r.valid_from, 'YYYY-MM-DD') AS valid_from, to_char(r.valid_to, 'YYYY-MM-DD') AS valid_to,
          r.created_at, r.updated_at
     FROM pricing_rules r
@@ -91,6 +92,7 @@ function mapRule(row: RuleRow): PricingRuleSummary {
     billingIncrementMinutes: row.billing_increment_minutes,
     minimumChargeCents: Number(row.minimum_charge_cents),
     minimumMinutes: row.minimum_minutes,
+    freeMinutes: row.free_minutes,
     roundingMode: row.rounding_mode,
     roundingIncrementCents: Number(row.rounding_increment_cents),
     isHappyHour: row.is_happy_hour,
@@ -153,8 +155,9 @@ export class PricingService {
     const inserted = await this.pool.query<{ id: string }>(
       `INSERT INTO pricing_rules (name, station_id, days_of_week, start_time, end_time, rate_cents_per_hour,
          billing_increment_minutes, minimum_charge_cents, minimum_minutes, rounding_mode,
-         rounding_increment_cents, is_happy_hour, priority, is_active, valid_from, valid_to, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
+         rounding_increment_cents, is_happy_hour, priority, is_active, valid_from, valid_to, created_by,
+         free_minutes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
       [
         input.name,
         input.stationId,
@@ -173,6 +176,7 @@ export class PricingService {
         input.validFrom,
         input.validTo,
         actor.userId ?? null,
+        input.freeMinutes ?? 0,
       ],
     );
     const rule = await this.getRule(inserted.rows[0]!.id);
@@ -199,7 +203,7 @@ export class PricingService {
       `UPDATE pricing_rules SET name=$2, station_id=$3, days_of_week=$4, start_time=$5, end_time=$6,
          rate_cents_per_hour=$7, billing_increment_minutes=$8, minimum_charge_cents=$9, minimum_minutes=$10,
          rounding_mode=$11, rounding_increment_cents=$12, is_happy_hour=$13, priority=$14, is_active=$15,
-         valid_from=$16, valid_to=$17
+         valid_from=$16, valid_to=$17, free_minutes=$18
        WHERE id = $1`,
       [
         id,
@@ -219,6 +223,7 @@ export class PricingService {
         next.isActive,
         next.validFrom,
         next.validTo,
+        next.freeMinutes ?? 0,
       ],
     );
     await recordAudit(this.pool, actor, {

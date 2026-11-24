@@ -1,6 +1,6 @@
 [package]
 name = "likapcs-client"
-version = "0.33.4"
+version = "0.41.1"
 description = "LIKApcs-Client — lock screen, session timer and remote control agent for gaming PCs"
 authors = ["LIKApcs"]
 edition = "2021"
@@ -11,10 +11,19 @@ name = "likapcs_client_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# 0.35.4: the window layer is kept at fixed versions. The repository has no Cargo.lock, so every
+# build took the newest Tauri, tao and wry of that day: a new one could change how a window
+# behaves next to a game without a line of this crate changing. These are the versions 0.35.3 was
+# built with (2026-11-15). Raise them on purpose, together, and try the result on a gaming PC.
+tauri = { version = "=2.12.5", features = ["tray-icon"] }
+tauri-runtime = { version = "=2.12.2", default-features = false }
+tauri-runtime-wry = { version = "=2.12.3", default-features = false }
+tauri-utils = { version = "=2.10.2", default-features = false }
+tao = { version = "=0.37.2", default-features = false }
+wry = { version = "=0.57.2", default-features = false }
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"

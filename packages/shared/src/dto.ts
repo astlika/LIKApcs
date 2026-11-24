@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import type { WakeIssue } from './wake.js';
+import {
+  ACCESS_CODE_MAX_LENGTH,
+  ACCESS_CODE_PATTERN,
+  ACCESS_CODES_MAX_PER_LOAD,
+} from './access-codes.js';
 import { ALL_ROLE_CODES } from './permissions.js';
 import type { StationLook } from './client-look.js';
 import type {
@@ -441,6 +446,10 @@ export interface ActiveSessionSummary {
   elapsedSeconds: number;
   remainingSeconds: number | null;
   currentPriceCents: number;
+  /** 0.36.0: the registered customer of the session (null: a typed name or nobody). */
+  customerId: string | null;
+  /** 0.36.0: time still to pay right now (see `SessionSummary.dueCents`); products come on top. */
+  dueCents: number;
 }
 
 export const registerDeviceSchema = z.object({
@@ -614,6 +623,8 @@ export const pricingRuleSchema = z
     billingIncrementMinutes: z.number().int().min(1).max(120).default(1),
     minimumChargeCents: z.number().int().min(0).max(1_000_000).default(0),
     minimumMinutes: z.number().int().min(0).max(600).default(0),
+    /** 0.36.0: a session no longer than this is free; past it the whole time is charged (0 = off). */
+    freeMinutes: z.number().int().min(0).max(60).default(0),
     roundingMode: z.enum(['up', 'down', 'nearest']).default('up'),
     roundingIncrementCents: z.number().int().min(1).max(1000).default(1),
     isHappyHour: z.boolean().default(false),
@@ -642,6 +653,7 @@ export interface PricingRuleSummary {
   billingIncrementMinutes: number;
   minimumChargeCents: number;
   minimumMinutes: number;
+  freeMinutes: number;
   roundingMode: 'up' | 'down' | 'nearest';
   roundingIncrementCents: number;
   isHappyHour: boolean;
@@ -789,12 +801,141 @@ export const extendSessionSchema = z
     requestId: z.string().uuid().optional(),
     /** 0.19.0: extend with minutes from a time credit sold for this PC (minutes only). */
     creditId: z.string().uuid().optional(),
+    /**
+     * 0.36.0: a paid session takes the minutes now and pays them at the end — nothing is taken
+     * here, the amount joins the PC's bill (`SessionSummary.dueCents`) and waits at the desk when
+     * the session ends. A pay-at-the-end session always works like this.
+     */
+    later: z.boolean().optional(),
+    /**
+     * 0.36.0: the registered customer of this session, set or changed here (pay later and the
+     * balance need one). The session keeps it.
+     */
+    customerId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
     path: ['minutes'],
   });
 export type ExtendSessionRequest = z.infer<typeof extendSessionSchema>;
+
+/**
+ * 0.36.0: set, change or clear who sits at a session — the registered customer (`customerId`) or
+ * a name typed by hand (`customerName`). Both null clears it. For a running session and for an
+ * ended one whose bill still waits. The products on its bill follow the customer.
+ */
+export const sessionCustomerSchema = z
+  .object({
+    customerId: z.string().uuid().nullable(),
+    customerName: z.string().trim().max(80).nullable().optional(),
+  })
+  .refine((c) => !(c.customerId && c.customerName), {
+    message: 'either a registered customer or a typed name',
+    path: ['customerName'],
+  });
+export type SessionCustomerRequest = z.infer<typeof sessionCustomerSchema>;
+
+/**
+ * 0.36.0 — payment for one or several PCs on ONE receipt, at any time: while the sessions run or
+ * after they ended. Each PC pays what it owes right now — time that is not paid yet and the
+ * products on its bill.
+ *
+ * - A paid (prepaid) session: the minutes added "to pay at the end", and its products. It runs on.
+ * - A pay-at-the-end session that runs: the whole reserved amount; from then on it is a paid
+ *   session and runs until its time is up.
+ * - An open-time session that runs: with `stopOpen` (the default) it is stopped and billed in
+ *   full; without, the time so far is paid and the session runs on — the rest is owed later.
+ * - An ended session whose bill waits: the bill.
+ *
+ * A session with nothing to pay is left out (see `skipped`); when nothing at all is owed the
+ * request is refused (409 `nothing_due`).
+ */
+export const paySessionsSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+  stopOpen: z.boolean().default(true),
+  /** Who pays (pay later and the balance need a registered customer). Goes on the receipt. */
+  customerId: z.string().uuid().nullable().default(null),
+  /** Comes off the time of the bill (`pos.discount`); spread over the PCs by their share. */
+  discountCents: z.number().int().min(0).max(1_000_000).default(0),
+  ...sessionTenders,
+  /**
+   * The `asOf` of the quote the desk showed (`POST /sessions/pay/quote`): running time is priced
+   * at that instant, so the amount shown is the amount billed while the money is counted. The
+   * server bounds it (never the future, never more than `SESSION_STOP_CLOCK_GRACE_SECONDS` back).
+   */
+  asOf: z.string().datetime().optional(),
+  /** Idempotency key: a retried request never takes the money twice. */
+  clientRequestId: z.string().min(8).max(64).optional(),
+});
+export type PaySessionsRequest = z.infer<typeof paySessionsSchema>;
+
+/** `GET /sessions/open-bills?customerId=` — what a customer has on the PCs and has not paid. */
+export interface CustomerOpenBills {
+  customerId: string;
+  bills: {
+    session: SessionSummary;
+    /**
+     * The products on this bill, oldest first. Since 0.40.0 one row per time a product was put on
+     * the bill (the same drink taken twice is two rows), each with that moment in `addedAt`.
+     */
+    items: { name: string; quantityMilli: number; lineTotalCents: number; addedAt: string }[];
+  }[];
+  /** Time and products still to pay on these PCs. */
+  totalCents: number;
+}
+
+export const paySessionsQuoteSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+  stopOpen: z.boolean().default(true),
+});
+
+/** `POST /sessions/pay/quote` — the lines `pay` would put on the receipt right now. */
+export interface PaySessionsQuote {
+  /** Send this back as `asOf` with the payment. */
+  asOf: string;
+  bills: (PaySessionsBill & {
+    customerId: string | null;
+    customerName: string | null;
+    billingMode: BillingMode;
+    /**
+     * The products on this PC's bill, oldest first. `addedAt` (0.40.0) is the moment each one was
+     * put on the bill — added by the desk, or accepted by it when the customer sent it from the PC.
+     */
+    items: { name: string; quantityMilli: number; lineTotalCents: number; addedAt: string }[];
+  })[];
+  skipped: PaySessionsResponse['skipped'];
+  timeCents: number;
+  ordersCents: number;
+  totalCents: number;
+}
+
+/** One PC on the receipt of `POST /sessions/pay`. */
+export interface PaySessionsBill {
+  sessionId: string;
+  stationId: string;
+  stationCode: string;
+  stationName: string;
+  /** Time paid on this receipt, after this PC's share of the discount. */
+  timeCents: number;
+  discountCents: number;
+  ordersCents: number;
+  /** An open-time session that was stopped by this payment. */
+  stopped: boolean;
+  /** The session runs on after the payment. */
+  running: boolean;
+}
+
+export interface PaySessionsResponse {
+  /**
+   * The one receipt. null when nothing had to be paid: open-time sessions that owed nothing were
+   * stopped, and there is no receipt of 0.00.
+   */
+  payment: SessionPaymentSummary | null;
+  bills: PaySessionsBill[];
+  /** Sessions that owed nothing (or were cancelled) and are not on the receipt. */
+  skipped: { sessionId: string; reason: 'nothing_due' | 'cancelled' | 'not_found' }[];
+  totalCents: number;
+}
 
 /**
  * 0.20.11: take minutes off a running prepaid or pay-at-the-end session. No money moves: a prepaid
@@ -936,16 +1077,32 @@ export const bulkMinutesSchema = z
     reason: z.string().trim().max(200).optional(),
     /** Paid mode: how the batch is paid at the desk (cash / card / bank transfer / other). */
     paymentMethod: z.enum(PAYMENT_METHODS).default('cash'),
-    /** Paid mode: the tenders for the whole batch (see above). Takes precedence over paymentMethod. */
-    payments: z
-      .lazy(() =>
-        z.array(salePaymentInputSchema.extend({ method: z.enum(PAYMENT_METHODS) })).max(5),
-      )
-      .optional(),
+    /**
+     * Paid mode: the tenders for the whole batch (see above). Takes precedence over paymentMethod.
+     * 0.36.0: `credit` (pay later) and `wallet` are allowed with `customerId`.
+     */
+    payments: z.lazy(() => z.array(salePaymentInputSchema).max(5)).optional(),
+    /**
+     * 0.36.0: nothing is paid now — every paid session takes the minutes on its bill, to pay at
+     * the end (see `extendSessionSchema.later`).
+     */
+    later: z.boolean().default(false),
+    /** 0.36.0: who pays the batch (needed for pay later and the balance). The sessions keep their own customers. */
+    customerId: z.string().uuid().optional(),
   })
   .refine((e) => Boolean(e.packageId) !== Boolean(e.minutes), {
     message: 'either a package or a number of minutes',
     path: ['minutes'],
+  })
+  .refine(
+    (e) =>
+      Boolean(e.customerId) ||
+      !(e.payments ?? []).some((p) => p.method === 'credit' || p.method === 'wallet'),
+    { message: 'pay later and the balance need a customer', path: ['customerId'] },
+  )
+  .refine((e) => !(e.payments ?? []).some((p) => p.method === 'staff'), {
+    message: 'a staff purchase cannot pay PC time',
+    path: ['payments'],
   });
 export type BulkMinutesRequest = z.infer<typeof bulkMinutesSchema>;
 
@@ -953,7 +1110,10 @@ export interface BulkMinutesApplied {
   stationId: string;
   code: string;
   minutes: number;
+  /** Paid now for this PC. */
   priceCents: number;
+  /** 0.36.0: put on this PC's bill, to pay at the end. */
+  laterCents?: number;
 }
 export interface BulkMinutesSkipped {
   stationId: string;
@@ -1019,6 +1179,7 @@ export interface SessionQuoteResponse {
     minimumChargeCents: number;
     roundingMode: 'up' | 'down' | 'nearest';
     roundingIncrementCents: number;
+    freeMinutes?: number;
   };
 }
 
@@ -1068,6 +1229,20 @@ export interface SessionSummary {
   /** Accepted "on the bill" orders still open on this session: settled together with it (0.10.0). */
   openOrdersCents: number;
   openOrdersCount: number;
+  /**
+   * 0.36.0: time that is still to pay on this session right now (the products on the bill come on
+   * top: `openOrdersCents`). Paid session: the minutes added "to pay at the end". Pay at the end:
+   * the reserved amount while it runs, the amount fixed at the end afterwards. Open time: the
+   * running amount minus `advanceCents`. 0 once the bill is paid.
+   */
+  dueCents: number;
+  /** 0.36.0: open time only — what was already paid for the time while the session runs on. */
+  advanceCents: number;
+  /**
+   * 0.36.0: a paid session — how many of its last seconds were added "to pay at the end". With
+   * `dueCents` and `unpaidTimeDueCents` the desk shows what stopping it right now would cost.
+   */
+  unpaidSeconds: number;
   /**
    * End pay (0.14.0): the session has ended but the bill has not been collected yet — it sits in
    * the "awaiting payment" strip until `POST /sessions/:id/collect`. `finalPriceCents` is the
@@ -1232,6 +1407,13 @@ export const productBarcodeSchema = z.object({
 });
 export type ProductBarcodeInput = z.infer<typeof productBarcodeSchema>;
 
+/**
+ * 0.34.0: what a product is. `internet_access` is a Wi-Fi package whose stock is its unused access
+ * codes (see `internetAccessLoadSchema`); it is created with the codes, never with `POST /products`.
+ */
+export const PRODUCT_KINDS = ['standard', 'internet_access'] as const;
+export type ProductKind = (typeof PRODUCT_KINDS)[number];
+
 export const productSchema = z.object({
   name: z.string().trim().min(1).max(120),
   /** Empty → generated (`SKU-000001`). */
@@ -1281,6 +1463,8 @@ export interface ProductBarcodeSummary {
 export interface ProductSummary {
   id: string;
   name: string;
+  /** 0.34.0: `internet_access` for a Wi-Fi package (its stock is its unused codes). */
+  kind: ProductKind;
   sku: string;
   categoryId: string | null;
   categoryName: string | null;
@@ -1323,6 +1507,11 @@ export interface ProductSummary {
   variantCount: number;
   /** Server-relative URL of the product picture (`/api/v1/files/products/<file>`), or null. */
   imageUrl: string | null;
+  /**
+   * 0.37.0: a small copy of the picture (longest side `PRODUCT_THUMB_SIDE`) for tiles and lists,
+   * or null while none has been made. Missing from an older server: show `imageUrl` then.
+   */
+  imageThumbUrl?: string | null;
   barcodes: ProductBarcodeSummary[];
   /** 0.19.1: extras with their own price (see `productAddonsSchema`). */
   addons: ProductAddonSummary[];
@@ -1338,6 +1527,20 @@ export type ProductImageFromUrlInput = z.infer<typeof productImageFromUrlSchema>
 
 export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+/**
+ * 0.37.0: the small copy of a product picture. The till shows a picture 48 px wide; this size
+ * stays sharp on a dense screen and still decodes in a fraction of a millisecond.
+ */
+export const PRODUCT_THUMB_SIDE = 160;
+export const PRODUCT_THUMB_MAX_BYTES = 256 * 1024;
+
+/** 0.37.0: a product whose picture has no small copy yet (`GET /catalog/product-thumbs/missing`). */
+export interface ProductThumbMissing {
+  id: string;
+  /** The picture's file name — sent back with the small copy, so a replaced picture is noticed. */
+  image: string;
+  imageUrl: string;
+}
 
 /** 0.23.0: which wallpaper a bulk upload sets. The desktop one must be JPEG or PNG (Windows). */
 export const WALLPAPER_KINDS = ['lock', 'desktop'] as const;
@@ -1362,11 +1565,149 @@ export const productListQuerySchema = z.object({
   q: z.string().trim().max(80).optional(),
   categoryId: z.string().uuid().optional(),
   lowStock: z.coerce.boolean().optional(),
+  /** 0.34.0: only products of this kind (e.g. the internet access packages). */
+  kind: z.enum(PRODUCT_KINDS).optional(),
   active: z.enum(['all', 'active', 'inactive']).default('active'),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(50),
 });
 export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+// ─── 0.34.0: internet access (Wi-Fi codes sold as products) ──────────────────
+
+/** One code as it is stored: see `ACCESS_CODE_PATTERN`. */
+const accessCodeSchema = z.string().regex(ACCESS_CODE_PATTERN, 'access code');
+
+/** A new package: an ordinary product of the kind `internet_access`. */
+export const internetAccessPackageSchema = z.object({
+  /** What the till and the receipt show: "Internet 1h". */
+  name: z.string().trim().min(1).max(120),
+  sellingPriceCents: z.number().int().min(0).max(100_000_000),
+  categoryId: z.string().uuid().nullable().default(null),
+  /** The stock list marks the package "running low" from this many unused codes down. */
+  lowAtCodes: z.number().int().min(0).max(100_000).default(10),
+});
+export type InternetAccessPackageInput = z.infer<typeof internetAccessPackageSchema>;
+
+/**
+ * `POST /internet-access/load`: adds pasted codes to a package — an existing one (`productId`) or
+ * a new one (`package`), exactly one of the two. A code that already waits to be sold is always
+ * left out; a code that was sold before is left out unless `allowSoldBefore` says the hotspot
+ * system issued it again.
+ */
+export const internetAccessLoadSchema = z
+  .object({
+    productId: z.string().uuid().optional(),
+    package: internetAccessPackageSchema.optional(),
+    codes: z.array(accessCodeSchema).max(ACCESS_CODES_MAX_PER_LOAD),
+    allowSoldBefore: z.boolean().default(false),
+  })
+  .refine((v) => (v.productId === undefined) !== (v.package === undefined), {
+    message: 'Provide productId or package',
+    path: ['productId'],
+  })
+  .refine((v) => v.package !== undefined || v.codes.length > 0, {
+    message: 'Paste at least one code',
+    path: ['codes'],
+  });
+export type InternetAccessLoadRequest = z.infer<typeof internetAccessLoadSchema>;
+
+/** `POST /internet-access/check`: what a paste would do, without changing anything. */
+export const internetAccessCheckSchema = z.object({
+  codes: z.array(accessCodeSchema).min(1).max(ACCESS_CODES_MAX_PER_LOAD),
+});
+export type InternetAccessCheckRequest = z.infer<typeof internetAccessCheckSchema>;
+
+/** A pasted code that is already known to the system. */
+export interface InternetAccessKnownCode {
+  code: string;
+  productId: string;
+  productName: string;
+  /** When it was sold (the last time, if more than once); null while it waits to be sold. */
+  soldAt: string | null;
+}
+
+export interface InternetAccessCheckResult {
+  /** Codes the system has never seen. */
+  fresh: number;
+  /** Codes that already wait to be sold: they are never loaded twice. */
+  waiting: InternetAccessKnownCode[];
+  /** Codes that were sold before. */
+  soldBefore: InternetAccessKnownCode[];
+}
+
+export interface InternetAccessPackageSummary {
+  product: ProductSummary;
+  /** Unused codes: the same number as the product's stock. */
+  availableCodes: number;
+  soldCodes: number;
+  lastLoadedAt: string | null;
+  lastSoldAt: string | null;
+  /** 0.36.0: shown on the quick bar of the POS and of the Stations page (`GET` of the list only). */
+  inBar?: boolean;
+}
+
+export interface InternetAccessLoadResult extends InternetAccessCheckResult {
+  package: InternetAccessPackageSummary;
+  /** How many codes were added now (`fresh`, plus the sold-before ones when they were allowed). */
+  added: number;
+  /** The id of this load (null when nothing was added): `remove` takes it to undo the paste. */
+  batchId: string | null;
+  /** True when the package itself was created by this request. */
+  created: boolean;
+}
+
+export const INTERNET_ACCESS_CODE_STATUSES = ['available', 'sold'] as const;
+export type InternetAccessCodeStatus = (typeof INTERNET_ACCESS_CODE_STATUSES)[number];
+
+export const internetAccessCodesQuerySchema = z.object({
+  productId: z.string().uuid().optional(),
+  status: z.enum(INTERNET_ACCESS_CODE_STATUSES).optional(),
+  /** A code or a part of it (case matters, as in the codes themselves). */
+  q: z.string().trim().max(ACCESS_CODE_MAX_LENGTH).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).default(100),
+});
+export type InternetAccessCodesQuery = z.infer<typeof internetAccessCodesQuerySchema>;
+
+export interface InternetAccessCodeSummary {
+  id: number;
+  code: string;
+  status: InternetAccessCodeStatus;
+  productId: string;
+  productName: string;
+  batchId: string;
+  loadedAt: string;
+  loadedByName: string | null;
+  saleId: string | null;
+  receiptNo: string | null;
+  soldAt: string | null;
+  soldByName: string | null;
+}
+
+/**
+ * `POST /internet-access/remove`: takes unused codes out of a package (a wrong paste, codes the
+ * hotspot system no longer accepts). Exactly one of: the listed `ids`, a whole `batchId`, or
+ * `all` unused codes of the package. Sold codes are never removed.
+ */
+export const internetAccessRemoveSchema = z
+  .object({
+    productId: z.string().uuid(),
+    ids: z.array(z.number().int().min(1)).min(1).max(ACCESS_CODES_MAX_PER_LOAD).optional(),
+    batchId: z.string().uuid().optional(),
+    all: z.literal(true).optional(),
+    reason: z.string().trim().min(2).max(200),
+  })
+  .refine((v) => [v.ids, v.batchId, v.all].filter((x) => x !== undefined).length === 1, {
+    message: 'Provide ids, batchId or all',
+    path: ['ids'],
+  });
+export type InternetAccessRemoveRequest = z.infer<typeof internetAccessRemoveSchema>;
+
+export interface InternetAccessRemoveResult {
+  removed: number;
+  package: InternetAccessPackageSummary;
+}
 
 /** Result of scanning/typing a code at the POS. */
 export interface ProductLookupResponse {
@@ -1516,14 +1857,32 @@ export const timeSaleItemSchema = z.object({
   discountCents: z.number().int().min(0).max(100_000_000).default(0),
 });
 
+/**
+ * 0.36.0: an offer sold at the till — "Coca-Cola + 60 min" at one price (see `offers.ts`). The
+ * server puts the offer's products and its PC time on the sale as lines of their own (stock, tax
+ * and the time credit work as for any line) and shares the offer's price among them.
+ * With PC time: `stationId` is the PC that gets the minutes — it starts, or its running session
+ * gets them, as soon as the sale is paid. Without a PC and with a `holderName` the minutes belong
+ * to that name and a PIN starts them at any PC, as with `timeSaleItemSchema`.
+ * 0.36.1: with neither (the till sells an offer with one click) the minutes wait at the desk as
+ * paid time for any PC — no PIN — and are given when a PC is started or gets more time.
+ */
+export const offerSaleItemSchema = z.object({
+  offerId: z.string().uuid(),
+  stationId: z.string().uuid().optional(),
+  holderName: z.string().trim().min(1).max(80).optional(),
+});
+
 export const saleItemInputSchema = z.union([
   productSaleItemSchema,
   freeSaleItemSchema,
   timeSaleItemSchema,
+  offerSaleItemSchema,
 ]);
 export type ProductSaleItemInput = z.infer<typeof productSaleItemSchema>;
 export type FreeSaleItemInput = z.infer<typeof freeSaleItemSchema>;
 export type TimeSaleItemInput = z.infer<typeof timeSaleItemSchema>;
+export type OfferSaleItemInput = z.infer<typeof offerSaleItemSchema>;
 export type SaleItemInput = z.infer<typeof saleItemInputSchema>;
 
 /** 0.19.0: an open prepaid-time credit at a PC (see `GET /time-credits`). */
@@ -1533,6 +1892,11 @@ export interface TimeCreditSummary {
   stationId: string | null;
   stationCode: string | null;
   holderName: string | null;
+  /**
+   * 0.36.1: the offer these minutes were sold with ("Coca-Cola + 60 min"), so the desk knows
+   * them when a PC is started; null for PC time sold on its own.
+   */
+  offerName?: string | null;
   minutesTotal: number;
   minutesRemaining: number;
   saleId: string;
@@ -1610,6 +1974,12 @@ export const createSaleSchema = z.object({
    */
   staff: z.boolean().default(false),
   payments: z.array(salePaymentInputSchema).max(10),
+  /**
+   * 0.34.0: this till shows the internet access codes of the sale it just made (`items[].accessCodes`).
+   * A sale with an internet access product is refused without it, so a program that cannot show a
+   * code never takes one out of the stock.
+   */
+  accessCodes: z.boolean().default(false),
 });
 export type CreateSaleRequest = z.infer<typeof createSaleSchema>;
 
@@ -1709,6 +2079,44 @@ export interface SaleItemSummary {
   refundedMilli: number;
   /** 0.19.1: the extras chosen on a product line (ids of the product's extras at the time). */
   addonIds: string[];
+  /**
+   * 0.34.0: the internet access codes handed out on this line, one per unit sold, in the order
+   * they were taken. Empty on every other line. They stay with the sale: a reprint shows them again.
+   */
+  accessCodes: string[];
+  /**
+   * 0.36.0: the offer this line was sold in. The lines of one offer share `group` (1, 2, … within
+   * the sale) and together cost the offer's price; a receipt shows them as one row
+   * (`receiptRows`). `id` is null once the offer itself was deleted — the name stays.
+   */
+  offer?: SaleItemOffer | null;
+  /**
+   * 0.40.0: when this product was put on a PC's bill (added by the desk, or accepted by it when
+   * the customer sent it from the PC). The bill is paid later, so the time of the sale is not the
+   * time of the product. Null / absent on every other line — PC time, and products sold at the
+   * till, where the time of the sale is the time of the product.
+   */
+  addedAt?: string | null;
+}
+
+export interface SaleItemOffer {
+  id: string | null;
+  name: string;
+  group: number;
+}
+
+/**
+ * 0.36.0: what happened to the PC minutes of an offer right after the sale was paid.
+ * `started`: the PC was free and runs with the minutes · `extended`: the running session got them
+ * · `kept`: the minutes stay paid for that PC (the desk starts them at Stations) — `reason` says
+ * why they could not be given at once.
+ */
+export interface OfferStartResult {
+  stationId: string;
+  stationCode: string;
+  minutes: number;
+  result: 'started' | 'extended' | 'kept';
+  reason: string | null;
 }
 
 export interface SalePaymentSummary {
@@ -1764,6 +2172,8 @@ export interface SaleSummary {
 export interface SaleDetail extends SaleSummary {
   /** Only on the response that completed a sale with prepaid PC time: the PINs to print (0.20.8). */
   claimPins?: ClaimPin[];
+  /** Only on the response that completed a sale with an offer for a PC (0.36.0). */
+  offerStarts?: OfferStartResult[];
   items: SaleItemSummary[];
   payments: SalePaymentSummary[];
   refunds: RefundSummary[];
@@ -1905,6 +2315,18 @@ export interface CashStatusResponse {
   current: CashShiftDetail | null;
   requireOpenShift: boolean;
   /** Closing differences above this (absolute, cents) are flagged in the UI and audit log. */
+  differenceWarningCents: number;
+}
+
+/**
+ * 0.37.0: `GET /cash/status?brief=true` — whether a shift is open, without its totals and its
+ * list of movements. What the top bar asks every half minute (the full answer carries every
+ * movement of the shift, which is hundreds of kB on a busy day).
+ */
+export interface CashStatusBrief {
+  registers: CashRegisterSummary[];
+  current: CashShiftSummary | null;
+  requireOpenShift: boolean;
   differenceWarningCents: number;
 }
 
@@ -2293,6 +2715,12 @@ export interface StationOrder {
   settledAt: string | null;
   /** When the desk finished preparing it (scan / manual check, 0.13.0); null = not yet. */
   preparedAt: string | null;
+  /**
+   * How it came to be (0.40.0): true = the customer sent it from the PC, false = the desk put the
+   * products on the PC's bill. Together with `decidedAt` (the moment the desk accepted or added
+   * it) this answers "when, and how, did this product come onto the bill".
+   */
+  fromDevice: boolean;
 }
 
 /** `GET /client/menu` (device token): what the customer at this PC can order right now. */
@@ -2675,6 +3103,150 @@ export const reportExportQuerySchema = reportRangeSchema.extend({
   kind: z.enum(REPORT_EXPORT_KINDS),
 });
 
+// ─── Data file for an AI (0.39.0) ────────────────────────────────────────────
+
+/**
+ * «Skedar për AI»: every figure of the business in one JSON file and/or one text file, to hand
+ * to an AI and ask it questions. On top the summaries the reports show (so nothing has to be
+ * added up from thousands of rows), then every sale, PC session, drawer movement, expense, stock
+ * movement … of the period, then the lists as they are now (products, customers, staff, prices).
+ * Passwords, keys, internet access codes, pictures and network details are never in it.
+ */
+export const DATA_EXPORT_FORMATS = ['json', 'txt'] as const;
+export type DataExportFormat = (typeof DATA_EXPORT_FORMATS)[number];
+
+/** Parts the owner can leave out to make the file smaller. The summary is always there. */
+export const DATA_EXPORT_PARTS = [
+  'sales',
+  'gaming',
+  'cash',
+  'stock',
+  'purchases',
+  'customers',
+  'lists',
+  'audit',
+] as const;
+export type DataExportPart = (typeof DATA_EXPORT_PARTS)[number];
+/** What a file holds when nothing is chosen: everything but the action log (large, technical). */
+export const DATA_EXPORT_DEFAULT_PARTS: readonly DataExportPart[] = DATA_EXPORT_PARTS.filter(
+  (part) => part !== 'audit',
+);
+
+/** Language of the labels and explanations inside the file. */
+export const DATA_EXPORT_LANGUAGES = ['sq', 'en'] as const;
+export type DataExportLanguage = (typeof DATA_EXPORT_LANGUAGES)[number];
+
+export const dataExportSchema = z
+  .object({
+    /** Both ends inclusive, business time zone. Leave both out for the whole history. */
+    from: isoDate.optional(),
+    to: isoDate.optional(),
+    formats: z.array(z.enum(DATA_EXPORT_FORMATS)).min(1).max(DATA_EXPORT_FORMATS.length),
+    parts: z.array(z.enum(DATA_EXPORT_PARTS)).max(DATA_EXPORT_PARTS.length).optional(),
+    /** Customers appear by their code only: no names, phones, e-mails or notes. */
+    hideCustomers: z.boolean().default(false),
+    language: z.enum(DATA_EXPORT_LANGUAGES).default('sq'),
+  })
+  .refine((v) => (v.from === undefined) === (v.to === undefined), {
+    message: 'Give both "from" and "to", or neither for the whole history',
+    path: ['from'],
+  })
+  .refine((v) => !v.from || !v.to || v.from <= v.to, {
+    message: '"from" must not be after "to"',
+    path: ['from'],
+  });
+export type DataExportRequest = z.infer<typeof dataExportSchema>;
+
+/** Every table of rows the file can hold; `DataExportResult.counts` says how many rows each got. */
+export const DATA_EXPORT_SECTIONS = [
+  'sales',
+  'refunds',
+  'sessions',
+  'timeCredits',
+  'reservations',
+  'orders',
+  'shifts',
+  'cashMovements',
+  'expenses',
+  'stockMovements',
+  'stockCounts',
+  'purchases',
+  'staffPurchases',
+  'debts',
+  'customerLedger',
+  'invoices',
+  'products',
+  'offers',
+  'pricing',
+  'packages',
+  'stations',
+  'customers',
+  'suppliers',
+  'users',
+  'audit',
+] as const;
+export type DataExportSection = (typeof DATA_EXPORT_SECTIONS)[number];
+
+export const DATA_EXPORT_PHASES = [
+  'starting',
+  'counting',
+  'summary',
+  ...DATA_EXPORT_SECTIONS,
+  'finishing',
+] as const;
+export type DataExportPhase = (typeof DATA_EXPORT_PHASES)[number];
+
+export interface DataExportFile {
+  format: DataExportFormat;
+  fileName: string;
+  sizeBytes: number;
+  /** Lower-case hex; a saved copy is compared with it. */
+  sha256: string;
+}
+
+export interface DataExportResult {
+  id: string;
+  /** The days the file covers (for the whole history: the first day with any data, and today). */
+  from: string;
+  to: string;
+  wholeHistory: boolean;
+  parts: DataExportPart[];
+  hideCustomers: boolean;
+  language: DataExportLanguage;
+  /** Rows written per table; a table that was left out is not listed. */
+  counts: Partial<Record<DataExportSection, number>>;
+  totalRows: number;
+  files: DataExportFile[];
+  createdAt: string;
+  /** The server deletes its copy of the files at this instant. */
+  expiresAt: string;
+}
+
+export interface DataExportJobStatus {
+  id: string;
+  state: 'running' | 'succeeded' | 'failed';
+  /** 0–100; never goes backwards. 100 only when `state` is `succeeded`. */
+  percent: number;
+  phase: DataExportPhase;
+  /** Rows written so far out of the rows to write; null while they are being counted. */
+  current: number | null;
+  total: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: { code: string; message: string } | null;
+  result: DataExportResult | null;
+}
+
+export interface DataExportJobStarted {
+  jobId: string;
+}
+
+/** A short-lived key that lets a plain link download one file (a link cannot send the sign-in). */
+export interface DataExportTicket {
+  ticket: string;
+  expiresAt: string;
+}
+
 // ─── Phase 7: suppliers & purchases ──────────────────────────────────────────
 
 export const PURCHASE_STATUSES = [
@@ -2882,6 +3454,19 @@ export const BACKUP_FORMAT = 'likapcs-backup';
 export const BACKUP_FORMAT_VERSION = 1;
 export const BACKUP_FILE_EXTENSION = '.likapcs-backup.tar.gz';
 
+/**
+ * 0.41.0 — the same backup written as ONE JSON document instead of a packed archive: every table
+ * row by row and every uploaded file as base64. Larger than the archive, but it is plain text
+ * that any program can open, and a restore reads it without unpacking an archive. Both kinds are
+ * restored by the same steps and hold exactly the same data.
+ */
+export const BACKUP_JSON_FORMAT = 'likapcs-backup-json';
+export const BACKUP_JSON_FORMAT_VERSION = 1;
+export const BACKUP_JSON_FILE_EXTENSION = '.likapcs-backup.json';
+/** How «Backup file» writes the file: the packed archive (`.tar.gz`) or the JSON document. */
+export const BACKUP_FILE_FORMATS = ['archive', 'json'] as const;
+export type BackupFileFormat = (typeof BACKUP_FILE_FORMATS)[number];
+
 export interface BackupManifest {
   format: typeof BACKUP_FORMAT;
   formatVersion: number;
@@ -2890,12 +3475,37 @@ export interface BackupManifest {
   schemaVersion: number;
   businessName: string | null;
   kind: BackupKind;
-  tables: { name: string; rows: number; bytes: number }[];
+  /** `sha256` (0.38.0): checksum of the table's CSV, so a restore can prove the table is whole. */
+  tables: { name: string; rows: number; bytes: number; sha256?: string }[];
   /**
    * Uploaded files in the archive's `uploads/` folder (product pictures, wallpapers, ad videos).
    * Absent or null in archives taken before this was added.
    */
   uploads?: { files: number; bytes: number } | null;
+  /**
+   * 0.38.0: every uploaded file with its size and checksum (path relative to `uploads/`, with
+   * forward slashes). A backup is read back against this list before it counts as written, and a
+   * restore checks it before anything is changed. Absent in older archives.
+   */
+  files?: { path: string; bytes: number; sha256: string }[];
+  /**
+   * 0.38.0: the installation the archive was taken on. A restore makes this server that
+   * installation, so the gaming PCs that were paired with it connect again by themselves.
+   */
+  installationId?: string | null;
+}
+
+/** What an archive holds, in the numbers shown to the owner (0.38.0). */
+export interface BackupContents {
+  createdAt: string;
+  serverVersion: string;
+  schemaVersion: number;
+  businessName: string | null;
+  tables: number;
+  rows: number;
+  /** Uploaded files (pictures, wallpapers, videos, voice clips) and their total size. */
+  files: number;
+  fileBytes: number;
 }
 
 export interface BackupSummary {
@@ -2915,6 +3525,8 @@ export interface BackupSummary {
   createdByName: string | null;
   /** 0.26.0: the file is encrypted with the backup password (needed to open it on another PC). */
   encrypted: boolean;
+  /** 0.41.0: how the file is written, told from its name: the packed archive or the JSON document. */
+  format: BackupFileFormat;
   /** 0.26.0: the copy to the external disk (null when no external folder is set). */
   externalCopy: BackupExternalCopy | null;
 }
@@ -3003,6 +3615,111 @@ export interface RestoreResult {
   durationMs: number;
   /** True when the caller's session survived (its user exists in the restored data). */
   sessionKept: boolean;
+  /** 0.38.0: uploaded files (pictures, wallpapers, videos) put back, and their total size. */
+  filesRestored: number;
+  fileBytesRestored: number;
+  /**
+   * 0.38.0: true when every table and every file was checked against the list inside the archive
+   * (row counts and checksums). False for an archive made before 0.38.0, which has no such list:
+   * it is restored the same way, only the proof is weaker (row counts and the number of files).
+   */
+  verified: boolean;
+  /** 0.38.0: the LIKApcs version and schema the archive was made with. */
+  archiveVersion: string;
+  archiveSchemaVersion: number;
+  /** 0.38.0: true when the archive was older than this server and was brought up to it first. */
+  upgraded: boolean;
+  /** 0.38.0: true when this server took over the identity of the installation in the archive. */
+  identityAdopted: boolean;
+}
+
+// ─── Backup file with progress (0.38.0) ──────────────────────────────────────
+
+/** The steps of a long backup or restore, in the order they are shown to the owner. */
+export const BACKUP_JOB_PHASES = [
+  'starting',
+  // making a backup
+  'database',
+  'files',
+  'packing',
+  'verifying',
+  'encrypting',
+  'finishing',
+  // restoring one
+  'checking',
+  'decrypting',
+  'unpacking',
+  'upgrading',
+  'safety_copy',
+  'restoring_database',
+  'checking_references',
+  'restoring_files',
+] as const;
+export type BackupJobPhase = (typeof BACKUP_JOB_PHASES)[number];
+
+/** Result of «Backup file»: the archive, what it holds, and whether it was read back whole. */
+export interface BackupFileResult {
+  backup: BackupSummary;
+  contents: BackupContents;
+  /** True once the finished archive was read back and every table and file matched. */
+  verified: boolean;
+  /** Folder on the main PC where the archive is kept as well. */
+  directory: string;
+}
+
+/**
+ * A long backup or restore running on the server. Read with `GET /backups/jobs/:id`, which needs
+ * no sign-in (the id is the key) and never touches the database, so it answers while a restore
+ * holds every table.
+ */
+export interface BackupJobStatus {
+  id: string;
+  kind: 'backup' | 'restore';
+  state: 'running' | 'succeeded' | 'failed';
+  /** 0–100; never goes backwards. 100 only when `state` is `succeeded`. */
+  percent: number;
+  phase: BackupJobPhase;
+  /** Position inside the phase (table 12 of 71, file 120 of 243); null when it is not counted. */
+  current: number | null;
+  total: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: { code: string; message: string } | null;
+  backup: BackupFileResult | null;
+  restore: RestoreResult | null;
+}
+
+export interface BackupJobStarted {
+  jobId: string;
+}
+
+/**
+ * «Backup file»: an optional password of its own for this one file, and (0.41.0) how the file is
+ * written. Without `format` the packed archive is made, as before.
+ */
+export const backupFileSchema = z.object({
+  password: z.string().min(4).max(200).optional(),
+  format: z.enum(BACKUP_FILE_FORMATS).default('archive'),
+});
+export type BackupFileRequest = z.infer<typeof backupFileSchema>;
+
+/** Restore on a fresh installation (no user yet): the uploaded archive and, if it has one, its password. */
+export const freshRestoreSchema = z.object({
+  backupId: z.string().uuid(),
+  archivePassword: z.string().min(1).max(200).optional(),
+});
+export type FreshRestoreRequest = z.infer<typeof freshRestoreSchema>;
+
+/** An archive that was just uploaded: its row in the list and what it holds. */
+export interface BackupUploadResult {
+  backup: BackupSummary;
+  contents: BackupContents;
+}
+
+/** A short-lived key that lets a plain link download one archive (a link cannot send the sign-in). */
+export interface BackupDownloadTicket {
+  ticket: string;
+  expiresAt: string;
 }
 
 export const backupUploadQuerySchema = z.object({

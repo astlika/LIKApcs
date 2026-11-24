@@ -98,10 +98,34 @@ struct WidgetState {
     layout: Mutex<WidgetLayout>,
     /// True while the window is in `overlay` mode (so a layout change re-applies at once).
     overlay: AtomicBool,
-    /// 0.19.7: owner setting `client.widget_hide_in_games` (default on).
+    /// 0.19.7: owner setting `client.widget_hide_in_games`. On until the server says otherwise.
+    /// Off: the widget stays on the screen during a game (see `widget_watch_tick`).
     hide_in_games: AtomicBool,
     /// 0.19.7: the widget is hidden right now because a fullscreen game is in front.
     hidden_for_game: AtomicBool,
+    /// 0.35.4: the same fullscreen program has held the same screen for `SETTLED_LOOKS` and the
+    /// widget has been put in its corner of that screen. From then on a widget that is still
+    /// outside the screen is a fault the desk is told about (`widget_check`).
+    settled_in_game: AtomicBool,
+    /// 0.35.2: the lock window as it was last found not covering its screen (one log line per
+    /// case, see `lock_cover_tick`).
+    lock_repaired: Mutex<Option<(i32, i32, u32, u32)>>,
+}
+
+/// 0.35.0: a screen as (x, y, width, height, scale × 1000), as the lock screen has to cover it.
+type ScreenShape = (i32, i32, u32, u32, u32);
+
+fn screen_shape(window: &WebviewWindow) -> Option<ScreenShape> {
+    let monitor = window.current_monitor().ok().flatten()?;
+    let size = monitor.size();
+    let position = monitor.position();
+    Some((
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        (monitor.scale_factor() * 1000.0).round() as u32,
+    ))
 }
 
 /// Screen position (physical pixels) of the last left click on the tray icon; the settings
@@ -428,40 +452,273 @@ fn show_widget(window: &WebviewWindow) {
     }
 }
 
-/// 0.19.7: whether a fullscreen game is in front (the same check as the widget report).
-#[cfg(windows)]
-fn game_in_front(app: &AppHandle) -> bool {
-    let Some(window) = app.get_webview_window("main") else {
-        return false;
-    };
-    diag::exclusive_fullscreen_foreground(&window).is_some()
+/// 0.35.4: what is in front of the widget at one look of the watch thread.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Front {
+    /// No program in fullscreen: the desktop, or ordinary windows.
+    Desk,
+    /// A program in fullscreen (its window handle).
+    Game(isize),
 }
 
-#[cfg(not(windows))]
-fn game_in_front(_app: &AppHandle) -> bool {
-    false
+/// A screen as Windows gives it: left, top, right, bottom.
+type ScreenRect = (i32, i32, i32, i32);
+
+/// 0.35.3: what the watch thread remembers from one look to the next.
+#[derive(Default)]
+struct GameWatch {
+    /// What was in front at the last look, and the screen it was on. `None` while the PC does
+    /// not show the widget and while Alt+Tab is up.
+    scene: Option<(Front, Option<ScreenRect>)>,
+    /// Looks in a row that found the same scene.
+    steady: u32,
+    /// The widget's own window handle (0 = not asked yet); asked on the desktop.
+    own: isize,
 }
 
-/// 0.19.7: hides the countdown widget while a fullscreen game is in front, and shows it again
-/// afterwards (owner setting `client.widget_hide_in_games`, default on). Only hides or shows the
-/// window and never takes focus, so the game keeps its focus and the cursor stays hidden.
-fn widget_watch_tick(app: &AppHandle) {
+/// The watch thread looks four times a second.
+const WATCH_MS: u64 = 250;
+/// Looks in a row without a fullscreen program in front (two seconds) before the widget is
+/// touched again.
+const CALM_LOOKS: u32 = 8;
+/// 0.35.4: looks in a row with the same fullscreen program on the same screen (eight seconds)
+/// before the widget is put in its corner of that screen.
+const SETTLED_LOOKS: u32 = 32;
+
+/// What `widget_to_corner` did.
+enum Corner {
+    /// The widget was in its corner already: no window call was made.
+    Kept,
+    /// Moved, from and to (physical pixels).
+    Moved((i32, i32), (i32, i32)),
+    /// The window is minimized: it has no place to set, and bringing it back would take the
+    /// focus from the game. Nothing was done (on the desktop the 15-second check restores it).
+    Minimized,
+    /// The screen or the window could not be read: nothing was done.
+    Unknown,
+}
+
+/// Four times a second while the PC runs: keeps the countdown widget right while a game (any
+/// program in fullscreen) is in front, without costing the game its screen.
+///
+/// What is known from the owners' PCs (CS2 and CS 1.6, from 640×480 up to 4K):
+/// - Up to 0.34.0 nothing touched the widget at the moment a game took the screen. With "Fshih
+///   gjatë lojës" off it stayed on the game; where the game's smaller screen left it outside,
+///   the 15-second check moved it in some seconds later. Games ran and the minutes were seen.
+/// - 0.35.0–0.35.2 moved the widget within a second of the game changing the resolution (0.35.1
+///   also raised it over the game every second): games minimized as soon as they were entered.
+/// - 0.35.3 made no window call at all during a game: games ran, but in a game with a smaller
+///   resolution the widget stayed outside the screen and the minutes were not seen.
+///
+/// The rule since 0.35.4:
+/// - "Fshih gjatë lojës" on: the widget is hidden once when a fullscreen program comes to the
+///   front and is not touched until it leaves (as in 0.35.3).
+/// - Off: the widget stays, and it is **not touched while the screen or the program in front
+///   is changing**. Only when the same fullscreen program has held the same screen for
+///   `SETTLED_LOOKS` (eight seconds) is the widget looked at, once, and moved into its corner of
+///   that screen when it is not there: one move — nothing is shown, raised, resized or focused.
+/// - Two seconds after no fullscreen program is in front, a widget that was hidden is shown
+///   again; after eight seconds on the same screen it is put in its corner of the desktop again
+///   (when it is not there). A customer who leaves the game for a moment and comes back finds
+///   the widget where it was: it is not moved to and fro.
+///
+/// So the widget is never moved within eight seconds of a change of the screen or of the
+/// fullscreen program in front. Do not add window calls that can run sooner. The looks
+/// themselves ask Windows only (no call into the window's own thread).
+fn widget_watch_tick(app: &AppHandle, watch: &mut GameWatch) {
     let state = app.state::<WidgetState>();
-    let overlay = state.overlay.load(Ordering::SeqCst);
-    let hidden = state.hidden_for_game.load(Ordering::SeqCst);
-    let want_hidden =
-        overlay && state.hide_in_games.load(Ordering::SeqCst) && game_in_front(app);
-    if want_hidden == hidden {
+    if !state.overlay.load(Ordering::SeqCst) {
+        // The lock screen and the settings panel show the window themselves.
+        state.hidden_for_game.store(false, Ordering::SeqCst);
+        state.settled_in_game.store(false, Ordering::SeqCst);
+        watch.scene = None;
+        watch.steady = 0;
+        return;
+    }
+    let game = diag::fullscreen_foreground();
+    let scene = match &game {
+        Some((handle, title)) => {
+            if state.hide_in_games.load(Ordering::SeqCst)
+                && !state.hidden_for_game.load(Ordering::SeqCst)
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    state.hidden_for_game.store(true, Ordering::SeqCst);
+                    let _ = window.hide();
+                    append_crash_log(&format!(
+                        "widget: {title} holds the screen — hidden until it leaves"
+                    ));
+                }
+            }
+            (Front::Game(*handle), diag::screen_of(*handle))
+        }
+        None if diag::task_switcher_in_front() => {
+            // Alt+Tab is up: neither a game nor the desktop yet. Wait for what comes next.
+            state.settled_in_game.store(false, Ordering::SeqCst);
+            watch.scene = None;
+            watch.steady = 0;
+            return;
+        }
+        None => (Front::Desk, diag::screen_of(watch.own)),
+    };
+    if watch.scene != Some(scene) {
+        // Another program in front, or another resolution: the count starts again.
+        state.settled_in_game.store(false, Ordering::SeqCst);
+        watch.scene = Some(scene);
+        watch.steady = 0;
+        return;
+    }
+    watch.steady = watch.steady.saturating_add(1);
+    let title = game.map(|(_, title)| title);
+
+    if title.is_none() && watch.steady >= CALM_LOOKS {
+        // No fullscreen program has been in front for two seconds: a widget that was hidden for
+        // the game is shown again.
+        if watch.own == 0 || state.hidden_for_game.load(Ordering::SeqCst) {
+            if let Some(window) = app.get_webview_window("main") {
+                if watch.own == 0 {
+                    watch.own = diag::handle_of(&window);
+                }
+                if state.hidden_for_game.swap(false, Ordering::SeqCst) {
+                    let _ = window.show();
+                    append_crash_log("widget: nothing in fullscreen any more — shown again");
+                }
+            }
+        }
+    }
+
+    // The one look at the widget's place: at the look that ends eight seconds with the same
+    // program in front (or none) on the same screen. A hidden widget has no place to mind.
+    if watch.steady != SETTLED_LOOKS || state.hidden_for_game.load(Ordering::SeqCst) {
         return;
     }
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    state.hidden_for_game.store(want_hidden, Ordering::SeqCst);
-    if want_hidden {
-        let _ = window.hide();
-    } else if overlay {
-        let _ = window.show();
+    let screen = match scene.1 {
+        Some((left, top, right, bottom)) => format!("{}x{}", right - left, bottom - top),
+        None => "unknown".to_string(),
+    };
+    let done = widget_to_corner(&window, &state);
+    let words = match &done {
+        Corner::Moved((from_x, from_y), (to_x, to_y)) => {
+            format!("moved from {from_x},{from_y} into its corner at {to_x},{to_y}")
+        }
+        Corner::Kept => "the widget is in its corner".to_string(),
+        Corner::Minimized => "the widget is minimized and was left so".to_string(),
+        Corner::Unknown => "the widget's place could not be read".to_string(),
+    };
+    match title {
+        Some(title) => {
+            // What Windows says about the game goes into the same line: a widget that is in its
+            // corner and still not seen is one the game covers (read only, as in `widget_check`).
+            let direct3d = if diag::direct3d_fullscreen() { "yes" } else { "no" };
+            let above = if diag::foreground_above(&window).is_some() { "yes" } else { "no" };
+            append_crash_log(&format!(
+                "widget: {title} holds a {screen} screen — {words} (Direct3D fullscreen: {direct3d}; game's window above the widget: {above})"
+            ));
+            state.settled_in_game.store(true, Ordering::SeqCst);
+        }
+        // On the desktop only a move is worth a line.
+        None => {
+            if matches!(done, Corner::Moved(..)) {
+                append_crash_log(&format!(
+                    "widget: nothing in fullscreen on a {screen} screen — {words}"
+                ));
+            }
+        }
+    }
+}
+
+/// 0.35.0 / 0.35.4: puts the widget in the corner the owner chose, on the screen as it is now,
+/// when it is not there already. A game that switches the resolution leaves the widget at its
+/// old place: outside a smaller screen, or away from its corner on a larger one. Only the place
+/// is set, for the size the window has (a notice may have made the card taller); nothing is
+/// shown, raised, resized or focused, and a widget that is in its corner is not touched at all.
+fn widget_to_corner(window: &WebviewWindow, state: &WidgetState) -> Corner {
+    let Ok(layout) = state.layout.lock().map(|layout| *layout) else {
+        return Corner::Unknown;
+    };
+    if window.is_minimized().unwrap_or(false) {
+        return Corner::Minimized;
+    }
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return Corner::Unknown;
+    };
+    let (Ok(at), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return Corner::Unknown;
+    };
+    let scale = monitor.scale_factor();
+    if !scale.is_normal() || scale <= 0.0 {
+        return Corner::Unknown; // the conversions below insist on a real scale
+    }
+    let (mut width, mut height) = layout.dimensions();
+    let now = size.to_logical::<f64>(scale);
+    if now.width >= 32.0 && now.height >= 16.0 {
+        width = now.width;
+        height = now.height;
+    }
+    let work = monitor.work_area();
+    let area = work.size.to_logical::<f64>(scale);
+    let origin = work.position.to_logical::<f64>(scale);
+    let (x, y) = corner_of(
+        layout.position,
+        (origin.x, origin.y),
+        (area.width, area.height),
+        width,
+        height,
+    );
+    let want = LogicalPosition::new(x, y).to_physical::<i32>(scale);
+    if (at.x - want.x).abs() <= 3 && (at.y - want.y).abs() <= 3 {
+        return Corner::Kept;
+    }
+    let _ = window.set_position(PhysicalPosition::new(want.x, want.y));
+    Corner::Moved((at.x, at.y), (want.x, want.y))
+}
+
+/// 0.35.2: keeps the lock screen over the whole screen. The window is made fullscreen once, when
+/// the PC locks, with the size the screen has at that moment. Locked while a game holds the
+/// screen in a smaller resolution (CS in 4:3), it stayed that small when Windows went back to its
+/// own resolution, and the desktop lay open beside it. Once a second while the PC is locked: a
+/// lock window that is not exactly over its screen is put over it again. Position and size only —
+/// nothing is shown, hidden, raised or focused here.
+fn lock_cover_tick(app: &AppHandle) {
+    let locked = app.state::<KioskState>().locked.clone();
+    if !locked.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_minimized().unwrap_or(false) {
+        return; // the focus guard brings it back; a minimized window has no place to compare
+    }
+    let Some((x, y, width, height, _)) = screen_shape(&window) else {
+        return;
+    };
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let state = app.state::<WidgetState>();
+    let Ok(mut repaired) = state.lock_repaired.lock() else {
+        return;
+    };
+    if position.x == x && position.y == y && size.width == width && size.height == height {
+        *repaired = None;
+        return;
+    }
+    // The PC may have been unlocked while the screen was read: never stretch the widget.
+    if !locked.load(Ordering::SeqCst) {
+        return;
+    }
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let found = (position.x, position.y, size.width, size.height);
+    if *repaired != Some(found) {
+        append_crash_log(&format!(
+            "lock: the window was {}x{} at {},{} on a {width}x{height} screen — put over the whole screen again",
+            size.width, size.height, position.x, position.y
+        ));
+        *repaired = Some(found);
     }
 }
 
@@ -477,6 +734,37 @@ fn set_block_win_in_games(enabled: bool) {
     kiosk::set_win_block_in_games(enabled);
 }
 
+/// The widget's place (logical pixels) in the chosen corner of a work area (taskbar excluded):
+/// `origin` is the top-left corner of the work area, `area` its width and height.
+fn corner_of(
+    position: WidgetPosition,
+    origin: (f64, f64),
+    area: (f64, f64),
+    width: f64,
+    height: f64,
+) -> (f64, f64) {
+    let left = origin.0 + OVERLAY_MARGIN;
+    let top = origin.1 + OVERLAY_MARGIN;
+    let right = origin.0 + area.0 - width - OVERLAY_MARGIN;
+    let bottom = origin.1 + area.1 - height - OVERLAY_MARGIN;
+    // 0.19.1: the centre positions sit in the middle of the work area, at the top or bottom edge.
+    let centre = origin.0 + (area.0 - width) / 2.0;
+    let middle = origin.1 + (area.1 - height) / 2.0;
+    let (x, y) = match position {
+        WidgetPosition::TopLeft => (left, top),
+        WidgetPosition::TopCenter => (centre, top),
+        WidgetPosition::TopRight => (right, top),
+        WidgetPosition::BottomLeft => (left, bottom),
+        WidgetPosition::BottomCenter => (centre, bottom),
+        WidgetPosition::BottomRight => (right, bottom),
+        WidgetPosition::MiddleLeft => (left, middle),
+        WidgetPosition::MiddleRight => (right, middle),
+    };
+    // 0.35.4: on a screen smaller than the widget (a game at 640×480 with a wide card) the
+    // widget starts at the screen's own corner, so the beginning of the card is what is seen.
+    (x.max(origin.0), y.max(origin.1))
+}
+
 /// Keeps the widget in the chosen corner of the work area (taskbar excluded) of the monitor the
 /// window is on — after every resize, or a grown card would drift away from its corner.
 fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64, height: f64) {
@@ -486,24 +774,13 @@ fn position_overlay(window: &WebviewWindow, position: WidgetPosition, width: f64
         let work = monitor.work_area();
         let size = work.size.to_logical::<f64>(scale);
         let pos = work.position.to_logical::<f64>(scale);
-        let right = pos.x + size.width - width - OVERLAY_MARGIN;
-        let bottom = pos.y + size.height - height - OVERLAY_MARGIN;
-        // 0.19.1: the centre positions sit in the middle of the work area, at the top or bottom edge.
-        let centre = pos.x + (size.width - width) / 2.0;
-        let (cx, cy) = match position {
-            WidgetPosition::TopLeft => (pos.x + OVERLAY_MARGIN, pos.y + OVERLAY_MARGIN),
-            WidgetPosition::TopCenter => (centre, pos.y + OVERLAY_MARGIN),
-            WidgetPosition::TopRight => (right, pos.y + OVERLAY_MARGIN),
-            WidgetPosition::BottomLeft => (pos.x + OVERLAY_MARGIN, bottom),
-            WidgetPosition::BottomCenter => (centre, bottom),
-            WidgetPosition::BottomRight => (right, bottom),
-            WidgetPosition::MiddleLeft => {
-                (pos.x + OVERLAY_MARGIN, pos.y + (size.height - height) / 2.0)
-            }
-            WidgetPosition::MiddleRight => (right, pos.y + (size.height - height) / 2.0),
-        };
-        x = cx;
-        y = cy;
+        (x, y) = corner_of(
+            position,
+            (pos.x, pos.y),
+            (size.width, size.height),
+            width,
+            height,
+        );
     }
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
@@ -572,9 +849,9 @@ fn lan_updater(app: &AppHandle, base: String) -> Result<tauri_plugin_updater::Up
 
 /// The PC's own answer to "is the widget visible?", plus the heal: a widget window that is
 /// hidden, empty or parked outside every connected monitor is put back on the primary monitor's
-/// work area before the report goes out. An exclusive-fullscreen foreground app (a game that
-/// bypasses the desktop compositor) hides every topmost window — that is reported as the cause,
-/// because no application can draw over it.
+/// work area before the report goes out. While a program in fullscreen is in front nothing is
+/// healed here (the watch thread minds the widget's place then, see `widget_watch_tick`): the
+/// answer says whether the widget lies on the game, may be covered by it, or is off the screen.
 #[tauri::command]
 async fn widget_check(
     app: AppHandle,
@@ -587,15 +864,43 @@ async fn widget_check(
         });
     }
     if state.hidden_for_game.load(Ordering::SeqCst) {
-        // Hidden on purpose while a game runs (0.19.7): not a broken widget, so no heal.
+        // Hidden on purpose while a game runs (0.19.7): not a broken widget, so no heal. 0.35.1:
+        // the customer does not see it, and the desk is told so (it used to read "visible").
         return Ok(WidgetCheck {
-            ok: true,
+            ok: false,
             detail: "hidden-for-game".into(),
         });
     }
     let window = app
         .get_webview_window("main")
         .ok_or("main window missing")?;
+    // 0.35.3: while a fullscreen program holds the screen this check only looks: the repair
+    // below moves and shows the window at whatever moment the check runs. 0.35.4: the watch
+    // thread puts the widget in its corner of the game's screen once that screen has been still
+    // for eight seconds (`widget_watch_tick`); a widget that is outside the screen after that is
+    // not seen by the customer, and the desk is told so.
+    // 0.35.1: a game that Windows reports as Direct3D fullscreen, or whose window lies above the
+    // widget, covers it; a borderless ("fullscreen windowed") game leaves it in sight.
+    if let Some((_, title)) = diag::fullscreen_foreground() {
+        if state.settled_in_game.load(Ordering::SeqCst)
+            && diag::on_its_screen(diag::handle_of(&window)) == Some(false)
+        {
+            return Ok(WidgetCheck {
+                ok: false,
+                detail: format!("off-screen:{title}"),
+            });
+        }
+        if diag::direct3d_fullscreen() || diag::foreground_above(&window).is_some() {
+            return Ok(WidgetCheck {
+                ok: false,
+                detail: format!("fullscreen-app:{title}"),
+            });
+        }
+        return Ok(WidgetCheck {
+            ok: true,
+            detail: format!("over-game:{title}"),
+        });
+    }
     let layout = *state.layout.lock().map_err(|_| "widget state poisoned")?;
 
     let monitors = app.available_monitors().unwrap_or_default();
@@ -647,13 +952,6 @@ async fn widget_check(
             detail,
         });
     }
-    if let Some(title) = diag::exclusive_fullscreen_foreground(&window) {
-        append_crash_log(&format!("widget_check: covered by exclusive-fullscreen app {title}"));
-        return Ok(WidgetCheck {
-            ok: false,
-            detail: format!("fullscreen-app:{title}"),
-        });
-    }
     Ok(WidgetCheck {
         ok: true,
         detail: "visible".into(),
@@ -663,39 +961,203 @@ async fn widget_check(
 /// Windows-only foreground check (see `widget_check`); always None elsewhere.
 #[cfg(windows)]
 mod diag {
-    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::Shell::{
+        SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowRect,
-        GWL_STYLE, WS_CAPTION,
+        GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
+        GetWindowTextW, GetWindowThreadProcessId, GWL_STYLE, GW_HWNDPREV, WS_CAPTION,
     };
 
-    /// Title of the foreground window when it covers its whole monitor without a caption — the
-    /// signature of an exclusive-fullscreen game (borderless ones keep WS_CAPTION-free popup
-    /// style too, but those are composed by DWM and never hide a topmost window; a false
-    /// positive there is harmless: the desk only reads it when the widget really is unseen).
-    pub fn exclusive_fullscreen_foreground(window: &tauri::WebviewWindow) -> Option<String> {
+    /// 0.35.1: title of the foreground window when it belongs to another program and lies above
+    /// the widget in the window order. Only an "always on top" window can: the widget is one, so
+    /// every ordinary window is below it already. Read only (0.35.2): the order is looked at for
+    /// the report to the desk and never changed.
+    pub fn foreground_above(window: &tauri::WebviewWindow) -> Option<String> {
+        let own = window.hwnd().ok()?.0 as HWND;
+        // SAFETY: plain Win32 queries without owned pointers. The walk is bounded: the order can
+        // change while it is read.
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_null() || fg == own {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(fg, &mut pid);
+            if pid == GetCurrentProcessId() {
+                return None;
+            }
+            let mut above = own;
+            for _ in 0..512 {
+                above = GetWindow(above, GW_HWNDPREV);
+                if above.is_null() {
+                    return None;
+                }
+                if above == fg {
+                    let mut title = [0u16; 128];
+                    let len = GetWindowTextW(fg, title.as_mut_ptr(), title.len() as i32);
+                    let name = String::from_utf16_lossy(&title[..len.max(0) as usize]);
+                    return Some(if name.is_empty() { "unknown".into() } else { name });
+                }
+            }
+            None
+        }
+    }
+
+    /// 0.35.1: Windows reports a Direct3D program in fullscreen (the state that also silences
+    /// notifications). A borderless game is reported as an ordinary busy fullscreen window.
+    pub fn direct3d_fullscreen() -> bool {
+        let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
+        // SAFETY: one out-parameter, owned by this frame.
+        let result = unsafe { SHQueryUserNotificationState(&mut state) };
+        result >= 0 && state == QUNS_RUNNING_D3D_FULL_SCREEN
+    }
+
+    /// 0.35.3: the window covers the whole screen it is on, at whatever resolution that screen
+    /// has right now.
+    fn covers_its_screen(hwnd: HWND, rect: &RECT) -> bool {
+        let empty = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: empty,
+            rcWork: empty,
+            dwFlags: 0,
+        };
+        // SAFETY: plain Win32 queries; `info` is owned by this frame and carries its own size.
+        let known = unsafe {
+            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            !monitor.is_null() && GetMonitorInfoW(monitor, &mut info) != 0
+        };
+        let screen = info.rcMonitor;
+        known
+            && screen.right > screen.left
+            && screen.bottom > screen.top
+            && rect.left <= screen.left
+            && rect.top <= screen.top
+            && rect.right >= screen.right
+            && rect.bottom >= screen.bottom
+    }
+
+    /// Window class of the foreground window ("" when there is none).
+    fn foreground_class(fg: HWND) -> String {
+        let mut class = [0u16; 64];
+        // SAFETY: the buffer is owned by this frame and its length is passed.
+        let len = unsafe { GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32) };
+        String::from_utf16_lossy(&class[..len.max(0) as usize])
+    }
+
+    /// The Alt+Tab / Task View switcher of Windows 10 and 11, and the window Windows 11 puts in
+    /// front for a moment while it changes programs.
+    fn is_task_switcher(class_name: &str) -> bool {
+        matches!(
+            class_name,
+            "MultitaskingViewFrame"
+                | "XamlExplorerHostIslandWindow"
+                | "TaskSwitcherWnd"
+                | "ForegroundStaging"
+        )
+    }
+
+    /// 0.35.3: the Alt+Tab switcher is in front — on the way from one program to another. It
+    /// covers the screen without a caption like a game does, and is neither a game nor the
+    /// desktop: the widget is left as it is until the switch is over.
+    pub fn task_switcher_in_front() -> bool {
+        // SAFETY: plain Win32 query without owned pointers.
+        let fg = unsafe { GetForegroundWindow() };
+        !fg.is_null() && is_task_switcher(&foreground_class(fg))
+    }
+
+    /// The handle of the client's own window as a number (0 = Windows gave none).
+    pub fn handle_of(window: &tauri::WebviewWindow) -> isize {
+        window.hwnd().map(|own| own.0 as isize).unwrap_or(0)
+    }
+
+    /// 0.35.4: whether the middle of the window lies on the screen the window is on — a widget
+    /// left outside the smaller screen of a game answers `false`. `None` when Windows cannot
+    /// say. Asked from Windows directly; `own` is the window handle, 0 = not known.
+    pub fn on_its_screen(own: isize) -> Option<bool> {
+        let (left, top, right, bottom) = screen_of(own)?;
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: plain Win32 query; `rect` is owned by this frame.
+        if unsafe { GetWindowRect(own as HWND, &mut rect) } == 0 {
+            return None;
+        }
+        let x = rect.left + (rect.right - rect.left) / 2;
+        let y = rect.top + (rect.bottom - rect.top) / 2;
+        Some(x >= left && x < right && y >= top && y < bottom)
+    }
+
+    /// 0.35.3: the screen (left, top, right, bottom) a window is on, asked from Windows
+    /// directly. `own` is the window handle; 0 = not known.
+    pub fn screen_of(own: isize) -> Option<(i32, i32, i32, i32)> {
+        if own == 0 {
+            return None;
+        }
+        let empty = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: empty,
+            rcWork: empty,
+            dwFlags: 0,
+        };
+        // SAFETY: plain Win32 queries; `info` is owned by this frame and carries its own size.
+        let known = unsafe {
+            let monitor = MonitorFromWindow(own as HWND, MONITOR_DEFAULTTONEAREST);
+            !monitor.is_null() && GetMonitorInfoW(monitor, &mut info) != 0
+        };
+        let screen = info.rcMonitor;
+        known.then_some((screen.left, screen.top, screen.right, screen.bottom))
+    }
+
+    /// The foreground window (its handle and its title) when it is a program in fullscreen:
+    /// another program's window without a caption that is at least 1280×720 (the rule since
+    /// 0.19.7) or covers the whole screen it is on (0.35.3: a game that switches the screen to
+    /// 1024×768 or 640×480 covers a screen of exactly that size). Games in exclusive and in
+    /// borderless fullscreen both answer; the countdown widget hides on this check. Asks Windows
+    /// only — never the client's own window thread — so it answers at once however busy the PC
+    /// is (0.35.3).
+    pub fn fullscreen_foreground() -> Option<(isize, String)> {
         // SAFETY: plain Win32 queries without owned pointers.
         unsafe {
             let fg = GetForegroundWindow();
             if fg.is_null() {
                 return None;
             }
-            if let Ok(own) = window.hwnd() {
-                // windows-sys HWND is a raw pointer; tauri's comes from the `windows` crate as a
-                // struct — compare the addresses, not the types.
-                if fg as isize == own.0 as isize {
-                    return None;
-                }
+            // Nothing of the client itself is a game: the widget, the settings panel, a tray menu.
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(fg, &mut pid);
+            if pid == GetCurrentProcessId() {
+                return None;
             }
             // The desktop and the shell (wallpaper, taskbar) cover the monitor without a caption
-            // too: they are not games (0.19.7 — the widget now hides on this check).
-            let mut class = [0u16; 64];
-            let class_len = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32);
-            let class_name = String::from_utf16_lossy(&class[..class_len.max(0) as usize]);
+            // too: they are not games (0.19.7 — the widget now hides on this check). 0.35.3: nor
+            // is the Alt+Tab switcher (see `task_switcher_in_front`).
+            let class_name = foreground_class(fg);
             if matches!(
                 class_name.as_str(),
                 "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-            ) {
+            ) || is_task_switcher(&class_name)
+            {
                 return None;
             }
             let style = GetWindowLongW(fg, GWL_STYLE);
@@ -715,13 +1177,14 @@ mod diag {
             let mut title = [0u16; 128];
             let len = GetWindowTextW(fg, title.as_mut_ptr(), title.len() as i32);
             let name = String::from_utf16_lossy(&title[..len.max(0) as usize]);
-            // "Covers the monitor" ≈ at least a full-HD-sized rect: smaller popups are not games.
-            if w >= 1280 && h >= 720 {
-                return Some(if name.is_empty() {
-                    "unknown".into()
+            // Smaller popups that leave part of the screen free are not games.
+            if (w >= 1280 && h >= 720) || covers_its_screen(fg, &rect) {
+                let name = if name.is_empty() {
+                    "unknown".to_string()
                 } else {
                     name
-                });
+                };
+                return Some((fg as isize, name));
             }
             None
         }
@@ -730,8 +1193,32 @@ mod diag {
 
 #[cfg(not(windows))]
 mod diag {
-    pub fn exclusive_fullscreen_foreground(_window: &tauri::WebviewWindow) -> Option<String> {
+    pub fn fullscreen_foreground() -> Option<(isize, String)> {
         None
+    }
+
+    pub fn task_switcher_in_front() -> bool {
+        false
+    }
+
+    pub fn handle_of(_window: &tauri::WebviewWindow) -> isize {
+        0
+    }
+
+    pub fn on_its_screen(_own: isize) -> Option<bool> {
+        None
+    }
+
+    pub fn screen_of(_own: isize) -> Option<(i32, i32, i32, i32)> {
+        None
+    }
+
+    pub fn foreground_above(_window: &tauri::WebviewWindow) -> Option<String> {
+        None
+    }
+
+    pub fn direct3d_fullscreen() -> bool {
+        false
     }
 }
 
@@ -1183,6 +1670,8 @@ pub fn run() {
             overlay: AtomicBool::new(false),
             hide_in_games: AtomicBool::new(true),
             hidden_for_game: AtomicBool::new(false),
+            settled_in_game: AtomicBool::new(false),
+            lock_repaired: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             device_identity,
@@ -1212,11 +1701,22 @@ pub fn run() {
             quit_app
         ])
         .setup(move |app| {
-            // 0.19.7: hide the countdown widget while a fullscreen game runs (once a second).
+            // Four times a second: mind the countdown widget while a game holds the screen —
+            // hidden when the owner asked for that (0.19.7), otherwise kept in its corner of the
+            // game's screen once that screen has been still for eight seconds (0.35.4). Once a
+            // second: keep the lock screen over the whole screen (0.35.2).
             let watch = app.handle().clone();
-            std::thread::spawn(move || loop {
-                std::thread::sleep(Duration::from_millis(1000));
-                widget_watch_tick(&watch);
+            std::thread::spawn(move || {
+                let mut game = GameWatch::default();
+                let mut look: u32 = 0;
+                loop {
+                    std::thread::sleep(Duration::from_millis(WATCH_MS));
+                    look = look.wrapping_add(1);
+                    widget_watch_tick(&watch, &mut game);
+                    if look % 4 == 0 {
+                        lock_cover_tick(&watch);
+                    }
+                }
             });
             // Keyboard hardening is armed from the start: the client boots locked.
             kiosk::install();

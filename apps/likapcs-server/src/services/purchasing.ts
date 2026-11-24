@@ -39,7 +39,7 @@ import { withTransaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { CashService } from './cash.js';
-import { applyMovement } from './catalog.js';
+import { applyMovement, internetAccessStock } from './catalog.js';
 import { nextDocumentNumber } from './documents.js';
 
 /** Category of the expense booked for a stock-less purchase line (0.19.1). */
@@ -475,7 +475,8 @@ export class PurchasingService {
         name: string;
         is_active: boolean;
         track_stock: boolean;
-      }>('SELECT id, name, is_active, track_stock FROM products WHERE id = ANY($1::uuid[])', [
+        kind: string;
+      }>('SELECT id, name, is_active, track_stock, kind FROM products WHERE id = ANY($1::uuid[])', [
         productIds,
       ]);
       const byId = new Map(products.rows.map((p) => [p.id, p]));
@@ -483,6 +484,8 @@ export class PurchasingService {
         const p = byId.get(id);
         if (!p) throw notFound(`Product ${id}`);
         if (!p.is_active) throw conflict(`${p.name} is archived`, { productId: id });
+        // 0.34.0: internet access is not bought in pieces — its stock is the codes that are loaded.
+        if (p.kind === 'internet_access') throw internetAccessStock(p.id, p.name);
       }
       let subtotal = 0;
       let tax = 0;

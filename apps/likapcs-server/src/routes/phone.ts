@@ -16,6 +16,8 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  // 0.35.0: the built-in voices of the Admin (Settings › Client screen › "Try").
+  '.mp3': 'audio/mpeg',
   '.txt': 'text/plain; charset=utf-8',
 };
 

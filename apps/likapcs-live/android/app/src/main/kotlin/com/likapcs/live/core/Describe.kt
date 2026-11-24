@@ -5,8 +5,22 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** One audit entry in the owner's words. `notify` false: listed in the app, but no notification. */
-class Described(val category: Category, val title: String, val text: String, val notify: Boolean)
+/**
+ * One audit entry in the owner's words. `notify` false: listed in the app, but no notification.
+ *
+ * `group` + `item` + `many`: rows of the same group that follow each other closely (the Admin
+ * shutting down PC after PC) are told as one message; `many` words it for the items so far.
+ */
+class Described(
+    val category: Category,
+    val title: String,
+    val text: String,
+    val notify: Boolean,
+    val topic: Topic? = null,
+    val group: String? = null,
+    val item: String? = null,
+    val many: ((List<String>) -> Pair<String, String>)? = null,
+)
 
 /**
  * Turns what the server reports into short texts: a sale, and every row of the audit log
@@ -17,35 +31,151 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
 
     // ─── Sales ──────────────────────────────────────────────────────────────────────────────
 
-    /** A completed sale (`LiveSale`): "Arta shiti 5.00 €" · "Coca-Cola ×2, Çips ×1 · fitimi 4.23 €". */
+    /**
+     * A completed sale (`LiveSale`): "Arta shiti 5.00 €" · "Coca-Cola ×2, Çips ×1 · fitimi 4.23 €".
+     * A sale that is nothing but PC time is told as what it was: "Arta nisi PC 05 · 60 min · 2.00 €"
+     * (a session paid at its start), "Arta zgjati PC 05 · +30 min · 1.00 €", "Arta mbylli PC 02 ·
+     * 1 h 05 min · 2.17 €" (open time paid at its end).
+     */
     fun sale(sale: JsonObject): Note? {
         val id = sale.str("saleId") ?: return null
         val x = texts()
         val cashier = sale.str("cashierName") ?: x.t("Dikush", "Someone")
         val total = x.money(sale.long("totalCents") ?: 0)
-        val parts = ArrayList<String>()
-        val items = sale.arr("items").objects().joinToString(", ") { item ->
-            val name = item.str("name") ?: "?"
-            if (item.bool("isTime") == true) timeLine(name) else "$name ×${x.qty(item.long("quantityMilli") ?: 1000)}"
-        }
-        if (items.isNotEmpty()) parts += items
-        var profit = x.t("fitimi ", "profit ") + x.money(sale.long("profitCents") ?: 0)
-        if (sale.bool("missingCost") == true) profit += x.t(" (pa kosto)", " (no cost)")
-        parts += profit
         val customer = sale.str("customerName")
-        if (sale.bool("onCredit") == true) {
-            parts += x.t("me borxh", "on credit") + (customer?.let { ": $it" } ?: "")
-        } else if (customer != null) {
-            parts += customer
+        val credit = sale.bool("onCredit") == true
+        val whose = when {
+            credit -> x.t("me borxh", "on credit") + (customer?.let { ": $it" } ?: "")
+            else -> customer
+        }
+        val items = sale.arr("items").objects()
+        val time = items.map { if (it.bool("isTime") == true) timeParts(it.str("name") ?: "") else null }
+        val kind = time.firstOrNull()?.kind
+
+        val title: String
+        val parts = ArrayList<String>()
+        if (kind != null && time.all { it?.kind == kind }) {
+            val lines = time.filterNotNull()
+            val verb = when (kind) {
+                "prepaid" -> x.t("nisi", "started")
+                "extension" -> x.t("zgjati", "extended")
+                else -> x.t("mbylli", "closed")
+            }
+            title = if (lines.size == 1) "$cashier $verb ${lines[0].pc} · ${lines[0].amount} · $total"
+            else "$cashier $verb ${lines.size} PC · $total"
+            if (lines.size > 1) parts += lines.joinToString(", ") { "${it.pc} · ${it.amount}" }
+            lines.map { it.pkg }.filter { it.isNotEmpty() }.distinct().forEach { parts += it }
+            discountText(sale)?.let { parts += it }
+            if (whose != null) parts += whose
+            if (parts.isEmpty()) {
+                parts += when (kind) {
+                    "prepaid", "extension" -> x.t("kohë e parapaguar", "prepaid time")
+                    "postpaid" -> x.t("kohë e hapur, e paguar në fund", "open time, paid at the end")
+                    else -> x.t("pagesë në fund", "paid at the end")
+                }
+            }
+        } else {
+            title = x.t("$cashier shiti $total", "$cashier sold $total")
+            val list = items.joinToString(", ") { item ->
+                val name = item.str("name") ?: "?"
+                if (item.bool("isTime") == true) timeLine(name) else "$name ×${x.qty(item.long("quantityMilli") ?: 1000)}"
+            }
+            if (list.isNotEmpty()) parts += list
+            discountText(sale)?.let { parts += it }
+            parts += profitText(sale)
+            if (whose != null) parts += whose
         }
         return Note(
             key = "sale:$id",
             category = Category.SALES,
-            title = x.t("$cashier shiti $total", "$cashier sold $total"),
+            title = title,
             text = parts.joinToString(" · "),
             at = Texts.parseTime(sale.str("completedAt")) ?: System.currentTimeMillis(),
             tab = "sales",
         )
+    }
+
+    /**
+     * The discount on the whole sale: what its lines add up to, minus what was charged. (The
+     * server's sale lines carry their own price; a discount on the sale is in none of them.)
+     */
+    fun saleDiscount(sale: JsonObject): Long {
+        val total = sale.long("totalCents") ?: return 0
+        val lines = sale.arr("items").objects()
+        if (lines.isEmpty()) return 0
+        return maxOf(0L, lines.sumOf { it.long("lineTotalCents") ?: 0 } - total)
+    }
+
+    /**
+     * What the sale earned. The server adds the profit up line by line, so a discount on the
+     * whole sale is missing from its figure: it is taken off here.
+     */
+    fun saleProfit(sale: JsonObject): Long = (sale.long("profitCents") ?: 0) - saleDiscount(sale)
+
+    private fun discountText(sale: JsonObject): String? {
+        val discount = saleDiscount(sale)
+        if (discount <= 0) return null
+        val x = texts()
+        return x.t("zbritje ${x.money(discount)}", "discount ${x.money(discount)}")
+    }
+
+    private fun profitText(sale: JsonObject): String {
+        val x = texts()
+        val profit = saleProfit(sale)
+        var text = if (profit < 0) x.t("humbje ${x.money(-profit)}", "loss ${x.money(-profit)}") else x.t("fitimi ${x.money(profit)}", "profit ${x.money(profit)}")
+        if (sale.bool("missingCost") == true) text += x.t(" (pa kosto)", " (no cost)")
+        return text
+    }
+
+    /**
+     * The same sale as a "thing to look at": sold under its cost, with a discount, or above the
+     * amount the owner set. It takes the place of the plain sale message, so one sale is still
+     * one message — with everything about it in one place.
+     */
+    fun saleAlert(sale: JsonObject, topic: Topic): Note? {
+        val id = sale.str("saleId") ?: return null
+        val x = texts()
+        val cashier = sale.str("cashierName") ?: x.t("Dikush", "Someone")
+        val total = x.money(sale.long("totalCents") ?: 0)
+        val parts = ArrayList<String>()
+        if (topic == Topic.SALE_DISCOUNT) parts += x.t("shitja $total", "sale $total")
+        val list = sale.arr("items").objects().joinToString(", ") { item ->
+            val name = item.str("name") ?: "?"
+            if (item.bool("isTime") == true) timeLine(name) else "$name ×${x.qty(item.long("quantityMilli") ?: 1000)}"
+        }
+        if (list.isNotEmpty()) parts += list
+        if (topic != Topic.SALE_DISCOUNT) discountText(sale)?.let { parts += it }
+        parts += profitText(sale)
+        val customer = sale.str("customerName")
+        if (sale.bool("onCredit") == true) parts += x.t("me borxh", "on credit") + (customer?.let { ": $it" } ?: "")
+        else if (customer != null) parts += customer
+        return Note(
+            key = "sale:$id",
+            category = Category.ALERTS,
+            title = when (topic) {
+                Topic.SALE_BELOW_COST -> x.t("Shitje nën kosto: $cashier · $total", "Sale below cost: $cashier · $total")
+                Topic.SALE_DISCOUNT -> x.money(saleDiscount(sale)).let { x.t("$cashier dha zbritje $it", "$cashier gave a discount of $it") }
+                else -> x.t("Shitje e madhe: $cashier · $total", "Big sale: $cashier · $total")
+            },
+            text = parts.joinToString(" · "),
+            at = Texts.parseTime(sale.str("completedAt")) ?: System.currentTimeMillis(),
+            tab = "sales",
+            topic = topic,
+        )
+    }
+
+    /** A PC time line of a sale, taken apart: "PC 01 · 60 min (prepaid: Paketa 3 orë)". */
+    private class TimeParts(val pc: String, val amount: String, val kind: String, val pkg: String)
+
+    private fun timeParts(name: String): TimeParts? {
+        val m = TIME_LINE.matchEntire(name) ?: return null
+        val kind = when (m.groupValues[3]) {
+            "pay at the end", "endpay" -> "endpay"
+            else -> m.groupValues[3]
+        }
+        // The server writes a session's length as "1h 05m": said here as everywhere else in the app.
+        val amount = HOURS.replace(m.groupValues[2].trim()) { "${it.groupValues[1]} h ${it.groupValues[2]} min" }
+        return TimeParts(m.groupValues[1].trim(), amount, kind, m.groupValues[4].trim())
     }
 
     /**
@@ -88,6 +218,7 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
             text = d.text,
             at = Texts.parseTime(entry.str("occurredAt")) ?: System.currentTimeMillis(),
             tab = "activity",
+            topic = d.topic,
         )
     }
 
@@ -113,27 +244,43 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
         var title = ""
         val parts = ArrayList<String>()
         var notify = true
+        var topic: Topic? = null
+        var group: String? = null
+        var item: String? = null
+        var many: ((List<String>) -> Pair<String, String>)? = null
         // The title already names the person (sign-ins): the text does not repeat it.
         var whoInTitle = false
+        // Done by a staff member (not by the system, not from a customer's PC).
+        val byStaff = entry.str("actorUserId") != null
 
         fun m(key: String): String = x.money(d.long(key))
         fun add(text: String?) {
             if (!text.isNullOrBlank()) parts += text
         }
         fun reason(key: String = "reason") = d.str(key)?.takeIf { it.isNotBlank() }?.let { x.t("arsyeja: $it", "reason: $it") }
-        fun items(n: Long?) = n?.let { x.t("$it artikuj", "$it items") }
+        fun items(n: Long?) = n?.let { if (it == 1L) x.t("1 artikull", "1 item") else x.t("$it artikuj", "$it items") }
         fun sessionPc(): String = lookup.sessionPc(entityId) ?: d.str("stationCode") ?: "PC"
         fun stationPc(id: String?): String = lookup.stationCode(id) ?: "PC"
 
         when (action) {
             // ── Sales ──
             "sale.completed" -> {
-                category = Category.SALES
-                notify = false // the sale itself is announced with its lines and profit
-                title = x.t("Shitje ${m("totalCents")}", "Sale ${m("totalCents")}")
+                val discount = d.long("discountCents") ?: 0
+                if (discount > 0) {
+                    // The discount is the thing to look at. (When the sale itself was told as
+                    // "gave a discount", the engine leaves this row out: one sale, one message.)
+                    category = Category.ALERTS
+                    topic = Topic.SALE_DISCOUNT
+                    whoInTitle = true
+                    title = x.t("$who dha zbritje ${x.money(discount)}", "$who gave a discount of ${x.money(discount)}")
+                    add(x.t("shitja ${m("totalCents")}", "sale ${m("totalCents")}"))
+                } else {
+                    category = Category.SALES
+                    notify = false // the sale itself is announced with its lines and profit
+                    title = x.t("Shitje ${m("totalCents")}", "Sale ${m("totalCents")}")
+                }
                 add(d.str("receiptNo"))
                 add(items(d.long("items")))
-                d.long("discountCents")?.takeIf { it > 0 }?.let { add(x.t("zbritje ${x.money(it)}", "discount ${x.money(it)}")) }
             }
             "sale.refunded" -> {
                 category = Category.ALERTS
@@ -180,28 +327,62 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
             // ── PC sessions ──
             "session.start" -> {
                 category = Category.PCS
-                title = x.t("${sessionPc()}: sesion i ri", "${sessionPc()}: session started")
-                d.long("minutes")?.takeIf { it > 0 }?.let { add("$it min") }
-                d.long("priceCents")?.takeIf { it > 0 }?.let { add(x.money(it)) }
+                topic = Topic.PC_SESSION
+                val pc = sessionPc()
+                val what = listOfNotNull(
+                    d.long("minutes")?.takeIf { it > 0 }?.let { "$it min" },
+                    d.long("priceCents")?.takeIf { it > 0 }?.let { x.money(it) },
+                ).joinToString("") { " · $it" }
+                if (byStaff) {
+                    whoInTitle = true
+                    title = x.t("$who nisi $pc$what", "$who started $pc$what")
+                } else {
+                    title = x.t("$pc: seanca nisi$what", "$pc: session started$what")
+                }
                 add(billingMode(d.str("billingMode")))
                 if (d.str("requestId") != null) add(x.t("kërkesë nga klienti", "asked by the customer"))
             }
             "session.extend" -> {
                 category = Category.PCS
-                title = x.t("${sessionPc()}: +${d.long("minutes") ?: 0} min", "${sessionPc()}: +${d.long("minutes") ?: 0} min")
-                d.long("priceCents")?.takeIf { it > 0 }?.let { add(x.money(it)) }
+                topic = Topic.PC_SESSION
+                val pc = sessionPc()
+                val what = "+${d.long("minutes") ?: 0} min" + (d.long("priceCents")?.takeIf { it > 0 }?.let { " · ${x.money(it)}" } ?: "")
+                if (byStaff) {
+                    whoInTitle = true
+                    title = x.t("$who zgjati $pc · $what", "$who extended $pc · $what")
+                } else {
+                    title = "$pc: $what"
+                }
                 if (d.str("requestId") != null) add(x.t("kërkesë nga klienti", "asked by the customer"))
             }
             "session.end" -> {
                 category = Category.PCS
-                title = x.t("${sessionPc()}: sesioni mbaroi", "${sessionPc()}: session ended")
-                d.long("billableSeconds")?.let { add(x.duration(it)) }
+                topic = Topic.PC_ENDED
+                val info = lookup.session(entityId)
+                val pc = info?.pc ?: sessionPc()
+                val length = d.long("billableSeconds")?.takeIf { it > 0 }?.let { " · ${x.duration(it)}" } ?: ""
+                if (byStaff) {
+                    whoInTitle = true
+                    title = x.t("$who mbylli $pc$length", "$who closed $pc$length")
+                } else {
+                    title = x.t("$pc: seanca mbaroi$length", "$pc: session ended$length")
+                }
+                add(info?.who)
+                info?.priceCents?.takeIf { it > 0 }?.let { add(x.money(it)) }
                 add(billingMode(d.str("billingMode")))
             }
             "session.collect" -> {
-                category = Category.PCS
-                title = x.t("${sessionPc()}: u pagua ${m("amountCents")}", "${sessionPc()}: paid ${m("amountCents")}")
-                d.long("discountCents")?.takeIf { it > 0 }?.let { add(x.t("zbritje ${x.money(it)}", "discount ${x.money(it)}")) }
+                val discount = d.long("discountCents") ?: 0
+                if (discount > 0) {
+                    category = Category.ALERTS
+                    topic = Topic.SALE_DISCOUNT
+                    whoInTitle = true
+                    title = x.t("$who dha zbritje ${x.money(discount)} · ${sessionPc()}", "$who gave a discount of ${x.money(discount)} · ${sessionPc()}")
+                    add(x.t("u pagua ${m("amountCents")}", "paid ${m("amountCents")}"))
+                } else {
+                    category = Category.PCS
+                    title = x.t("${sessionPc()}: u pagua ${m("amountCents")}", "${sessionPc()}: paid ${m("amountCents")}")
+                }
                 d.long("orders")?.takeIf { it > 0 }?.let { add(x.t("$it porosi", "$it orders")) }
             }
             "session.collect_all" -> {
@@ -212,7 +393,7 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
             }
             "session.cancel" -> {
                 category = Category.ALERTS
-                title = x.t("${sessionPc()}: sesioni u anulua", "${sessionPc()}: session cancelled")
+                title = x.t("${sessionPc()}: seanca u anulua", "${sessionPc()}: session cancelled")
                 add(reason())
             }
             "session.adjust_price" -> {
@@ -260,7 +441,7 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
                 val pc = d.str("stationCode") ?: "PC"
                 val minutes = d.long("minutes") ?: 0
                 title = if (d.str("kind") == "extend") x.t("$pc kërkon edhe $minutes min", "$pc asks for $minutes more min")
-                else x.t("$pc kërkon sesion: $minutes min", "$pc asks for a session: $minutes min")
+                else x.t("$pc kërkon seancë: $minutes min", "$pc asks for a session: $minutes min")
                 d.long("priceCents")?.takeIf { it > 0 }?.let { add(x.money(it)) }
             }
             "request.approve" -> {
@@ -591,6 +772,70 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
                 title = x.t("Një PC-je iu hoq lidhja", "A PC was disconnected for good")
                 add(lookup.stationCode(d.str("stationId")))
             }
+            // ── PCs switched on and off from the Admin ──
+            "station.wake" -> {
+                category = Category.POWER
+                topic = Topic.PC_WAKE
+                whoInTitle = true
+                val pc = stationPc(entityId)
+                val sent = x.t("sinjali i ndezjes u dërgua", "the wake signal was sent")
+                title = x.t("$who e ndezi $pc", "$who switched $pc on")
+                add(sent)
+                group = "wake:$who"
+                item = pc
+                many = { pcs -> x.t("$who ndezi ${pcs.size} PC", "$who switched ${pcs.size} PCs on") to "${PcWatch.list(PcWatch.sorted(pcs))} · $sent" }
+            }
+            "station.wake_all" -> {
+                category = Category.POWER
+                topic = Topic.PC_WAKE
+                whoInTitle = true
+                val pcs = PcWatch.sorted(d.arr("sent").strings())
+                // PCs that were left out: already on, or without a network card on record.
+                val skipped = d.arr("skipped").objects()
+                val alreadyOn = skipped.count { it.str("reason") == "online" }
+                val cannot = skipped.size - alreadyOn
+                title = x.t("$who i ndezi të gjitha PC-të (${pcs.size})", "$who switched all PCs on (${pcs.size})")
+                if (pcs.isNotEmpty()) add(PcWatch.list(pcs))
+                if (alreadyOn > 0) add(x.t("$alreadyOn ishin ndezur", "$alreadyOn were already on"))
+                if (cannot > 0) add(x.t("$cannot nuk mund të ndizen nga rrjeti", "$cannot cannot be woken over the network"))
+                add(x.t("sinjali i ndezjes u dërgua", "the wake signal was sent"))
+            }
+            "station.command.power.shutdown", "station.command.power.restart" -> {
+                category = Category.POWER
+                topic = Topic.PC_COMMAND
+                val pc = stationPc(entityId)
+                val off = action.endsWith("shutdown")
+                if (d.bool("ok") == false) {
+                    title = if (off) x.t("$pc nuk u fik", "$pc did not shut down") else x.t("$pc nuk u rinis", "$pc did not restart")
+                    add(d.str("error")?.let { x.t("gabimi: $it", "error: $it") })
+                } else {
+                    whoInTitle = true
+                    title = if (off) x.t("$who e fiku $pc", "$who shut $pc down") else x.t("$who e rinisi $pc", "$who restarted $pc")
+                    add(x.t("komanda u dërgua nga Admin", "the command was sent from the Admin"))
+                    group = "${if (off) "shutdown" else "restart"}:$who"
+                    item = pc
+                    many = { pcs ->
+                        (if (off) x.t("$who fiku ${pcs.size} PC", "$who shut ${pcs.size} PCs down")
+                        else x.t("$who rinisi ${pcs.size} PC", "$who restarted ${pcs.size} PCs")) to PcWatch.list(PcWatch.sorted(pcs))
+                    }
+                }
+            }
+            "station.command.lock", "station.command.unlock", "station.command.message.show",
+            "station.command.update.apply", "station.command.wol.configure", "station.command.tasks.end" -> {
+                category = Category.PCS
+                notify = false
+                val pc = stationPc(entityId)
+                title = when (action.removePrefix("station.command.")) {
+                    "lock" -> x.t("$pc: ekrani u kyç", "$pc: screen locked")
+                    "unlock" -> x.t("$pc: ekrani u hap", "$pc: screen unlocked")
+                    "message.show" -> x.t("$pc: mesazh në ekran", "$pc: message on the screen")
+                    "update.apply" -> x.t("$pc: përditësim i programit", "$pc: program update")
+                    "wol.configure" -> x.t("$pc: përgatitje për ndezje nga rrjeti", "$pc: set up for wake over the network")
+                    else -> x.t("$pc: programet u mbyllën", "$pc: programs closed")
+                }
+                add(d.obj("payload").str("text"))
+                if (d.bool("ok") == false) add(d.str("error")?.let { x.t("gabimi: $it", "error: $it") })
+            }
             "station.create" -> {
                 category = Category.SYSTEM
                 title = x.t("PC e re: ${d.str("name") ?: ""}", "New PC: ${d.str("name") ?: ""}")
@@ -639,7 +884,7 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
         }
 
         val text = (if (whoInTitle) parts else listOf(who) + parts).joinToString(" · ")
-        return Described(category, title.trim(), text, notify)
+        return Described(category, title.trim(), text, notify, topic, group, item, many)
     }
 
     private fun orderPc(orderId: String?): String = lookup.orderPc(orderId)?.let { "$it: " } ?: ""
@@ -719,6 +964,9 @@ class Describer(private val lookup: Lookup, private val texts: () -> Texts) {
         this?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p !is JsonNull }?.content } ?: emptyList()
 
     companion object {
+        /** "PC 01 · 60 min (prepaid: Paketa)" → the PC, the amount of time, the kind, the package. */
+        private val TIME_LINE = Regex("^(.+?) · (.+?)\\s*\\((prepaid|extension|postpaid|pay at the end|endpay)(?:: ([^)]*))?\\)\\s*$")
+        private val HOURS = Regex("^(\\d+)h (\\d+)m$")
         private val TIME_SUFFIX = Regex("\\s*\\((?:prepaid|extension|postpaid|pay at the end|endpay)(: ([^)]*))?\\)\\s*$")
         private val UUID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 

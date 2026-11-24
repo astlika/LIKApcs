@@ -17,6 +17,7 @@ import { useI18n } from '../i18n';
 import { LIKA_WEBSITE_URL } from '../lib/desktop';
 import { useAuth } from '../state/auth';
 import { useAppSettings } from '../state/app-settings';
+import { RestoreEntry, RestoreFileDialog } from '../components/backups/BackupFile';
 import {
   Alert,
   Button,
@@ -48,6 +49,9 @@ export function LoginPage() {
   const [local, setLocal] = useState<EmbeddedServerInfo | null>(null);
   const [localStarting, setLocalStarting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  // 0.38.0: «Restore from a backup» is reachable before signing in (the owner's account is asked
+  // for inside the dialog).
+  const [restoring, setRestoring] = useState(false);
   const autoDiscovered = useRef(false);
   const desktop = isDesktopApp();
 
@@ -318,6 +322,9 @@ export function LoginPage() {
             )}
           </div>
         )}
+        <div className="auth__restore">
+          <RestoreEntry compact onClick={() => setRestoring(true)} />
+        </div>
         <div className="auth__footer">
           <button
             type="button"
@@ -339,6 +346,7 @@ export function LoginPage() {
           />
         </div>
       </form>
+      {restoring && <RestoreFileDialog mode="login" onClose={() => setRestoring(false)} />}
     </div>
   );
 }

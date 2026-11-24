@@ -19,12 +19,15 @@ import {
   Play,
   Plus,
   Square,
+  Timer,
+  Wallet,
   X,
   XCircle,
 } from 'lucide-react';
 import {
   PERMISSIONS,
   parseMoneyInput,
+  unpaidTimeDueCents,
   type GamingPackageSummary,
   type CustomerSummary,
   type SessionMutationResponse,
@@ -33,6 +36,7 @@ import {
   type SessionSummary,
   type StationPendingRequest,
   type StationSummary,
+  type TimeCreditSummary,
 } from '@likapcs/shared';
 import { api, ApiError } from '../../lib/api';
 import {
@@ -40,12 +44,18 @@ import {
   formatHms,
   liveSessionPrice,
   projectSession,
+  sessionDueNow,
 } from '../../lib/session-time';
+import { awaitingAmountCents } from '../../lib/pay-all';
+import { creditHolder, groupCredits } from '../../lib/time-credit-assign';
 import { useFormat } from '../../lib/format';
 import { useEnterSubmits } from '../../lib/enter-submit';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../state/auth';
 import { AddToSessionDialog } from './AddToSessionDialog';
+import { PaySessionsDialog } from './PaySessionsDialog';
+import { SessionBillItems } from './SessionBillItems';
+import { CustomerBillDialog, SessionCustomerDialog } from './SessionCustomer';
 import { useToast } from '../../state/toast';
 import { useShiftGuard } from '../../state/shift-guard';
 import { CustomerPicker } from '../customers/CustomerPicker';
@@ -582,9 +592,9 @@ function ActiveSession({
   const shiftGuard = useShiftGuard();
   const queryClient = useQueryClient();
   const now = useNow();
-  const [dialog, setDialog] = useState<'end' | 'extend' | 'cancel' | 'remove' | 'addItems' | null>(
-    null,
-  );
+  const [dialog, setDialog] = useState<
+    'end' | 'extend' | 'cancel' | 'remove' | 'addItems' | 'pay' | 'customer' | 'bill' | null
+  >(null);
   const canControl = can(PERMISSIONS.STATIONS_CONTROL);
   const canGift = can(PERMISSIONS.STATIONS_GIFT);
   useEffect(() => {
@@ -616,7 +626,8 @@ function ActiveSession({
         'remove-time': t('sessions.timeRemoved'),
         end: result.session.awaitingPayment
           ? t('sessions.endedAwaiting', {
-              total: fmt.money(result.session.finalPriceCents ?? result.session.currentPriceCents),
+              // What still waits at the desk: unpaid time and the products on the bill.
+              total: fmt.money(awaitingAmountCents(result.session)),
             })
           : t('sessions.ended', {
               total: fmt.money(
@@ -644,6 +655,9 @@ function ActiveSession({
   const { elapsed, remaining } = projectSession(s, session.dataUpdatedAt, now);
   const livePrice = liveSessionPrice(s, Math.floor(elapsed));
   const expiringSoon = remaining !== null && remaining <= 300;
+  // 0.36.0: what this PC owes right now — time that is not paid yet and the products on its bill.
+  const dueTime = sessionDueNow(s, elapsed);
+  const dueNow = dueTime + s.openOrdersCents;
 
   return (
     <div className="stack">
@@ -665,7 +679,28 @@ function ActiveSession({
             {t(billingModeKey(s.billingMode))}
           </Badge>
         </div>
-        <span className="muted">{s.customerName ?? t('sessions.customerOptional')}</span>
+        <span className="row" style={{ gap: 8 }} data-testid="session-customer-row">
+          {s.customerId ? (
+            <button
+              type="button"
+              className="name-link"
+              onClick={() => setDialog('bill')}
+              title={t('customerBill.body')}
+              data-testid="session-customer-name"
+            >
+              {s.customerName}
+            </button>
+          ) : (
+            <span className="muted">{s.customerName ?? t('sessions.customerOptional')}</span>
+          )}
+          {canControl && (
+            <Button size="sm" onClick={() => setDialog('customer')} data-testid="session-customer">
+              {s.customerId || s.customerName
+                ? t('sessions.customerChange')
+                : t('sessions.customerSet')}
+            </Button>
+          )}
+        </span>
       </div>
 
       <div className="session-timers">
@@ -719,17 +754,24 @@ function ActiveSession({
             <span className="num">{s.receiptNo}</span>
           </div>
         )}
+        {dueNow > 0 && (
+          <div className="row row--between" data-testid="session-due-now">
+            <span className="muted">{t('sessions.dueNow')}</span>
+            <strong className="num">
+              <span className="due-pill">{fmt.money(dueNow)}</span>
+            </strong>
+          </div>
+        )}
         {s.openOrdersCount > 0 && (
           <div className="row row--between" data-testid="session-open-orders">
             <span className="muted">{t('sessions.openOrders')}</span>
-            <Link to="/orders" className="num">
-              {t('sessions.openOrdersN', {
-                n: s.openOrdersCount,
-                amount: fmt.money(s.openOrdersCents),
-              })}
+            <Link to="/orders" className="num" title={t('sessions.openOrdersLink')}>
+              {fmt.money(s.openOrdersCents)}
             </Link>
           </div>
         )}
+        {/* 0.40.0: every product of this PC with the time it was put on the bill, and by whom. */}
+        <SessionBillItems sessionId={s.id} showPaid />
       </div>
 
       {!station.device?.online && <Alert tone="warning">{t('sessions.offlineWarning')}</Alert>}
@@ -764,6 +806,11 @@ function ActiveSession({
               {t('addItems.button')}
             </Button>
           )}
+          {(dueNow > 0 || s.billingMode === 'postpaid') && (
+            <Button onClick={() => setDialog('pay')} data-testid="session-pay">
+              <Wallet size={14} /> {t('sessions.payNow')}
+            </Button>
+          )}
           <Button variant="primary" onClick={() => setDialog('end')} data-testid="session-end">
             <Square size={14} /> {t('sessions.end')}
           </Button>
@@ -775,6 +822,41 @@ function ActiveSession({
         </div>
       )}
 
+      {dialog === 'pay' && (
+        <PaySessionsDialog
+          sessionIds={[s.id]}
+          onClose={() => setDialog(null)}
+          onPaid={(paid) => {
+            setDialog(null);
+            onPaid(paid);
+            refresh();
+          }}
+        />
+      )}
+      {dialog === 'customer' && (
+        <SessionCustomerDialog
+          targets={[
+            {
+              sessionId: s.id,
+              code: s.stationCode,
+              customerId: s.customerId,
+              customerName: s.customerName,
+            },
+          ]}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            setDialog(null);
+            refresh();
+          }}
+        />
+      )}
+      {dialog === 'bill' && s.customerId && (
+        <CustomerBillDialog
+          customerId={s.customerId}
+          onClose={() => setDialog(null)}
+          onPay={() => setDialog('pay')}
+        />
+      )}
       {dialog === 'addItems' && (
         <AddToSessionDialog
           sessionId={s.id}
@@ -859,19 +941,33 @@ export function EndSessionDialog({
   const metered = postpaid || endpay;
   // Drinks / snacks accepted "on the bill" are settled on this receipt (prepaid too).
   const ordersCents = session.openOrdersCents;
-  const bills = metered || ordersCents > 0;
+  // 0.36.0: open time that was partly paid while it ran owes only the rest.
+  const alreadyPaid = postpaid ? session.advanceCents + session.discountCents : 0;
   // Frozen at open: the first render's live values and the moment they were taken.
   const [stopped] = useState(() => ({
     at: Date.now(),
     elapsedSeconds,
-    priceCents: livePrice,
+    priceCents: Math.max(0, livePrice - alreadyPaid),
+    // 0.36.0: a paid session's minutes added "to pay at the end" — by use when stopped early.
+    addedCents:
+      session.billingMode === 'prepaid'
+        ? unpaidTimeDueCents({
+            usedSeconds: elapsedSeconds,
+            plannedSeconds: session.plannedSeconds ?? 0,
+            unpaidSeconds: session.unpaidSeconds ?? 0,
+            unpaidCents: session.dueCents ?? 0,
+            terms: session.terms,
+          })
+        : 0,
   }));
+  const addedCents = stopped.addedCents;
+  const bills = metered || ordersCents > 0 || addedCents > 0;
   const [discount, setDiscount] = useState('');
   const discountCents = discount.trim() ? parseMoneyInput(discount) : 0;
   const discountInvalid =
     discountCents === null || discountCents < 0 || discountCents > stopped.priceCents;
   const timeCents = metered ? Math.max(0, stopped.priceCents - (discountCents ?? 0)) : 0;
-  const total = timeCents + ordersCents;
+  const total = timeCents + addedCents + ordersCents;
   const { customer, pickedId, setCustomer } = useSessionCustomer(session);
   const tender = useTender({ totalCents: total, customer });
   const ready = !bills || (!discountInvalid && tender.covered);
@@ -887,7 +983,12 @@ export function EndSessionDialog({
             customerId: pickedId,
           }
         : bills
-          ? { payments: tender.payments, customerId: pickedId }
+          ? {
+              payments: tender.payments,
+              customerId: pickedId,
+              // The added minutes are priced at the instant shown here.
+              ...(addedCents > 0 ? { stoppedSecondsAgo: stoppedSecondsAgo() } : {}),
+            }
           : {},
     );
   };
@@ -915,7 +1016,8 @@ export function EndSessionDialog({
             {t('common.cancel')} <Kbd>Esc</Kbd>
           </Button>
           {/* 0.28.0: a prepaid PC whose products are still on the bill can be left to collect later too. */}
-          {(endpay || (session.billingMode === 'prepaid' && ordersCents > 0)) && (
+          {(endpay ||
+            (session.billingMode === 'prepaid' && (ordersCents > 0 || addedCents > 0))) && (
             <Button
               variant="ghost"
               size="lg"
@@ -968,27 +1070,41 @@ export function EndSessionDialog({
               </span>
             </div>
           )}
+          {alreadyPaid > 0 && (
+            <div className="quote__row" data-testid="session-end-advance">
+              <span className="muted">{t('sessions.paidWhileRunning')}</span>
+              <span className="num">{fmt.money(alreadyPaid)}</span>
+            </div>
+          )}
           {!metered && (
-            <div className={`quote__row ${ordersCents > 0 ? '' : 'quote__row--total'}`}>
+            <div
+              className={`quote__row ${ordersCents > 0 || addedCents > 0 ? '' : 'quote__row--total'}`}
+            >
               <span>{t('sessions.paid')}</span>
               <strong className="num">{fmt.money(session.currentPriceCents)}</strong>
             </div>
           )}
+          {addedCents > 0 && (
+            <div className="quote__row" data-testid="session-end-added">
+              <span className="muted">{t('sessions.addedMinutesDue')}</span>
+              <span className="num">{fmt.money(addedCents)}</span>
+            </div>
+          )}
           {ordersCents > 0 && (
-            <>
-              <div className="quote__row" data-testid="session-end-orders">
-                <span className="muted">
-                  {t('sessions.ordersOnBill', { n: session.openOrdersCount })}
-                </span>
-                <span className="num">{fmt.money(ordersCents)}</span>
-              </div>
-              <div className="quote__row quote__row--total">
-                <span>{t('sessions.totalDue')}</span>
-                <strong className="num" data-testid="session-end-total">
-                  {fmt.money(total)}
-                </strong>
-              </div>
-            </>
+            <div className="quote__row" data-testid="session-end-orders">
+              <span className="muted">{t('sessions.openOrders')}</span>
+              <span className="num">{fmt.money(ordersCents)}</span>
+            </div>
+          )}
+          {/* 0.40.0: what those products are, each with the time it was put on the bill. */}
+          {ordersCents > 0 && <SessionBillItems sessionId={session.id} variant="quote" />}
+          {(ordersCents > 0 || addedCents > 0) && (
+            <div className="quote__row quote__row--total">
+              <span>{t('sessions.totalDue')}</span>
+              <strong className="num" data-testid="session-end-total">
+                {fmt.money(total)}
+              </strong>
+            </div>
           )}
         </div>
         {ordersCents > 0 && (
@@ -1210,10 +1326,37 @@ export function ExtendSessionDialog({
       }),
     enabled: body !== null && !useGift,
   });
-  const { customer, setCustomer } = useSessionCustomer(session);
-  const tender = useTender({ totalCents: quote.data?.priceCents ?? 0, customer });
+  const { customer, pickedId, setCustomer } = useSessionCustomer(session);
+  // 0.36.1: minutes already paid at the till that this PC can take — the minutes of an offer
+  // ("Coca-Cola + 60 min") sold with one click, or PC time sold for this PC. One click adds them;
+  // nothing is paid here. Always asked fresh: a credit is used once.
+  const credits = useQuery({
+    queryKey: ['time-credits', session.stationId, 'extend'],
+    queryFn: () =>
+      api<{ credits: TimeCreditSummary[] }>('/time-credits', {
+        query: { stationId: session.stationId },
+      }),
+    enabled: !request && session.billingMode !== 'postpaid',
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const paid = groupCredits(credits.data?.credits ?? []);
+  const addPaid = (credit: TimeCreditSummary) => {
+    if (busy) return;
+    onConfirm({
+      minutes: credit.minutesRemaining,
+      creditId: credit.id,
+      clientRequestId: requestId,
+    });
+  };
   // End pay: the added time goes on the bill collected at the end — nothing is paid now.
   const endpay = session.billingMode === 'endpay';
+  // 0.36.0: a paid session can take the minutes "to pay at the end" too (the End Pay chip).
+  const tender = useTender({
+    totalCents: quote.data?.priceCents ?? 0,
+    customer,
+    allowEndPay: session.billingMode === 'prepaid',
+  });
   const ready = !!body && (useGift || (!!quote.data && (endpay || tender.covered)));
   const submit = () => {
     if (!ready || busy) return;
@@ -1223,7 +1366,10 @@ export function ExtendSessionDialog({
     }
     onConfirm({
       ...body,
-      ...(endpay ? {} : { payments: tender.payments }),
+      ...(endpay ? {} : tender.endPay ? { later: true } : { payments: tender.payments }),
+      // 0.36.0: the customer picked here goes with the request — pay later needs one, and the
+      // session keeps it.
+      ...(pickedId ? { customerId: pickedId } : {}),
       clientRequestId: requestId,
       ...(request ? { requestId: request.id } : {}),
     });
@@ -1262,6 +1408,37 @@ export function ExtendSessionDialog({
       }
     >
       <div className="stack">
+        {paid.length > 0 && !useGift && (
+          <div className="paid-credits" data-testid="session-extend-credits">
+            <span className="paid-credits__title">{t('sessions.paidCreditsTitle')}</span>
+            <div className="paid-credits__list">
+              {paid.map(({ credit: cr, count }) => (
+                <button
+                  key={cr.id}
+                  type="button"
+                  className="paid-credit"
+                  disabled={busy}
+                  onClick={() => addPaid(cr)}
+                  data-testid="session-extend-credit"
+                >
+                  <Timer size={18} />
+                  <span className="paid-credit__text">
+                    <strong>{cr.offerName ?? t('map.useCredit')}</strong>
+                    <span className="faint">
+                      {[
+                        `+${cr.minutesRemaining} min`,
+                        creditHolder(cr),
+                        count > 1 ? t('map.useCreditCount', { n: count }) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="chips">
           {(packages.data ?? []).map((p) => (
             <button

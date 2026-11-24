@@ -219,6 +219,7 @@ export function PricingPage() {
                       <div className="faint" style={{ fontSize: 12 }}>
                         {r.billingIncrementMinutes} min · min {r.minimumMinutes} min ·{' '}
                         {fmt.money(r.minimumChargeCents)}
+                        {r.freeMinutes > 0 && ` · ${t('pricing.freeShort', { n: r.freeMinutes })}`}
                         {(r.validFrom || r.validTo) &&
                           ` · ${r.validFrom ?? '…'} → ${r.validTo ?? '…'}`}
                       </div>
@@ -351,6 +352,7 @@ const KNOWN_RULE_FIELDS = [
   'rateCentsPerHour',
   'billingIncrementMinutes',
   'minimumMinutes',
+  'freeMinutes',
   'minimumChargeCents',
   'roundingMode',
   'roundingIncrementCents',
@@ -408,6 +410,8 @@ interface RuleForm {
   rate: string;
   billingIncrementMinutes: string;
   minimumMinutes: string;
+  /** 0.36.0: "up to N minutes free". */
+  freeMinutes: string;
   minimumCharge: string;
   roundingMode: 'up' | 'down' | 'nearest';
   roundingIncrementCents: string;
@@ -514,6 +518,7 @@ function RuleDialog({
     rate: rule ? centsToInput(rule.rateCentsPerHour) : '',
     billingIncrementMinutes: String(rule?.billingIncrementMinutes ?? 1),
     minimumMinutes: String(rule?.minimumMinutes ?? 0),
+    freeMinutes: String(rule?.freeMinutes ?? 0),
     minimumCharge: centsToInput(rule?.minimumChargeCents ?? 0),
     roundingMode: rule?.roundingMode ?? 'up',
     roundingIncrementCents: String(rule?.roundingIncrementCents ?? 1),
@@ -540,6 +545,8 @@ function RuleDialog({
     local.billingIncrementMinutes = t('pricing.errors.range', { min: 1, max: 120 });
   if (!inRange(toInt(form.minimumMinutes), 0, 600))
     local.minimumMinutes = t('pricing.errors.range', { min: 0, max: 600 });
+  if (!inRange(toInt(form.freeMinutes), 0, 60))
+    local.freeMinutes = t('pricing.errors.range', { min: 0, max: 60 });
   if (!inRange(toInt(form.roundingIncrementCents), 1, 1000))
     local.roundingIncrementCents = t('pricing.errors.range', { min: 1, max: 1000 });
   if (!inRange(toInt(form.priority), -100, 100))
@@ -569,6 +576,7 @@ function RuleDialog({
         rateCentsPerHour: rateCents,
         billingIncrementMinutes: toInt(form.billingIncrementMinutes),
         minimumMinutes: toInt(form.minimumMinutes),
+        freeMinutes: toInt(form.freeMinutes),
         minimumChargeCents: minimumCents,
         roundingMode: form.roundingMode,
         roundingIncrementCents: toInt(form.roundingIncrementCents),
@@ -687,6 +695,27 @@ function RuleDialog({
             label={t('pricing.active')}
           />
         </div>
+        {/* 0.36.0: next to the price on purpose — "up to 3 minutes free" is part of the price. */}
+        <Field
+          label={t('pricing.freeMinutes')}
+          hint={t('pricing.freeMinutesHint')}
+          error={issue('freeMinutes')}
+          className="span-2"
+        >
+          {(id, inv) => (
+            <Input
+              id={id}
+              aria-invalid={inv}
+              type="number"
+              min={0}
+              max={60}
+              style={{ maxWidth: 160 }}
+              value={form.freeMinutes}
+              onChange={(e) => set('freeMinutes', e.target.value)}
+              data-testid="rule-free-minutes"
+            />
+          )}
+        </Field>
         <Field label={t('pricing.days')} className="span-2" error={issue('daysOfWeek')}>
           {() => <DayPicker value={form.daysOfWeek} onChange={(d) => set('daysOfWeek', d)} />}
         </Field>
